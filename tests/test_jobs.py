@@ -406,7 +406,8 @@ class TestLifetime:
         from agent_cli.main import web_instance_is_active
 
         renderer = SimpleNamespace(
-            has_live_connections=lambda: False, worker_is_busy=lambda: False
+            hub=SimpleNamespace(has_live_connections=lambda: False),
+            worker_is_busy=lambda: False,
         )
         server = SimpleNamespace(pending_count=lambda: 0)
         assert not web_instance_is_active(renderer, server, None, jobs=reg)

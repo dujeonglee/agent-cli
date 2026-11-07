@@ -398,7 +398,8 @@ class TestLiveness:
         from agent_cli.main import web_instance_is_active
 
         r = SimpleNamespace(
-            has_live_connections=lambda: False, worker_is_busy=lambda: False
+            hub=SimpleNamespace(has_live_connections=lambda: False),
+            worker_is_busy=lambda: False,
         )
         s = SimpleNamespace(pending_count=lambda: 0)
         assert web_instance_is_active(r, s, None, harness=SimpleNamespace(in_flight=1))
@@ -484,11 +485,12 @@ class TestAssembly:
 
     def test_web_boot_announces_the_auditor(self):
         from agent_cli.main import _announce_agent_boot
-        from agent_cli.render.web import WebConnection, WebRenderer
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.render.web_hub import WebConnection
 
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         _announce_agent_boot(
             r, revived=0, auto=0, auditor=SimpleNamespace(enabled=True)
         )
@@ -526,7 +528,7 @@ class TestWebKnob:
         assert st["available"] and st["value"] is False and st["in_flight"] == 0
         r = client.post("/api/knobs/auditor?token=t", json={"value": True}).json()
         assert r["ok"] and r["value"] is True and auditor.enabled
-        assert renderer._sticky["knob:auditor"]["payload"]["value"] is True
+        assert renderer.hub.sticky_payload("knob:auditor")["value"] is True
         assert client.get("/api/health?token=t").json()["auditing"] is False
         r = client.post("/api/knobs/auditor?token=t", json={"value": "off"}).json()
         assert r["ok"] and not auditor.enabled
@@ -553,12 +555,12 @@ class TestWebKnob:
         auditor.jobs.in_flight = 1
         renderer.note_harness(1)
         assert read_status_file(tmp_path)["auditing"] is True
-        payload = renderer._sticky["knob:auditor"]["payload"]
+        payload = renderer.hub.sticky_payload("knob:auditor")
         assert payload["in_flight"] == 1 and payload["badge"] == "auditing"
         auditor.jobs.in_flight = 0
         renderer.note_harness(0)
         assert read_status_file(tmp_path)["auditing"] is False
-        assert renderer._sticky["knob:auditor"]["payload"]["badge"] == "on"
+        assert renderer.hub.sticky_payload("knob:auditor")["badge"] == "on"
 
     def test_without_the_wiring_status_still_updates(self, tmp_path):
         renderer, _server, _client = self._app(tmp_path, None)
@@ -566,7 +568,7 @@ class TestWebKnob:
         from agent_cli.web.instance_file import read_status_file
 
         assert read_status_file(tmp_path)["auditing"] is True
-        assert "knob:auditor" not in renderer._sticky
+        assert renderer.hub.sticky_payload("knob:auditor") is None
 
     def test_chip_comes_from_the_table(self, tmp_path):
         """🔎 칩은 표의 선언이다 (v10.45.0) — 아이콘·선택지 글자·배지·설명·켜짐."""

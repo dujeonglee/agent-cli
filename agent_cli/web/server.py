@@ -52,7 +52,8 @@ from starlette.background import BackgroundTask
 
 from agent_cli import images as _images
 from agent_cli.input_queue import InputQueue
-from agent_cli.render.web import WebConnection, WebRenderer
+from agent_cli.render.web import WebRenderer
+from agent_cli.render.web_hub import WebConnection
 
 # C3: 도메인 로직은 분리 모듈 소유 — server 는 전송(라우팅·SSE·미들웨어) 전용.
 from agent_cli.web.directives import generate_directive_section
@@ -309,7 +310,7 @@ class WebServer:
         """Add a user message to the pending queue (any connection may).
         Returns the queued item ``{id, conn_id, nickname, text, images}``.
         ``images`` (v10.60.0) — ``ImageRef`` dicts from :meth:`image_refs`."""
-        nickname = self.renderer.nickname_for(conn_id)
+        nickname = self.renderer.hub.nickname_for(conn_id)
         return self._queue.enqueue(conn_id, text, nickname=nickname, images=images)
 
     def image_refs(self, paths: list) -> list[dict]:
@@ -421,11 +422,11 @@ class WebServer:
         keep proxies from closing the connection during idle periods.
 
         The ``__close__`` sentinel — pushed by
-        ``WebRenderer.unregister_connection`` when the renderer side
+        ``EventHub.unregister`` when the renderer side
         drops this connection — ends the loop promptly without waiting
         for the keep-alive timer.
         """
-        snapshot = self.renderer.register_connection(conn)
+        snapshot = self.renderer.hub.register(conn)
         for event, data in snapshot:
             # ``_emit`` payloads carry a pre-serialized ``json_str`` (dumped
             # once at the fan-out point); per-connection synthetics (identity /
@@ -460,7 +461,7 @@ class WebServer:
                     payload = json.dumps(data, ensure_ascii=False)
                 yield {"event": event, "data": payload}
         finally:
-            self.renderer.unregister_connection(conn)
+            self.renderer.hub.unregister(conn)
 
 
 # Sentinel + helper for SSE queue polling. Using a custom timeout
@@ -674,7 +675,7 @@ def create_app(server: WebServer) -> FastAPI:
         # means those tasks finish quietly instead of bubbling up
         # CancelledError tracebacks to stderr. Idempotent — main.py's
         # finally block calls the same teardown.
-        server.renderer.shutdown_all_connections()
+        server.renderer.hub.shutdown_all()
 
     app = FastAPI(title="agent-cli web", lifespan=_lifespan)
     # Single auth chokepoint: trust-local / cookie / bootstrap ?token= → inject
@@ -721,7 +722,7 @@ def create_app(server: WebServer) -> FastAPI:
             "status": "ok",
             "busy": server.renderer.worker_is_busy(),
             "awaiting_input": server.renderer.is_awaiting_input(),
-            "viewers": server.renderer.viewer_count(),
+            "viewers": server.renderer.hub.viewer_count(),
             # v9.24.0: 문법 제약이 실리는 세션인가 (board 📐 배지, status.json 동형) —
             # 노브 표의 같은 한 장(v10.45.0: 종전 `grammar_state` 중복 계산 삭제)
             "grammar": bool(_knob("grammar").get("active")),
@@ -1345,7 +1346,7 @@ def create_app(server: WebServer) -> FastAPI:
             raise HTTPException(
                 status_code=400, detail="content must be a non-empty string"
             )
-        nickname = server.renderer.nickname_for(body.get("conn_id")) or "user"
+        nickname = server.renderer.hub.nickname_for(body.get("conn_id")) or "user"
         answer_id = body.get("answer_id")
         if answer_id:
             if images:
@@ -1453,7 +1454,7 @@ def create_app(server: WebServer) -> FastAPI:
                 # ``author`` puts the answer on the team view's user lane.
                 # UI-echo only (not in history), so it never feeds the
                 # ``answers`` attribution — that is loop-owned.
-                nick = server.renderer.nickname_for(body.get("conn_id"))
+                nick = server.renderer.hub.nickname_for(body.get("conn_id"))
                 server.renderer.push_user_message(
                     content, author="" if nick == "?" else nick
                 )
@@ -1478,7 +1479,7 @@ def create_app(server: WebServer) -> FastAPI:
         """Set the caller's display nickname. Body: ``{conn_id, name}``. The
         UI pre-fills the assigned fun default; the user edits/confirms."""
         body = await _json_object(request)
-        ok = server.renderer.set_nickname(body.get("conn_id"), body.get("name", ""))
+        ok = server.renderer.hub.set_nickname(body.get("conn_id"), body.get("name", ""))
         return JSONResponse({"ok": ok})
 
     @app.post("/api/abort")

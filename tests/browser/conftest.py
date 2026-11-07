@@ -140,7 +140,7 @@ class WebStack:
         ]
 
         def worker():
-            while not self.renderer.has_live_connections():
+            while not self.renderer.hub.has_live_connections():
                 if self._uv.should_exit:
                     return
                 time.sleep(0.05)
@@ -166,7 +166,7 @@ class WebStack:
         """ask(prompt_user) 1회 — 답을 results 에 적재."""
 
         def worker():
-            while not self.renderer.has_live_connections():
+            while not self.renderer.hub.has_live_connections():
                 if self._uv.should_exit:
                     return
                 time.sleep(0.05)

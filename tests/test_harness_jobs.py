@@ -289,11 +289,12 @@ class TestScopeCard:
         """보고서의 탐침 그대로: 스코프 없는 스레드의 카드는 task_id=None(main).
         이제 그 스레드의 카드가 하니스 카드의 task_id 를 단다."""
         from agent_cli import render
-        from agent_cli.render.web import WebConnection, WebRenderer
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.render.web_hub import WebConnection
 
         r = WebRenderer()
         conn = WebConnection(id="c")
-        r.register_connection(conn)
+        r.hub.register(conn)
         monkeypatch.setattr(render, "_renderer", r)
         monkeypatch.setattr(render, "get_renderer", lambda: r)
 

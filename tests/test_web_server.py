@@ -66,7 +66,7 @@ def _qget(conn, timeout=1.0):
 def _register(renderer, conn_id="ctrl"):
     """Register a connection and return its id (input tests need a live
     connection so push_user_message / can_prompt work)."""
-    renderer.register_connection(WebConnection(id=conn_id))
+    renderer.hub.register(WebConnection(id=conn_id))
     return conn_id
 
 
@@ -146,14 +146,14 @@ class TestHandleSlashCommand:
 
         renderer = WebRenderer()
         assert handle_slash_command("regular chat message", renderer) is False
-        assert renderer.persistent_count == 0
+        assert renderer.hub.persistent_count == 0
 
     def test_slash_sh_runs_command_and_emits_observation(self):
         from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
 
         handled = handle_slash_command("/sh echo hello-from-shell", renderer)
 
@@ -171,7 +171,7 @@ class TestHandleSlashCommand:
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
 
         handled = handle_slash_command("/sh exit 7", renderer)
 
@@ -186,7 +186,7 @@ class TestHandleSlashCommand:
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
 
         assert handle_slash_command("/sh", renderer) is True
         event, data = _qget(conn)
@@ -201,7 +201,7 @@ class TestHandleSlashCommand:
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
 
         assert handle_slash_command(r"/sh printf '\xff\xfe hi'", renderer) is True
         event, data = _qget(conn)
@@ -215,7 +215,7 @@ class TestHandleSlashCommand:
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
         ctx = MagicMock()
         ctx.compact_now.return_value = (5000, 2000)
 
@@ -236,7 +236,7 @@ class TestHandleSlashCommand:
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
         ctx = MagicMock()
         ctx.compact_now.return_value = (3000, 3000)
         ctx.max_context_tokens = 100000
@@ -250,7 +250,7 @@ class TestHandleSlashCommand:
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
 
         assert handle_slash_command("/compact", renderer, ctx=None) is True
         _, data = _qget(conn)
@@ -261,7 +261,7 @@ class TestHandleSlashCommand:
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
 
         assert handle_slash_command("/help", renderer) is True
         event, data = _qget(conn)
@@ -1222,7 +1222,7 @@ class TestStaticUI:
         snap = server.queue_snapshot()
         assert [it.get("mail", False) for it in snap] == [False, True]
         server.broadcast_queue()
-        payload = renderer._sticky["queue"]["payload"]
+        payload = renderer.hub.sticky_payload("queue")
         assert payload["pending"][-1]["nickname"] == "job"
 
     def test_agent_work_carries_the_item_id(self, server_and_client):
@@ -1230,7 +1230,7 @@ class TestStaticUI:
         ``index`` (v9.7.0 오프바이원 수리)는 순번과 함께 사라졌다."""
         _, renderer, _client = server_and_client
         renderer.begin_agent_work(key="agt-x", item="u-1", profile="p", message="m")
-        payload = next(d for e, d in renderer._event_buffer if e == "scope_start")
+        payload = next(d for e, d in renderer.hub.events if e == "scope_start")
         assert payload["item"] == "u-1" and payload["task_id"] == "agt-x#u-1"
         assert "index" not in payload
 
@@ -1400,16 +1400,15 @@ class TestAuth:
         assert client.get("/api/health").json()["awaiting_input"] is False
 
     def test_health_reports_viewers(self, server_and_client):
-        import threading
-        import types
+        from agent_cli.render.web_hub import WebConnection
 
         _, renderer, client = server_and_client
         assert client.get("/api/health").json()["viewers"] == 0
         # a live (not-closed) subscriber counts; a closed one does not
-        live = types.SimpleNamespace(closed=threading.Event())
-        gone = types.SimpleNamespace(closed=threading.Event())
+        renderer.hub.register(WebConnection(id="live"))
+        gone = WebConnection(id="gone")
+        renderer.hub.register(gone)
         gone.closed.set()
-        renderer._connections.extend([live, gone])
         assert client.get("/api/health").json()["viewers"] == 1
 
     def test_stream_without_token_is_401(self, server_and_client):
@@ -1601,7 +1600,7 @@ class TestInputEndpoint:
         reply right away, ahead of the LLM's next emission."""
         _, renderer, client = server_and_client
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
 
         # Detach a worker so the input_queue has a consumer.
         def worker():
@@ -1673,8 +1672,8 @@ class TestInputEndpoint:
     def test_any_connection_can_send_input(self, server_and_client):
         # No controller gate: every registered connection may send input.
         _, renderer, client = server_and_client
-        renderer.register_connection(WebConnection(id="a"))
-        renderer.register_connection(WebConnection(id="b"))
+        renderer.hub.register(WebConnection(id="a"))
+        renderer.hub.register(WebConnection(id="b"))
         for conn_id in ("a", "b"):
             resp = client.post(
                 "/api/input?token=testtoken",
@@ -1718,7 +1717,7 @@ class TestInputGate:
     def test_prompt_without_pending_wait_is_409_and_not_echoed(self, server_and_client):
         _, renderer, client = server_and_client
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
         resp = client.post(
             "/api/input?token=testtoken",
             json={"kind": "prompt", "content": "stale answer", "conn_id": "c1"},
@@ -1925,7 +1924,7 @@ class TestMessageQueue:
 
     def test_enqueue_assigns_nickname_and_id(self):
         renderer = WebRenderer()
-        renderer.register_connection(WebConnection(id="c1"))
+        renderer.hub.register(WebConnection(id="c1"))
         srv = WebServer(renderer)
         item = srv.enqueue("c1", "do the thing")
         assert item["text"] == "do the thing"
@@ -1954,7 +1953,7 @@ class TestMessageQueue:
     def test_enqueue_broadcasts_queue_event(self):
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
+        renderer.hub.register(conn)
         srv = WebServer(renderer)
         srv.enqueue("c1", "hello")
         # the `queue` event is broadcast to the live connection
@@ -2207,7 +2206,7 @@ class TestStreamGenerator:
             assert json.loads(ident["data"])["conn_id"] == "c1"
 
             # A fresh connection joins — must NOT end this generator.
-            renderer.register_connection(WebConnection(id="c2"))
+            renderer.hub.register(WebConnection(id="c2"))
 
             # c1 still receives a subsequent live emit.
             renderer.final("still here", turn=1)
@@ -2231,7 +2230,7 @@ class TestStreamGenerator:
             # Push a real event AND then immediately unregister so
             # the generator sees one event followed by the sentinel.
             renderer.final("byebye", turn=1)
-            renderer.unregister_connection(conn)
+            renderer.hub.unregister(conn)
 
             event_dict = await self._next(gen, timeout=2.0)
             assert event_dict["event"] == "assistant_turn"
@@ -2246,7 +2245,7 @@ class TestStreamGenerator:
 # classes don't pay the import cost when running selectively.
 import asyncio
 
-from agent_cli.render.web import WebConnection
+from agent_cli.render.web_hub import WebConnection
 
 # ── Prompt Inspector (GET /api/debug/prompt) ───────
 
@@ -2863,12 +2862,12 @@ class TestViewerCount:
         return None
 
     def test_broadcast_on_join_and_leave(self):
-        from agent_cli.render.web import _NICKNAMES
+        from agent_cli.render.web_hub import _NICKNAMES
 
         r = WebRenderer()
         a = WebConnection(id="a")
         # joining conn learns the roster via its snapshot (not its queue)
-        snap_a = r.register_connection(a)
+        snap_a = r.hub.register(a)
         va = self._snap_viewers(snap_a)
         assert va["count"] == 1
         assert va["viewers"][0]["id"] == "a"
@@ -2876,14 +2875,14 @@ class TestViewerCount:
         assert self._viewer_events(a) == []  # nothing on its own queue
 
         b = WebConnection(id="b")
-        snap_b = r.register_connection(b)
+        snap_b = r.hub.register(b)
         assert self._snap_viewers(snap_b)["count"] == 2
         evs = self._viewer_events(a)  # existing conn learns via queue
         assert evs[-1]["count"] == 2
         names = {v["name"] for v in evs[-1]["viewers"]}
         assert len(names) == 2  # distinct nicknames while pool not exhausted
 
-        r.unregister_connection(b)
+        r.hub.unregister(b)
         assert self._viewer_events(a)[-1]["count"] == 1  # decremented on leave
 
     def test_viewers_ui_wired(self, server_and_client):
@@ -2897,27 +2896,27 @@ class TestNickname:
 
     def test_set_nickname_updates_roster(self, server_and_client):
         _, renderer, client = server_and_client
-        from agent_cli.render.web import WebConnection
+        from agent_cli.render.web_hub import WebConnection
 
-        renderer.register_connection(WebConnection(id="c1"))
+        renderer.hub.register(WebConnection(id="c1"))
         resp = client.post(
             "/api/nickname?token=testtoken",
             json={"conn_id": "c1", "name": "  Captain Code  "},
         )
         assert resp.status_code == 200 and resp.json()["ok"] is True
-        assert renderer.nickname_for("c1") == "Captain Code"  # trimmed
+        assert renderer.hub.nickname_for("c1") == "Captain Code"  # trimmed
 
     def test_empty_name_rejected(self, server_and_client):
         _, renderer, client = server_and_client
-        from agent_cli.render.web import WebConnection
+        from agent_cli.render.web_hub import WebConnection
 
-        renderer.register_connection(WebConnection(id="c1"))
-        before = renderer.nickname_for("c1")
+        renderer.hub.register(WebConnection(id="c1"))
+        before = renderer.hub.nickname_for("c1")
         resp = client.post(
             "/api/nickname?token=testtoken", json={"conn_id": "c1", "name": "   "}
         )
         assert resp.json()["ok"] is False
-        assert renderer.nickname_for("c1") == before  # unchanged
+        assert renderer.hub.nickname_for("c1") == before  # unchanged
 
     def test_nickname_requires_token(self, server_and_client):
         _, _, client = server_and_client
@@ -3300,8 +3299,8 @@ class TestTeammateEndpoints:
         reg = self._FakeRegistry()
         server.agent_registry = reg
         conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
-        renderer.set_nickname("c1", "bob")
+        renderer.hub.register(conn)
+        renderer.hub.set_nickname("c1", "bob")
         r = client.post(
             f"/api/agent/agt-1/input?token={server.token}",
             json={"content": "do it", "conn_id": "c1"},

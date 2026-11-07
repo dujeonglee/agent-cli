@@ -6,7 +6,7 @@ Architecture::
     AgentLoop (worker thread)              FastAPI / uvicorn (main thread, async)
     ──────────────────────────              ───────────────────────────────────
     renderer.thought(...)
-      → _emit("assistant_turn", ...) ─→ event_buffer (persistent)
+      → _emit("assistant_turn", ...) ─→ hub.publish → event_buffer (persistent)
                                         ↓
                                       conn.queue (per active SSE)
                                         ↓
@@ -18,15 +18,17 @@ Architecture::
                                           ↑
                                       POST /api/input puts here
 
-Multi-viewer, all equal: every authenticated connection is kept in
-``_connections``, receives the fan-out, AND may send input / queue messages.
-The worker thread is unaware of clients — it just emits, the renderer fans
-out to all.
+Multi-viewer, all equal: every authenticated connection is kept in the
+connection hub (``self.hub`` — :class:`agent_cli.render.web_hub.EventHub`),
+receives the fan-out, AND may send input / queue messages. The worker thread
+is unaware of clients — it just emits; ``_emit`` shapes + serializes the event
+and the hub fans out to all. 연결·재생 버퍼·스티키·별명은 허브, 이벤트 모양·
+스코프·재생·status.json 은 렌더러 (v10.115.0).
 
-Buffer / replay: ``_event_buffer`` holds the most recent persistent events
+Buffer / replay: the hub's buffer holds the most recent persistent events
 since session start (or since session resume on ``--resume <id>``), bounded
-at ``_EVENT_BUFFER_MAX`` so a long-lived session cannot grow memory (and
-reconnect cost) without limit. When a new client connects, the server first
+at ``web_hub._EVENT_BUFFER_MAX`` so a long-lived session cannot grow memory
+(and reconnect cost) without limit. When a new client connects, the server first
 replays the buffer in order — prefixed by a ``transcript_truncated`` notice
 when older events have been dropped (the full record stays in the session's
 ``history.jsonl``) — then forwards live events from its dedicated queue.
@@ -38,44 +40,20 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
 import threading
 import time
-from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, SimpleQueue
 from typing import Any, ClassVar
 
 from agent_cli.fsio import atomic_write_json
 from agent_cli.render.base import ConfirmOption, Renderer
-
-# Replay-buffer bound (persistent events). ~3-4 persistent events per turn →
-# roughly a thousand turns of transcript; beyond that a reconnecting client
-# gets a ``transcript_truncated`` notice + the most recent window. Live
-# delivery is unaffected (connected clients received everything as it
-# happened); only the mid-session reconnect replay is windowed. Full history
-# survives on disk (history.jsonl → --resume replays from there).
-_EVENT_BUFFER_MAX = 5000
-
+from agent_cli.render.web_hub import EventHub, _JsonReady
 
 # 모델 시점(v10.6.0): history 레코드 하나를 그리는 이벤트 — ``note_record`` 의
 # ``hidx`` 가 이들에만 붙는다.
 _CARD_EVENTS = frozenset({"assistant_turn", "observation", "user_message"})
-
-
-class _JsonReady(dict):
-    """A fan-out payload dict carrying its own serialized form.
-
-    ``_emit`` serializes each event ONCE at the single fan-out point and
-    caches the string here; the SSE generator (one per viewer) sends the
-    cached string instead of re-``json.dumps``-ing the same dict per viewer
-    per event — and buffer replay on reconnect reuses it too. Still a real
-    dict, so tests and in-process consumers read fields normally.
-    """
-
-    __slots__ = ("json_str",)
 
 
 # Prompt Inspector scope key for the main loop's system prompt. Delegate
@@ -112,42 +90,6 @@ def _flips_status(name: str) -> bool:
     return name in _STATUS_STICKY_KEYS or name.startswith("knob:")
 
 
-# Fun default nicknames assigned to viewers on connect (browsers can't read
-# the client's OS username, so a friendly auto-label is the practical
-# identity). A random unused one is picked per connection.
-_NICKNAMES = [
-    "Sneaky Fox",
-    "Witty Otter",
-    "Brave Penguin",
-    "Sleepy Panda",
-    "Curious Cat",
-    "Jazzy Llama",
-    "Grumpy Walrus",
-    "Dizzy Ferret",
-    "Mellow Moose",
-    "Snappy Crab",
-    "Funky Gecko",
-    "Loyal Hound",
-    "Zesty Quokka",
-    "Cosmic Yak",
-    "Turbo Sloth",
-    "Nifty Newt",
-    "Rowdy Raccoon",
-    "Bouncy Badger",
-    "Spicy Mantis",
-    "Chill Capybara",
-]
-
-
-@dataclass
-class WebConnection:
-    """One active SSE subscriber. Server creates one per HTTP connection."""
-
-    id: str
-    queue: SimpleQueue = field(default_factory=SimpleQueue)
-    closed: threading.Event = field(default_factory=threading.Event)
-
-
 def _tool_name(schema: dict) -> str:
     fn = schema.get("function") if isinstance(schema, dict) else None
     if isinstance(fn, dict) and fn.get("name"):
@@ -163,14 +105,16 @@ class WebRenderer(Renderer):
     """Renderer for ``agent-cli web``.
 
     Thread-safe: emit methods are called from the AgentLoop worker
-    thread; ``register_connection`` / ``push_user_input`` are called
-    from the FastAPI request handlers (async, but the calls themselves
-    are synchronous from the renderer's POV). All shared state is
-    guarded by ``self._lock``.
+    thread; ``push_user_input`` (and ``hub.register``) are called from the
+    FastAPI request handlers (async, but the calls themselves are
+    synchronous from the renderer's POV). The renderer's own state (scope
+    maps, pending notes, prompt snapshots, …) is guarded by ``self._lock``;
+    connection / buffer / sticky / nickname state lives in ``self.hub``
+    under the hub's own lock. The two locks are never held together.
 
-    Persistent events flow through ``_event_buffer`` (for replay) and
-    every active connection's ``queue``. Transient events skip the
-    buffer.
+    ``_emit`` shapes + serializes an event once and hands it to
+    ``hub.publish``: persistent events go to the replay buffer and every
+    open connection's ``queue``; transient events skip the buffer.
     """
 
     def __init__(
@@ -192,14 +136,9 @@ class WebRenderer(Renderer):
             (self._status_dir / "scopes.jsonl") if self._status_dir else None
         )
         self._scope_log_lock = threading.Lock()
-        # event_buffer entries: (event_name, data_dict) — bounded deque; the
-        # oldest events fall off past _EVENT_BUFFER_MAX (reconnect replay is
-        # windowed, disk history is complete). _persistent_count keeps the
-        # TOTAL ever emitted so register_connection can report the gap.
-        self._event_buffer: deque[tuple[str, dict[str, Any]]] = deque(
-            maxlen=_EVENT_BUFFER_MAX
-        )
-        self._connections: list[WebConnection] = []
+        # 연결 허브 (v10.115.0) — SSE 구독자·재생 버퍼·스티키·별명. 뷰어 수가 바뀌면
+        # status.json 을 다시 쓴다 (허브는 status.json 을 모른다).
+        self.hub = EventHub(on_viewers_changed=self._publish_status)
         # Worker busy/idle mirror (set by worker_busy/worker_idle) — a plain
         # queryable bool for the idle-reaper, independent of the sticky payload.
         self._worker_busy = False
@@ -212,11 +151,6 @@ class WebRenderer(Renderer):
         # Set when DIRECTIVE.md is edited via the Prompt Inspector; the loop
         # consumes it each LLM call to rebuild its system prompt.
         self._directives_dirty = False
-        # conn_id → fun nickname (assigned on register, shown to all viewers)
-        self._nicknames: dict[str, str] = {}
-        # Every connection is equal: all receive the fan-out AND may send
-        # input / queue messages (no controller/observer split).
-        # ``_connections`` is append-order = oldest-first (snapshot fan-out).
         # input queue feeds prompt_user / confirm
         self._input_queue: SimpleQueue = SimpleQueue()
         # Pending assistant emission: thought() arrives before action() /
@@ -227,8 +161,6 @@ class WebRenderer(Renderer):
         # 오귀속됐다(CLI 는 스레드 캡처라 무사했던 비대칭). emit 하는 스레드가
         # 자기 tid 슬롯만 읽고 지운다; delegate 종료 시 pop 으로 누수 방지.
         self._pending_thoughts: dict[int, str] = {}
-        # Counter of persistent events in the SSE replay buffer.
-        self._persistent_count: int = 0
         # Optional workspace path piggybacks on the ``ready`` event so
         # the frontend's top bar can show "provider · model · cwd"
         # without the LLM needing to volunteer the path. Empty string
@@ -288,26 +220,6 @@ class WebRenderer(Renderer):
         self._prompt_view_dir = (
             (self._status_dir / "prompt_views") if self._status_dir else None
         )
-        # ── Sticky state registry ───────────────────────────────────
-        # A "sticky" state is a single server value that is (a) broadcast live
-        # to connected clients AND (b) replayed into each NEW connection's
-        # snapshot — so a late / refreshed / second-browser client sees the
-        # last value (plain SSE only reaches clients connected at emit time).
-        # ``set_sticky(name, event, payload, position=…)`` is the ONE place that
-        # does both; ``register_connection`` walks this dict to rebuild the
-        # snapshot. ``position`` controls placement: ``ready`` goes FIRST (the
-        # top-bar must populate before everything — fixes the stuck
-        # "connecting…" state), the rest append. All emit non-persistent (live
-        # only — ``_event_buffer`` keeps history, the slot keeps "latest" so the
-        # buffer doesn't accumulate one entry per turn). Members:
-        #   ready        — session info (model/session/workspace) for the top-bar
-        #   worker_state — {busy} send-button gating
-        #   token_usage  — per-turn token readout
-        #   queue        — pending user-message queue
-        # NOT sticky: viewers (connection-set-derived, not a single latest
-        # value) / prompt snapshots (per-scope, on-demand pull).
-        # name → {"event", "payload", "position"}.
-        self._sticky: dict[str, dict[str, Any]] = {}
         # Per-thread delegate-task routing. Worker threads spawned by
         # ``_run_parallel`` register their ``task_id`` here via
         # ``begin_delegate_task``; ``_emit`` then auto-attaches
@@ -367,7 +279,23 @@ class WebRenderer(Renderer):
         *,
         persistent: bool,
     ) -> None:
-        """Append to buffer (if persistent) and fan out to active connections.
+        """Shape the event (``_shape``) and hand it to ``hub.publish`` — buffered
+        if persistent, fanned out to every open connection."""
+        self.hub.publish(
+            event,
+            self._shape(event, data, persistent=persistent),
+            persistent=persistent,
+        )
+
+    def _shape(
+        self,
+        event: str,
+        data: dict[str, Any],
+        *,
+        persistent: bool,
+    ) -> _JsonReady:
+        """이벤트 하나의 와이어 모양을 만들고 한 번 직렬화한다 — 모든 팬아웃
+        (``_emit`` 과 스티키의 라이브 송출)이 지나는 단일 지점.
 
         Auto-attaches ``task_id`` from the per-thread delegate map
         when the emitting thread is a parallel-delegate worker, so
@@ -429,13 +357,7 @@ class WebRenderer(Renderer):
         # instead of re-dumping the same dict (N viewers × M replays).
         ready = _JsonReady(data)
         ready.json_str = json.dumps(ready, ensure_ascii=False)
-        with self._lock:
-            if persistent:
-                self._event_buffer.append((event, ready))
-                self._persistent_count += 1
-            for conn in self._connections:
-                if not conn.closed.is_set():
-                    conn.queue.put((event, ready))
+        return ready
 
     def set_sticky(
         self,
@@ -446,17 +368,14 @@ class WebRenderer(Renderer):
         position: str = "append",
     ) -> None:
         """Set a sticky state: broadcast ``(event, payload)`` live AND cache it
-        so every NEW connection replays it in its snapshot (see ``_sticky``).
+        so every NEW connection replays it in its snapshot (``EventHub``).
         ``position`` ('prepend' | 'append') is where it lands in the snapshot —
         ``ready`` prepends (top-bar first), the rest append. Always live
-        (non-persistent): the slot holds the latest, the buffer holds history."""
-        with self._lock:
-            self._sticky[name] = {
-                "event": event,
-                "payload": payload,
-                "position": position,
-            }
-        self._emit(event, payload, persistent=False)
+        (non-persistent): the slot holds the latest, the buffer holds history.
+
+        렌더러 쪽 몫은 라이브 송출의 모양(``_shape``)과 status.json 정책이다."""
+        live = self._shape(event, payload, persistent=False)
+        self.hub.set_sticky(name, event, payload, live=live, position=position)
         if _flips_status(name):  # busy / awaiting / knob flipped → refresh file
             self._publish_status()
 
@@ -464,104 +383,9 @@ class WebRenderer(Renderer):
         """Drop a sticky slot so new connections no longer replay it — e.g.
         once a pending ``input_required`` is answered, a late/reconnecting
         client must NOT be handed the already-resolved prompt."""
-        with self._lock:
-            self._sticky.pop(name, None)
+        self.hub.clear_sticky(name)
         if _flips_status(name):  # awaiting cleared → refresh file
             self._publish_status()
-
-    def register_connection(self, conn: WebConnection) -> list[tuple[str, dict]]:
-        """Add ``conn`` as a subscriber. Every connection is equal — all may
-        send input and queue messages (no controller/observer split).
-
-        The returned snapshot starts with an ``identity`` event (so the client
-        learns its ``conn_id`` before anything else — used for the viewer
-        roster "(you)" mark and queued-message ownership), then the usual
-        replay. Caller yields the snapshot, then loops on ``conn.queue`` for
-        live events.
-        """
-        with self._lock:
-            self._connections.append(conn)
-
-            snapshot = list(self._event_buffer)
-            # Bounded buffer: when older events have been dropped, tell the
-            # joining client HOW MANY are missing (rendered as a small notice
-            # card) — the windowed replay must not read as the full story.
-            omitted = self._persistent_count - len(snapshot)
-            if omitted > 0:
-                snapshot.insert(0, ("transcript_truncated", {"omitted": omitted}))
-            # Replay sticky state into the new connection's snapshot so a
-            # late/refreshed/second-browser client sees the last value of each.
-            # ``prepend`` slots (ready → top-bar) go ahead of the buffer;
-            # ``append`` slots (worker_state/token_usage/queue) after.
-            for slot in self._sticky.values():
-                entry = (slot["event"], slot["payload"])
-                if slot["position"] == "prepend":
-                    snapshot.insert(0, entry)
-                else:
-                    snapshot.append(entry)
-            # ``identity`` first: the client needs its conn_id before anything.
-            snapshot.insert(0, ("identity", {"conn_id": conn.id}))
-            self._assign_nickname_locked(conn.id)
-            # Live viewers: the JOINING conn learns the roster via its snapshot
-            # (no extra queue event — keeps single-conn queue assertions
-            # clean); EXISTING conns learn via their queue.
-            payload = self._viewers_payload_locked()
-            snapshot.append(("viewers", payload))
-            for c in self._connections:
-                if c is not conn and not c.closed.is_set():
-                    c.queue.put(("viewers", payload))
-            # 스냅샷의 끝 (v10.8.1): 클라이언트는 여기까지 타임라인을 숨긴 채 재생하고
-            # 한 번에 맨 아래로 점프한 뒤 보여 준다 — 열 때마다 카드가 쌓이며
-            # 내려가는 스크롤이 보이지 않는다. 그 다음부터는 라이브 이벤트다.
-            snapshot.append(("snapshot_end", {"events": len(snapshot)}))
-        self._publish_status()  # viewers changed (outside lock: does disk I/O)
-        return snapshot
-
-    def _assign_nickname_locked(self, conn_id: str) -> None:
-        used = set(self._nicknames.values())
-        free = [n for n in _NICKNAMES if n not in used]
-        if free:
-            name = random.choice(free)
-        else:  # more viewers than pool — disambiguate with a counter
-            name = f"{random.choice(_NICKNAMES)} #{len(self._nicknames) + 1}"
-        self._nicknames[conn_id] = name
-
-    def _viewers_payload_locked(self) -> dict:
-        """`{count, viewers:[{id, name}]}` for the open connections. The
-        client matches its own ``conn_id`` to mark "(you)"."""
-        vs = [
-            {"id": c.id, "name": self._nicknames.get(c.id, "?")}
-            for c in self._connections
-            if not c.closed.is_set()
-        ]
-        return {"count": len(vs), "viewers": vs}
-
-    def _broadcast_viewers_locked(self) -> None:
-        """Push the current viewer roster to every remaining client's queue.
-        Caller must hold ``self._lock`` — invoked from unregister (the leaver
-        is already removed)."""
-        payload = self._viewers_payload_locked()
-        for c in self._connections:
-            if not c.closed.is_set():
-                c.queue.put(("viewers", payload))
-
-    def nickname_for(self, conn_id: str | None) -> str:
-        """The fun nickname assigned to ``conn_id`` (for queued-message
-        attribution), or "?" if unknown."""
-        with self._lock:
-            return self._nicknames.get(conn_id or "", "?")
-
-    def set_nickname(self, conn_id: str | None, name: str) -> bool:
-        """Let a viewer rename itself (the fun default is pre-filled in the
-        UI, the user edits/confirms). Trimmed + length-capped; empty rejected.
-        Rebroadcasts the roster so everyone sees the new name."""
-        name = (name or "").strip()[:24]
-        if not conn_id or not name:
-            return False
-        with self._lock:
-            self._nicknames[conn_id] = name
-            self._broadcast_viewers_locked()
-        return True
 
     def queue_state(self, pending: list[dict]) -> None:
         """Broadcast the pending user-message queue (real-time). Each item is
@@ -569,23 +393,6 @@ class WebRenderer(Renderer):
         shows a cancel control on the viewer's own items. Cached so a
         reconnecting client sees the queue immediately."""
         self.set_sticky("queue", "queue", {"pending": pending})
-
-    def unregister_connection(self, conn: WebConnection) -> None:
-        """Drop ``conn`` and wake any pending queue waiter.
-
-        The sentinel put is the symmetric pair of ``register_connection``'s
-        list append: register exposes the queue to writers, unregister signals
-        readers to stop (else the SSE generator's ``queue.get(timeout=15)``
-        leaks its executor thread for up to 15s after disconnect).
-        """
-        with self._lock:
-            if conn in self._connections:
-                self._connections.remove(conn)
-            self._nicknames.pop(conn.id, None)
-            # the leaver is already removed → broadcast the decremented count
-            self._broadcast_viewers_locked()
-        self._publish_status()  # viewers changed (outside lock: does disk I/O)
-        conn.queue.put(_CLOSE_SENTINEL)
 
     # ─── Parallel delegate visibility ───────────────
 
@@ -959,21 +766,14 @@ class WebRenderer(Renderer):
         """5.13: 한 teammate 의 대화 기록을 표면에서 정리한다 (kill 시).
 
         replay 버퍼에서 그 key 의 ``agent_msg`` 를 제거해 재접속 snapshot
-        에 남지 않게 하고(``_persistent_count`` 도 제거 수만큼 보정해
+        에 남지 않게 하고(허브의 누적 수도 제거 수만큼 보정해 — ``hub.drop_buffered``,
         ``omitted`` 계산이 어긋나지 않게), 라이브 뷰어에게는
         ``agent_cleared`` 를 보내 열려 있는 대화창(``msgs[key]``)도 비우게
         한다. resume 시 ``conversation.jsonl`` 재생이 다시 채우므로,
         "kill=정리 / resume=재생" 이 대칭을 이룬다."""
-        with self._lock:
-            kept: deque[tuple[str, dict[str, Any]]] = deque(maxlen=_EVENT_BUFFER_MAX)
-            removed = 0
-            for event, ready in self._event_buffer:
-                if event == "agent_msg" and ready.get("key") == key:
-                    removed += 1
-                    continue
-                kept.append((event, ready))
-            self._event_buffer = kept
-            self._persistent_count -= removed
+        self.hub.drop_buffered(
+            lambda event, data: event == "agent_msg" and data.get("key") == key
+        )
         self._emit("agent_cleared", {"key": key}, persistent=False)
 
     def set_thread_status(self, status: str) -> None:
@@ -990,26 +790,6 @@ class WebRenderer(Renderer):
                 {"task_id": task_id, "status": status},
                 persistent=False,
             )
-
-    def shutdown_all_connections(self) -> None:
-        """Close every active SSE generator (used on shutdown).
-
-        Pushes the ``__close__`` sentinel into each connection's queue
-        so the SSE generator's blocking executor-thread ``queue.get``
-        wakes up and breaks out of its loop. Idempotent — second call
-        finds an empty connection list and no-ops.
-
-        Called from two places: the FastAPI ``shutdown`` lifespan hook
-        (uvicorn's own SIGINT path) and ``main.py``'s ``finally`` block
-        (belt-and-braces). Either ordering leaves the worker thread
-        free to finalise the session.
-        """
-        with self._lock:
-            for conn in self._connections:
-                if not conn.closed.is_set():
-                    conn.closed.set()
-                    conn.queue.put(_CLOSE_SENTINEL)
-            self._connections.clear()
 
     def replay_from_history(self, ctx, scope_events=None) -> None:
         """Re-emit persistent events from ``ctx`` so reconnecting
@@ -1096,7 +876,7 @@ class WebRenderer(Renderer):
     #
     # 지속성은 불리언이 아니라 **독립된 세 단계**다:
     #   ① 라이브 팬아웃        — 모든 이벤트
-    #   ② 재접속 리플레이      — `persistent=True` → `_event_buffer`
+    #   ② 재접속 리플레이      — `persistent=True` → 허브 재생 버퍼(`hub.events`)
     #   ③ `--resume` 리플레이  — **ContextManager 가 history.jsonl 에 썼는가**
     #
     # ③은 ②에서 파생되지 않는다. `persistent=` 는 `_emit` 의 파라미터인데 ③은
@@ -1453,14 +1233,6 @@ class WebRenderer(Renderer):
             else:
                 tool_input = str(action_input)
             self.action(action, tool_input, turn=turn)
-
-    @property
-    def persistent_count(self) -> int:
-        """Number of persistent events currently in the SSE replay
-        buffer. Read by tests to assert which events land in replay.
-        """
-        with self._lock:
-            return self._persistent_count
 
     # ─── Output methods (Renderer ABC) ──────────────
 
@@ -1843,8 +1615,7 @@ class WebRenderer(Renderer):
         reply (the ``input_required`` sticky is set between emit and resolve).
         Lets a front controller flag "needs your answer" distinctly from a
         busy-generating turn."""
-        with self._lock:
-            return "input_required" in self._sticky
+        return self.hub.sticky_payload("input_required") is not None
 
     def awaiting_input_kind(self) -> str | None:
         """Kind (``"prompt"`` | ``"confirm"``) of the pending input wait, or
@@ -1855,15 +1626,8 @@ class WebRenderer(Renderer):
         confirm clicks, or when two viewers race to answer the same prompt.
         The kind match also stops a confirm tuple from feeding a prompt wait
         that expects a plain string (and vice versa)."""
-        with self._lock:
-            slot = self._sticky.get("input_required")
-            return slot["payload"].get("kind") if slot else None
-
-    def has_live_connections(self) -> bool:
-        """Whether at least one browser is still subscribed (not closed).
-        The idle-reaper's primary 'someone is here' signal."""
-        with self._lock:
-            return any(not c.closed.is_set() for c in self._connections)
+        payload = self.hub.sticky_payload("input_required")
+        return payload.get("kind") if payload is not None else None
 
     def mark_directives_dirty(self) -> None:
         """A web edit wrote DIRECTIVE.md → ask the loop to rebuild its system
@@ -1892,14 +1656,6 @@ class WebRenderer(Renderer):
         `memory` op updated the `## Session Memory` index. Transient event."""
         self._emit("memory_changed", {}, persistent=False)
 
-    def viewer_count(self) -> int:
-        """Number of live (not-closed) browser subscribers — the same predicate
-        as :meth:`has_live_connections`, as a count. Exposed via /api/health so a
-        front controller (e.g. a board) can tell 'someone is watching' from
-        'nobody here' before disrupting the session."""
-        with self._lock:
-            return sum(1 for c in self._connections if not c.closed.is_set())
-
     @staticmethod
     def _agents_summary_from(roster: list | None) -> dict | None:
         """roster sticky payload → status.json/health 용 요약. dead 는
@@ -1927,34 +1683,38 @@ class WebRenderer(Renderer):
     def agents_summary(self) -> dict | None:
         """현재 roster sticky 의 에이전트 요약 (없으면 None) — /api/health
         와 status.json 이 같은 소스를 공유한다."""
-        with self._lock:
-            slot = self._sticky.get("agent_roster")
-            roster = slot["payload"].get("roster") if slot else None
+        payload = self.hub.sticky_payload("agent_roster")
+        roster = payload.get("roster") if payload is not None else None
         return self._agents_summary_from(roster)
 
     def _publish_status(self) -> None:
         """Write the live ``{busy, awaiting_input, viewers}`` to ``status.json``
         so the board reads a file instead of polling ``GET /api/health``. No-op
-        unless a session dir was given. Snapshots under the lock, then writes
-        OUTSIDE it (never hold the lock across disk I/O). Callers must NOT hold
-        ``self._lock`` (this re-acquires it)."""
+        unless a session dir was given. Snapshots under the locks, then writes
+        OUTSIDE them (never hold a lock across disk I/O). Callers must NOT hold
+        ``self._lock`` (this re-acquires it).
+
+        세 출처를 각자의 락 아래 한 번씩 뜬다 (v10.115.0): 렌더러의 busy·auditing,
+        허브의 스티키 사본 한 벌, 허브의 뷰어 수. 이 파일은 "마지막 쓰기가 최신"
+        인 거울이라(전이마다 다시 쓴다) 세 값 사이의 원자성은 필요 없다."""
         if self._status_dir is None:
             return
         with self._lock:
             busy = self._worker_busy
-            awaiting = "input_required" in self._sticky
-            viewers = sum(1 for c in self._connections if not c.closed.is_set())
-            slot = self._sticky.get("agent_roster")
-            roster = slot["payload"].get("roster") if slot else None
-            gslot = self._sticky.get("knob:grammar")
-            grammar = bool(gslot["payload"].get("active")) if gslot else None
             auditing = self._auditing
-            # v10.46.0 — 노브 현재 값 전부 (소유자 있는 것만; sticky 가 곧 최신값)
-            knobs = {
-                slot["payload"]["name"]: slot["payload"]["value"]
-                for key, slot in self._sticky.items()
-                if key.startswith("knob:") and slot["payload"].get("available")
-            }
+        sticky = dict(self.hub.sticky_items())
+        viewers = self.hub.viewer_count()
+        awaiting = "input_required" in sticky
+        roster_p = sticky.get("agent_roster")
+        roster = roster_p.get("roster") if roster_p is not None else None
+        grammar_p = sticky.get("knob:grammar")
+        grammar = bool(grammar_p.get("active")) if grammar_p is not None else None
+        # v10.46.0 — 노브 현재 값 전부 (소유자 있는 것만; sticky 가 곧 최신값)
+        knobs = {
+            p["name"]: p["value"]
+            for key, p in sticky.items()
+            if key.startswith("knob:") and p.get("available")
+        }
         try:
             from agent_cli.web.instance_file import write_status_file
 
@@ -2351,7 +2111,7 @@ class WebRenderer(Renderer):
         worker waits until someone shows up and answers (v7.8.0).
 
         This is deliberately "can an answer EVER arrive", not "is someone
-        here NOW" (that's ``has_live_connections``). The old now-based
+        here NOW" (that's ``hub.has_live_connections``). The old now-based
         gate made every ask/confirm fired while the user was viewing a
         DIFFERENT board room collapse to "(no response)" in the same
         millisecond — with resident multi-room use, "wait and surface on
@@ -2550,9 +2310,3 @@ class WebRenderer(Renderer):
 # Sentinel object used to distinguish "abort" from a legitimate empty
 # string input. Module-private — never crosses the renderer boundary.
 _ABORT_SENTINEL = object()
-
-# Sentinel event used by ``unregister_connection`` to wake up the SSE
-# generator's executor-thread queue wait. Pattern-matched in
-# ``WebServer.stream_events`` as a stream-end signal — never serialised
-# to a client.
-_CLOSE_SENTINEL: tuple[str, dict] = ("__close__", {})

@@ -108,13 +108,14 @@ class TestWebRenderer:
         실세션에서 드러났다."""
         import threading
 
-        from agent_cli.render.web import WebConnection, WebRenderer
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.render.web_hub import WebConnection
 
         # `_emit` 은 스텁하지 않는다 — 실제 팬아웃이 `task_id` 를 붙이는
         # 경로까지 함께 봐야 "스코프별"이 화면까지 도달하는지 확인된다.
         r = WebRenderer()
         conn = WebConnection(id="c1")
-        r.register_connection(conn)
+        r.hub.register(conn)
 
         def drain():
             out = []

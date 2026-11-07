@@ -345,9 +345,12 @@ class TestLifetimeInBothRuntimes:
         인스턴스는 뷰어가 없으면 자기를 거두고 모니터가 조용히 죽는다."""
         from agent_cli.main import web_instance_is_active
 
-        class _R:
+        class _Hub:
             def has_live_connections(self):
                 return False
+
+        class _R:
+            hub = _Hub()
 
             def worker_is_busy(self):
                 return False

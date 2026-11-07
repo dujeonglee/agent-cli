@@ -542,11 +542,12 @@ class TestWebRendererUnchanged:
     """
 
     def _make_web(self):
-        from agent_cli.render.web import WebConnection, WebRenderer
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.render.web_hub import WebConnection
 
         r = WebRenderer()
         c = WebConnection(id="c1")
-        r.register_connection(c)
+        r.hub.register(c)
         return r, c
 
     def _drain(self, conn):
@@ -693,9 +694,7 @@ class TestParallelBatchScopeIdentity:
             ),
         )
         return [
-            d
-            for e, d in r._event_buffer
-            if e == "scope_start" and d.get("kind") == "run"
+            d for e, d in r.hub.events if e == "scope_start" and d.get("kind") == "run"
         ]
 
     def test_batch_workers_share_one_start_timestamp(self, monkeypatch):
@@ -751,7 +750,7 @@ class TestParallelBatchScopeIdentity:
                 )
             ),
         )
-        ends = [d for e, d in r._event_buffer if e == "scope_end"]
-        starts = [d for e, d in r._event_buffer if e == "scope_start"]
+        ends = [d for e, d in r.hub.events if e == "scope_end"]
+        starts = [d for e, d in r.hub.events if e == "scope_start"]
         assert len({s["ts"] for s in starts}) == 1
         assert len({e["ts"] for e in ends}) == 2  # per-worker completion stands
