@@ -80,10 +80,13 @@ def _iso_to_epoch(ts) -> float | None:
 
 
 # Sticky slots whose change flips a field of ``status.json``: ``worker_state``
-# → busy, ``input_required`` → awaiting_input, ``agent_roster`` → agents, and
-# every ``knob:<name>`` → knobs (+ grammar). A set_sticky/clear_sticky on any of
-# them republishes the status sidecar (viewers republish on register/unregister).
-_STATUS_STICKY_KEYS = frozenset({"worker_state", "input_required", "agent_roster"})
+# → busy, ``input_required`` → awaiting_input, ``agent_roster`` → agents,
+# ``open_items`` → open_items (v10.119.0), and every ``knob:<name>`` → knobs
+# (+ grammar). A set_sticky/clear_sticky on any of them republishes the status
+# sidecar (viewers republish on register/unregister).
+_STATUS_STICKY_KEYS = frozenset(
+    {"worker_state", "input_required", "agent_roster", "open_items"}
+)
 
 
 def _flips_status(name: str) -> bool:
@@ -257,6 +260,11 @@ class WebRenderer(Renderer):
         # (레코드를 훑으며 모으고 final 에서 소비). 라이브는 장부(`state.ledger`)
         # 에서 바로 풀므로 이 맵을 쓰지 않는다.
         self._replay_requests: dict[str, dict] = {}
+        # 장부 항목 id → 그 원문 레코드의 history 서수 (v10.119.0, 장부 P4) — 📋 띠의
+        # 행이 원문 카드로 점프한다. 라이브는 루프가 `note_request` 로, resume 은
+        # 재생이 레코드의 `request_id` 로 채운다. 장부는 history 를 모르므로 스냅샷의
+        # `hidx` 는 여기서 채운다.
+        self._request_hidx: dict[str, int] = {}
 
     # ─── Event distribution ─────────────────────────
 
@@ -963,6 +971,10 @@ class WebRenderer(Renderer):
                     for a in msg.get("answers") or []:
                         if a and a not in self._replay_authors:
                             self._replay_authors.append(a)
+                    # 메일·회신 빚 관찰은 그 항목 id 를 `request_id` 로 싣는다
+                    rid = str(msg.get("request_id") or "")
+                    if rid and hidx is not None:
+                        self.note_request(rid, hidx)
                 self.observation(
                     content,
                     turn=int(msg.get("turn", 0) or 0),
@@ -988,6 +1000,8 @@ class WebRenderer(Renderer):
                     author = msg.get("author") or ""
                     is_user = msg.get("author_is_user", True) and author != "🤝 agent"
                     rid = str(msg.get("request_id") or "")
+                    if rid and hidx is not None:
+                        self.note_request(rid, hidx)
                     if rid:
                         # 라벨(`[닉]: `)을 떼어 라이브가 실어 보내는 원문과 같게.
                         raw = content
@@ -1480,6 +1494,51 @@ class WebRenderer(Renderer):
     def note_record(self, hidx: int) -> None:
         self._pending_hidx[threading.get_ident()] = hidx
 
+    def note_request(self, request_id: str, hidx: int) -> None:
+        with self._lock:
+            self._request_hidx[str(request_id)] = int(hidx)
+
+    def open_items(self, snapshot: dict) -> None:
+        """장부 스티키 ``open_items`` (v10.119.0, docs/ledger/DESIGN.md §15).
+
+        항목의 ``hidx`` 를 원문 레코드 서수로 채우고(모르면 ``None`` — 행은 점프
+        없이 그린다), **직전 payload 와 같으면 보내지 않는다**(호출 자리가 넷이라
+        같은 장부가 연달아 온다 — 늦은 접속은 스티키가 보장한다). 아직 띠가 없을 때
+        빈 장부도 보내지 않는다. `_flips_status` 라 status.json 도 함께 다시 쓴다."""
+        with self._lock:
+            items = [
+                {
+                    **it,
+                    "hidx": it.get("hidx")
+                    if it.get("hidx") is not None
+                    else self._request_hidx.get(str(it.get("id"))),
+                }
+                for it in snapshot.get("items") or []
+            ]
+        payload = {"items": items, "budget": dict(snapshot.get("budget") or {})}
+        prev = self.hub.sticky_payload("open_items")
+        if prev == payload or (prev is None and not items):
+            return
+        self.set_sticky("open_items", "open_items", payload)
+
+    def open_items_summary(self) -> dict | None:
+        """장부 요약 ``{count, ids, oldest_turns, budget_left}`` — status.json 과
+        ``/api/health`` 가 같이 쓴다(보드 📋 칩). 열린 항목이 없으면 None(생략)."""
+        return self._open_items_summary_from(self.hub.sticky_payload("open_items"))
+
+    @staticmethod
+    def _open_items_summary_from(payload: dict | None) -> dict | None:
+        items = (payload or {}).get("items") or []
+        if not items:
+            return None
+        turns = [it["turns"] for it in items if it.get("turns") is not None]
+        return {
+            "count": len(items),
+            "ids": [str(it.get("id")) for it in items],
+            "oldest_turns": max(turns) if turns else None,
+            "budget_left": (payload.get("budget") or {}).get("left"),
+        }
+
     def context_view(self, view: dict) -> None:
         """스코프별 sticky ``ctx_view`` (v10.6.0, docs/inspector-model-view §3.1).
 
@@ -1715,6 +1774,7 @@ class WebRenderer(Renderer):
             for key, p in sticky.items()
             if key.startswith("knob:") and p.get("available")
         }
+        open_items = self._open_items_summary_from(sticky.get("open_items"))
         try:
             from agent_cli.web.instance_file import write_status_file
 
@@ -1727,6 +1787,7 @@ class WebRenderer(Renderer):
                 grammar=grammar,
                 auditing=auditing,
                 knobs=knobs or None,
+                open_items=open_items,
             )
         except OSError:
             pass  # best-effort: a status write must never break the session

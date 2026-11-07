@@ -1040,7 +1040,10 @@ class TestLoopWiring:
             turn=3,
             _oversized_cap=10_000,
             run_authors=[],
+            # v10.119.0: 메일 레코드의 항목 id 를 렌더러에 알린다(📋 띠 점프)
+            noted=[],
         )
+        fake_self._note_request_record = fake_self.noted.append
         # v10.88.0: 어디서 받을지는 종류(`MainLoop.intake` — 레지스트리 `drain_replies`),
         # 어떻게 넣을지는 엔진(`_inject_mail`)
         for reply in reg.drain_replies():
@@ -1048,6 +1051,7 @@ class TestLoopWiring:
 
         assert len(fake_self.messages) == 1
         assert "done:job" in fake_self.messages[0]["content"]
+        assert fake_self.noted == [added[0]["request_id"]]  # 장부 항목 = 그 레코드
         assert len(added) == 1
         assert added[0]["tool"] == "agent"
         # 장부 항목 (v10.55.0): 회신은 `answers` 로 닫는 열린 항목, 레코드에 id

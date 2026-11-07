@@ -972,7 +972,9 @@ class TurnDispatcher:
         render_step(
             "final", answer, self.state.turn, requests=answered, hidx=self._next_hidx()
         )
-        if (still_open or debts) and ledger.spend():
+        nag = bool(still_open or debts) and ledger.spend()
+        show_open_items(self.cfg, self.state)  # 정산·예산 소진이 띠에 바로 선다
+        if nag:
             # 기록은 `_intervene` 이 한다 — 이 턴의 assistant 레코드(종결 모양)를
             # 관찰과 함께 저장한다. 따로 넣으면 같은 final 이 두 번 들어간다.
             turn.record = self._terminal_record(turn, answer, claimed, still_open)
@@ -1948,6 +1950,19 @@ def _combined_tool_label(names: list[str]) -> str:
         out.append(names[i] if j - i == 1 else f"{names[i]}×{j - i}")
         i = j
     return "+".join(out)
+
+
+def show_open_items(cfg, state) -> None:
+    """장부를 사람 화면에 (v10.119.0, docs/ledger/DESIGN.md §15) — 런 시작·턴 경계·
+    `complete` 정산·런 끝에서 부른다. **main 런만**: 사람 요청을 받는 런(입력 큐가
+    있는 종류 — `tracks_run_authors`)의 장부가 사람이 보는 장부다. 상주·one-shot·
+    스킬 루프도 같은 렌더러를 쓰므로 거르지 않으면 main 의 띠를 덮어쓴다. 같은
+    스냅샷이 연달아 와도 렌더러가 거른다. 모델 입력과 무관하다."""
+    if not cfg.kind.tracks_run_authors:
+        return
+    from agent_cli.render import get_renderer
+
+    get_renderer().open_items(state.ledger.snapshot(state.turn))
 
 
 def _append_observation(

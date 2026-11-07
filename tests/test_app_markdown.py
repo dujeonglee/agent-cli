@@ -90,6 +90,8 @@ globalThis.document = {
   getElementById: function () { return _stubEl(); },
   createElement: function () { return _stubEl(); },
   body: _stubEl(),
+  // v10.119.0: channels.js 가 `agentcli:jump`(📋 띠의 점프)를 document 에서 듣는다.
+  addEventListener: function () {},
 };
 globalThis.EventSource = function () { return _stubEl(); };
 // v9.26.0 따라가기가 로드 시 붙이는 관찰자 — 여기선 아무것도 안 본다.

@@ -25,7 +25,7 @@ from agent_cli.context.manager import ContextManager
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.dialects import get as _get_dialect
-from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
+from agent_cli.loop.dispatch import TurnDispatcher, _append_observation, show_open_items
 from agent_cli.loop.llm import LLMCaller, _build_token_stats
 from agent_cli.loop.ports import LoopPorts
 from agent_cli.loop.prompt import SystemPromptSvc
@@ -590,6 +590,7 @@ class AgentLoop:
             self._install_signal_handler()
         try:
             self._setup()
+            show_open_items(self._config, self._state)  # 시작 핀 (장부 P4)
             # OnSessionStart 가 주입한 시스템 섹션도 반영한다 (v10.36.0) — 종전엔
             # 반환값을 버려 README 의 `on_session_start → inject_system_section`
             # 예시가 동작하지 않았다(내장 스냅샷 훅의 안내가 모델에 안 닿았다).
@@ -604,6 +605,9 @@ class AgentLoop:
                     self.ctx.set_turn(self.turn + 1)
                 seen = len(self.messages)
                 self._intake()
+                # 턴 경계 (장부 P4) — 지난 턴의 관찰과 방금 흡수한 메일·요청이 다
+                # 기록된 뒤. 메일·빚은 루프 밖에서도 바뀌므로 턴마다 다시 보낸다.
+                show_open_items(self._config, self._state)
                 if starterless and self.turn == 0 and len(self.messages) == seen:
                     # 깨우기 런인데 배달된 것이 없다(다른 런이 이미 가져갔다) —
                     # 모델에게 줄 새 입력이 없으니 LLM 을 부르지 않는다.
@@ -627,6 +631,8 @@ class AgentLoop:
         finally:
             # 틀의 Tail 에 "이 호출 뒤에 닫힌 항목" 표시 (v10.63.0) — 어떻게 끝나든.
             render_items_closed_after(self._state.ledger.pin_ids())
+            # 런 끝 (장부 P4) — 남은 항목 그대로, 비었으면 띠가 숨는다
+            show_open_items(self._config, self._state)
             self._fire_hook("OnSessionEnd")
             if self.graceful_interrupt:
                 self._restore_signal_handler()
@@ -735,14 +741,19 @@ class AgentLoop:
         ledger = self._state.ledger
         for r in self.user_requests:
             if r.get("id"):
-                ledger.add_request(r["id"], r.get("author") or "", r.get("text") or "")
+                ledger.add_request(
+                    r["id"], r.get("author") or "", r.get("text") or "", turn=self.turn
+                )
         # 앞선 런이 `wait` 로 넘긴 열린 요청 (v10.65.0) — 깨우기 런이 같은 항목을
         # 들고 시작한다. 이 ctx 를 쓰는 다음 런이 무엇이든 가져간다.
         if self.ctx is not None:
             for r in self.ctx.take_parked_requests():
                 if r.get("id") and not ledger.has_request(str(r["id"])):
                     ledger.add_request(
-                        r["id"], r.get("author") or "", r.get("text") or ""
+                        r["id"],
+                        r.get("author") or "",
+                        r.get("text") or "",
+                        turn=self.turn,
                     )
         # 시작 항목의 id (v10.56.0) — 사람 요청이면 장부에 오르고(상주는
         # `user_requests` 가 이미 올렸다), 어느 쪽이든 그 레코드에 찍혀 열려 있는
@@ -753,7 +764,9 @@ class AgentLoop:
             and self.query_author_is_user
             and not ledger.has_request(starter_rid)
         ):
-            ledger.add_request(starter_rid, self.query_author or "", self.query)
+            ledger.add_request(
+                starter_rid, self.query_author or "", self.query, turn=self.turn
+            )
         if not self.query:
             # 시작 메시지 없는 런 = 깨우기 런 (v10.55.0, `RunRequest.loop_query`):
             # 첫 입력은 첫 턴 경계가 배달하는 메일 관찰이다.
@@ -822,11 +835,26 @@ class AgentLoop:
         if self.ctx:
             self.ctx.add(record)
             self.messages = self.ctx.get_messages()
+            if request_id:
+                self._note_request_record(request_id)
         else:
             self.messages.append(record)
         if author and is_user and author not in self.run_authors:
             self.run_authors.append(author)
         self._mirror_run_authors()
+
+    def _note_request_record(self, request_id: str) -> None:
+        """방금 기록한 레코드가 장부 항목 ``request_id`` 의 원문이다 — 렌더러가 그
+        서수를 기억해 📋 띠의 행이 그 카드로 점프한다 (v10.119.0). main 런만
+        (`show_open_items` 와 같은 거름). 서수를 모르는 ctx(테스트 더미)는 건너뛴다."""
+        if not self._config.kind.tracks_run_authors:
+            return
+        hidx = getattr(self.ctx, "last_ordinal", None)
+        if hidx is None:
+            return
+        from agent_cli.render import get_renderer
+
+        get_renderer().note_request(request_id, hidx)
 
     def _mirror_run_authors(self) -> None:
         """Web main loop only (sub-loops have no queue): keep the renderer's
@@ -897,7 +925,7 @@ class AgentLoop:
         if item.get("system"):
             rid = ""
         if rid:
-            self._state.ledger.add_request(rid, author or "", text)
+            self._state.ledger.add_request(rid, author or "", text, turn=self.turn)
         self._add_user_message(text, author, request_id=rid, images=images)
 
     def _note_run_started(self) -> None:
@@ -950,7 +978,9 @@ class AgentLoop:
         item = mail_item(reply)
         if item is not None:
             nid, who = item
-            self._state.ledger.add_request(nid, who, mail_queue_item(reply)["text"])
+            self._state.ledger.add_request(
+                nid, who, mail_queue_item(reply)["text"], turn=self.turn
+            )
             record["request_id"] = nid
         # 귀속 승계 (v8.5.0): 회신이 실어온 원 요청자들을 이 런의 answers 에 합류 — 🤝
         # 웨이크 런(시작 authors 빈)과 실행 중 배달 양쪽이 이 한 지점으로 커버된다.
@@ -960,6 +990,8 @@ class AgentLoop:
         self.messages.append({"role": "user", "content": record["content"]})
         if self.ctx:
             self.ctx.add(dict(record))
+            if record.get("request_id"):
+                self._note_request_record(str(record["request_id"]))
         render_step(
             "observation",
             record["content"],
@@ -984,7 +1016,9 @@ class AgentLoop:
         ``record`` (main·동료의 요청, 회신, 질문, 독촉, 잡·모니터·체크인 통지)는 관찰로."""
         ur = it.get("user_request")
         if ur:
-            self._state.ledger.add_request(ur["id"], ur.get("author") or "", ur["text"])
+            self._state.ledger.add_request(
+                ur["id"], ur.get("author") or "", ur["text"], turn=self.turn
+            )
             self._add_user_message(ur["text"], ur.get("author"), request_id=ur["id"])
             return
         rec = it["record"]

@@ -154,6 +154,8 @@ function qRender() {
   $queueList.hidden = shown.length + leaving.length === 0;
   shown.forEach(function (it) {
     const row = el("div", ["queue-item"]);
+    // id 칩 (v10.119.0) — 디큐되면 같은 id 로 📋 띠에 오른다. 두 띠를 잇는다.
+    if (it.id) row.appendChild(el("span", ["oi-id"], it.id));
     const txt = el("span", ["queue-text"]);
     txt.textContent = "⏳ [" + it.nickname + "] " + it.text;
     row.appendChild(txt);
@@ -180,6 +182,7 @@ function qRender() {
     const cancelled = lv.state === "cancelled";
     const mine = lv.item.conn_id === session.connId;
     const row = el("div", ["queue-item", cancelled ? "q-cancelled" : "q-injected"]);
+    if (lv.item.id) row.appendChild(el("span", ["oi-id"], lv.item.id));
     const txt = el("span", ["queue-text"]);
     txt.textContent = (cancelled ? "✕" : "✓") + " [" + lv.item.nickname + "] " + lv.item.text;
     row.appendChild(txt);

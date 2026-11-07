@@ -954,6 +954,38 @@ footer {
 .queue-item.q-cancelled .queue-text { text-decoration: line-through; }
 .queue-state { margin-left: auto; font-size: 11px; font-weight: 700; white-space: nowrap; }
 
+/* 📋 열린 항목 장부 (v10.119.0, docs/ledger/DESIGN.md §15) — ❓ 트레이와 ⏳ 대기열
+   사이. 간격·모서리는 .queue-item 과 맞추고, 테두리는 accent 계열(대기열 warn 과 구별).
+   닫힌 행은 대기열 ✓ 영수증(q-injected)과 같은 ok 토큰. */
+#open-items {
+  display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px;
+  border: 1px solid var(--accent-soft-border); border-radius: 6px;
+  background: var(--accent-soft-bg3); padding: 6px 8px;
+}
+.oi-hd { display: flex; align-items: baseline; gap: 8px; font-size: 11px; color: var(--muted); }
+.oi-title { font-weight: 600; letter-spacing: .02em; }
+.oi-budget { margin-left: auto; font: 11px "Jetendard", ui-monospace, monospace; white-space: nowrap; }
+.oi-budget.oi-budget-out { color: var(--warn); font-weight: 700; }
+.oi-item {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 3px 4px; border-radius: 4px; font-size: 13px; color: var(--text);
+}
+.oi-item.oi-jump { cursor: pointer; }
+.oi-item.oi-jump:hover, .oi-item.oi-jump:focus-visible { background: var(--accent-soft-bg); outline: none; }
+.oi-id {
+  flex: none; font: 12px "Jetendard", ui-monospace, monospace; color: var(--accent-soft-text);
+  background: var(--accent-soft-bg); border: 1px solid var(--accent-soft-border);
+  border-radius: 4px; padding: 0 5px;
+}
+.oi-who { flex: none; color: var(--text-2); font-size: 12px; white-space: nowrap; }
+.oi-head { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oi-closer { flex: none; color: var(--muted); font: 11px "Jetendard", ui-monospace, monospace; white-space: nowrap; }
+.oi-turns { flex: none; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.oi-item.oi-closed { background: var(--ok-soft-bg); color: var(--ok); }
+.oi-item.oi-closed .oi-head { text-decoration: line-through; }
+.oi-state { flex: none; margin-left: auto; font-size: 11px; font-weight: 700; white-space: nowrap; }
+@media (max-width: 560px) { .oi-closer, .oi-turns { display: none; } }
+
 /* Action card variants — distinct from the generic <pre class="args">
    fallback so per-tool renderings stand out and stay readable. */
 .action-detail {

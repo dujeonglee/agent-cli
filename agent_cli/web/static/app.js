@@ -6,8 +6,8 @@
 // import 는 반드시 `./` 상대 경로 — 이 파일의 URL 기준으로 풀려 base-path
 // 접두 밑에서도 맞는다.
 //
-// 메인 화면(v10.117.0, DESIGN §8)은 모듈 18개다. 처음 여덟은 순환 밖의 잎으로
-// 적힌 순서대로 평가된다. 그 뒤 열 개는 함수 호출로 서로 얽힌 순환 묶음이다.
+// 메인 화면(v10.117.0, DESIGN §8)은 모듈 19개다. 처음 아홉은 순환 밖의 잎으로
+// 적힌 순서대로 평가된다(v10.119.0 의 ledger 가 아홉째 — 순환 앞). 그 뒤 열 개는 함수 호출로 서로 얽힌 순환 묶음이다.
 // ESM 은 깊이 우선 후위로 평가해, 순환에서는 처음 import 된 멤버가 마지막에
 // 평가된다. 평가 시점에 순환 안을 읽는 줄은 channels 채널 바 IIFE(옛 [31])의
 // 두 호출 `ovSyncChannels()`·`frameShowChannel(ovActiveChannel)` 뿐이다. 이 둘은
@@ -23,6 +23,7 @@ import "./js/scroll.js";
 import "./js/sse.js";
 import "./js/copy.js";
 import "./js/attach.js";
+import "./js/ledger.js";
 import "./js/channels.js";
 import "./js/timeline.js";
 import "./js/frames.js";
