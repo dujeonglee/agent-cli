@@ -698,7 +698,7 @@ class TestStaticUI:
         그대로 넘겨도 마크업 실행 불가), HTML 은 elHtml() 로만 명시. 종전
         innerHTML-기본은 콜사이트마다 escapeHtml 규율이 갈려 누락=self-XSS 였다."""
         js = js_text()
-        el_body = js_fn_body(js_text("main"), "el")
+        el_body = js_fn_body(js_text("dom"), "el")
         assert "textContent" in el_body and "innerHTML" not in el_body
         elh_body = js_fn_body(js, "elHtml")
         assert "innerHTML" in elh_body
@@ -1099,7 +1099,8 @@ class TestStaticUI:
         관대하지 않다) — 서빙 쪽 MIME 이 바뀌면 화면 전체가 조용히 안 뜬다."""
         _, _, client = server_and_client
         names = module_order()
-        assert names[0] == "main"
+        # v10.117.0: 첫 모듈은 boot — 주소창의 ?token= 을 다른 모듈의 fetch 전에 걷는다.
+        assert names[0] == "boot"
         for name in names:
             assert (STATIC / "js" / f"{name}.js").is_file(), name
             resp = client.get(f"/static/js/{name}.js")
@@ -1225,7 +1226,7 @@ class TestStaticUI:
         ):
             assert gone not in js, gone
         assert "Q_MAIL_GRACE_MS" in js and "qVisible" in js
-        assert "!it.mail && it.conn_id === myConnId" in js  # 메일은 취소 불가
+        assert "!it.mail && it.conn_id === session.connId" in js  # 메일은 취소 불가
 
         server.mail_source = lambda: [
             {
@@ -1849,7 +1850,8 @@ class TestConfirmStallWarning:
 
     def test_main_ask_in_tray_input_box_chat_only(self, server_and_client):
         """3b: main prompt/confirm 이 input box 가 아니라 글로벌 트레이 항목으로
-        렌더(ovMainAsk/ovBuildMainAskEl), input box 는 항상 chat(모드 전환 폐지).
+        렌더(session.mainAsk/ovBuildMainAskEl), input box 는 항상 chat(모드 전환 폐지).
+        v10.117.0: 옛 ``var ovMainAsk`` 는 state.js 의 ``session.mainAsk`` 필드다.
         """
         _, _, client = server_and_client
         html = client.get("/").text
@@ -1858,11 +1860,14 @@ class TestConfirmStallWarning:
         assert "setInputMode" not in js
         assert 'id="input-mode-badge"' not in html
         # main ask 는 트레이로
-        assert "var ovMainAsk" in js and "function ovBuildMainAskEl(" in js
+        assert (
+            "  mainAsk: null," in js_text("state")
+            and "function ovBuildMainAskEl(" in js
+        )
         ir = js.split('es.addEventListener("input_required"', 1)[1].split("\n  });", 1)[
             0
         ]
-        assert "ovMainAsk = { kind: d.kind, data: d }" in ir
+        assert "session.mainAsk = { kind: d.kind, data: d }" in ir
         assert "ovRenderAskTray()" in ir
         # input box 는 chat 전용 — prompt kind 제출 경로 없음
         sc = js_fn_body(js, "submitChatOrPrompt")
@@ -1871,7 +1876,7 @@ class TestConfirmStallWarning:
         bm = js_fn_body(js, "ovBuildMainAskEl")
         assert "buildPromptMetaEl(" in bm and "highlightDangerHtml(" in bm
         # main ask 대기 중엔 #chat-stop 숨김 — #abort 와 두 Stop 동시노출 방지.
-        assert "!ovMainAsk" in js_fn_body(js, "isBusyChat")
+        assert "!session.mainAsk" in js_fn_body(js, "isBusyChat")
 
 
 class TestWebResumeCli:

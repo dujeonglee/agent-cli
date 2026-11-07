@@ -1,4 +1,4 @@
-# 웹 프런트를 ES 모듈로 (v10.116.0 — 1단계)
+# 웹 프런트를 ES 모듈로 (v10.116.0 — 1단계, v10.117.0 — 2단계 §8)
 
 ## 1. 왜 모듈인가
 
@@ -112,8 +112,8 @@ top-level 코드는 이벤트 리스너를 걸고 첫 fetch 를 낸다. 같은 �
 서빙 테스트는 따로 남는다. `/static/app.js` 와 `module_order()` 의 모든 모듈이 200 +
 JS MIME 이어야 하고, `js/` 의 파일은 전부 적재 순서에 있어야 한다. 서빙된 `index.html`
 엔 `type="module"` 이 있어야 하고, 없는 파일은 404 여야 한다.
-`test_app_markdown` 은 `js_text("main")` 을 `(function(){ … })()` 로 감싸 node 로 실행한다.
-그래서 main.js 에 `import`/`export` 가 없음을 단정한다.
+v10.116.0 의 `test_app_markdown` 은 `js_text("main")` 을 `(function(){ … })()` 로 감싸 node 로
+실행했다. v10.117.0 부터는 node 가 모듈 파일을 그대로 import 한다(§8.6).
 
 ## 6. 확인한 의미론 (스크립트 → 모듈)
 
@@ -138,7 +138,7 @@ JS MIME 이어야 하고, `js/` 의 파일은 전부 적재 순서에 있어야 
    `_NoCacheStaticFiles`(Starlette `StaticFiles` + `mimetypes`)는 `.js` 를
    `text/javascript` 나 `application/javascript` 로 준다. 둘 다 허용됨을 테스트로 고정했다.
 
-## 7. 2단계 계획 (다음 PR)
+## 7. 2단계 계획 (v10.116.0 시점 — v10.117.0 에서 실행, §8)
 
 `main.js` 를 절 단위 모듈로 쪼갠다. 후보는 `markdown`·`cards`·`frames`·`timeline`·
 `input`·`sse`·`runblocks`·`queue`·`roster`·`util`·`state` 다.
@@ -149,3 +149,206 @@ JS MIME 이어야 하고, `js/` 의 파일은 전부 적재 순서에 있어야 
   사라진다.
 - 그때 `tests/web_static.py` 의 긁기 helper 는 줄어들거나 없어진다. 서빙 테스트와
   `module_order()` 는 남는다.
+
+## 8. 메인 화면의 분할 (v10.117.0)
+
+`js/main.js`(4,210줄, 절 36개)를 절(`// ── … ──` 머리) 단위 모듈 18개로 나눴다. `main.js` 는
+없어졌다. 진입 `app.js` 가 18개를 import 하고, 기능 모듈 열 개는 그 뒤에 종전 순서 그대로다.
+코드 리뷰 §4.6 "프론트 ES 모듈 분할" 의 마지막 조각이다.
+
+### 8.1 모듈 표
+
+절 번호는 옛 `main.js` 의 `// ──` 순서다([0] 은 파일 머리 주석). 줄 수는 머리 주석·import 포함.
+
+| 모듈 | 옛 절 | 줄 | 내용 |
+|---|---|---|---|
+| `boot.js` | [1] | 30 | 주소창 `?token=` 걷기·`showSetupHelp`. 첫 import |
+| `dom.js` | [2]+[5] | 33 | 공유 DOM 참조 + `el`·`elHtml` |
+| `state.js` | [3] 의 상태 넷 | 33 | `export const session = { mainAsk, connId, workerBusy, stopRequested }` |
+| `markdown.js` | [4] + `imageUrl` | 309 | 이스케이프·마크다운·diff 색칠·그림 주소. 순수 모듈 |
+| `scroll.js` | [7] | 156 | 따라가기 |
+| `sse.js` | [24] | 108 | `export const es`·연결 표시·`copyToClipboard` |
+| `copy.js` | [9] | 76 | 복사, 훅 `__cardMarkdown`·`__timelineMarkdown` |
+| `attach.js` | [23] | 147 | 이미지 첨부 |
+| `channels.js` | [28]+[30]+[31] | 442 | 채널·트레이 상태·필터·점프. **순환 진입점** |
+| `timeline.js` | [6]+[8]+[26]+[27] | 429 | 카드 시각·delegate 그룹·`scope_*` 배선·타임라인 |
+| `frames.js` | [10]+[11] | 625 | 모델 시점 + 틀, 훅 `__ctxFrames` |
+| `progress.js` | [12]+[18] | 139 | stall 표시·생성 중 표시 |
+| `thumbs.js` | [13]+[14] | 91 | 사용자 말풍선·썸네일 |
+| `cards.js` | [15]+[16]+[17] | 590 | 한 줄 리듬·발신 도구·스텝 카드 |
+| `input.js` | [3] 의 함수 둘 + [19]~[22]+[32] | 311 | Send/Stop·입력 모드·POST·confirm stall·입력 바인딩·abort |
+| `share.js` | [25] | 276 | 🔗 공유 링크·`fmtTok`·대화 카드 SSE 핸들러 |
+| `runs.js` | [29] | 329 | 런 블록 |
+| `roster.js` | [33]+[34]+[35] | 261 | identity·뷰어 로스터·별명·대기열 |
+
+합계 4,385줄이다. 옛 4,210줄보다 는 몫은 모듈 머리 주석(51줄)·import(107줄)·setter(3줄)·
+`session` 객체 틀(2줄)이고, 빠진 몫은 옛 파일 머리 주석(4줄)이다.
+
+브리프의 처음 표에서 바꾼 곳은 셋이다. 셋 다 실제 의존을 보고 정했다.
+
+- **`imageUrl` → `markdown.js`**: 마크다운의 그림 렌더가 `imageUrl`([14])을 부른다.
+  `markdown.js` 가 `thumbs.js` 를 import 하면 DOM 을 쓰는 모듈 그래프가 딸려 와 node 가
+  순수하게 import 할 수 없다. 함수와 그 주석 13줄을 옮겼다.
+- **`isBusyChat`·`updateSendEnabled` → `input.js`**: `updateSendEnabled` 가
+  `ovApplyChannelInput`(runs)을 부른다. `state.js` 에 두면 state 가 순환에 들어가고 진입
+  순서상 먼저 나와 순환의 진입점이 된다(§8.4). 두 함수는 Send/Stop 버튼 일이라 입력 바인딩과
+  abort 가시성 곁으로 갔다. `state.js` 는 import 없는 잎이다.
+- **[13] → `thumbs.js`**: [13] "Card renderers" 는 머리와 `renderUserMessage` 의 문서 주석뿐이다.
+  그 함수는 [14] 에 있다(v10.60.0 에 썸네일 절이 사이에 끼었다).
+
+### 8.2 세 규칙
+
+1. **코드 불변**: 함수 본문·식은 글자 그대로 옮겼다. 바뀐 것은 (a) `import` 줄과 선언 앞
+   `export `, (b) `session.x` 표기, (c) 바깥 대입 → setter 호출, (d) 모듈 머리 주석이다.
+   주석도 옮기기만 했다 — `state.js` 의 주석은 옛 이름(``myConnId`` 등)으로 남아 있어,
+   머리 주석에 옛 이름 → 새 이름 표를 적었다.
+2. **export 는 쓰이는 것만**: 다른 모듈이 import 하는 이름만 export 한다. 예외는 node 하니스가
+   import 하는 이름이다(`tests/test_app_markdown.py` 의 `HARNESS_IMPORTS` — markdown 의
+   `extractCodeFences`·`renderHeadings`, cards 의 `obsSummary`, channels 의 `ovAgentIcon`·
+   `ovAgentNickname`·`OV_AGENT_ICONS`·`OV_AGENT_ANIMALS`). 가드가 둘을 합쳐 센다.
+   **테스트 전용 export**(다른 모듈은 쓰지 않고 node 하니스만 import 하는 이름):
+   - `markdown.js`: `extractCodeFences`·`renderHeadings`
+   - `cards.js`: `obsSummary`
+   - `channels.js`: `ovAgentIcon`·`ovAgentNickname`·`OV_AGENT_ICONS`·`OV_AGENT_ANIMALS`
+3. **`let`/`var` 는 정의 모듈만 대입한다**: import 한 바인딩은 읽기 전용이다(대입은 런타임
+   TypeError). 바깥 대입이 있던 이름은 §8.3 의 두 방법으로 옮겼다.
+
+export 집합은 acorn 스코프 해석으로 정했다. 측정 스크립트(`main-sections.py`)는 정규식이라
+문자열·주석·속성 이름까지 셌다. 그 목록의 `loading`·`pinned`·`scrollToBottom` 은 바깥에서
+쓰이지 않는다. `main-writes.py` 가 [4] 에서 본 `loading` 대입은 HTML 문자열
+`loading="lazy"` 다. 그래서 `setLoading` 은 만들지 않았다(쓰이지 않는 export 가 된다).
+
+### 8.3 `session` 객체와 setter — live binding 의 대입 제한
+
+ES 모듈의 import 는 정의 모듈 변수의 **살아 있는 별칭**이다. 읽으면 늘 지금 값이 보이지만,
+대입은 정의 모듈만 할 수 있다. 옛 파일에서 정의 절 밖에서 대입되던 `let`/`var` 는 여섯이었다.
+
+- **여러 모듈이 대입하는 넷 → `session` 객체의 필드**: `ovMainAsk`([20]·[32] 가 대입) →
+  `session.mainAsk`, `myConnId`([33]) → `session.connId`, `workerBusy`([32]) →
+  `session.workerBusy`, `stopRequested`([22]·[32]) → `session.stopRequested`. 객체는
+  `const` 이고 필드 대입은 어느 모듈에서나 된다. 읽기·쓰기 모두 `session.x` 다.
+- **한 모듈이 주인인 둘 → setter**: `ovActiveChannel`·`ovBack` 은 channels 에 있고 runs 의
+  `ovSyncChannels` 가 한 번씩 대입한다(채널이 roster 에서 사라지면 main 으로, 돌아갈 곳이
+  사라지면 null). 기존 `ovSetChannel` 은 필터·틀·입력·스크롤까지 움직여 같은 일이 아니다.
+  그래서 channels 에 `setOvActiveChannel(v)`·`setOvBack(v)` 한 줄씩을 두고 runs 는 그것을 부른다.
+  "1줄 위임 금지" 는 같은 일을 하는 함수가 이미 있는데 포장만 더하는 것을 막는 규칙이다.
+  모듈 경계의 setter 는 대입 권한을 넘기는 유일한 방법이라 그 규칙의 예외다.
+- 나머지(`myNickname` 은 [33]·[34] 가 같은 roster 모듈, `loading` 은 바깥 대입 없음)는 그대로다.
+
+### 8.4 순환 — 진입점이 평가 순서를 정한다
+
+메인 화면은 함수 호출로 얽혀 있다. acorn 으로 절 단위 호출 그래프를 그리면 절 21개(약
+3,300줄)가 하나의 강연결요소다. 예: `updateSendEnabled`[3] → `ovApplyChannelInput`[29] →
+… → `workerBusy`[3]. 코드를 바꾸지 않고는 어떻게 묶어도 순환 없는 그래프가 되지 않는다.
+그래서 **함수 호출 순환은 허용**한다. 함수 선언은 모듈 인스턴스화 때 초기화되므로, 순환
+상대의 함수를 부르는 것은 평가 순서와 무관하게 안전하다.
+
+위험은 **평가 시점 읽기**다. 모듈 top-level 코드가 아직 평가되지 않은 모듈의 `let`/`const`
+를 읽으면 TDZ ReferenceError 이고, `var` 면 조용히 `undefined` 다. acorn 으로 top-level 문이
+(호출을 따라 전이적으로) 읽는 바인딩을 셌다. IIFE 와 `forEach` 콜백은 그 자리에서 도는 코드로 쳤다.
+
+- 순환 밖 잎(boot·dom·state·markdown·scroll·sse·copy·attach)의 바인딩: `$messages`·`$input`
+  같은 DOM 참조와 `es`. 잎은 자기보다 앞의 모듈만 import 하므로 app.js 에 적힌 순서대로
+  평가된다. 그래서 순환의 어느 모듈보다 먼저다.
+- 순환 안 모듈의 바인딩을 평가 시점에 읽는 곳은 **하나뿐**이다. channels 의 채널 바 IIFE 가
+  `ovSyncChannels(); frameShowChannel(ovActiveChannel);` 을 부르고, 그 호출이 frames 의
+  `frames`·`ctxViews`·`$ctxBudget`·`$ctxTail`·`frameSeen` 과 `session` 을 읽는다.
+
+평가 시점에 다른 모듈의 바인딩을 읽는 줄 전부(새 모듈의 줄 번호, acorn — IIFE·`forEach`
+콜백 본문 포함, 리스너 콜백 본문 제외):
+
+| 모듈 | 줄 | 읽는 이름 (출처) |
+|---|---|---|
+| `scroll.js` | 97·118·149·154·155 | `$messages` (dom) |
+| `attach.js` | 127 | `$input` (dom) |
+| `attach.js` | 132·138·141 | `$inputArea` (dom) |
+| `input.js` | 230·231 | `$chatStop` (dom) |
+| `input.js` | 236 | `$send` (dom) |
+| `input.js` | 241 | `$input` (dom) |
+| `input.js` | 272 | `$abort` (dom) |
+| `input.js` | 278·291·295 | `es` (sse) |
+| `timeline.js` | 353·384·389 | `es` (sse) |
+| `share.js` | 60·66·72·80·89·105·111·116·124·130·166·174·185·191·196·200·212·220·233·241·260·266·274 | `es` (sse) |
+| `roster.js` | 13·16·24·213 | `es` (sse) |
+| `channels.js` | 354 | `ovSyncChannels` (runs) — 호출 |
+| `channels.js` | 355 | `frameShowChannel` (frames) — 호출 |
+
+dom·sse 는 순환 밖 잎이다. 순환 안을 향하는 것은 channels 354·355 의 두 호출뿐이다. 이 두
+호출은 옛 [31] 의 채널 바 IIFE 다. 호출을 따라가면 frames 의 const 들과 `session` 을 읽는다.
+
+ES 모듈의 평가는 깊이 우선 후위 순서다. 순환에서는 **처음 import 된 모듈이 마지막에 평가된다**
+— 그 모듈의 import 를 따라 순환의 나머지가 모두 먼저 끝난다. 그래서 app.js 는 잎 여덟 다음에
+**channels 를 순환의 첫 멤버로** import 한다. channels 의 채널 바 IIFE 가 돌 때 순환의 다른
+모듈은 전부 평가돼 있다. app.js 의 channels 뒤 아홉 줄은 이미 평가된 모듈이라 하는 일이 없고,
+모듈 목록으로 둔다.
+
+실제 평가 순서는 이렇다(import 줄로 모의):
+
+```
+boot dom state markdown scroll sse copy attach | progress thumbs cards runs roster share frames timeline input channels
+```
+
+진입점이 바뀌면 깨진다. frames 를 순환의 첫 import 로 두면 node 에서
+`ReferenceError: Cannot access 'frames' before initialization` 이 난다(확인함).
+
+순서가 옮겨 간 나머지 top-level 부작용은 서로 무관함을 확인했다.
+
+- 같은 대상·같은 이벤트에 여러 모듈이 리스너를 거는 곳이 없다. SSE 이벤트 종류마다 등록은
+  한 모듈 한 번이다.
+- `scroll.js` 의 `MutationObserver`(#messages)는 잎이라 channels 의 IIFE 가 #messages 를
+  건드리기 전에 걸린다. 옛 순서([7] → [31])와 같다.
+- `new EventSource` 는 sse 가 잎이라 먼저 돈다. 이벤트는 §8.5 대로 평가가 끝난 뒤에 온다.
+
+### 8.5 SSE 핸들러 등록 시점
+
+`es` 는 `sse.js` 에서 만들고, 핸들러(`es.addEventListener`)는 각 소유 모듈이 `import { es }`
+해서 건다 — timeline 의 `scope_*`, share 의 대화 카드 이벤트들, input 의 `input_required`·
+`input_resolved`·`worker_state`, roster 의 `snapshot_end`·`identity`·`viewers`·`queue`.
+top-level await 가 없는 모듈 그래프는 한 작업(task) 안에서 동기로 끝까지 평가된다. EventSource
+의 이벤트는 그 뒤의 작업으로 디스패치되므로, 첫 이벤트가 오기 전에 모든 모듈의 등록이 끝나
+있다. 옛 단일 파일에서 [24] 뒤에 등록하던 것과 같다.
+
+### 8.6 node 가 `markdown.js` 를 직접 import 한다
+
+`markdown.js` 는 import 가 없고 top-level 에서 DOM·window 를 건드리지 않는다. node 하니스는
+`.mjs` 스크립트 파일에 `import { escapeAndFormat } from "file:///…/js/markdown.js"` 를 쓰고
+`node <파일>` 로 실행한다. 대역(stub)이 없다 — 대역이 필요해지면 그 자체로 테스트가 깨진다.
+`node -e` 인자 상한(128 KiB) 때문에 스크립트는 여전히 파일로 넘긴다.
+
+`obsSummary`(cards)·에이전트 아이콘(channels)은 순환 안이라 메인 화면 그래프 전체가 딸려 온다.
+하니스는 브라우저 전역 대역 모듈을 먼저 import 하고 메인 화면 모듈을 app.js 순서로 import 한
+뒤 그 이름을 import 한다. 이 평가가 TDZ 없이 끝나는 것을
+`test_main_screen_graph_evaluates` 가 단정한다(§8.4 의 진입점이 바뀌면 여기서 깨진다).
+
+v10.116.0 까지의 긁기 — 메인 본문을 `(function(){…})()` 로 감싸기, `js_fn_body` 로 함수
+하나씩 떼어 잇기, 정규식으로 `OV_AGENT_*` 풀 떼기 — 는 전부 import 로 바뀌었다. 아무도 부르지
+않던 `_ov_render_html` helper(없는 함수 `ovUserHtml`·`ovRespHtml` 을 가리켰다)는 함께 지웠다.
+`tests/web_static.py` 의 `js_text()`·`js_fn_body()` 는 소스 글자를 보는 다른 테스트를 위해 남는다.
+
+### 8.7 가드와 등가성
+
+`tests/test_web_static_modules.py`:
+
+- (a) export 된 이름은 다른 모듈이나 node 하니스가 import 한다.
+- (b) import 한 이름은 출처 모듈이 export 한다.
+- (c) 순환의 모양: 순환 밖 모듈은 app.js 에서 앞의 모듈만 import 하고, 순환 묶음은 하나이며
+  진입점은 channels 다. 실제 평가는 node 테스트(§8.6)가 본다.
+- (d) import 한 바인딩에 대입하지 않고, 다른 모듈의 top-level `let`/`var` 를 대입하지 않는다.
+- `state.js` 는 import 없는 잎이고 export 는 `session` 하나, 옛 이름 넷은 코드에 없다.
+
+등가성 증명은 줄 multiset 비교다. 옛 `main.js` 의 모든 줄과 새 모듈 18개의 모든 줄에서 빈 줄과
+`// ──` 절 머리를 걷는다. 옛 쪽은 파일 머리 주석 4줄을 걷는다. 새 쪽은 모듈 머리 주석·import
+문·선언 앞 `export `·setter 정의와 그 주석·`session` 객체 틀을 걷는다. 그 뒤 `session.x` 와
+setter 호출을 옛 이름의 대입으로, `session` 필드 줄을 옛 선언 줄로 역치환한다.
+
+| | 줄 |
+|---|---|
+| 옛 줄 | 3,994 |
+| 새 줄 | 3,994 |
+| 옛에만 있는 줄 | 0 |
+| 새에만 있는 줄 | 0 |
+
+acorn 으로 따로 확인한 것: 18개 모두 모듈 모드로 파싱된다. 모듈마다 빠진 import·안 쓰는
+import·export 안 된 import 가 0 이다. 옛 파일과 새 모듈 전체의 자유 변수(브라우저 전역) 집합이
+같다. 같은 이름의 top-level 함수가 두 모듈에 생기지 않았다(`js_fn_body` 의 모호성 목록이
+v10.116.0 과 같다).
