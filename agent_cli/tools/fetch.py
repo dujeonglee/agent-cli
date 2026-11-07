@@ -3,7 +3,11 @@ XML, plain text); binary content and ``download_to`` go to a file instead.
 
 v10.92.0 (docs/tool-review/TRACKER.md): ``depth`` (같은 도메인 링크를 따라 최대 10
 페이지 재귀)를 지웠다 — 벤치 810 세션·실사용 22 세션에서 0회, 쓰이면 관찰 하나에
-페이지 10개. 오류 결과는 사실만 말한다(종전 "Try again later." 힌트는 되풀이를 부른다)."""
+페이지 10개. 오류 결과는 사실만 말한다(종전 "Try again later." 힌트는 되풀이를 부른다).
+
+v10.118.0: 실패는 세 줄 틀 ``Fetch failed (<cause>): <url>`` / 사실 / 재시도 판정
+(``failure_text``) — 원인 분류는 ``classify_exception``·``classify_status``·
+``_disguised_block`` 셋, 문구는 ``_FAILURE_LINES`` 한 곳."""
 
 from __future__ import annotations
 
@@ -11,7 +15,12 @@ import base64
 import binascii
 import json
 import mimetypes
+import os
 import re
+import socket
+import ssl
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import ClassVar
@@ -359,11 +368,33 @@ _JS_SHELL_MAX_TEXT = (
 )
 
 
-def _disguised_block(status: int, html: str, text: str) -> str | None:
-    """성공 코드인데 내용이 아닌 응답 — 실패 문구, 아니면 None (v10.56.3).
+#: 로그인 벽 (v10.118.0) — 최종 URL 경로 조각(슬래시로 나눈 한 조각)이 이 낱말과
+#: **통째로 같을 때만**(대소문자 무시). ``/login``·``/accounts/sign-in``·
+#: ``/auth/realms/x`` 는 걸리고, 낱말을 품은 조각(``/blog/how-to-login-x``·
+#: ``/author``·``/oauth``)은 글일 수 있어 안 걸린다. 경로는 본문 길이와 무관하다
+#: (로그인 자리로 되돌려진 응답은 최종 URL 이 말한다).
+_LOGIN_SEGMENTS = frozenset(("login", "signin", "sign-in", "auth"))
+_PASSWORD_INPUT = re.compile(
+    r"<input\b[^>]*\btype\s*=\s*[\"']?password\b", re.IGNORECASE
+)
 
-    4xx 는 코드가 말해 주지만(모델이 뜻을 안다) 이 둘은 200·202 로 와서 그동안
-    **성공**으로 넘어갔다: 모델이 확인 페이지 글자나 빈 껍데기를 내용으로 읽었다.
+
+def _login_wall(html: str, flat: str, final_url: str) -> bool:
+    """200 으로 온 로그인 폼 — 경로가 로그인 자리이거나, 비밀번호 입력이 있고
+    본문이 짧다(확인 페이지와 같은 상한). 긴 글 속의 비밀번호 입력(예: 설정 문서의
+    예시 폼)은 내용이다."""
+    path = urlparse(final_url).path.lower()
+    if any(seg in _LOGIN_SEGMENTS for seg in path.split("/")):
+        return True
+    return len(flat) <= _BOT_CHECK_MAX_TEXT and bool(_PASSWORD_INPUT.search(html))
+
+
+def _disguised_block(html: str, text: str, final_url: str) -> tuple[str, dict] | None:
+    """성공 코드인데 내용이 아닌 응답 — ``(cause, facts)``, 아니면 None (v10.56.3).
+
+    4xx 는 코드가 말해 주지만 이 셋은 200·202 로 와서 그동안 **성공**으로
+    넘어갔다: 모델이 확인 페이지 글자·빈 껍데기·로그인 폼을 내용으로 읽었다.
+    판정 순서는 ``bot-check`` → ``needs-js`` → ``login-wall``(v10.118.0 신규).
     대안은 적지 않는다 — 어디로 갈지는 정보원 목록의 몫이다."""
     flat = " ".join(text.split())
     if len(flat) <= _BOT_CHECK_MAX_TEXT:
@@ -372,16 +403,211 @@ def _disguised_block(status: int, html: str, text: str) -> str | None:
             (m for m in _BOT_HTML_MARKERS if m in low), None
         )
         if hit:
-            return (
-                f"Bot check: {{url}} returned a bot-check page, not the content "
-                f'(HTTP {status}, "{hit}")'
-            )
+            return "bot-check", {"marker": hit}
     if len(html) >= _JS_SHELL_MIN_HTML and len(flat) <= _JS_SHELL_MAX_TEXT:
-        return (
-            "Needs JavaScript: {url} renders in a browser; the fetched HTML "
-            f"({len(html):,} chars) has {len(flat)} chars of text"
-        )
+        return "needs-js", {"chars": len(flat)}
+    if _login_wall(html, flat, final_url):
+        return "login-wall", {}
     return None
+
+
+# ── 실패 문구 (v10.118.0) ──────────────────────
+# 실패는 세 줄 틀 하나다::
+#
+#     Fetch failed (<cause>): <url>
+#     <사실 한 문장>
+#     <재시도 판정 한 문장>
+#
+# 첫 줄 머리는 기계가 읽는 문법 — 웹 관찰 카드(cards.js)가 여기서 ``cause`` 를
+# 뽑아 칩을 그린다. 둘째·셋째 줄은 원인마다 고정이다(설계 harness-top3 §3 의
+# 확정 문구 — 모델 입력 문구는 실측 뒤에만 바꾼다). 종전엔 원인은 적어도 다시
+# 부를 가치가 있는지는 적지 않아, 모델이 403·404·확인 페이지를 되부르고 한
+# 번이면 풀릴 시간 초과는 포기했다. 대안 URL 은 적지 않는다(v10.56.3).
+_FAILURE_LINES: dict[str, tuple[str, str]] = {
+    "dns": (
+        "The host name did not resolve.",
+        "Retrying the same URL will not help; check the address.",
+    ),
+    "connect": (
+        "No connection to the host.",
+        "One retry may succeed; after that, assume the host is unreachable from here.",
+    ),
+    "timeout": ("The host did not answer within {seconds}s.", "One retry may succeed."),
+    "tls": (
+        "The TLS handshake failed ({detail}).",
+        "Retrying will not help from this client.",
+    ),
+    "http-auth": (
+        "The server refused this client (HTTP {code}: login or bot protection).",
+        "Retrying the same URL will not help.",
+    ),
+    "http-missing": (
+        "The page does not exist at this address (HTTP {code}).",
+        "Retrying will not help; the address is wrong or the page moved.",
+    ),
+    "http-rate": (
+        "Rate limited; the server asks to wait {seconds}s (Retry-After).",
+        "Retry after that wait, once.",
+    ),
+    "http-server": (
+        "The server failed (HTTP {code}).",
+        "One retry after a short wait may succeed.",
+    ),
+    "http-other": (
+        "The server returned HTTP {code}.",
+        "Retrying the same URL will not help.",
+    ),
+    "bot-check": (
+        'The page is a bot check, not the content ("{marker}").',
+        "The harness does not pass bot checks; retrying will not help.",
+    ),
+    "needs-js": (
+        "The page renders in a browser; the HTML has {chars} chars of text.",
+        "Retrying will not help.",
+    ),
+    "login-wall": (
+        "The page is a sign-in form, not the content.",
+        "Retrying will not help; this source needs an account.",
+    ),
+    "request": (
+        "The request failed ({detail}).",
+        "Retrying the same URL will not help.",
+    ),
+}
+#: ``Retry-After`` 가 없거나 읽을 수 없을 때의 429 — 초를 지어내지 않는다.
+_RATE_UNKNOWN = (
+    "Rate limited; the server did not say how long to wait.",
+    "Retry once after about a minute.",
+)
+#: 프록시 문장을 붙이는 원인 — 연결이 안 된 경우만(프록시를 거치는지가 사실이 된다).
+_PROXY_CAUSES = frozenset(("dns", "connect"))
+_PROXY_VARS = (
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+)
+
+
+def failure_text(cause: str, url: str, **facts) -> str:
+    """세 줄 실패 문구 — 문구는 여기 한 곳에만 있다.
+
+    ``facts`` 는 둘째 줄의 구체값(``seconds``·``code``·``detail``·``marker``·
+    ``chars``)과 프록시 사실(``proxy`` 변수 이름, ``no_proxy_all``)."""
+    if cause == "http-rate" and facts.get("seconds") is None:
+        fact, verdict = _RATE_UNKNOWN
+    else:
+        fact, verdict = _FAILURE_LINES[cause]
+        fact = fact.format(**facts)
+    if cause in _PROXY_CAUSES and facts.get("proxy"):
+        # 변수 이름만 — 값(프록시 주소)은 비밀일 수 있다.
+        fact += f" A proxy is configured ({facts['proxy']})."
+        if facts.get("no_proxy_all"):
+            fact += " NO_PROXY=* disables fetching through the proxy."
+    return f"Fetch failed ({cause}): {url}\n{fact}\n{verdict}"
+
+
+def _proxy_facts() -> dict:
+    """환경에 실제로 있는 프록시 사실만 — 없으면 빈 dict (없는 사실을 지어내지 않는다)."""
+    name = next((v for v in _PROXY_VARS if os.environ.get(v, "").strip()), None)
+    if name is None:
+        return {}
+    star = any(os.environ.get(v, "").strip() == "*" for v in ("NO_PROXY", "no_proxy"))
+    return {"proxy": name, "no_proxy_all": star}
+
+
+def _chain(exc: BaseException):
+    """예외와 그 원인들 — ``__cause__``·``__context__``·urllib3 의 ``reason``·
+    ``args`` 안의 예외(requests 는 ``MaxRetryError`` 를 args 로 감싼다)."""
+    seen: set[int] = set()
+    todo: list[BaseException] = [exc]
+    while todo:
+        e = todo.pop(0)
+        if id(e) in seen:
+            continue
+        seen.add(id(e))
+        yield e
+        nxt = [e.__cause__, e.__context__, getattr(e, "reason", None), *e.args]
+        todo.extend(x for x in nxt if isinstance(x, BaseException))
+
+
+def _one_line(text: str) -> str:
+    return " ".join(str(text).split())
+
+
+def _tls_detail(exc: BaseException) -> str:
+    """TLS 실패의 이유 — 가장 안쪽 ``ssl.SSLError`` 의 말에서 ``[SSL: …]`` 머리와
+    ``(_ssl.c:N)`` 꼬리를 뗀다. requests 의 겉 문구(``HTTPSConnectionPool(…):
+    Max retries exceeded …``)는 이유를 300자 뒤에 묻는다."""
+    inner = next((e for e in _chain(exc) if isinstance(e, ssl.SSLError)), None)
+    if inner is not None:
+        verify = getattr(inner, "verify_message", None)
+        msg = f"certificate verify failed: {verify}" if verify else str(inner)
+        msg = re.sub(r"^\[SSL: [A-Z_]+\]\s*", "", _one_line(msg))
+        msg = re.sub(r"\s*\(_ssl\.c:\d+\)$", "", msg)
+        if msg:
+            return msg
+    return _one_line(exc) or type(exc).__name__
+
+
+def classify_exception(exc: BaseException) -> tuple[str, dict]:
+    """``requests`` 예외 → ``(cause, facts)``.
+
+    순서가 뜻이다: ``SSLError`` 와 ``ConnectTimeout`` 은 ``ConnectionError`` 의
+    하위 클래스라(requests 2.x) 종전 순서에선 TLS 실패와 연결 시간 초과가 모두
+    "Connection failed" 로 갔다."""
+    exc_mod = requests.exceptions
+    if isinstance(exc, exc_mod.SSLError):
+        return "tls", {"detail": _tls_detail(exc)}
+    if isinstance(exc, exc_mod.Timeout):
+        return "timeout", {"seconds": FETCH_TIMEOUT}
+    if isinstance(exc, exc_mod.ConnectionError):
+        from urllib3.exceptions import NameResolutionError
+
+        dns = any(
+            isinstance(e, (socket.gaierror, NameResolutionError)) for e in _chain(exc)
+        )
+        return ("dns" if dns else "connect"), _proxy_facts()
+    return "request", {"detail": _one_line(exc) or type(exc).__name__}
+
+
+def _retry_after(headers) -> int | None:
+    """``Retry-After`` 초 — 정수 초 또는 HTTP 날짜. 없거나 읽을 수 없으면 None."""
+    try:
+        raw = headers.get("Retry-After")
+    except Exception:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    raw = raw.strip()
+    if raw.isdigit():
+        return int(raw)
+    try:
+        when = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0, int((when - datetime.now(timezone.utc)).total_seconds() + 0.999))
+
+
+def classify_status(code: int, headers) -> tuple[str, dict] | None:
+    """HTTP 상태 → ``(cause, facts)``, 실패가 아니면(< 400) None."""
+    if code < 400:
+        return None
+    if code in (401, 403):
+        return "http-auth", {"code": code}
+    if code in (404, 410):
+        return "http-missing", {"code": code}
+    if code == 429:
+        return "http-rate", {"seconds": _retry_after(headers)}
+    if code >= 500:
+        return "http-server", {"code": code}
+    return "http-other", {"code": code}
 
 
 def _gitiles_bytes(text: str) -> bytes | None:
@@ -402,7 +628,7 @@ def _is_gitiles_blob(resp) -> bool:
 
 
 def _request(url: str):
-    """GET ``url`` — (response, None) 또는 (None, 실패 문구)."""
+    """GET ``url`` — (response, None) 또는 (None, 세 줄 실패 문구)."""
     try:
         resp = requests.get(
             url,
@@ -410,16 +636,12 @@ def _request(url: str):
             headers={"User-Agent": USER_AGENT},
             allow_redirects=True,
         )
-    except requests.exceptions.ConnectionError:
-        return None, f"Connection failed: {url} (DNS or network error)"
-    except requests.exceptions.Timeout:
-        return None, f"Timeout after {FETCH_TIMEOUT}s: {url}"
-    except requests.exceptions.SSLError as e:
-        return None, f"SSL error: {url} ({e})"
     except requests.exceptions.RequestException as e:
-        return None, f"Request failed: {url} ({e})"
-    if resp.status_code >= 400:
-        return None, f"HTTP {resp.status_code}: {url}"
+        cause, facts = classify_exception(e)
+        return None, failure_text(cause, url, **facts)
+    status = classify_status(resp.status_code, resp.headers)
+    if status:
+        return None, failure_text(status[0], url, **status[1])
     return resp, None
 
 
@@ -505,15 +727,16 @@ def _download(url: str, dest: str) -> tuple[str, str | None]:
         data = _gitiles_bytes(_decode(resp, content_type, kind)) or data
     elif kind == "html":
         html = _decode(resp, content_type, kind)
-        parser = _HTMLToMarkdown(_final_url(resp, url))
+        final = _final_url(resp, url)
+        parser = _HTMLToMarkdown(final)
         try:
             parser.feed(html)
         except Exception:
             pass
         else:
-            blocked = _disguised_block(resp.status_code, html, parser.get_markdown())
+            blocked = _disguised_block(html, parser.get_markdown(), final)
             if blocked:
-                return "", blocked.format(url=url)
+                return "", failure_text(blocked[0], url, **blocked[1])
     return _save(data, Path(dest), url, content_type, asked=True)
 
 
@@ -561,25 +784,18 @@ def _fetch_single(url: str) -> tuple[str, str | None]:
     # HTML 은 **변환 전** 원본에서 잘려 본문 뒷부분이 사라졌다(Wikipedia 1MB →
     # 앞 1/5). 큰 결과는 공용 `Tool.render_oversized` 가 전체를 파일로 남기고
     # 발췌를 돌려준다 — 잘린 것은 그 파일까지 잘려 있었다.
-    parser = _HTMLToMarkdown(_final_url(resp, url))
+    final = _final_url(resp, url)
+    parser = _HTMLToMarkdown(final)
     try:
         parser.feed(text)
     except Exception:
         return text, None
 
     markdown = parser.get_markdown()
-    blocked = _disguised_block(resp.status_code, text, markdown)
+    blocked = _disguised_block(text, markdown, final)
     if blocked:
-        return "", blocked.format(url=url)
+        return "", failure_text(blocked[0], url, **blocked[1])
     return markdown, None
-
-
-#: 상태 코드만으로 모르는 사실 한 조각 — 그 밖의 실패는 문구가 이미 사실이다
-#: (`Connection failed … (DNS or network error)`, `Timeout after 15s`, `SSL error`).
-_HTTP_FACTS = {
-    403: "the site refused an automated request",
-    404: "there is no page at that address",
-}
 
 
 def tool_fetch(args: dict) -> ToolResult:
@@ -610,9 +826,9 @@ def tool_fetch(args: dict) -> ToolResult:
     else:
         content, error = _fetch_single(url)
     if error:
-        m = re.match(r"HTTP (\d+): ", error)
-        fact = _HTTP_FACTS.get(int(m.group(1))) if m else None
-        return ToolResult(False, error=f"{error} — {fact}" if fact else error)
+        # 실패 문구는 `_request`·`_disguised_block` 이 이미 세 줄 틀로 완성한다
+        # (v10.118.0 — 종전의 `HTTP (\d+): ` 재파싱·`_HTTP_FACTS` 덧붙이기 삭제).
+        return ToolResult(False, error=error)
     if download_to is not None:
         return ToolResult(True, output=content)
 

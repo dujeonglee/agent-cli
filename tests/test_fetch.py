@@ -1,15 +1,27 @@
 """Tests for the fetch tool."""
 
 import json
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from agent_cli.tools.fetch import (
+    _PROXY_VARS,
     FetchTool,
     _body_kind,
     _fetch_single,
     _HTMLToMarkdown,
     tool_fetch,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_proxy_env(monkeypatch):
+    """v10.118.0: 연결 실패 문구는 환경의 프록시 변수를 사실로 싣는다 — 테스트를
+    돌리는 셸의 프록시 설정이 단정에 새지 않게 모두 지운다(필요한 테스트가 다시 넣는다)."""
+    for name in (*_PROXY_VARS, "NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
 
 
 class TestHTMLToMarkdown:
@@ -80,7 +92,9 @@ class TestFetchSingle:
 
         with patch("agent_cli.tools.fetch.requests.get", return_value=mock_resp):
             _, error = _fetch_single("https://example.com/missing")
-            assert "404" in error
+            assert error.startswith(
+                "Fetch failed (http-missing): https://example.com/missing\n"
+            )
 
     def test_timeout(self):
         import requests as req
@@ -90,7 +104,9 @@ class TestFetchSingle:
             side_effect=req.exceptions.Timeout(),
         ):
             _, error = _fetch_single("https://slow.example.com")
-            assert "Timeout" in error
+            assert error.startswith(
+                "Fetch failed (timeout): https://slow.example.com\n"
+            )
 
     def test_connection_error(self):
         import requests as req
@@ -100,7 +116,9 @@ class TestFetchSingle:
             side_effect=req.exceptions.ConnectionError(),
         ):
             _, error = _fetch_single("https://nonexistent.example.com")
-            assert "Connection failed" in error
+            assert error.startswith(
+                "Fetch failed (connect): https://nonexistent.example.com\n"
+            )
 
     def test_plain_text(self):
         mock_resp = MagicMock()
@@ -211,15 +229,19 @@ class TestDisguisedBlocks:
             "Please confirm this search was made by a human.</div></html>"
         )
         c, err = _get(self._html(body, 202))
-        assert c == "" and err.startswith("Bot check: https://example.com/x")
-        assert '(HTTP 202, "made by a human")' in err  # 보이는 글이 먼저
+        assert c == "" and err.startswith(
+            "Fetch failed (bot-check): https://example.com/x\n"
+        )
+        assert '("made by a human")' in err  # 보이는 글이 먼저
 
     def test_js_shell_is_a_failure(self):
         body = (
             "<html><script>" + "x" * 20_000 + "</script><div>Google Search</div></html>"
         )
         c, err = _get(self._html(body))
-        assert c == "" and err.startswith("Needs JavaScript: https://example.com/x")
+        assert c == "" and err.startswith(
+            "Fetch failed (needs-js): https://example.com/x\n"
+        )
 
     def test_a_long_article_about_captcha_is_content(self):
         body = (
@@ -534,8 +556,9 @@ class TestToolFetch:
             assert "x" * 100 in result.output  # Full content, not truncated
 
     def test_errors_state_facts_without_advice(self):
-        """v10.92.0 — "Hint: … Try again later." 가 없다. 403·404 는 코드만으로
-        모르는 사실 한 조각을 덧붙이고, 나머지는 문구가 이미 사실이다."""
+        """v10.92.0 — "Hint: … Try again later." 가 없다. v10.118.0 부터 실패는 세 줄
+        틀이고(`_HTTP_FACTS` 의 403·404 사실은 둘째 줄로 흡수), `tool_fetch` 는 문구를
+        덧붙이지 않고 그대로 넘긴다."""
         import requests as req
 
         with patch(
@@ -543,14 +566,23 @@ class TestToolFetch:
             side_effect=req.exceptions.ConnectionError(),
         ):
             r = tool_fetch({"url": "https://bad.example.com"})
-        assert (
-            r.error
-            == "Connection failed: https://bad.example.com (DNS or network error)"
+        assert r.error == (
+            "Fetch failed (connect): https://bad.example.com\n"
+            "No connection to the host.\n"
+            "One retry may succeed; after that, assume the host is unreachable from here."
         )
-        for code, tail in (
-            (403, " — the site refused an automated request"),
-            (404, " — there is no page at that address"),
-            (500, ""),
+        for code, cause, fact in (
+            (
+                403,
+                "http-auth",
+                "The server refused this client (HTTP 403: login or bot protection).",
+            ),
+            (
+                404,
+                "http-missing",
+                "The page does not exist at this address (HTTP 404).",
+            ),
+            (500, "http-server", "The server failed (HTTP 500)."),
         ):
             resp = MagicMock()
             resp.status_code = code
@@ -558,7 +590,12 @@ class TestToolFetch:
             resp.content = b"x"
             with patch("agent_cli.tools.fetch.requests.get", return_value=resp):
                 r = tool_fetch({"url": "https://example.com/p"})
-            assert r.error == f"HTTP {code}: https://example.com/p{tail}"
+            head, second, _ = r.error.split("\n")
+            assert (head, second) == (
+                f"Fetch failed ({cause}): https://example.com/p",
+                fact,
+            )
+            assert " — " not in r.error
         assert "Hint" not in r.error and "Try again" not in r.error
 
     def test_a_page_is_one_request(self):
@@ -697,7 +734,8 @@ class TestDownload:
             _resp("text/html", page),
             {"url": "https://example.com/s", "download_to": "s.html"},
         )
-        assert not r.success and "Bot check" in r.error
+        assert not r.success
+        assert r.error.startswith("Fetch failed (bot-check): https://example.com/s\n")
         assert not (tmp_path / "s.html").exists()
 
     def test_http_error_saves_nothing(self, tmp_path, monkeypatch):
@@ -705,7 +743,10 @@ class TestDownload:
         resp = _resp("text/html", "nope")
         resp.status_code = 404
         r = self._run(resp, {"url": "https://example.com/n", "download_to": "n"})
-        assert not r.success and "HTTP 404" in r.error
+        assert not r.success
+        assert r.error.startswith(
+            "Fetch failed (http-missing): https://example.com/n\n"
+        )
         assert not (tmp_path / "n").exists()
 
     def test_empty_download_to_is_rejected(self):
@@ -750,3 +791,345 @@ class TestDownload:
         assert "download_to" in FetchTool.parameters["properties"]
         assert "download_to" in FetchTool.description
         assert ".agent-cli/tmp/downloads/" in FetchTool.description
+
+
+# ── v10.118.0 실패 문구: 세 줄 틀 + 원인 분류 ──────────────────────────
+# 설계 harness-top3 §3 의 확정 문구를 글자 그대로 고정한다 — 모델이 받는 결과다.
+# 네트워크는 쓰지 않는다: `requests.get` 을 가짜로 바꾸고, 예외는 requests·urllib3
+# 가 실제로 감싸는 모양(ConnectionError(MaxRetryError(reason=…)))으로 만든다.
+
+URL = "https://example.com/p"
+FIRST_LINE = __import__("re").compile(r"^Fetch failed \([a-z-]+\): \S+$")
+
+
+def _dns_error():
+    import socket
+
+    import requests as req
+    import urllib3.exceptions as u3
+
+    try:
+        try:
+            raise socket.gaierror(8, "nodename nor servname provided, or not known")
+        except socket.gaierror as e:
+            raise u3.NameResolutionError("example.com", None, e) from e
+    except u3.NameResolutionError as nre:
+        return req.exceptions.ConnectionError(u3.MaxRetryError(None, "/p", nre))
+
+
+def _connect_error():
+    import requests as req
+    import urllib3.exceptions as u3
+
+    try:
+        try:
+            raise ConnectionRefusedError(61, "Connection refused")
+        except OSError as e:
+            raise u3.NewConnectionError(None, f"Failed to establish: {e}") from e
+    except u3.NewConnectionError as nce:
+        return req.exceptions.ConnectionError(u3.MaxRetryError(None, "/p", nce))
+
+
+def _tls_error():
+    import ssl
+
+    import requests as req
+    import urllib3.exceptions as u3
+
+    inner = ssl.SSLCertVerificationError(
+        1,
+        "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+        "self-signed certificate in certificate chain (_ssl.c:1006)",
+    )
+    inner.verify_message = "self-signed certificate in certificate chain"
+    return req.exceptions.SSLError(u3.MaxRetryError(None, "/p", u3.SSLError(inner)))
+
+
+def _raise(exc, url=URL):
+    with patch("agent_cli.tools.fetch.requests.get", side_effect=exc):
+        return tool_fetch({"url": url}).error
+
+
+def _status(code, headers=None, url=URL):
+    resp = MagicMock()
+    resp.status_code = code
+    resp.headers = {"content-type": "text/html", **(headers or {})}
+    resp.content = b"x"
+    with patch("agent_cli.tools.fetch.requests.get", return_value=resp):
+        return tool_fetch({"url": url}).error
+
+
+def _page(html, *, final_url=URL, status=200):
+    resp = _resp("text/html; charset=utf-8", html)
+    resp.status_code = status
+    resp.url = final_url
+    with patch("agent_cli.tools.fetch.requests.get", return_value=resp):
+        return tool_fetch({"url": URL})
+
+
+_BOT_PAGE = "<html><p>Please verify you are human</p></html>"
+_JS_SHELL = (
+    "<html><script>" + "x" * 20_000 + "</script><div>" + "y" * 110 + "</div></html>"
+)
+_LOGIN_FORM = (
+    "<html><form><p>Sign in to continue</p><input name=u>"
+    "<input type='password' name=p></form></html>"
+)
+
+
+def _all_thirteen():
+    """cause 13종 각각의 실제 결과 — (cause, 결과 문구)."""
+    import requests as req
+
+    return [
+        ("dns", _raise(_dns_error())),
+        ("connect", _raise(_connect_error())),
+        ("timeout", _raise(req.exceptions.ReadTimeout())),
+        ("tls", _raise(_tls_error())),
+        ("http-auth", _status(403)),
+        ("http-missing", _status(404)),
+        ("http-rate", _status(429, {"Retry-After": "42"})),
+        ("http-server", _status(503)),
+        ("http-other", _status(418)),
+        ("bot-check", _page(_BOT_PAGE).error),
+        ("needs-js", _page(_JS_SHELL).error),
+        ("login-wall", _page(_LOGIN_FORM).error),
+        ("request", _raise(req.exceptions.TooManyRedirects("Exceeded 30 redirects."))),
+    ]
+
+
+class TestFailureCauses:
+    """v10.118.0: 실패는 `Fetch failed (<cause>): <url>` / 사실 / 재시도 판정."""
+
+    EXPECTED: ClassVar[dict[str, tuple[str, str]]] = {
+        "dns": (
+            "The host name did not resolve.",
+            "Retrying the same URL will not help; check the address.",
+        ),
+        "connect": (
+            "No connection to the host.",
+            "One retry may succeed; after that, assume the host is unreachable from here.",
+        ),
+        "timeout": ("The host did not answer within 15s.", "One retry may succeed."),
+        "tls": (
+            (
+                "The TLS handshake failed (certificate verify failed: self-signed "
+                "certificate in certificate chain)."
+            ),
+            "Retrying will not help from this client.",
+        ),
+        "http-auth": (
+            "The server refused this client (HTTP 403: login or bot protection).",
+            "Retrying the same URL will not help.",
+        ),
+        "http-missing": (
+            "The page does not exist at this address (HTTP 404).",
+            "Retrying will not help; the address is wrong or the page moved.",
+        ),
+        "http-rate": (
+            "Rate limited; the server asks to wait 42s (Retry-After).",
+            "Retry after that wait, once.",
+        ),
+        "http-server": (
+            "The server failed (HTTP 503).",
+            "One retry after a short wait may succeed.",
+        ),
+        "http-other": (
+            "The server returned HTTP 418.",
+            "Retrying the same URL will not help.",
+        ),
+        "bot-check": (
+            'The page is a bot check, not the content ("verify you are human").',
+            "The harness does not pass bot checks; retrying will not help.",
+        ),
+        "needs-js": (
+            "The page renders in a browser; the HTML has 110 chars of text.",
+            "Retrying will not help.",
+        ),
+        "login-wall": (
+            "The page is a sign-in form, not the content.",
+            "Retrying will not help; this source needs an account.",
+        ),
+        "request": (
+            "The request failed (Exceeded 30 redirects.).",
+            "Retrying the same URL will not help.",
+        ),
+    }
+
+    def test_every_cause_is_three_exact_lines(self):
+        got = _all_thirteen()
+        assert [c for c, _ in got] == list(self.EXPECTED)  # 13종 빠짐없이
+        for cause, text in got:
+            fact, verdict = self.EXPECTED[cause]
+            assert text == f"Fetch failed ({cause}): {URL}\n{fact}\n{verdict}", cause
+
+    def test_first_line_grammar_holds_for_every_cause(self):
+        for cause, text in _all_thirteen():
+            first = text.split("\n")[0]
+            assert FIRST_LINE.match(first), first
+            assert text.count("\n") == 2, cause
+
+    def test_connect_timeout_is_a_timeout_and_tls_is_not_connect(self):
+        """requests 에서 `ConnectTimeout`·`SSLError` 는 `ConnectionError` 의 하위
+        클래스 — 종전 순서에선 둘 다 "Connection failed" 였다."""
+        import requests as req
+
+        assert _raise(req.exceptions.ConnectTimeout()).startswith(
+            "Fetch failed (timeout)"
+        )
+        assert _raise(_tls_error()).startswith("Fetch failed (tls)")
+
+    def test_dns_versus_connect(self):
+        import requests as req
+
+        assert _raise(_dns_error()).startswith("Fetch failed (dns)")
+        assert _raise(_connect_error()).startswith("Fetch failed (connect)")
+        assert _raise(req.exceptions.ConnectionError()).startswith(
+            "Fetch failed (connect)"
+        )
+
+    def test_http_code_families(self):
+        for code, cause in (
+            (401, "http-auth"),
+            (410, "http-missing"),
+            (500, "http-server"),
+            (502, "http-server"),
+            (400, "http-other"),
+            (405, "http-other"),
+        ):
+            assert _status(code).startswith(f"Fetch failed ({cause}): {URL}\n"), code
+
+
+class TestRetryAfter:
+    def test_seconds_header(self):
+        assert _status(429, {"Retry-After": "120"}).split("\n")[1:] == [
+            "Rate limited; the server asks to wait 120s (Retry-After).",
+            "Retry after that wait, once.",
+        ]
+
+    def test_http_date_header(self):
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+
+        when = datetime.now(timezone.utc) + timedelta(seconds=90)
+        second = _status(429, {"Retry-After": format_datetime(when, usegmt=True)})
+        secs = int(second.split("\n")[1].split("wait ")[1].split("s ")[0])
+        assert 85 <= secs <= 91
+
+    @pytest.mark.parametrize(
+        "headers", [{}, {"Retry-After": "soon"}, {"Retry-After": ""}]
+    )
+    def test_missing_or_unreadable_header_says_so(self, headers):
+        assert _status(429, headers) == (
+            f"Fetch failed (http-rate): {URL}\n"
+            "Rate limited; the server did not say how long to wait.\n"
+            "Retry once after about a minute."
+        )
+
+
+class TestProxySentence:
+    """프록시 문장은 환경에 변수가 실제로 있을 때만 — 이름만, 값은 적지 않는다."""
+
+    def test_no_proxy_variables_no_sentence(self):
+        assert "proxy" not in _raise(_connect_error()).lower()
+
+    @pytest.mark.parametrize("name", ["HTTPS_PROXY", "http_proxy", "ALL_PROXY"])
+    def test_configured_proxy_is_named_not_its_value(self, monkeypatch, name):
+        monkeypatch.setenv(name, "http://secret-user:pw@proxy.corp:3128")
+        text = _raise(_connect_error())
+        assert text.split("\n")[1] == (
+            f"No connection to the host. A proxy is configured ({name})."
+        )
+        assert "secret" not in text and "proxy.corp" not in text
+
+    def test_no_proxy_star_is_stated(self, monkeypatch):
+        monkeypatch.setenv("HTTPS_PROXY", "http://proxy.corp:3128")
+        monkeypatch.setenv("NO_PROXY", "*")
+        assert _raise(_dns_error()).split("\n")[1] == (
+            "The host name did not resolve. A proxy is configured (HTTPS_PROXY). "
+            "NO_PROXY=* disables fetching through the proxy."
+        )
+
+    def test_no_proxy_star_without_a_proxy_says_nothing(self, monkeypatch):
+        monkeypatch.setenv("no_proxy", "*")
+        assert _raise(_dns_error()).split("\n")[1] == "The host name did not resolve."
+
+    def test_proxy_sentence_only_on_connection_causes(self, monkeypatch):
+        import requests as req
+
+        monkeypatch.setenv("HTTPS_PROXY", "http://proxy.corp:3128")
+        assert "proxy" not in _raise(req.exceptions.ReadTimeout()).lower()
+        assert "proxy" not in _status(403).lower()
+
+
+class TestLoginWall:
+    def test_login_path_after_redirect(self):
+        body = (
+            "<html><h1>Welcome</h1><p>"
+            + "Our product does many things. " * 20
+            + "</p></html>"
+        )
+        r = _page(body, final_url="https://example.com/accounts/sign-in?next=/p")
+        assert not r.success and r.error.startswith(
+            f"Fetch failed (login-wall): {URL}\n"
+        )
+
+    def test_short_page_with_password_input(self):
+        r = _page(_LOGIN_FORM)
+        assert not r.success and r.error.startswith("Fetch failed (login-wall)")
+
+    def test_long_page_with_a_password_input_is_content(self):
+        body = (
+            "<html><p>"
+            + "This guide explains how password fields work in HTML forms. " * 80
+            + "</p><input type='password'></html>"
+        )
+        r = _page(body)
+        assert r.success and "password fields" in r.output
+
+    def test_a_segment_that_only_contains_login_is_content(self):
+        """조각이 통째로 같을 때만 — 글 주소의 낱말(``how-to-login-x``)은 로그인 벽이 아니다."""
+        body = (
+            "<html><h1>How to log in</h1><p>"
+            + "Step one, open the app. " * 30
+            + "</p></html>"
+        )
+        for final in (
+            "https://example.com/blog/how-to-login-x",
+            "https://example.com/login.php-guide/notes",
+            "https://example.com/oauth/intro",
+        ):
+            r = _page(body, final_url=final)
+            assert r.success and "How to log in" in r.output, final
+
+    def test_whole_segment_match_ignores_case(self):
+        r = _page(
+            "<html><p>Welcome back.</p></html>", final_url="https://example.com/x/Auth/"
+        )
+        assert r.error.startswith("Fetch failed (login-wall)")
+
+    def test_ordinary_page_is_content(self):
+        r = _page(
+            "<html><h1>Release notes</h1><p>Fixed the author page.</p></html>",
+            final_url="https://example.com/author/notes",
+        )
+        assert r.success and "Release notes" in r.output
+
+    def test_bot_check_wins_over_login_wall(self):
+        r = _page(_BOT_PAGE, final_url="https://example.com/login")
+        assert r.error.startswith("Fetch failed (bot-check)")
+
+
+class TestDownloadFailureText:
+    def test_download_uses_the_same_frame(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        resp = _resp("text/html", _LOGIN_FORM)
+        resp.url = "https://example.com/login"
+        with patch("agent_cli.tools.fetch.requests.get", return_value=resp):
+            r = tool_fetch({"url": URL, "download_to": "p.html"})
+        assert r.error == (
+            f"Fetch failed (login-wall): {URL}\n"
+            "The page is a sign-in form, not the content.\n"
+            "Retrying will not help; this source needs an account."
+        )
+        assert not (tmp_path / "p.html").exists()

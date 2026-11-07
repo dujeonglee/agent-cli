@@ -524,6 +524,13 @@ body.multi-viewer .card-user .who {
 .badge.tool { color: var(--accent-soft-text); border-color: var(--accent-soft-border); background: var(--accent-soft-bg); }
 .badge.ok { color: var(--ok); border-color: var(--ok-soft-border); background: transparent; }
 .badge.bad { color: var(--fail); border-color: var(--fail-soft-border); background: var(--fail-soft-bg); }
+/* fetch 실패 원인 칩 (v10.118.0) — 첫 줄 `Fetch failed (<cause>):` 의 cause.
+   실패 배지와 같은 위험 토큰, 글자는 배지와 같은 고정폭. */
+.obs-cause {
+  font: 10px "Jetendard", ui-monospace, monospace;
+  letter-spacing: .02em; padding: 1px 6px; border-radius: 3px; white-space: nowrap;
+  color: var(--fail); border: 1px solid var(--fail-soft-border); background: var(--fail-soft-bg);
+}
 .row.can { cursor: pointer; }
 .row.can:hover .x, .row.open .x { opacity: 1; }
 .row.can:hover .s { color: var(--text); }

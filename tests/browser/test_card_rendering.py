@@ -871,6 +871,47 @@ class TestStepCard:
         assert "고아" in page.locator(".card-observation").first.inner_text()
 
 
+class TestFetchCauseChip:
+    """v10.118.0: fetch 실패 첫 줄 `Fetch failed (<cause>): <url>` → 머리 행의 원인 칩.
+    스텝 카드는 접힌 채라 칩은 스텝 머리(배지 줄)에 선다. 문구는 tools/fetch.py
+    `failure_text` 가 만든 실제 결과 그대로."""
+
+    def test_chip_text_is_the_cause(self, stack, page):
+        from agent_cli.tools.fetch import failure_text
+
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        url = "https://example.org/report.pdf"
+        stack.renderer.action("fetch", json.dumps({"url": url}), 1)
+        stack.renderer.observation(
+            failure_text("http-auth", url, code=403),
+            turn=1,
+            tool_name="fetch",
+            success=False,
+        )
+        steps = page.locator(".card-assistant.step")
+        assert _wait(lambda: steps.count() == 1)
+        head = steps.first.locator(".step-head")
+        assert _wait(lambda: head.locator(".obs-cause").count() == 1)
+        assert head.locator(".obs-cause").inner_text().strip() == "http-auth"
+        assert head.locator(".obs-cause").is_visible()  # 접힌 채 보인다
+
+        # 성공한 fetch·다른 도구의 같은 모양 글자는 칩이 없다.
+        stack.renderer.action("fetch", json.dumps({"url": url}), 2)
+        stack.renderer.observation(
+            "[Fetched 2 chars]\n\nok", turn=2, tool_name="fetch", success=True
+        )
+        stack.renderer.action("shell", json.dumps({"command": "x"}), 3)
+        stack.renderer.observation(
+            failure_text("timeout", url, seconds=15),
+            turn=3,
+            tool_name="shell",
+            success=False,
+        )
+        assert _wait(lambda: steps.count() == 3)
+        assert page.locator(".obs-cause").count() == 1
+
+
 class TestStepCardMultiOp:
     """다중 op 턴 — 서버는 ``action()`` 을 **op 마다** 부르고 관찰은 합쳐서
     하나만 낸다(``[1/2] shell — OK …``).
