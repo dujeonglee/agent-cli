@@ -96,6 +96,13 @@ class TestOpenItemsStrip:
         closed = page.locator("#open-items .oi-item.oi-closed")
         assert _wait(lambda: closed.count() == 1)
         assert "✓ closed" in closed.inner_text() and "u-2" in closed.inner_text()
+        # v10.119.1: 닫힘은 ✓ closed 글자로만 — 제목은 긋지 않는다
+        assert (
+            closed.locator(".oi-head").evaluate(
+                "e => getComputedStyle(e).textDecorationLine"
+            )
+            == "none"
+        )
         assert page.locator("#open-items .oi-budget.oi-budget-out").inner_text() == (
             "budget 0/8"
         )

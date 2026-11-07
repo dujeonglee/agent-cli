@@ -147,3 +147,18 @@ class TestLoopWiring:
         opened = snap.call_args.kwargs["open_items"]
         assert opened == ["u-1"]
         after.assert_called_once_with([])
+
+
+class TestWebSource:
+    def test_closed_item_line_gets_a_tag_only(self):
+        """v10.119.1: 닫힌 항목 줄은 끝에 ``✓ closed`` 태그만 — 글은 긋지 않는다.
+        "이 호출 뒤" 는 섹션 머리 칩·각주가 말하므로 줄에서는 뺀다."""
+        from tests.web_static import STATIC, js_fn_body, js_text
+
+        js = js_text("frames")
+        body = js_fn_body(js, "markClosed")
+        assert '<span class="insp-tag ok">✓ closed</span>' in body
+        assert "closed after this call" not in body
+        assert "ctx-closed" not in js
+        assert "Items marked ✓ were closed after this call." in js  # 각주는 남는다
+        assert ".ctx-closed" not in (STATIC / "style.css").read_text(encoding="utf-8")
