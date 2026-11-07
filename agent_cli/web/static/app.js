@@ -4494,6 +4494,21 @@
 
     const label = document.createElement("span");
     label.className = "dl-label";
+    // 🔗 밖을 가리키거나 깨진 심링크 (v10.113.1) — 보이되 들어갈 수 없다: 펼침 없음,
+    // 선택 안 됨. 판정(밖/깨짐)은 서버가 한다 — 프런트는 파일시스템을 모른다.
+    if (entry.type === "link") {
+      cb.disabled = true;
+      label.innerHTML = `🔗 ${esc(entry.name)}`;
+      label.title =
+        `symlink → ${entry.target} — ` +
+        (entry.broken ? "target does not exist" : "outside the workspace, not listed");
+      row.appendChild(toggle);
+      row.appendChild(cb);
+      row.appendChild(label);
+      const linkWrap = document.createElement("div");
+      linkWrap.appendChild(row);
+      return linkWrap;
+    }
     const icon = entry.type === "dir" ? "📁" : "📄";
     const size = ` <span class="dl-size">${fmtSize(entry.size)}</span>`;
     label.innerHTML = `${icon} ${esc(entry.name)}${size}`;

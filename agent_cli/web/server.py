@@ -1035,11 +1035,41 @@ def create_app(server: WebServer) -> FastAPI:
                     pass
             return total
 
+        # 항목의 ``rel`` 은 **어휘적**이다 (v10.113.1): 요청 ``path`` 밑의 이름 — 사용자가
+        # 본 트리 위치가 곧 rel. 종전엔 ``child.resolve().relative_to(workspace)`` 라
+        # 밖을 가리키는 심링크 하나에 ValueError → 500 으로 드로어 전체가 안 열렸고,
+        # 안을 가리키는 링크는 대상 이름으로 바뀌었다. 펼치기·다운로드·삭제는 그 rel 을
+        # ``_safe_workspace_path`` 가 resolve 해 판정한다(밖이면 400 — 종전과 같다).
+        base = "/".join(
+            p for p in path.replace("\\", "/").split("/") if p not in ("", ".")
+        )
+
+        def _link_entry(child: Path) -> dict | None:
+            """밖을 가리키거나 깨진 심링크면 들어갈 수 없는 🔗 항목, 아니면 None
+            (안을 가리키는 링크는 종전처럼 대상 종류로 보인다)."""
+            if not child.is_symlink():
+                return None
+            target = child.resolve()
+            broken = not target.exists()
+            inside = target == server.workspace or server.workspace in target.parents
+            if inside and not broken:
+                return None
+            try:
+                shown = os.readlink(child)
+            except OSError:
+                shown = ""
+            return {"type": "link", "size": 0, "target": shown, "broken": broken}
+
         def _scan() -> list[dict]:
             entries = []
             for child in sorted(
                 d.iterdir(), key=lambda c: (c.is_file(), c.name.lower())
             ):
+                rel = f"{base}/{child.name}" if base else child.name
+                link = _link_entry(child)
+                if link is not None:
+                    entries.append({"name": child.name, "rel": rel, **link})
+                    continue
                 is_dir = child.is_dir()
                 try:
                     size = _dir_size(child) if is_dir else child.stat().st_size
@@ -1048,7 +1078,7 @@ def create_app(server: WebServer) -> FastAPI:
                 entries.append(
                     {
                         "name": child.name,
-                        "rel": str(child.resolve().relative_to(server.workspace)),
+                        "rel": rel,
                         "type": "dir" if is_dir else "file",
                         "size": size,
                     }

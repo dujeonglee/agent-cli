@@ -2382,6 +2382,88 @@ class TestWorkspaceDownload:
             == 400
         )
 
+    # ── 심링크 (v10.113.1): 밖행 링크 하나에 드로어 전체가 500 으로 죽었다 ──
+
+    @staticmethod
+    def _ws_with_links(server, tmp_path):
+        ws = tmp_path / "ws"
+        (ws / "src").mkdir(parents=True)
+        (ws / "src" / "main.c").write_text("int main(){}\n")
+        (ws / "README.md").write_text("# hi\n")
+        out = tmp_path / "outside"
+        (out / "d").mkdir(parents=True)
+        (out / "f.txt").write_text("secret")
+        (ws / "out_dir").symlink_to(out / "d")
+        (ws / "out_file").symlink_to(out / "f.txt")
+        (ws / "broken").symlink_to(ws / "nope")
+        (ws / "inside").symlink_to(ws / "src")
+        server.workspace = ws.resolve()
+        return ws, out
+
+    def test_outside_links_are_link_entries_not_a_500(
+        self, server_and_client, tmp_path
+    ):
+        server, _, client = server_and_client
+        _ws, out = self._ws_with_links(server, tmp_path)
+        r = client.get("/api/workspace/tree?token=testtoken")
+        assert r.status_code == 200
+        by = {e["name"]: e for e in r.json()["entries"]}
+        for name, target in (("out_dir", out / "d"), ("out_file", out / "f.txt")):
+            assert by[name] == {
+                "name": name,
+                "rel": name,
+                "type": "link",
+                "size": 0,
+                "target": str(target),
+                "broken": False,
+            }
+        # 나머지는 종전과 같다
+        assert by["src"]["type"] == "dir" and by["src"]["rel"] == "src"
+        assert by["README.md"]["type"] == "file" and by["README.md"]["size"] == 5
+
+    def test_broken_link_is_marked(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        ws, _ = self._ws_with_links(server, tmp_path)
+        entries = client.get("/api/workspace/tree?token=testtoken").json()["entries"]
+        b = next(e for e in entries if e["name"] == "broken")
+        assert b["type"] == "link" and b["broken"] is True
+        assert b["target"] == str(ws / "nope") and b["size"] == 0
+
+    def test_inside_dir_link_keeps_its_own_name_as_rel(
+        self, server_and_client, tmp_path
+    ):
+        """안을 가리키는 링크는 종전처럼 대상 종류로 보이되 rel 은 **링크 이름**이다 —
+        종전엔 resolve() 로 대상 이름("src")이 됐다. 그 rel 로 펼치면 대상 내용."""
+        server, _, client = server_and_client
+        self._ws_with_links(server, tmp_path)
+        entries = client.get("/api/workspace/tree?token=testtoken").json()["entries"]
+        inside = next(e for e in entries if e["name"] == "inside")
+        assert inside["type"] == "dir" and inside["rel"] == "inside"
+        sub = client.get("/api/workspace/tree?token=testtoken&path=inside").json()
+        assert [e["rel"] for e in sub["entries"]] == ["inside/main.c"]
+
+    def test_subdir_entries_have_lexical_rel(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._ws_with_links(server, tmp_path)
+        for path in ("src", "./src", "src/"):
+            entries = client.get(
+                f"/api/workspace/tree?token=testtoken&path={path}"
+            ).json()["entries"]
+            assert [e["rel"] for e in entries] == ["src/main.c"], path
+
+    def test_expanding_an_outside_link_is_400(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._ws_with_links(server, tmp_path)
+        r = client.get("/api/workspace/tree?token=testtoken&path=out_dir")
+        assert r.status_code == 400
+
+    def test_frontend_draws_link_entries(self, server_and_client):
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert 'entry.type === "link"' in js and "🔗" in js
+        assert "outside the workspace, not listed" in js
+        assert "target does not exist" in js
+
     def test_download_selected_dir_recursive(self, server_and_client, tmp_path):
         import io
         import zipfile
