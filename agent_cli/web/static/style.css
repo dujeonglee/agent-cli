@@ -501,9 +501,8 @@ body.multi-viewer .card-user .who {
 .step-why .why-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .card-assistant.step.open > .step-why { display: none; }
 /* 최종답 카드의 생각은 펼쳐 두되 답보다 흐리게 — 답이 먼저 읽힌다. 펼친 동안
-   머리 줄의 첫 줄 요약은 본문과 겹치므로 감춘다. */
+   요약 칸이 숨는 것은 모든 줄의 규칙이다(아래 `.row.open:has(> .row-body)`). */
 .row.final-think .row-body { color: var(--muted); font-size: .94em; }
-.row.final-think.open > .s { visibility: hidden; }
 /* 머리 행의 펼침 표시는 **항상 보인다**(`.row.can` 은 hover 에만 보인다).
    스텝 카드의 존재 이유가 '펼치면 더 있다' 라서, 표시가 hover 에만 있으면
    그냥 한 줄로 읽히고 아무도 펼치지 않는다. */
@@ -539,6 +538,19 @@ body.multi-viewer .card-user .who {
 .row.bad .ic { color: var(--fail); }
 .row.act .ic { color: var(--accent); }
 .row-body { grid-column: 3 / -1; margin-top: 5px; }
+/* 펼치면 요약 칸이 본문으로 바뀐다 (v10.119.2). 본문은 요약과 같은 열(3 / -1)이라
+   요약을 숨기고 위 여백을 없애면 본문 첫 줄이 요약 자리에 들어온다 — 종전엔 관찰·
+   생각의 첫 줄이 요약으로 한 번, 본문 첫 줄로 한 번 두 번 보였다. 첫 줄을 본문에서
+   떼지 않는다(원문·복사가 그대로). `:has(> .row-body)` 는 **본문을 가진 줄만** —
+   스텝 머리(`.step-head`)도 `.open` 을 받지만 본문은 형제(`.step-body`)라 요약이
+   남아야 한다.
+   본문은 **첫 행 3열에 못박는다**: 요약이 빠지면 자동 배치가 펼침 표시(.x)를 1fr
+   칸에 넣고 `3 / -1` 본문은 둘째 행으로 밀려, 첫 줄이 종류 칸보다 한 행 아래
+   섰다(실브라우저 실측 — 종류 13px · 본문 37px). 명시 배치가 먼저 자리를 잡으므로
+   .x·꼬리·시각은 접힌 때와 같은 칸(4열~)에 서고, 첫 행 `baseline` 맞춤이 본문 첫
+   줄을 종류 칸과 같은 기준선에 세운다. */
+.row.open:has(> .row-body) > .s { display: none; }
+.row.open > .row-body { grid-row: 1; grid-column: 3; margin-top: 0; }
 .row-body.hide { display: none; }
 /* 마크다운 본문(생각·폴백) — 줄바꿈은 원문 그대로라 pre-wrap 이 맡는다(최종답과 같이,
    v10.64.1). 공백 없는 긴 토큰은 끊고, 그리드 칸이 내용 폭으로 늘지 않게 min-width 0. */

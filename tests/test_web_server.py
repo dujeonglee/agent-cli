@@ -955,6 +955,21 @@ class TestStaticUI:
         block = css.split(".action-detail {", 1)[1].split("}", 1)[0]
         assert "overflow-wrap: anywhere" in block, ".action-detail 줄바꿈 규칙 없음"
 
+    def test_open_row_summary_becomes_body(self, server_and_client):
+        """v10.119.2: 펼친 줄은 요약 칸이 본문으로 바뀐다 — 첫 줄이 두 번 보이던
+        것. 숨김은 **본문을 가진 줄만**(스텝 머리는 `.open` 을 받아도 본문이 형제라
+        요약이 남는다). 화면 단정은 tests/browser/test_card_rendering.py."""
+        _, _, client = server_and_client
+        css = client.get("/static/style.css").text
+        assert ".row.open:has(> .row-body) > .s { display: none; }" in css
+        # 첫 행 3열 고정 — 없으면 .x 가 1fr 칸을 먹고 본문이 둘째 행으로 밀린다
+        assert (
+            ".row.open > .row-body { grid-row: 1; grid-column: 3; margin-top: 0; }"
+            in css
+        )
+        # 최종답 생각만의 옛 숨김(visibility)은 일반 규칙에 흡수됐다
+        assert ".row.final-think.open > .s" not in css
+
     def test_agent_icon_per_key_wired(self, server_and_client):
         """agent 아이콘이 key 별 결정적(ovAgentIcon) — ovAgentLabel 이 고정 🤝 대신
         이를 쓴다. 서버(agent_icon) parity 는 test_app_markdown 이 강제.
