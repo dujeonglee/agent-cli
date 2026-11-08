@@ -35,7 +35,7 @@ def stack(tmp_path, clock):
     server = WebServer(renderer, token="t")
     reg = ScheduleRegistry(tmp_path, clock=clock)
     reg.start = lambda: None
-    reg.enqueue = server.enqueue_scheduled
+    reg.enqueue = server.enqueue_named
     set_schedule_registry(reg)
     yield server, reg, TestClient(create_app(server))
     set_schedule_registry(None)

@@ -30,9 +30,11 @@ from agent_cli.loop.tool_bridge import ToolBridge, _normalize_input
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.detectors import (
     ActionLoopDetector,
+    StaleGuard,
     detect_nested_envelope,
     detect_schema_mismatch,
     detect_unknown_tool,
+    stale_turn_pairs,
     unwrap_nested_envelope,
 )
 from agent_cli.recovery.dialect_recovery import (
@@ -49,6 +51,7 @@ from agent_cli.recovery.observability import (
     FAILURE_NO_OUTPUT,
     FAILURE_OUTPUT_SWALLOWED,
     FAILURE_SCHEMA_MISMATCH,
+    FAILURE_STALE_LOOP,
     FAILURE_UNKNOWN_TOOL,
 )
 from agent_cli.recovery.primitives import echo_prior_output, summarize_call
@@ -71,6 +74,11 @@ from agent_cli.verbose import debug_log as _debug_log
 # NotImplementedError 로 런이 죽는 크래시 트랩 — 리뷰 §4.1). 새 도구를
 # 병렬 배치에 태우려면 엔진을 배선하고 이 집합에 추가한다.
 _PARALLEL_BATCH_ENGINES = frozenset({"agent"})
+
+#: 제자리 고리 확인에서 Continue 의 코멘트를 보낸 사람을 모를 때의 작성자 (v10.120.0)
+STALE_HINT_AUTHOR = "Hint"
+#: 확인 프롬프트에 싣는 반복 호출 줄 수 — 대표 두세 개
+_STALE_CALLS_SHOWN = 3
 
 
 #: A batch op rejected before it ran (unknown tool, schema mismatch, repeated
@@ -142,6 +150,11 @@ class TurnDispatcher:
         # B1 (action loop) detector. Threshold=2 fires on the second
         # consecutive identical (action, args).
         self.loop_detector = ActionLoopDetector(threshold=2)
+        # 제자리 고리 (v10.120.0, docs/stale-guard): B1 과 별개로 비연속 고리를 본다 —
+        # 글자가 달라도 결과가 같은 턴이 이어진다. 표시(+웹 main 은 두 번째에 묻기)만 한다.
+        self.stale_guard = StaleGuard()
+        #: 🔁 표시가 떠 있나 — 발화 뒤 제자리 턴마다 N 을 갱신하고 새 결과면 지운다
+        self._stale_shown = False
         #: 이 런에서 A5 자동 전문을 이미 받은 지연 도구 (v10.109.0) — 한 도구에 한 번.
         #: 디스패치만 쓰는 상태라 ``LoopState`` 가 아니라 여기(소유자)에 둔다.
         self._guided_tools: set[str] = set()
@@ -468,8 +481,10 @@ class TurnDispatcher:
         else:
             turn.record = self.cfg.dialect.serialize_assistant_for_history(llm_text)
 
+        # 이 턴이 기록할 첫 레코드의 서수 — 턴 끝에 그 구간을 StaleGuard 에 먹인다
+        turn_start = self._next_hidx()
         try:
-            return self._dispatch_turn(llm_text, turn, outcome)
+            result = self._dispatch_turn(llm_text, turn, outcome)
         finally:
             # 아무 출력 없이 끝난 턴의 생각도 사라지지 않게 (v9.24.11 안전망)
             flush_pending_thought()
@@ -490,6 +505,171 @@ class TurnDispatcher:
                     {"action": op.action, "input": op.action_input} for op in turn.ops
                 ],
             }
+        if result is _CONTINUE:
+            self._watch_stale(turn_start)
+        return result
+
+    # ── 제자리 고리 (v10.120.0, docs/stale-guard/DESIGN.md) ──────────
+
+    def _watch_stale(self, turn_start: int | None) -> None:
+        """턴의 관찰이 다 기록된 뒤 한 번 — 그 턴이 ``ctx`` 에 남긴 레코드를 StaleGuard 에.
+
+        쌍은 history 의 그 구간에서 뽑는다(`stale_turn_pairs`) — trajectory 의 (호출 이름,
+        관찰 본문) 과 같은 출처다. 저장되지 않은 시도(형식 재시도·B1 이 막은 반복)는 턴이
+        아니라 부르지 않는다. 모델 입력은 바꾸지 않는다: 발화는 failures.jsonl·렌더러
+        표시, 웹 main 의 두 번째 발화부터는 사람에게 묻는다(Hint 만 사용자 메시지로 간다)."""
+        records_since = getattr(self.ctx, "records_since", None)
+        if turn_start is None or records_since is None:
+            return
+        pairs = stale_turn_pairs(records_since(turn_start))
+        if pairs is None:
+            return
+        from agent_cli.runtime import harness_work_running
+
+        guard = self.stale_guard
+        fired = guard.observe(
+            pairs,
+            turn=self.state.turn,
+            work_running=harness_work_running(self.cfg.owner),
+        )
+        if not fired:
+            if self._stale_shown:
+                # 떠 있는 표시의 N 갱신 — 새 결과(0)면 지운다
+                self._show_stale(asking=False)
+                self._stale_shown = guard.turns_without_new > 0
+            return
+        calls = self._stale_calls(guard.since_turn)
+        self._record_stale(calls)
+        from agent_cli.render import get_renderer
+
+        asking = (
+            guard.fires >= 2
+            and self.cfg.kind.tracks_run_authors
+            and get_renderer().can_pause_for_human()
+        )
+        self._stale_shown = True
+        self._show_stale(asking=asking)
+        if asking:
+            self._ask_stale(calls)
+
+    def clear_stale(self) -> None:
+        """런 끝 — 떠 있는 🔁 표시를 지운다(엔진의 ``run`` finally)."""
+        if not self._stale_shown:
+            return
+        self._stale_shown = False
+        from agent_cli.render import get_renderer
+
+        get_renderer().stale_loop(
+            {"turns_without_new": 0, "since_turn": 0, "fires": 0, "asking": False}
+        )
+
+    def _stale_info(self, *, asking: bool) -> dict:
+        g = self.stale_guard
+        return {
+            "turns_without_new": g.turns_without_new,
+            "since_turn": g.since_turn,
+            "fires": g.fires,
+            "asking": asking,
+        }
+
+    def _show_stale(self, *, asking: bool) -> None:
+        from agent_cli.render import get_renderer
+
+        get_renderer().stale_loop(self._stale_info(asking=asking))
+
+    def _stale_calls(self, since_turn: int) -> list[str]:
+        """제자리 구간의 대표 호출 — 결과가 같은 것끼리 하나, 마지막 몇 개, 각 한 줄
+        ``도구 인자 → 결과 첫 줄``. 확인 프롬프트와 failures.jsonl 이 같이 쓴다."""
+        uniq: dict[tuple[str, str], dict] = {}
+        for row in self.tools.recent_tool_history:
+            if int(row.get("turn") or 0) < since_turn:
+                continue
+            key = (str(row.get("tool") or ""), str(row.get("digest") or ""))
+            uniq.pop(key, None)
+            uniq[key] = row  # 마지막에 본 자리로
+        lines = []
+        for row in list(uniq.values())[-_STALE_CALLS_SHOWN:]:
+            call = " ".join(f"{row.get('tool')} {row.get('input') or ''}".split())
+            result = (str(row.get("result") or "").strip().splitlines() or [""])[0]
+            lines.append(f"{call[:100]} → {' '.join(result.split())[:60]}")
+        return lines
+
+    def _record_stale(self, calls: list[str]) -> None:
+        """발화 하나 = failures.jsonl 한 줄 (`record_failure`, failure_signal ``stale_loop``)."""
+        sdir = getattr(self.ctx, "session_dir", None) if self.ctx is not None else None
+        if not sdir:
+            return
+        from agent_cli.recovery.failures import record_failure
+
+        g = self.stale_guard
+        record_failure(
+            sdir,
+            turn=self.state.turn,
+            model=self.cfg.model,
+            dialect=getattr(self.cfg.dialect, "name", "?"),
+            failure_signal=FAILURE_STALE_LOOP,
+            stop_reason=None,
+            stop_detail=None,
+            parse_stage=None,
+            primitives=[],
+            text="\n".join(calls),
+            thinking=None,
+            usage=None,
+            detail={
+                "turns_without_new": g.turns_without_new,
+                "since_turn": g.since_turn,
+                "fires": g.fires,
+                "calls": calls,
+            },
+        )
+
+    def _ask_stale(self, calls: list[str]) -> None:
+        """웹 main 의 두 번째 발화부터 — 런을 세우고 사람에게 Continue/Stop 을 묻는다.
+
+        기존 ``confirm`` 경로 그대로다(새 입력 종류 없음): 트레이의 확인 항목, 코멘트 칸이
+        Hint. 락: 이 자리(턴 디스패치가 끝난 뒤, `_handle_text_path` 꼬리)의 워커는 락을 하나도
+        잡지 않는다 — ``confirm`` 이 ``interactive_lock`` 을 잡고 그 안에서 렌더러·허브 락을
+        잠깐씩 잡는 순서는 ``ask``·위험 셸 확인과 같다. abort/EOF 는 confirm 규칙대로 기본값
+        Continue."""
+        from agent_cli.render import get_renderer
+        from agent_cli.render.base import ConfirmOption
+
+        g = self.stale_guard
+        n = g.turns_without_new
+        lines = [
+            (
+                f"🔁 No new results for {n} turns (since turn {g.since_turn}) "
+                "— the model may be going in circles."
+            ),
+        ]
+        if calls:
+            lines.append("Repeated calls:")
+            lines.extend(f"  {c}" for c in calls)
+        lines.append(
+            "Continue lets the run go on — a comment is sent to the model as a hint. "
+            "Stop ends the run."
+        )
+        renderer = get_renderer()
+        key, comment = renderer.confirm(
+            "\n".join(lines),
+            [ConfirmOption("c", "Continue"), ConfirmOption("s", "Stop")],
+            default_key="c",
+        )
+        author = renderer.confirm_author()
+        if key == "s":
+            self.state.stop_note = (
+                f"Stopped by the user after {n} turns without new results."
+            )
+            self.state.stop_event.set()
+            self._show_stale(asking=False)
+            return
+        g.acknowledge()
+        self._show_stale(asking=False)
+        hint = (comment or "").strip()
+        enqueue = getattr(self.cfg.kind.ports, "enqueue_user_message", None)
+        if hint and enqueue is not None:
+            # 사람이 입력창에 친 메시지와 같은 길 — 다음 턴 경계가 흡수해 `u-N` 이 된다
+            enqueue(hint, author or STALE_HINT_AUTHOR)
 
     def _dispatch_turn(self, llm_text: str, turn, outcome: dict):
         """Turn-level dispatch: guards, then the ops in array order.

@@ -397,17 +397,15 @@ class TestRunBootApplies:
         assert auditor.enabled is False  # 기본값
 
     def test_minimal_renderer_auto_approve_answers_without_asking(self):
-        from agent_cli.render.base import ConfirmOption
-
+        """v10.120.0: 판정은 confirm 밖 `auto_approved` — 안전 확인이 confirm 전에 부른다."""
         r = _renderer()
+        assert r.auto_approved("rm -rf build") is False  # 기본 OFF — 기록도 없다
+        assert "Auto-approved" not in r.con.file.getvalue()
         r.set_auto_approve(True)
-        key, comment = r.confirm(
-            "run it?",
-            [ConfirmOption("y", "allow"), ConfirmOption("n", "deny")],
-            default_key="n",
+        assert r.auto_approved("rm -rf build") is True
+        assert "⚡ Auto-approved (no confirmation): rm -rf build" in (
+            r.con.file.getvalue()
         )
-        assert (key, comment) == ("y", "")
-        assert "Auto-approved" in r.con.file.getvalue()
 
 
 class TestChipShapeIsDeclaredInTheTable:

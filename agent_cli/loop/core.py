@@ -633,6 +633,8 @@ class AgentLoop:
             render_items_closed_after(self._state.ledger.pin_ids())
             # 런 끝 (장부 P4) — 남은 항목 그대로, 비었으면 띠가 숨는다
             show_open_items(self._config, self._state)
+            # 런 끝 (StaleGuard, v10.120.0) — 🔁 띠는 그 런의 것이다
+            self._dispatch.clear_stale()
             self._fire_hook("OnSessionEnd")
             if self.graceful_interrupt:
                 self._restore_signal_handler()
@@ -709,6 +711,13 @@ class AgentLoop:
                 hidx=getattr(self.ctx, "last_ordinal", None),
             )
         _debug_log(f"Graceful interrupt at turn {self.turn}")
+        note = self._state.stop_note
+        if note:
+            # 사람이 StaleGuard 의 확인에서 Stop 을 골랐다 (v10.120.0) — 사실 한 줄을 결과와
+            # 화면(런 종료 사유)에. 기록(INTERRUPT_NOTICE)은 보통 Stop 과 같다: 모델 입력 불변.
+            if self._config.kind.renders():
+                render_run_ended(note, self.turn)
+            return ToolResult(False, error=f"Interrupted by user. {note}")
         return ToolResult(False, error="Interrupted by user")
 
     def _setup(self) -> None:

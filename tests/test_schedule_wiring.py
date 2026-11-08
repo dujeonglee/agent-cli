@@ -162,7 +162,7 @@ class TestWebServerInjection:
 
         server = WebServer.__new__(WebServer)
         server._queue = InputQueue()
-        item = server.enqueue_scheduled("weekly report", "⏰ Scheduler")
+        item = server.enqueue_named("weekly report", "⏰ Scheduler")
         assert item["text"] == "weekly report"
         assert item["nickname"] == "⏰ Scheduler"
         assert item["system"] is False  # 화면의 대기열에도 보인다

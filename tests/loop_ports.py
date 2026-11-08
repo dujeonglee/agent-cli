@@ -29,6 +29,7 @@ def make_ports(**overrides: Any) -> LoopPorts:
         "hook_runner": None,
         "route_message": None,
         "dequeue_user_message": None,
+        "enqueue_user_message": None,
         "absorb_inbox": None,
         "peer_roster": None,
     }

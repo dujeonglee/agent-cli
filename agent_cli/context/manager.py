@@ -469,6 +469,17 @@ class ContextManager:
         resume 재생이 카드에 ``hidx`` 를 싣는 데 쓴다 (v10.6.0)."""
         return list(self._cache_hidx)
 
+    def records_since(self, ordinal: int) -> list[dict]:
+        """서수 ``ordinal`` 부터 ``add`` 된 캐시 레코드들(순서대로) — 한 턴이 기록한 것을
+        턴 끝에 읽는다 (v10.120.0, StaleGuard). 뒤에서부터 훑어 그 턴 몫만 본다."""
+        out: list[dict] = []
+        for msg, hidx in zip(reversed(self._cache), reversed(self._cache_hidx)):
+            if hidx < ordinal:
+                break
+            out.append(msg)
+        out.reverse()
+        return out
+
     @property
     def next_ordinal(self) -> int:
         """다음 ``add`` 가 받을 history 서수 — 레코드보다 먼저 그려지는 카드

@@ -100,6 +100,7 @@ def write_status_file(
     auditing: bool | None = None,
     knobs: dict | None = None,
     open_items: dict | None = None,
+    stuck: dict | None = None,
 ) -> Path:
     """Atomically (over)write the live status sidecar. Returns the path.
 
@@ -109,6 +110,10 @@ def write_status_file(
 
     ``open_items`` (v10.119.0, additive): 장부 요약 ``{count, ids, oldest_turns,
     budget_left}`` — 보드 카드의 📋 칩. 열린 항목이 없으면 ``None`` → 생략.
+
+    ``stuck`` (v10.120.0, additive): 제자리 고리 ``{turns, since_turn, asking}`` — 새 결과
+    없는 턴이 이어지는 중(StaleGuard 발화 뒤)이면 실린다. ``asking`` 은 런이 멈춰 사람의
+    Continue/Stop 을 기다리는 중(``awaiting_input`` 도 참). 없으면 생략.
 
     ``agents`` (v7.10.0, additive): 상주 에이전트 요약
     ``{"alive", "working", "list": [{key, profile, name, state}, ...]}`` —
@@ -129,6 +134,8 @@ def write_status_file(
         info["knobs"] = knobs
     if open_items is not None:  # v10.119.0 — 장부 요약 (board 📋 칩)
         info["open_items"] = open_items
+    if stuck is not None:  # v10.120.0 — 제자리 고리 (StaleGuard)
+        info["stuck"] = stuck
     path = status_file_path(session_dir)
     # fsio.atomic_write_json 이 같은 의미론(유니크 tmp + replace + 부모
     # 소실 가드)을 소유 — 자체 mkstemp 구현을 수렴 (v4.27.1 레이스 교훈은

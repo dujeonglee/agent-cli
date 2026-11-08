@@ -81,11 +81,11 @@ def _iso_to_epoch(ts) -> float | None:
 
 # Sticky slots whose change flips a field of ``status.json``: ``worker_state``
 # → busy, ``input_required`` → awaiting_input, ``agent_roster`` → agents,
-# ``open_items`` → open_items (v10.119.0), and every ``knob:<name>`` → knobs
-# (+ grammar). A set_sticky/clear_sticky on any of them republishes the status
-# sidecar (viewers republish on register/unregister).
+# ``open_items`` → open_items (v10.119.0), ``stuck`` → stuck (v10.120.0), and
+# every ``knob:<name>`` → knobs (+ grammar). A set_sticky/clear_sticky on any of
+# them republishes the status sidecar (viewers republish on register/unregister).
 _STATUS_STICKY_KEYS = frozenset(
-    {"worker_state", "input_required", "agent_roster", "open_items"}
+    {"worker_state", "input_required", "agent_roster", "open_items", "stuck"}
 )
 
 
@@ -265,6 +265,9 @@ class WebRenderer(Renderer):
         # 재생이 레코드의 `request_id` 로 채운다. 장부는 history 를 모르므로 스냅샷의
         # `hidx` 는 여기서 채운다.
         self._request_hidx: dict[str, int] = {}
+        # 스레드 → 방금 받은 confirm 답의 뷰어 닉네임 (v10.120.0, `confirm_author`).
+        # 답은 큐로 오고 confirm 은 스레드마다 하나라 스레드로 짝짓는다(`_pending_hidx` 와 같다).
+        self._confirm_authors: dict[int, str] = {}
 
     # ─── Event distribution ─────────────────────────
 
@@ -1539,6 +1542,44 @@ class WebRenderer(Renderer):
             "budget_left": (payload.get("budget") or {}).get("left"),
         }
 
+    def stale_loop(self, info: dict) -> None:
+        """제자리 고리 스티키 ``stuck`` (v10.120.0, docs/stale-guard/DESIGN.md §5) — 입력창
+        위 🔁 띠와 status.json ``stuck``. main 의 띠 하나뿐이라 중첩 루프(상주·one-shot·스킬)
+        의 발화는 그리지 않는다(그 기록은 failures.jsonl 에 있다). ``turns_without_new`` 0
+        이면 지운다 — 스티키를 거두고 띠를 숨기라는 휘발 이벤트를 보낸다."""
+        if self.in_nested_render():
+            return
+        n = int(info.get("turns_without_new") or 0)
+        prev = self.hub.sticky_payload("stuck")
+        if n <= 0:
+            if prev is not None:
+                self.clear_sticky("stuck")
+                self._emit("stuck", {"turns": 0}, persistent=False)
+            return
+        payload = {
+            "turns": n,
+            "since_turn": int(info.get("since_turn") or 0),
+            "fires": int(info.get("fires") or 0),
+            "asking": bool(info.get("asking")),
+        }
+        if prev != payload:
+            self.set_sticky("stuck", "stuck", payload)
+
+    def stuck_summary(self) -> dict | None:
+        """제자리 고리 요약 ``{turns, since_turn, asking}`` — status.json 과 ``/api/health``
+        가 같이 쓴다. 띠가 없으면 None(생략)."""
+        return self._stuck_summary_from(self.hub.sticky_payload("stuck"))
+
+    @staticmethod
+    def _stuck_summary_from(payload: dict | None) -> dict | None:
+        if not payload or not payload.get("turns"):
+            return None
+        return {
+            "turns": int(payload["turns"]),
+            "since_turn": int(payload.get("since_turn") or 0),
+            "asking": bool(payload.get("asking")),
+        }
+
     def context_view(self, view: dict) -> None:
         """스코프별 sticky ``ctx_view`` (v10.6.0, docs/inspector-model-view §3.1).
 
@@ -1775,6 +1816,7 @@ class WebRenderer(Renderer):
             if key.startswith("knob:") and p.get("available")
         }
         open_items = self._open_items_summary_from(sticky.get("open_items"))
+        stuck = self._stuck_summary_from(sticky.get("stuck"))
         try:
             from agent_cli.web.instance_file import write_status_file
 
@@ -1788,6 +1830,7 @@ class WebRenderer(Renderer):
                 auditing=auditing,
                 knobs=knobs or None,
                 open_items=open_items,
+                stuck=stuck,
             )
         except OSError:
             pass  # best-effort: a status write must never break the session
@@ -2181,6 +2224,19 @@ class WebRenderer(Renderer):
         arrive there."""
         return True
 
+    def _note_auto_approved(self, text: str) -> None:
+        # 관찰 카드 — 타임라인에 무엇이 확인 없이 실행됐는지 남는다
+        self.observation(text, turn=0, tool_name="confirm")
+
+    def can_pause_for_human(self) -> bool:
+        """``True`` — 웹은 사람이 와서 답할 때까지 워커를 세워 둘 수 있다(`can_prompt` 와
+        같은 "언젠가 답이 온다" 의미, 보드가 "답변 필요" 를 띄운다). StaleGuard 의 두 번째
+        발화가 묻는 근거다."""
+        return True
+
+    def confirm_author(self) -> str:
+        return self._confirm_authors.pop(threading.get_ident(), "")
+
     def confirm(
         self,
         prompt: str,
@@ -2200,20 +2256,8 @@ class WebRenderer(Renderer):
         with its dangerous tokens highlighted.
         """
 
-        # Per-session "trust" toggle (⚡ 자동 승인): when on, skip the safety
-        # prompt and allow immediately (options[0] = the affirmative — y/allow in
-        # both guards). Leave an observation so the timeline still records WHAT
-        # ran without asking. Off by default; resets on restart (runtime-only).
-        if self.auto_approve:
-            allow = options[0].key if options else default_key
-            label = command or prompt.strip().split("\n", 1)[0]
-            self.observation(
-                f"⚡ Auto-approved (no confirmation): {label}",
-                turn=0,
-                tool_name="confirm",
-            )
-            return (allow, "")
-
+        # ⚡ 자동 승인은 여기서 보지 않는다 (v10.120.0) — 안전 확인의 호출자가 먼저
+        # `auto_approved` 를 부른다. confirm 은 언제나 묻는다(StaleGuard 의 멈춤 질문).
         # Emit + wait run together under ``_guarded_read``'s shared lock
         # (same serialization as ``prompt_user``) so confirm and ask never
         # have two prompts outstanding on the single ``_input_queue``.
@@ -2261,6 +2305,11 @@ class WebRenderer(Renderer):
             # caller passed a default_key precisely so confirm can always
             # answer).
             return (default_key, "")
+        if isinstance(value, tuple) and len(value) == 3:
+            # 큐는 (key, comment, 답한 뷰어) — 뷰어는 `confirm_author` 로 (v10.120.0)
+            key, comment, author = value
+            self._confirm_authors[threading.get_ident()] = str(author or "")
+            return (key, comment)
         if isinstance(value, tuple) and len(value) == 2:
             return value  # type: ignore[return-value]
         # Malformed payload — fall back to default.
@@ -2276,7 +2325,15 @@ class WebRenderer(Renderer):
         ``{"key": "...", "comment": "..."}``.
         """
         if kind == "confirm":
-            self._input_queue.put((payload.get("key", ""), payload.get("comment", "")))
+            # 답한 뷰어 (v10.120.0): 확인의 코멘트를 그 사람의 메시지로 넣을 때(Hint) 쓴다
+            nick = self.hub.nickname_for(payload.get("conn_id"))
+            self._input_queue.put(
+                (
+                    payload.get("key", ""),
+                    payload.get("comment", ""),
+                    "" if nick == "?" else nick,
+                )
+            )
         else:
             self._input_queue.put(payload.get("content", ""))
 

@@ -270,6 +270,8 @@ class MinimalRenderer(Renderer):
         self._parallel_order: list[str] = []
         # 직전 장부 스냅샷 (v10.119.0) — 같은 것이 연달아 오면 줄을 다시 찍지 않는다.
         self._last_open_items: dict | None = None
+        # 마지막으로 찍은 제자리 고리 발화 수 (v10.120.0) — 발화마다 한 줄, N 갱신엔 안 찍는다.
+        self._last_stale_fires = 0
 
     @property
     def _prefix(self) -> str:
@@ -424,6 +426,23 @@ class MinimalRenderer(Renderer):
         ids = [str(it.get("id")) for it in snapshot.get("items") or []]
         if ids:
             self._p(f"  [{_MUTED}]{escape('open: ' + ' '.join(ids))}[/]")
+
+    def _note_auto_approved(self, text: str) -> None:
+        self.con.print(text, highlight=False)  # ⚡ — 터미널에도 물을 사람이 없다
+
+    def stale_loop(self, info: dict) -> None:
+        """제자리 고리 한 줄 ``🔁 no new results for N turns`` (v10.120.0) — 발화마다 흐리게.
+        묻지 않는다(``run`` 은 사람 없이 끝난다). 발화 뒤 N 이 느는 갱신과 지움(0)은 찍지
+        않고 발화 수만 따라간다. escape 는 `open_items` 줄과 같은 이유."""
+        n = int(info.get("turns_without_new") or 0)
+        fires = int(info.get("fires") or 0)
+        if n <= 0:
+            self._last_stale_fires = 0
+            return
+        if fires == self._last_stale_fires:
+            return
+        self._last_stale_fires = fires
+        self._p(f"  [{_MUTED}]{escape(f'🔁 no new results for {n} turns')}[/]")
 
     def push_user_message(
         self,
@@ -946,12 +965,6 @@ class MinimalRenderer(Renderer):
         delegate-originated confirms, and when ``command`` is supplied it is
         printed on its own line with the dangerous tokens highlighted.
         """
-        if self.auto_approve:  # ⚡ 노브 `auto_approve` — 터미널에도 물을 사람이 없다
-            label = command or prompt.strip().split("\n", 1)[0]
-            self.con.print(
-                f"⚡ Auto-approved (no confirmation): {label}", highlight=False
-            )
-            return (options[0].key if options else default_key, "")
 
         def _read():
             self._emit_prompt_meta_header(include_action=True)

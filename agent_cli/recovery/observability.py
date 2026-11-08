@@ -52,6 +52,9 @@ FAILURE_NESTED_ENVELOPE = (
     "NESTED_ENVELOPE"  # A6: complete result wraps another envelope
 )
 FAILURE_ACTION_LOOP = "ACTION_LOOP"  # B1: same (action, args) repeated
+# 제자리 고리 (v10.120.0, StaleGuard): 새 결과 없는 턴이 3번 연달아 — failures.jsonl 에만
+# 남는다(turns.jsonl 의 턴 판정이 아니다 — 생성은 정상이었고 그 턴들의 묶음이 문제다).
+FAILURE_STALE_LOOP = "stale_loop"
 FAILURE_DEGENERATE = "DEGENERATE"  # A8: emission repeated the wire shape (e.g. multiple ## Thought/## Action blocks in one response) — format runaway. Observed (labelled); the dispatch still proceeds on the parsed action. stop sequences (wire provider_call_kwargs) are the primary guard.
 # v10.10.0: cut generations are rows too — before, a call that hit the output
 # cap was never written (dispatch never ran), so "which limit?" needed the

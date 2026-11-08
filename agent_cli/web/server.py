@@ -335,9 +335,10 @@ class WebServer:
                 raise HTTPException(status_code=400, detail=str(e)) from None
         return refs
 
-    def enqueue_scheduled(self, text: str, nickname: str) -> dict:
-        """예약 발화 — 사용자 요청처럼 큐에 들어가되 표시 이름은 예약의 것이다
-        (docs/schedule/DESIGN.md §5). 연결이 없으므로 ``conn_id`` 는 없다."""
+    def enqueue_named(self, text: str, nickname: str) -> dict:
+        """연결 없이 이름을 단 사용자 요청 — 예약 발화(표시 이름은 예약의 것,
+        docs/schedule/DESIGN.md §5)와 제자리 고리 확인의 Hint(대답한 뷰어의 닉네임,
+        v10.120.0). 입력창의 메시지와 같은 큐·같은 흡수 길이다."""
         return self._queue.enqueue(None, text, nickname=nickname)
 
     def enqueue_system(self, conn_id: str | None, text: str) -> dict:
@@ -733,6 +734,8 @@ def create_app(server: WebServer) -> FastAPI:
             "auditing": server.auditor is not None and server.auditor.in_flight > 0,
             # v10.119.0: 장부 요약 (없으면 None) — status.json 과 같은 소스
             "open_items": server.renderer.open_items_summary(),
+            # v10.120.0: 제자리 고리 (없으면 None) — status.json 과 같은 소스
+            "stuck": server.renderer.stuck_summary(),
         }
 
     @app.get("/api/share-url")

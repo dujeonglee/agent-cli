@@ -23,6 +23,11 @@ dialect (native_fc) the calls never appear in ``text``, so a rejected call's
 arguments used to be recorded nowhere. Every string inside is capped like
 ``text`` and flagged ``tool_calls_truncated``.
 
+``detail`` (v10.120.0, additive) is a judgment about several turns rather
+than one generation — ``stale_loop`` (StaleGuard): ``{turns_without_new,
+since_turn, fires, calls}``; ``text`` then holds the repeated calls, one per
+line, and the generation fields are empty.
+
     jq -c '{turn, failure_signal, stop_reason, stop_detail, chars: (.text|length)}' failures.jsonl
     jq -c 'select(.tool_calls) | {turn, failure_signal, calls: [.tool_calls[] | {name, input}]}' failures.jsonl
 """
@@ -78,6 +83,7 @@ def record_failure(
     thinking: str | None,
     usage: dict | None,
     tool_calls: list[dict] | None = None,
+    detail: dict | None = None,
 ) -> Path | None:
     """Append one record; no-op without a session directory. Returns the path."""
     if session_dir is None:
@@ -103,6 +109,9 @@ def record_failure(
         "tool_calls": calls,
         "tool_calls_truncated": calls_truncated,
     }
+    if detail is not None:
+        # 생성 하나가 아니라 턴 묶음의 판정 (v10.120.0 ``stale_loop``) — 무엇을 셌는지
+        rec["detail"] = detail
     path = Path(session_dir) / FILE_NAME
     append_line(path, json.dumps(rec, ensure_ascii=False, default=str))
     return path

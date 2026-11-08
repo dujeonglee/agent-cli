@@ -145,3 +145,6 @@ class LoopState:
     ledger: Ledger = field(default_factory=Ledger)
     interrupted: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event)
+    #: 런을 멈춘 사람의 결정에 붙는 사실 한 줄 (v10.120.0) — 디스패처(StaleGuard 의 Stop)가
+    #: 쓰고 엔진의 `_on_interrupt` 가 결과와 화면에 싣는다. 보통 Stop 은 빈 값.
+    stop_note: str = ""

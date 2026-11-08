@@ -586,9 +586,18 @@ def guard(
             if command
             else None
         )
-        decision, comment = renderer.confirm(
-            prompt, options, default_key="n", command=command, danger_spans=danger_spans
-        )
+        # ⚡ 자동 승인 (v10.120.0 부터 confirm 밖 — 정책은 안전 확인의 것): 묻지 않고 once.
+        # 기록 이름은 종전 confirm 안의 것과 같다(명령, 없으면 프롬프트 첫 줄).
+        if renderer.auto_approved(command or head):
+            decision, comment = "y", ""
+        else:
+            decision, comment = renderer.confirm(
+                prompt,
+                options,
+                default_key="n",
+                command=command,
+                danger_spans=danger_spans,
+            )
         if decision == "n":
             kind = "sensitive path" if secrets else "outside workspace"
             err = f"User denied {action} — {kind}: {joined}"

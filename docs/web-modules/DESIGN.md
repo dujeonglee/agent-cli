@@ -171,6 +171,7 @@ v10.116.0 의 `test_app_markdown` 은 `js_text("main")` 을 `(function(){ … })
 | `copy.js` | [9] | 76 | 복사, 훅 `__cardMarkdown`·`__timelineMarkdown` |
 | `attach.js` | [23] | 147 | 이미지 첨부 |
 | `ledger.js` | — (v10.119.0 신규) | 122 | 📋 열린 항목 띠(`open_items` 스티키). 순환 밖 잎 — `dom`·`sse` 만 import, export 없음. 점프는 `agentcli:jump` 이벤트로 |
+| `stuck.js` | — (v10.120.0 신규) | 63 | 🔁 제자리 고리 띠(`stuck` 스티키, docs/stale-guard). 순환 밖 잎 — `dom`·`state`·`sse` 만 import, export 없음. Stop 은 `fetch` 로 직접(`/api/stop`, 묻는 중엔 confirm `s`) — input 의 `postInput` 을 import 하면 잎이 순환에 든다 |
 | `channels.js` | [28]+[30]+[31] | 471 | 채널·트레이 상태·필터·점프(v10.119.0: `agentcli:jump` {hidx} → 원문 카드). **순환 진입점** |
 | `timeline.js` | [6]+[8]+[26]+[27] | 429 | 카드 시각·delegate 그룹·`scope_*` 배선·타임라인 |
 | `frames.js` | [10]+[11] | 625 | 모델 시점 + 틀, 훅 `__ctxFrames` |
@@ -183,7 +184,7 @@ v10.116.0 의 `test_app_markdown` 은 `js_text("main")` 을 `(function(){ … })
 | `roster.js` | [33]+[34]+[35] | 264 | identity·뷰어 로스터·별명·대기열(v10.119.0: 행 앞 id 칩) |
 
 v10.117.0 분할 당시 합계는 4,385줄이다(이 표의 줄 수는 v10.119.0 기준 — `ledger.js` 가 더해져 모듈 19개,
-channels 에 점프 리스너 29줄, roster 에 id 칩 3줄). 옛 4,210줄보다 는 몫은 모듈 머리 주석(51줄)·import(107줄)·setter(3줄)·
+channels 에 점프 리스너 29줄, roster 에 id 칩 3줄; v10.120.0 에 `stuck.js` 63줄이 더해져 모듈 20개). 옛 4,210줄보다 는 몫은 모듈 머리 주석(51줄)·import(107줄)·setter(3줄)·
 `session` 객체 틀(2줄)이고, 빠진 몫은 옛 파일 머리 주석(4줄)이다.
 
 브리프의 처음 표에서 바꾼 곳은 셋이다. 셋 다 실제 의존을 보고 정했다.
@@ -249,7 +250,7 @@ ES 모듈의 import 는 정의 모듈 변수의 **살아 있는 별칭**이다. 
 를 읽으면 TDZ ReferenceError 이고, `var` 면 조용히 `undefined` 다. acorn 으로 top-level 문이
 (호출을 따라 전이적으로) 읽는 바인딩을 셌다. IIFE 와 `forEach` 콜백은 그 자리에서 도는 코드로 쳤다.
 
-- 순환 밖 잎(boot·dom·state·markdown·scroll·sse·copy·attach·ledger)의 바인딩: `$messages`·`$input`
+- 순환 밖 잎(boot·dom·state·markdown·scroll·sse·copy·attach·ledger·stuck)의 바인딩: `$messages`·`$input`
   같은 DOM 참조와 `es`. 잎은 자기보다 앞의 모듈만 import 하므로 app.js 에 적힌 순서대로
   평가된다. 그래서 순환의 어느 모듈보다 먼저다.
 - 순환 안 모듈의 바인딩을 평가 시점에 읽는 곳은 **하나뿐**이다. channels 의 채널 바 IIFE 가
@@ -272,6 +273,7 @@ ES 모듈의 import 는 정의 모듈 변수의 **살아 있는 별칭**이다. 
 | `timeline.js` | 353·384·389 | `es` (sse) |
 | `share.js` | 60·66·72·80·89·105·111·116·124·130·166·174·185·191·196·200·212·220·233·241·260·266·274 | `es` (sse) |
 | `ledger.js` | 96 | `es` (sse) |
+| `stuck.js` | 58 | `es` (sse) |
 | `roster.js` | 13·16·24·216 | `es` (sse) |
 | `channels.js` | 354 | `ovSyncChannels` (runs) — 호출 |
 | `channels.js` | 355 | `frameShowChannel` (frames) — 호출 |
@@ -280,7 +282,7 @@ dom·sse 는 순환 밖 잎이다. 순환 안을 향하는 것은 channels 354·
 호출은 옛 [31] 의 채널 바 IIFE 다. 호출을 따라가면 frames 의 const 들과 `session` 을 읽는다.
 
 ES 모듈의 평가는 깊이 우선 후위 순서다. 순환에서는 **처음 import 된 모듈이 마지막에 평가된다**
-— 그 모듈의 import 를 따라 순환의 나머지가 모두 먼저 끝난다. 그래서 app.js 는 잎 여덟(v10.119.0 부터 아홉 — `ledger` 가 `attach` 뒤) 다음에
+— 그 모듈의 import 를 따라 순환의 나머지가 모두 먼저 끝난다. 그래서 app.js 는 잎 여덟(v10.119.0 부터 아홉 — `ledger` 가 `attach` 뒤, v10.120.0 부터 열 — `stuck` 이 `ledger` 뒤) 다음에
 **channels 를 순환의 첫 멤버로** import 한다. channels 의 채널 바 IIFE 가 돌 때 순환의 다른
 모듈은 전부 평가돼 있다. app.js 의 channels 뒤 아홉 줄은 이미 평가된 모듈이라 하는 일이 없고,
 모듈 목록으로 둔다.
@@ -288,7 +290,7 @@ ES 모듈의 평가는 깊이 우선 후위 순서다. 순환에서는 **처음 
 실제 평가 순서는 이렇다(import 줄로 모의):
 
 ```
-boot dom state markdown scroll sse copy attach ledger | progress thumbs cards runs roster share frames timeline input channels
+boot dom state markdown scroll sse copy attach ledger stuck | progress thumbs cards runs roster share frames timeline input channels
 ```
 
 진입점이 바뀌면 깨진다. frames 를 순환의 첫 import 로 두면 node 에서
@@ -297,8 +299,8 @@ boot dom state markdown scroll sse copy attach ledger | progress thumbs cards ru
 순서가 옮겨 간 나머지 top-level 부작용은 서로 무관함을 확인했다.
 
 - 같은 대상·같은 이벤트에 여러 모듈이 리스너를 거는 곳이 없다. SSE 이벤트 종류마다 등록은
-  한 모듈 한 번이다. (v10.119.0 의 `open_items` 는 ledger, `document` 의 `agentcli:jump` 는 channels
-  하나씩이다. 잎이 순환 안 함수를 부를 일은 이벤트로 넘긴다 — 잎이 순환 모듈을 import 하면 잎이
+  한 모듈 한 번이다. (v10.119.0 의 `open_items` 는 ledger, `document` 의 `agentcli:jump` 는 channels,
+  v10.120.0 의 `stuck` 은 stuck 하나씩이다. 잎이 순환 안 함수를 부를 일은 이벤트로 넘긴다 — 잎이 순환 모듈을 import 하면 잎이
   순환에 들어가고, app.js 순서상 channels 보다 앞이라 진입점이 바뀐다.)
 - `scroll.js` 의 `MutationObserver`(#messages)는 잎이라 channels 의 IIFE 가 #messages 를
   건드리기 전에 걸린다. 옛 순서([7] → [31])와 같다.
@@ -308,7 +310,7 @@ boot dom state markdown scroll sse copy attach ledger | progress thumbs cards ru
 
 `es` 는 `sse.js` 에서 만들고, 핸들러(`es.addEventListener`)는 각 소유 모듈이 `import { es }`
 해서 건다 — timeline 의 `scope_*`, share 의 대화 카드 이벤트들, input 의 `input_required`·
-`input_resolved`·`worker_state`, roster 의 `snapshot_end`·`identity`·`viewers`·`queue`, ledger 의 `open_items`(v10.119.0).
+`input_resolved`·`worker_state`, roster 의 `snapshot_end`·`identity`·`viewers`·`queue`, ledger 의 `open_items`(v10.119.0), stuck 의 `stuck`(v10.120.0).
 top-level await 가 없는 모듈 그래프는 한 작업(task) 안에서 동기로 끝까지 평가된다. EventSource
 의 이벤트는 그 뒤의 작업으로 디스패치되므로, 첫 이벤트가 오기 전에 모든 모듈의 등록이 끝나
 있다. 옛 단일 파일에서 [24] 뒤에 등록하던 것과 같다.
