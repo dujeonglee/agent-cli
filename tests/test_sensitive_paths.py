@@ -378,7 +378,7 @@ class TestSensitiveReadsAreGatedEvenWhenReadOnly:
         self._refuse(monkeypatch)
         paths = _confine.extract_shell_paths(cmd)
         assert paths, f"경로 토큰조차 못 뽑았다: {cmd}"
-        err, _ = _confine.guard(paths, "shell", command=cmd)
+        err = _confine.guard(paths, "shell", command=cmd)
         assert err is not None and "sensitive" in err
 
     def test_ordinary_outside_read_stays_silent(self, monkeypatch, tmp_path):

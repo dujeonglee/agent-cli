@@ -529,6 +529,10 @@ class TestWebMain:
             calls[6], ensure_ascii=False
         )
         assert [x["detail"]["fires"] for x in _failures(ctx)] == [1, 2]
+        # StaleGuard 확인의 코멘트는 Hint 로만 — 도구 결과 끝의 사람 말 줄이 아니다
+        # (v10.120.2 `human_note` 는 안전 확인 두 곳만 기록한다).
+        assert "User note when" not in json.dumps(calls, ensure_ascii=False)
+        assert "User note when" not in json.dumps(hist, ensure_ascii=False)
 
     def test_stop_ends_the_run_with_the_fact(self, web, caps, tmp_path):
         r, _conn = web
@@ -711,7 +715,7 @@ class TestAutoApproveDoesNotSkipThePause:
         )
         r.confirm = MagicMock(side_effect=AssertionError("⚡ 에서는 묻지 않는다"))
         monkeypatch.setattr(render, "get_renderer", lambda: r)
-        assert _confine.guard([str(outside / "x")], "write_file") == (None, "")
+        assert _confine.guard([str(outside / "x")], "write_file") is None
         want = "⚡ Auto-approved (no confirmation): ⚠ write_file touches path(s)"
         assert recorded == [f"{want} outside the workspace"]
 

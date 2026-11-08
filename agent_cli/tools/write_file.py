@@ -96,7 +96,7 @@ def tool_write_file(args: dict) -> ToolResult:
     content = args.get("content", "")
     from agent_cli.tools import _confine
 
-    denial, comment = _confine.guard([path], "write_file")
+    denial = _confine.guard([path], "write_file")
     if denial:
         return ToolResult(False, error=denial)
     try:
@@ -145,7 +145,7 @@ def tool_write_file(args: dict) -> ToolResult:
         from agent_cli.tools.code_index import post_hook
 
         post_hook(path)
-        return ToolResult(True, output=_confine.with_approval_note(msg, comment))
+        return ToolResult(True, output=msg)
     except Exception as e:
         return ToolResult(False, error=f"write_file failed: {e}")
 

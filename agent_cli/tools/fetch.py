@@ -819,7 +819,7 @@ def tool_fetch(args: dict) -> ToolResult:
             return ToolResult(False, error="download_to must be a file path")
         from agent_cli.tools import _confine
 
-        denial, comment = _confine.guard([download_to], "fetch")
+        denial = _confine.guard([download_to], "fetch")
         if denial:
             return ToolResult(False, error=denial)
         content, error = _download(url, download_to)
@@ -830,7 +830,7 @@ def tool_fetch(args: dict) -> ToolResult:
         # (v10.118.0 — 종전의 `HTTP (\d+): ` 재파싱·`_HTTP_FACTS` 덧붙이기 삭제).
         return ToolResult(False, error=error)
     if download_to is not None:
-        return ToolResult(True, output=_confine.with_approval_note(content, comment))
+        return ToolResult(True, output=content)
 
     # No truncation here. If the result is over the oversized cap, the shared
     # ``Tool.render_oversized`` policy persists it to a file and returns an
