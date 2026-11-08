@@ -192,8 +192,53 @@ class TestRowRhythm:
         row.locator(".s").click()
         assert _wait(lambda: body.is_visible())
         assert row.locator(".x").inner_text().strip() == "▾"
-        row.locator(".s").click()
+        # v10.119.2: 펼치면 요약 칸이 본문으로 바뀐다 — 접기는 종류 칸에서
+        assert not row.locator(".s").is_visible()
+        row.locator(".k").click()
         assert _wait(lambda: not body.is_visible())
+
+    def test_open_row_shows_its_first_line_once(self, stack, page):
+        """v10.119.2: 펼치면 요약 칸이 본문으로 바뀐다 — 종전엔 관찰의 첫 줄이
+        요약으로 한 번, 본문 첫 줄로 한 번 두 번 보였다(사용자 보고). 접으면
+        요약이 돌아온다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        first = "collected 412 items"
+        stack.renderer.observation(
+            first + "\n412 passed in 3.1s\nok", turn=1, tool_name="shell", success=True
+        )
+        assert _wait(lambda: self._rows(page).count() > 0)
+        row = self._rows(page).first
+        summary = row.locator(".s")
+        assert summary.is_visible() and summary.inner_text().strip() == first
+        row.locator(".s").click()
+        assert _wait(lambda: row.locator(".row-body").is_visible())
+        assert not summary.is_visible(), "펼친 줄에 요약 칸이 남으면 첫 줄이 두 번"
+        assert row.inner_text().count(first) == 1
+        # 본문은 요약 자리(첫 행)에 선다 — 요약이 빠진 자리를 .x 가 먹으면 본문이
+        # 둘째 행으로 밀려 첫 줄이 종류 칸보다 한 줄 아래 선다(실측)
+        k, b, x = (row.locator(c).bounding_box() for c in (".k", ".row-body", ".x"))
+        assert b["y"] < k["y"] + k["height"], (k, b)
+        assert x["x"] >= b["x"] + b["width"] - 1, (b, x)
+        row.locator(".k").click()  # 요약 칸이 숨었으니 종류 칸으로 접는다
+        assert _wait(lambda: not row.locator(".row-body").is_visible())
+        assert summary.is_visible()
+
+    def test_open_thought_row_shows_its_first_line_once(self, stack, page):
+        """v10.119.2: 생각 줄(최종답 카드 — 펼친 채 온다)도 같은 규칙."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        first = "먼저 실패한 테스트를 본다"
+        stack.renderer.thought(first + "\n\n그다음 워커 경합을 의심한다", 1)
+        stack.renderer.final("done", 1)
+        assert _wait(lambda: page.locator(".card-assistant .final").count() == 1)
+        think = page.locator(".card-assistant .row.think").first
+        assert think.locator(".row-body").is_visible()
+        assert not think.locator(".s").is_visible()
+        assert think.inner_text().count(first) == 1
+        think.locator(".k").click()
+        assert _wait(lambda: not think.locator(".row-body").is_visible())
+        assert think.locator(".s").is_visible()
 
     def test_failed_observation_stays_folded_with_its_cause(self, stack, page):
         """v10.19.0: 실패도 접어 둔다 — 펼쳐진 실패가 옆의 성공한 스텝을 가렸다.
