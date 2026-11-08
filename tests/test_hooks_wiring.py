@@ -43,6 +43,7 @@ def _all_ports():
             agent_registry=_Reg(),
             mcp_manager=_S,
             dequeue_user_message=_S,
+            enqueue_user_message=_S,
             route_message=_S,
         ),
         "resident": ResidentLoop.make_ports(
@@ -146,6 +147,7 @@ class TestBuiltinHooksDir:
             agent_registry=None,
             mcp_manager=None,
             dequeue_user_message=None,
+            enqueue_user_message=None,
             route_message=None,
         )
         cfg = LoopConfig(tools_list=["shell"], hook_runner=ports.hook_runner)

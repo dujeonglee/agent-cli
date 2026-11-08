@@ -47,7 +47,7 @@
 
 | | |
 |---|---|
-| 생성 | `core.py:623-640` 스타터(main `query_request_id`, 상주 `user_requests`) · `:774-780` 런 도중 큐 드레인(라우팅 명령·`system` 깨우기 제외) · `:859-867` 상주 `_absorb_inbox` 의 `user_request`. 예약 발화(`server.enqueue_scheduled`)도 일반 큐라 **사람 요청과 똑같이** 여기 오른다 |
+| 생성 | `core.py:623-640` 스타터(main `query_request_id`, 상주 `user_requests`) · `:774-780` 런 도중 큐 드레인(라우팅 명령·`system` 깨우기 제외) · `:859-867` 상주 `_absorb_inbox` 의 `user_request`. 예약 발화(`server.enqueue_named`)도 일반 큐라 **사람 요청과 똑같이** 여기 오른다 |
 | 표시 | 꼬리 `outstanding_requests_block`(`constants.py:143`) — 매 턴, 1건이어도 |
 | 강제 | ① `_require_answers`(`dispatch.py:962`) `answers` 없이 `complete` → **런당 1회 되돌림, 결과 미배달** ② `_settle_requests`(`:1009`) 주장 id 삭제, 생략이면 전부 삭제(모름) ③ `_nag_open_requests`(`:1050`) 남은 것 **요청당 1회 독촉, 결과 먼저 배달 후 계속** ④ `_with_unanswered_notice`(`:1150`) 최종답 말미 `⏳`/`📋` |
 | 영속 | 메모리(런 수명). 디스크엔 user 레코드 `request_id`, 종결 레코드 `answers`·`open_requests`. main 은 끊긴 런의 요청을 되살리지 않음, 상주는 `in_flight` 재주입 |

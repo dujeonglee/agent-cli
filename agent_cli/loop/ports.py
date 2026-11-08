@@ -53,6 +53,10 @@ class LoopPorts:
     hook_runner: Any
     route_message: Any
     dequeue_user_message: Any
+    #: main 전용 (v10.120.0): ``(text, nickname) -> item`` — 입력 큐에 사람 요청 하나를
+    #: 넣는다. 사람이 입력창에 친 메시지와 같은 길(다음 턴 경계 흡수 → ``u-N`` 장부)로
+    #: 가야 하는 하니스 쪽 입력이 쓴다: 제자리 고리 확인(StaleGuard)의 Hint.
+    enqueue_user_message: Any
     #: 상주 에이전트 전용 (v9.25.0): 턴 경계에서 받은편지함을 비워
     #: ``[{"record": …} | {"user_request": …}]`` 로 돌려주는 콜러블. 런 도중
     #: 도착한 요청이 다음 런까지 기다리지 않게 한다 — main 이 ``dequeue_user_

@@ -452,6 +452,20 @@ def _wake_items(owner: str, _seen: frozenset = frozenset()) -> list[tuple[str, s
     return out
 
 
+def harness_work_running(owner: str) -> bool:
+    """이 소유자의 하니스 작업이 도는 중인가 — 돌고 있는 `shell background` 작업이나 살아 있는
+    모니터 (v10.120.0). StaleGuard 가 그 턴을 제자리로 세지 않는다: 작업을 기다리며 같은 로그를
+    다시 보는 것은 고리가 아니다(오프라인 대입의 폴링 오탐 — apt-get 을 tail 로 반복해 봄)."""
+    from agent_cli.jobs import get_job_registry
+    from agent_cli.monitor.runtime import get_monitor_registry
+
+    jobs = get_job_registry()
+    if jobs is not None and jobs.running(owner):
+        return True
+    mons = get_monitor_registry()
+    return mons is not None and any(m.owner == owner for m in mons.list_all())
+
+
 def wake_sources(owner: str, _seen: frozenset = frozenset()) -> list[str]:
     """이 소유자를 **깨울 수 있는 것** — `wait` 도구의 판정 (v10.65.0, docs/wait/DESIGN.md).
 
@@ -639,6 +653,7 @@ class MainLoop(LoopKind):
         agent_registry,
         mcp_manager,
         dequeue_user_message,
+        enqueue_user_message,
         route_message,
         max_turns: int,
         max_depth: int,
@@ -661,12 +676,18 @@ class MainLoop(LoopKind):
             agent_registry=agent_registry,
             mcp_manager=mcp_manager,
             dequeue_user_message=dequeue_user_message,
+            enqueue_user_message=enqueue_user_message,
             route_message=route_message,
         )
 
     @staticmethod
     def make_ports(
-        *, agent_registry, mcp_manager, dequeue_user_message, route_message
+        *,
+        agent_registry,
+        mcp_manager,
+        dequeue_user_message,
+        enqueue_user_message,
+        route_message,
     ) -> LoopPorts:
         return LoopPorts(
             owner="main",
@@ -674,6 +695,7 @@ class MainLoop(LoopKind):
             agent_registry=agent_registry,
             mcp_manager=mcp_manager,
             dequeue_user_message=dequeue_user_message,
+            enqueue_user_message=enqueue_user_message,
             route_message=route_message,
             message_handler=None,
             hook_runner=_hook_runner_port(),

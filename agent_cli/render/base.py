@@ -64,13 +64,29 @@ class Renderer(ABC):
         self._thread_agent: dict[int, str] = {}  # tid → delegate label
         self._thread_thought: dict[int, str] = {}  # tid → last reasoning
         self._thread_action: dict[int, str] = {}  # tid → last action line
-        # ⚡ 자동 승인 (노브 `auto_approve`, v10.43.0 — 종전 web 전용): confirm()
-        # 이 묻지 않고 첫 선택지(허용)로 답한다. 세션 한정, 기본 off.
+        # ⚡ 자동 승인 (노브 `auto_approve`, v10.43.0 — 종전 web 전용): 안전 확인
+        # (위험 셸·경로)을 묻지 않고 허용한다 — `auto_approved` 가 판정한다. 세션 한정, 기본 off.
         self.auto_approve: bool = False
 
     def set_auto_approve(self, on: bool) -> None:
         """⚡ 자동 승인 토글 — web 은 sticky 전파를 덧붙인다."""
         self.auto_approve = bool(on)
+
+    def auto_approved(self, label: str) -> bool:
+        """⚡ 자동 승인이 켜져 있으면 무엇을 묻지 않고 허용했는지 남기고 ``True`` (v10.120.0).
+
+        안전 확인(위험 셸 `shell._ask_confirmation`·경로 `_confine`)이 ``confirm`` **전에**
+        부른다. 종전엔 이 검사가 ``confirm`` 안에 있어 모든 확인이 자동으로 답해졌다 —
+        StaleGuard 의 멈춤 질문(런을 세우고 사람의 결정을 받는 확인)까지. 자동 승인의 뜻은
+        "위험 확인을 묻지 마라" 라 정책은 그 호출자의 것이고, ``confirm`` 은 언제나 묻는다.
+        기록 모양은 렌더러가 정한다(`_note_auto_approved`)."""
+        if not self.auto_approve:
+            return False
+        self._note_auto_approved(f"⚡ Auto-approved (no confirmation): {label}")
+        return True
+
+    def _note_auto_approved(self, text: str) -> None:
+        """자동 승인 기록 한 줄 — Default no-op; CLI 는 콘솔 줄, web 은 관찰 카드."""
 
     # ── Depth (nesting) ──────────────────────────────
 
@@ -200,6 +216,25 @@ class Renderer(ABC):
     def note_request(self, request_id: str, hidx: int) -> None:
         """장부 항목 ``request_id`` 의 원문 레코드 history 서수 (v10.119.0) —
         `open_items` 의 행이 그 카드로 점프하는 데 쓴다. Default no-op."""
+
+    def stale_loop(self, info: dict) -> None:
+        """제자리 고리 (v10.120.0, docs/stale-guard/DESIGN.md) — ``info`` 는
+        ``{turns_without_new, since_turn, fires, asking}``. 발화할 때, 발화 뒤 제자리 턴이
+        이어질 때(N 이 는다), 새 결과가 나오거나 런이 끝날 때(``turns_without_new`` 0 =
+        지운다) 온다. 모델 입력과 무관한 표시 전용이다. Default no-op — web 은 입력창 위
+        띠(스티키 ``stuck``), CLI 는 발화마다 흐린 한 줄."""
+
+    def can_pause_for_human(self) -> bool:
+        """런을 멈추고 사람에게 물어 결정을 받을 수 있는 표면인가 (v10.120.0, StaleGuard 의
+        두 번째 발화). ``can_prompt`` 와 다른 질문이다 — CLI 는 TTY 가 있어도 묻지 않는다
+        (``run`` 은 사람 없이 끝나는 것이 결정이다). Default ``False``; web 만 ``True``."""
+        return False
+
+    def confirm_author(self) -> str:
+        """이 스레드가 방금 받은 ``confirm`` 답을 누가 냈는가 — 뷰어의 닉네임, 모르면 ``""``
+        (v10.120.0). 확인의 코멘트를 그 사람의 메시지로 넣는 쪽(StaleGuard 의 Hint)이 쓴다.
+        Default ``""`` — CLI 의 답은 터미널의 한 사람이다."""
+        return ""
 
     def prompt_meta(self) -> dict[str, str]:
         """Provenance for an interactive prompt on the current thread:

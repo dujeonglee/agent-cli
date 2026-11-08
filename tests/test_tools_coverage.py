@@ -605,6 +605,9 @@ class TestShellConfirmationComments:
         captured: dict = {}
 
         class Spy:
+            def auto_approved(self, label):  # ⚡ 꺼짐 (v10.120.0 — 판정은 confirm 밖)
+                return False
+
             def confirm(
                 self, prompt, options, *, default_key, command=None, danger_spans=None
             ):

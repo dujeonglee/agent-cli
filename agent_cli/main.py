@@ -1517,6 +1517,10 @@ def run(
             agent_registry=agent_registry,
             mcp_manager=mcp_manager,
             dequeue_user_message=input_queue.dequeue_nowait,
+            # run 은 묻지 않는다(StaleGuard) — 그래도 큐는 같은 큐다: 예약 발화와 같은 모양
+            enqueue_user_message=lambda text, nickname: input_queue.enqueue(
+                None, text, nickname=nickname
+            ),
             route_message=lambda text: pump.route(text),
             max_turns=max_turns,
             max_depth=max_depth,
@@ -2394,7 +2398,7 @@ def web(
     # 예약 발화는 사용자 요청처럼 큐로 들어온다. 첫 정산이 꺼져 있던 동안 지난
     # 발화를 질문으로 남긴다 (docs/schedule/DESIGN.md §5).
     schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
-    schedule_registry.enqueue = server.enqueue_scheduled
+    schedule_registry.enqueue = server.enqueue_named
     schedule_registry.on_change = renderer.broadcast_schedules_changed
     schedule_registry.start()
 
@@ -2516,6 +2520,7 @@ def web(
             agent_registry=agent_registry,
             mcp_manager=mcp_manager,
             dequeue_user_message=server.dequeue_nowait,
+            enqueue_user_message=server.enqueue_named,
             route_message=lambda text: pump.route(text),
             max_turns=max_turns,
             max_depth=max_depth,

@@ -35,6 +35,7 @@ BUILDERS = {
         agent_registry=_Reg(),
         mcp_manager=_S,
         dequeue_user_message=_S,
+        enqueue_user_message=_S,
         route_message=_S,
     ),
     "skill": lambda: SkillLoop.make_ports(agent_registry=_Reg(), owner="agent:parent"),

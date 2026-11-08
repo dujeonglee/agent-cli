@@ -129,10 +129,14 @@ def _ask_confirmation(cmd: str, keyword: str) -> tuple[str, str]:
             aliases=("always", "allow"),
         ),
     ]
+    # ⚡ 자동 승인 (v10.120.0 부터 confirm 밖 — 정책은 안전 확인의 것): 묻지 않고 once.
+    renderer = get_renderer()
+    if renderer.auto_approved(cmd):
+        return ("y", "")
     # Renderer guarantees ``key`` is one of the option keys (or default
     # on EOF / empty / unrecognized) and preserves any free-text comment
     # so the user's intent surfaces upstream to the LLM observation.
-    return get_renderer().confirm(
+    return renderer.confirm(
         prompt,
         options,
         default_key="n",

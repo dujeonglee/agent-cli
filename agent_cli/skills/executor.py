@@ -226,6 +226,7 @@ class SkillLoop(LoopKind):
             hook_runner=_hook_runner_port(),
             route_message=None,
             dequeue_user_message=None,
+            enqueue_user_message=None,
             absorb_inbox=None,
             peer_roster=None,
             unwired={
@@ -235,6 +236,7 @@ class SkillLoop(LoopKind):
                 **_hook_unwired(),
                 "route_message": _WEB_ONLY,
                 "dequeue_user_message": _WEB_ONLY,
+                "enqueue_user_message": _WEB_ONLY,
                 "absorb_inbox": _NO_INBOX,
                 "peer_roster": _RESIDENT_ROSTER,
             },
