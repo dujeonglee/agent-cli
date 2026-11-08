@@ -1,3 +1,3 @@
 """agent_cli -- modular agentic loop CLI."""
 
-__version__ = "10.120.0"
+__version__ = "10.120.1"

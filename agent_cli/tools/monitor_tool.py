@@ -240,7 +240,7 @@ class MonitorTool(Tool):
             except ValueError as exc:
                 return ToolResult(False, error=BAD_DEADLINE.format(why=exc))
 
-        gate = _gate_command(cond)
+        gate, comments = _gate_command(cond)
         if gate:
             return ToolResult(False, error=gate)
         # `command` 는 셸 권한이다 — `shell` 이 없는 루프(감사자처럼 읽기 전용
@@ -276,16 +276,21 @@ class MonitorTool(Tool):
             return ToolResult(False, error=str(exc))
 
         left = format_duration(mon.deadline_at - _t.time())
+        from agent_cli.tools import _confine
+
         return ToolResult(
             True,
-            output=added_text(
-                mon.id, mon.cond.describe(), left, once=mon.once, note=note
+            output=_confine.with_approval_note(
+                added_text(mon.id, mon.cond.describe(), left, once=mon.once, note=note),
+                *comments,
             ),
         )
 
 
-def _gate_command(cond) -> str | None:
+def _gate_command(cond) -> tuple[str | None, list[str]]:
     """`command` 조건은 임의 명령을 돈다 — **등록 시점에** 게이트한다.
+    ``(거부 | None, 승인 코멘트들)`` — 코멘트는 등록 결과 끝에 붙는다 (v10.120.1,
+    `shell` 과 같은 줄).
 
     발화 시점이 아닌 이유 둘:
 
@@ -306,16 +311,19 @@ def _gate_command(cond) -> str | None:
     from agent_cli.monitor.conditions import CommandCondition
 
     if not isinstance(cond, CommandCondition):
-        return None
+        return None, []
     from agent_cli.tools import _confine
     from agent_cli.tools.shell import confirm_dangerous
 
     cmd = cond.command
-    denied, _ = confirm_dangerous(cmd)
+    denied, keyword_comment = confirm_dangerous(cmd)
     if denied:
-        return denied
+        return denied, []
+    path_comment = ""
     if _confine.enabled():
-        err = _confine.guard(_confine.extract_shell_paths(cmd), "monitor", command=cmd)
+        err, path_comment = _confine.guard(
+            _confine.extract_shell_paths(cmd), "monitor", command=cmd
+        )
         if err:
-            return err
-    return None
+            return err, []
+    return None, [c for c in (keyword_comment, path_comment) if c]

@@ -711,7 +711,7 @@ class TestAutoApproveDoesNotSkipThePause:
         )
         r.confirm = MagicMock(side_effect=AssertionError("⚡ 에서는 묻지 않는다"))
         monkeypatch.setattr(render, "get_renderer", lambda: r)
-        assert _confine.guard([str(outside / "x")], "write_file") is None
+        assert _confine.guard([str(outside / "x")], "write_file") == (None, "")
         want = "⚡ Auto-approved (no confirmation): ⚠ write_file touches path(s)"
         assert recorded == [f"{want} outside the workspace"]
 

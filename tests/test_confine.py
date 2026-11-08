@@ -149,7 +149,7 @@ class TestTildeIsExpanded:
             lambda self, *a, **k: (seen.append(1), ("n", ""))[1],
         )
         paths = _confine.extract_shell_paths(cmd)
-        err = _confine.guard(paths, "shell", command=cmd)
+        err, _ = _confine.guard(paths, "shell", command=cmd)
         assert seen, f"{cmd}: 확인을 묻지 않았다"
         assert err is not None
 
@@ -167,18 +167,18 @@ class TestGuardGating:
         _, outside = confined
         monkeypatch.setenv("AGENT_CLI_WORKSPACE_CONFINE", "0")
         # Even an outside path passes untouched when the gate is off.
-        assert _confine.guard([str(outside / "x")], "write_file") is None
+        assert _confine.guard([str(outside / "x")], "write_file") == (None, "")
 
     def test_inside_path_no_prompt(self, confined):
         ws, _ = confined
         # No renderer forced / input patched → if it prompted, it'd refuse or
         # hang. None means it passed without prompting.
-        assert _confine.guard([str(ws / "deep/x.txt")], "write_file") is None
+        assert _confine.guard([str(ws / "deep/x.txt")], "write_file") == (None, "")
 
     def test_outside_cannot_prompt_refused(self, confined):
         _, outside = confined
         # pytest has no TTY → can_prompt False → refuse (not hang).
-        denial = _confine.guard([str(outside / "x")], "write_file")
+        denial, _ = _confine.guard([str(outside / "x")], "write_file")
         assert denial is not None
         assert "outside the workspace" in denial
         assert "AGENT_CLI_WORKSPACE_CONFINE=0" in denial
@@ -206,7 +206,7 @@ class TestDevicePseudoFiles:
     )
     def test_device_passes_without_prompt(self, confined, dev):
         # pytest 엔 TTY 가 없어 물으면 거절 문자열이 온다 — None 은 안 물은 것
-        assert _confine.guard([dev], "shell", command=f"cmd >{dev}") is None
+        assert _confine.guard([dev], "shell", command=f"cmd >{dev}") == (None, "")
 
     @pytest.mark.parametrize(
         "cmd",
@@ -222,7 +222,7 @@ class TestDevicePseudoFiles:
         세그먼트를 "바꿀 수 있음"으로 올려 읽기 대상 `/tmp/w1.log` 를 물었다."""
         paths = _confine.extract_shell_paths(cmd)
         assert "/tmp/w1.log" not in paths and "/tmp/x" not in paths
-        assert _confine.guard(paths, "shell", command=cmd) is None
+        assert _confine.guard(paths, "shell", command=cmd) == (None, "")
 
     def test_stderr_redirect_to_a_real_file_is_still_a_write(self, confined):
         """``2>/tmp/err.log`` — 종전엔 ``2>`` 토큰이 통째로 버려져 밖으로 쓰는
@@ -231,7 +231,7 @@ class TestDevicePseudoFiles:
         cmd = f"make 2>{outside}/err.log"
         paths = _confine.extract_shell_paths(cmd)
         assert f"{outside}/err.log" in paths
-        denial = _confine.guard(paths, "shell", command=cmd)
+        denial, _ = _confine.guard(paths, "shell", command=cmd)
         assert denial is not None and "outside the workspace" in denial
 
     def test_file_redirect_still_makes_the_segment_mutating(self, confined, tmp_path):
@@ -241,11 +241,11 @@ class TestDevicePseudoFiles:
         assert str(out) in paths
 
     def test_block_device_still_gated(self, confined):
-        denial = _confine.guard(["/dev/disk0"], "shell", command="dd of=/dev/disk0")
+        denial, _ = _confine.guard(["/dev/disk0"], "shell", command="dd of=/dev/disk0")
         assert denial is not None and "outside the workspace" in denial
 
     def test_write_file_to_dev_null_passes(self, confined):
-        assert _confine.guard(["/dev/null"], "write_file") is None
+        assert _confine.guard(["/dev/null"], "write_file") == (None, "")
 
 
 class TestSystemTempDirs:
@@ -259,28 +259,30 @@ class TestSystemTempDirs:
 
     def test_temp_file_passes_without_prompt(self, confined, tmp_path):
         target = tmp_path / "systmp" / "build" / "x.log"
-        assert _confine.guard([str(target)], "write_file") is None
+        assert _confine.guard([str(target)], "write_file") == (None, "")
         cmd = f"make 2>{target}"
-        assert (
-            _confine.guard(_confine.extract_shell_paths(cmd), "shell", command=cmd)
-            is None
-        )
+        assert _confine.guard(
+            _confine.extract_shell_paths(cmd), "shell", command=cmd
+        ) == (None, "")
 
     def test_temp_root_itself_passes(self, confined, tmp_path):
         root = tmp_path / "systmp"
-        assert _confine.guard([str(root)], "shell", command=f"cd {root}; ls") is None
+        assert _confine.guard([str(root)], "shell", command=f"cd {root}; ls") == (
+            None,
+            "",
+        )
 
     def test_symlink_in_temp_pointing_outside_still_gated(self, confined, tmp_path):
         """resolve 결과로 비교한다 — `/tmp/link -> <밖>` 은 여전히 밖이다."""
         _, outside = confined
         link = tmp_path / "systmp" / "link"
         link.symlink_to(outside, target_is_directory=True)
-        denial = _confine.guard([str(link / "x")], "write_file")
+        denial, _ = _confine.guard([str(link / "x")], "write_file")
         assert denial is not None and "outside the workspace" in denial
 
     def test_sensitive_name_in_temp_still_asks(self, confined, tmp_path):
         """민감 경로 사전은 임시 통과보다 먼저 본다."""
-        denial = _confine.guard(
+        denial, _ = _confine.guard(
             [str(tmp_path / "systmp" / "id_rsa")], "read_file", check_workspace=False
         )
         assert denial is not None and "sensitive" in denial
@@ -312,7 +314,7 @@ class TestGuardPromptFlow:
         _, outside = confined
         _allow_prompt(monkeypatch)
         with patch("builtins.input", return_value="y"):
-            assert _confine.guard([str(outside / "x")], "write_file") is None
+            assert _confine.guard([str(outside / "x")], "write_file") == (None, "")
         # `y` does NOT allowlist — a second op prompts again.
         assert not _confine._session_root_allowlist
 
@@ -320,7 +322,7 @@ class TestGuardPromptFlow:
         _, outside = confined
         _allow_prompt(monkeypatch)
         with patch("builtins.input", return_value="n wrong place"):
-            denial = _confine.guard([str(outside / "x")], "write_file")
+            denial, _ = _confine.guard([str(outside / "x")], "write_file")
         assert denial is not None
         assert "User denied" in denial
         assert "wrong place" in denial  # free-text comment surfaced
@@ -329,11 +331,11 @@ class TestGuardPromptFlow:
         _, outside = confined
         _allow_prompt(monkeypatch)
         with patch("builtins.input", return_value="a"):
-            assert _confine.guard([str(outside / "hdr" / "a.h")], "shell") is None
+            assert _confine.guard([str(outside / "hdr" / "a.h")], "shell") == (None, "")
         # Sibling under the same dir passes WITHOUT a second prompt (input
         # patched to raise → would fire if it prompted).
         with patch("builtins.input", side_effect=AssertionError("should not prompt")):
-            assert _confine.guard([str(outside / "hdr" / "b.h")], "shell") is None
+            assert _confine.guard([str(outside / "hdr" / "b.h")], "shell") == (None, "")
 
 
 # ── shell path extraction (best-effort) ────────────────────
@@ -460,7 +462,7 @@ class TestConfineWaitsForLateViewer:
         results = []
 
         def worker():
-            results.append(_confine.guard([str(outside / "x.txt")], "read_file"))
+            results.append(_confine.guard([str(outside / "x.txt")], "read_file")[0])
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
@@ -538,7 +540,7 @@ class TestConfineHighlight:
         captured = self._spy(monkeypatch)
         p = str(outside / "a.c")
         cmd = f"cat > {p}"
-        assert _confine.guard([p], "shell command", command=cmd) is None
+        assert _confine.guard([p], "shell command", command=cmd) == (None, "")
         assert captured["command"] == cmd
         i = cmd.index(p)
         assert captured["danger_spans"] == [(i, i + len(p))]
@@ -546,7 +548,7 @@ class TestConfineHighlight:
     def test_write_file_prompt_only_no_command(self, confined, monkeypatch):
         _, outside = confined
         captured = self._spy(monkeypatch)
-        assert _confine.guard([str(outside / "x")], "write_file") is None
+        assert _confine.guard([str(outside / "x")], "write_file") == (None, "")
         assert captured["command"] is None
         assert captured["danger_spans"] is None
 
@@ -559,7 +561,7 @@ class TestConfineHighlight:
 
         def fake_guard(paths, action, *, command=None):
             seen["command"] = command
-            return "denied for test"
+            return "denied for test", ""
 
         monkeypatch.setattr(_confine, "guard", fake_guard)
         _, outside = confined

@@ -2169,42 +2169,20 @@ class WebRenderer(Renderer):
         back to the assistant card to see what they're answering.
         """
 
-        # Emit + wait run together under ``_guarded_read``'s shared lock so
-        # only one ``input_required`` is outstanding at a time — otherwise
-        # two concurrent delegate prompts would both block on the single
-        # ``_input_queue`` and one answer could satisfy the wrong worker.
         meta = self.prompt_meta()
-
-        def _do() -> str:
-            # Anything already in the queue predates this prompt's announce —
-            # stale by definition; must not auto-answer it.
-            self._drain_stale_input()
-            # Sticky (not bare emit): a pending prompt must replay into a
-            # late/reconnecting client's snapshot, else the worker waits for an
-            # answer the UI never offered (the prompt is invisible). Cleared on
-            # resolve so a fresh connection doesn't see the stale question.
-            self.set_sticky(
-                "input_required",
-                "input_required",
-                {
-                    "kind": "prompt",
-                    "prompt": prompt,
-                    "multiline": multiline,
-                    "continuation": continuation,
-                    "context": context,
-                    # Who/why: which delegate agent is asking + its
-                    # reasoning, so the user can attribute the prompt.
-                    "agent": meta["agent"],
-                    "reasoning": meta["reasoning"],
-                },
-            )
-            try:
-                return self._wait_for_input()
-            finally:
-                self.clear_sticky("input_required")
-                self._emit("input_resolved", {}, persistent=False)
-
-        value = self._guarded_read(_do)
+        value = self._await_human(
+            "prompt",
+            {
+                "prompt": prompt,
+                "multiline": multiline,
+                "continuation": continuation,
+                "context": context,
+                # Who/why: which delegate agent is asking + its
+                # reasoning, so the user can attribute the prompt.
+                "agent": meta["agent"],
+                "reasoning": meta["reasoning"],
+            },
+        )
         return value if value else default
 
     def can_prompt(self) -> bool:
@@ -2258,21 +2236,11 @@ class WebRenderer(Renderer):
 
         # ⚡ 자동 승인은 여기서 보지 않는다 (v10.120.0) — 안전 확인의 호출자가 먼저
         # `auto_approved` 를 부른다. confirm 은 언제나 묻는다(StaleGuard 의 멈춤 질문).
-        # Emit + wait run together under ``_guarded_read``'s shared lock
-        # (same serialization as ``prompt_user``) so confirm and ask never
-        # have two prompts outstanding on the single ``_input_queue``.
         meta = self.prompt_meta()
-
-        def _do():
-            # Stale answers must not auto-confirm — see ``_drain_stale_input``.
-            self._drain_stale_input()
-            # Sticky like ``prompt_user`` so a reconnecting client replays the
-            # pending confirm dialog instead of leaving the worker blocked.
-            self.set_sticky(
-                "input_required",
-                "input_required",
+        try:
+            value = self._await_human(
+                "confirm",
                 {
-                    "kind": "confirm",
                     "prompt": prompt,
                     "options": [
                         {"key": o.key, "label": o.label, "aliases": list(o.aliases)}
@@ -2291,14 +2259,6 @@ class WebRenderer(Renderer):
                     "action": meta["action"],
                 },
             )
-            try:
-                return self._wait_for_input()
-            finally:
-                self.clear_sticky("input_required")
-                self._emit("input_resolved", {}, persistent=False)
-
-        try:
-            value = self._guarded_read(_do)
         except EOFError:
             # Mirror MinimalRenderer: confirm is "pick or default" — abort
             # collapses to the safe default rather than propagating (the
@@ -2390,6 +2350,34 @@ class WebRenderer(Renderer):
         self._input_queue.put(_ABORT_SENTINEL)
 
     # ─── Helpers ────────────────────────────────────
+
+    def _await_human(self, kind: str, fields: dict[str, Any]) -> Any:
+        """ask·confirm 공통 뼈대 (v10.120.1): 사람에게 묻는 ``input_required`` 를 띄우고
+        POST /api/input 의 답을 기다린다. 돌려주는 것은 큐에 들어온 날것 그대로 —
+        해석(기본값·tuple 모양)은 공개 메서드 몫. 중단이면 ``EOFError`` 가 그대로 오른다.
+
+        띄우기와 기다리기는 ``_guarded_read`` 의 공유 락 아래 함께 돈다 — 한 번에
+        ``input_required`` 하나만 떠 있어야 두 위임 에이전트의 질문이 하나뿐인
+        ``_input_queue`` 에서 서로의 답을 가로채지 않는다."""
+
+        def _do() -> Any:
+            # 띄우기 전에 큐에 있던 것은 정의상 옛 질문의 답 — 이 질문에 자동으로
+            # 답하면 안 된다 (``_drain_stale_input``).
+            self._drain_stale_input()
+            # Sticky (not bare emit): a pending prompt must replay into a
+            # late/reconnecting client's snapshot, else the worker waits for an
+            # answer the UI never offered (the prompt is invisible). Cleared on
+            # resolve so a fresh connection doesn't see the stale question.
+            self.set_sticky(
+                "input_required", "input_required", {"kind": kind, **fields}
+            )
+            try:
+                return self._wait_for_input()
+            finally:
+                self.clear_sticky("input_required")
+                self._emit("input_resolved", {}, persistent=False)
+
+        return self._guarded_read(_do)
 
     def _drain_stale_input(self) -> None:
         """Empty ``_input_queue`` before a new prompt is announced.

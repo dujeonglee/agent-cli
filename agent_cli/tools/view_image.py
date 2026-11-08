@@ -79,9 +79,9 @@ class ViewImageTool(Tool):
     def _run(self, args: dict, *, ctx: RunContext | None = None) -> ToolResult:
         path = args["path"]
         # 민감 경로 게이트 — read_file 과 같은 축(자격증명 사전)만 건다.
-        from agent_cli.tools._confine import guard as _path_guard
+        from agent_cli.tools import _confine
 
-        denied = _path_guard([path], "view_image", check_workspace=False)
+        denied, comment = _confine.guard([path], "view_image", check_workspace=False)
         if denied:
             return ToolResult(False, error=denied)
         try:
@@ -116,9 +116,10 @@ class ViewImageTool(Tool):
             return ToolResult(False, error=f"view_image failed: {e}")
         return ToolResult(
             True,
-            output=(
+            output=_confine.with_approval_note(
                 f"{ref.placeholder}\n{ref.mime}, {ref.bytes:,} bytes — "
-                "the image is attached to this result."
+                "the image is attached to this result.",
+                comment,
             ),
             images=[ref.to_dict()],
         )

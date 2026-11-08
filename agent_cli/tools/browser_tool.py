@@ -168,15 +168,20 @@ class BrowserTool(Tool):
         # 이동 뒤 자동 스냅샷 예산 — 과대 출력 캡(창/10)의 일부. 캡이 꺼져
         # 있으면(0) 예산도 없다.
         budget = int((ctx.oversized_cap if ctx else 0) * AUTO_SNAPSHOT_SHARE)
+        comment = ""  # 로컬 파일 열기의 승인 코멘트 (v10.120.1)
         try:
             if mode == "screenshot":
                 return self._screenshot(session, bool(args.get("full_page", False)))
             if mode == "open":
-                url, denied = self._local_target(str(args["url"]).strip())
+                url, denied, comment = self._local_target(str(args["url"]).strip())
                 if denied:
                     return ToolResult(False, error=denied)
                 args = {**args, "url": url}
             out = self._dispatch(session, mode, args, budget)
+            if comment:
+                from agent_cli.tools import _confine
+
+                out = _confine.with_approval_note(out, comment)
         except BrowserError as e:
             return ToolResult(False, error=f"browser: {e}")
         except Exception as e:
@@ -185,15 +190,18 @@ class BrowserTool(Tool):
         return ToolResult(True, output=out)
 
     @staticmethod
-    def _local_target(url: str) -> tuple[str, str | None]:
-        """``(연 주소, 거절 문구)`` — 로컬 파일이면 ``file://`` URI 로 바꾸고
+    def _local_target(url: str) -> tuple[str, str | None, str]:
+        """``(연 주소, 거절 문구, 승인 코멘트)`` — 로컬 파일이면 ``file://`` URI 로 바꾸고
         ``read_file`` 과 같은 게이트를 건다(v10.99.0): 워크스페이스 밖은 열고,
         자격증명 사전에 걸리면 묻는다. 거절 문구는 ``read_file`` 과 같은 모양."""
         from agent_cli.browser import resolve_target
         from agent_cli.tools._confine import guard
 
         url, path = resolve_target(url)
-        return url, (guard([path], "browser", check_workspace=False) if path else None)
+        if not path:
+            return url, None, ""
+        denied, comment = guard([path], "browser", check_workspace=False)
+        return url, denied, comment
 
     @staticmethod
     def _screenshot(session, full_page: bool) -> ToolResult:

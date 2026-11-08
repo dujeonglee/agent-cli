@@ -208,18 +208,21 @@ def confirm_dangerous(cmd: str) -> tuple[str | None, str]:
         return None, user_comment
 
 
-def _guard(cmd: str) -> tuple[str | None, str]:
+def _guard(cmd: str) -> tuple[str | None, list[str]]:
     """위험 키워드 확인 + 워크스페이스 봉쇄 — 포그라운드·백그라운드가 같은 문.
-    ``(거부 사유 | None, 승인 코멘트)``."""
-    denied, user_comment = confirm_dangerous(cmd)
+    ``(거부 사유 | None, 승인 코멘트들)`` — 두 확인이 모두 물었고 둘 다 말을 남겼으면
+    둘 다 (위험 키워드 쪽이 먼저, v10.120.1). 빈 코멘트는 빠진다."""
+    denied, keyword_comment = confirm_dangerous(cmd)
     if denied:
-        return denied, ""
+        return denied, []
     from agent_cli.tools import _confine
 
-    denial = _confine.guard(
+    denial, path_comment = _confine.guard(
         _confine.extract_shell_paths(cmd), "shell command", command=cmd
     )
-    return (denial or None), user_comment
+    if denial:
+        return denial, []
+    return None, [c for c in (keyword_comment, path_comment) if c]
 
 
 #: 전경 명령이 기다리는 시간의 기본값이자 상한 (v10.91.0). 종전엔 기본 120 에 상한이
@@ -307,7 +310,7 @@ def tool_shell_background(args: dict, *, owner: str, note: str = "") -> ToolResu
         )
     if not cmd:
         return ToolResult(False, error=f"{note}Nothing is left to run.")
-    denied, _comment = _guard(cmd)
+    denied, comments = _guard(cmd)
     if denied:
         return ToolResult(False, error=denied)
     reg = get_job_registry()
@@ -323,13 +326,16 @@ def tool_shell_background(args: dict, *, owner: str, note: str = "") -> ToolResu
         return ToolResult(False, error=str(exc))
     except OSError as exc:
         return ToolResult(False, error=f"could not start the job: {exc}")
+    from agent_cli.tools import _confine
+
     return ToolResult(
         True,
-        output=(
+        output=_confine.with_approval_note(
             f"{note}job #{job.id} started (pid {job.pid}) — output goes to "
             f"{job.log.as_posix()}. You will be told when it ends, with its exit "
             f"code and the log's last lines; keep working meanwhile. To stop it: "
-            f"{job.stop_hint}."
+            f"{job.stop_hint}.",
+            *comments,
         ),
     )
 
@@ -343,9 +349,10 @@ def tool_shell(args: dict) -> ToolResult:
             False, error="Empty command. Provide a shell command to execute."
         )
 
-    denied, user_comment = _guard(cmd)
+    denied, comments = _guard(cmd)
     if denied:
         return ToolResult(False, error=denied)
+    from agent_cli.tools import _confine
 
     # (Workspace confinement rides in ``_guard`` — best-effort literal path
     # tokens, blind to $(...) / python -c / variables; documented in _confine.)
@@ -381,9 +388,8 @@ def tool_shell(args: dict) -> ToolResult:
             parts.append(f"[exit code: {proc.returncode}]")
         # When the user approved with a comment, surface it after the
         # command output so the LLM sees the additional instruction
-        # alongside the result.
-        if user_comment:
-            parts.append(f"[User note when approving: {user_comment}]")
+        # alongside the result (위험 키워드·경로 확인 각각 한 줄).
+        parts.extend(_confine.approval_note(c) for c in comments)
         return ToolResult(True, output="\n".join(parts) if parts else "(no output)")
     except Exception as e:
         return ToolResult(False, error=f"shell failed: {e}")
