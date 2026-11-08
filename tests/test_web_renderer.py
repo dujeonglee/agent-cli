@@ -1004,6 +1004,22 @@ class TestConfirmInput:
         assert result == [("n", "")]
 
 
+class TestAwaitHumanSkeleton:
+    """ask·confirm 의 뼈대는 한 곳 (v10.120.1) — 드레인·스티키·대기·정리가 두 벌로
+    갈라지지 않게 소스로 고정한다. 두 공개 메서드에는 payload 와 결과 해석만."""
+
+    def test_sticky_lives_only_in_the_skeleton(self):
+        import inspect
+        import re
+
+        sticky = re.compile(r'set_sticky\(\s*"input_required"')
+        for name in ("prompt_user", "confirm"):
+            src = inspect.getsource(getattr(WebRenderer, name))
+            assert not sticky.search(src), name
+            assert "_await_human(" in src, name
+        assert sticky.search(inspect.getsource(WebRenderer._await_human))
+
+
 # ── Sanity: Renderer ABC conformance ───────────────
 
 

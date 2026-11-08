@@ -265,12 +265,40 @@ def _read_one(
     # 자격증명 사전은 건다: `cat ~/.ssh/id_rsa` 는 묻는데 이 도구로는 무음으로
     # 읽히면 그건 일관성이 아니라 우연이다. 축 하나만 보도록
     # `check_workspace=False`.
-    from agent_cli.tools._confine import guard as _path_guard
+    from agent_cli.tools import _confine
 
-    denied = _path_guard([path], "read_file", check_workspace=False)
+    denied, comment = _confine.guard([path], "read_file", check_workspace=False)
     if denied:
         return ToolResult(False, error=denied)
 
+    result = _read_text(
+        path,
+        line_start,
+        line_end,
+        stat=stat,
+        search=search,
+        context=context,
+        oversized_cap=oversized_cap,
+        tools_available=tools_available,
+    )
+    # 승인하면서 남긴 말 (v10.120.1) — 모든 읽기 모드의 결과 끝에 같은 한 줄.
+    if comment and result.success:
+        result.output = _confine.with_approval_note(result.output, comment)
+    return result
+
+
+def _read_text(
+    path: str,
+    line_start: int,
+    line_end: int,
+    *,
+    stat: bool,
+    search: str,
+    context: int,
+    oversized_cap: int,
+    tools_available: frozenset[str],
+) -> ToolResult:
+    """게이트를 지난 뒤의 읽기 — 모드별 결과 (``_read_one`` 이 승인 코멘트를 붙인다)."""
     # 이미지는 ``view_image`` 의 일이다 (v10.77.0) — 모델이 read_file 로 열면
     # 도구를 바꾸는 층(`loop/reroute.py`)이 여기 오기 전에 바꾼다. 그 도구가
     # 없는 루프(못 보는 모델 등)의 이미지는 다른 바이너리와 같은 한 줄이다.

@@ -1470,7 +1470,7 @@ shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `g
 
 강조 범위는 서버에서 계산한 문자 span 이라 CLI·웹이 같은 소스를 칠하며, 유발 토큰만(정확히 그 명령을 위험하게 만든 `rm`) 표시됩니다 — `rm-helper.sh` 같은 유사 문자열은 강조하지 않습니다. 응답 첫 토큰이 결정 (`y` 이번만 / `n` 거부 / `a` 이 세션 동안 같은 키워드 자동 허용), 뒤에 **선택적 코멘트** 추가 가능:
 
-- `y and also cleanup /tmp/cache next` — 명령 실행 + 코멘트가 출력 끝에 `[User note when approving: ...]` 로 붙어서 LLM 이 다음 액션에 반영
+- `y and also cleanup /tmp/cache next` — 명령 실행 + 코멘트가 출력 끝에 `[User note when approving: ...]` 로 붙어서 LLM 이 다음 액션에 반영. 승인할 때 남긴 말은 모든 확인에서 모델에게 갑니다 (v10.120.1) — 백그라운드 셸은 작업 시작 결과, `monitor` 는 등록 결과, 워크스페이스 밖·민감 경로 확인은 그 도구(`write_file`·`edit_file`·`read_file` 등)의 결과 끝에 같은 줄. 한 명령이 위험 키워드와 밖 경로로 두 번 물었으면 줄도 둘
 - `n the path is wrong, try /tmp/build instead` — 거부 + 이유가 에러 메시지에 들어가서 LLM 이 다른 경로 탐색
 - `a only inside /tmp` — 세션 allowlist 추가 + 코멘트 전달
 - 빈 응답 / 인식 안 되는 첫 토큰 → 거부 (전체 입력은 코멘트로 보존)

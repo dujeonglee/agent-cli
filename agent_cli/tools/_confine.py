@@ -472,14 +472,30 @@ def _outside_spans(command: str, literals: list[str]) -> list[tuple[int, int]]:
     return merged
 
 
+def approval_note(comment: str) -> str:
+    """승인하면서 남긴 말의 결과 줄 — 셸 전경이 처음 쓴 글자 그대로 (v10.120.1 부터
+    모든 확인 경로가 같은 줄을 쓴다)."""
+    return f"[User note when approving: {comment}]"
+
+
+def with_approval_note(output: str, *comments: str) -> str:
+    """``output`` 끝에 비지 않은 승인 코멘트마다 한 줄씩. 코멘트가 없으면 그대로 —
+    그 경우 모델 입력은 종전과 같다."""
+    lines = [approval_note(c) for c in comments if c]
+    return "\n".join([output, *lines]) if lines else output
+
+
 def guard(
     paths, action: str, *, command: str | None = None, check_workspace: bool = True
-) -> str | None:
+) -> tuple[str | None, str]:
     """Gate ``paths`` for tool ``action`` (e.g. ``"write_file"``). Returns
-    ``None`` when the gate is disabled, or every path is inside the workspace /
-    already allowlisted — the zero-overhead common case (no renderer import, no
-    lock). Otherwise prompts ONCE for the flagged paths and returns ``None`` on
-    allow, or an error string on deny / when no prompt can be shown.
+    ``(거절 | None, 승인 코멘트)`` (v10.120.1 — 종전엔 거절만 돌려줘 승인하면서
+    남긴 말이 모델에게 갈 길이 없었다). ``(None, "")`` when the gate is disabled,
+    or every path is inside the workspace / already allowlisted — the
+    zero-overhead common case (no renderer import, no lock). Otherwise prompts
+    ONCE for the flagged paths: allow → ``(None, comment)`` (호출자가
+    ``with_approval_note`` 로 결과 끝에 붙인다), deny / no prompt possible →
+    ``(error, "")`` — 거절 코멘트는 종전처럼 거절 문구 안에 있다.
 
     **두 축을 본다** (v9.10.0):
 
@@ -501,7 +517,7 @@ def guard(
     treatment the dangerous-keyword guard gives ``rm``. Omit it (write
     /edit_file) for a prompt-only dialog."""
     if not enabled():
-        return None
+        return None, ""
     root = workspace_root()
     outside: list[Path] = []
     lit_of: dict[str, str] = {}  # resolved-str → literal token (for highlighting)
@@ -522,7 +538,7 @@ def guard(
             lit_of.setdefault(str(resolved), path)
             why[str(resolved)] = secret or "outside the workspace"
     if not outside:
-        return None
+        return None, ""
 
     from agent_cli.render import get_renderer
     from agent_cli.render.base import ConfirmOption, interactive_lock
@@ -535,7 +551,7 @@ def guard(
         # while we waited.
         outside = [p for p in outside if not _allowlisted(p)]
         if not outside:
-            return None
+            return None, ""
         renderer = get_renderer()
         joined = ", ".join(str(p) for p in outside)
         # 민감 경로가 섞여 있으면 그쪽이 헤드라인이다 — "워크스페이스 밖"보다
@@ -552,7 +568,7 @@ def guard(
                 f"confirmation right now (non-interactive shell, or no connected "
                 f"client). Set AGENT_CLI_WORKSPACE_CONFINE=0 to disable these "
                 f"path gates for non-interactive runs."
-            )
+            ), ""
         listing = "\n".join(f"  {p}\n    ↳ {why[str(p)]}" for p in outside)
         head = (
             "⚠ Touches sensitive path(s)"
@@ -603,7 +619,7 @@ def guard(
             err = f"User denied {action} — {kind}: {joined}"
             if comment:
                 err += f". User said: {comment}"
-            return err
+            return err, ""
         if decision == "a":
             for p in outside:
                 # Allowlist the directory subtree: a file → its parent dir, a
@@ -619,4 +635,4 @@ def guard(
             renderer.note_next(
                 f"🔓 User approved paths outside the workspace — allowed for the rest of this session: {dirs}"
             )
-    return None
+    return None, comment

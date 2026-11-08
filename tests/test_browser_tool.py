@@ -1225,7 +1225,7 @@ class TestToolDispatch:
 
         def gate(paths, action, **kw):
             seen.append((paths, action, kw))
-            return "User denied browser — sensitive path: x"
+            return "User denied browser — sensitive path: x", ""
 
         monkeypatch.setattr(_confine, "guard", gate)
         n = len(page.gotos)
