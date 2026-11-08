@@ -256,7 +256,7 @@ def apply_edits_batch_parts(
             {"success": False, "content": err} for _ in edits
         ]
 
-    denial, comment = _confine.guard([path], "edit_file")
+    denial = _confine.guard([path], "edit_file")
     if denial:
         return _all(denial)
     try:
@@ -385,7 +385,6 @@ def apply_edits_batch_parts(
             empty_insert=empty_insert,
             reversed_range=reversed_range,
         )
-        msg = _confine.with_approval_note(msg, comment)
         for part in parts:
             part["content"] += "\n\n" + msg
         return ToolResult(True, output=msg), parts
@@ -406,7 +405,6 @@ def apply_edits_batch_parts(
     from agent_cli.tools.code_index import post_hook
 
     post_hook(path)
-    msg = _confine.with_approval_note(msg, comment)
     parts[-1]["content"] += "\n\n" + msg
     return ToolResult(True, output=msg), parts
 

@@ -145,8 +145,9 @@ def _ask_confirmation(cmd: str, keyword: str) -> tuple[str, str]:
     )
 
 
-def confirm_dangerous(cmd: str) -> tuple[str | None, str]:
-    """위험 키워드 확인 — ``(거부 사유 | None, 사용자 코멘트)``.
+def confirm_dangerous(cmd: str) -> str | None:
+    """위험 키워드 확인 — 거부 사유 | None. 답에 남긴 말은 ``human_note`` 에
+    기록된다(v10.120.2 — 승인·거절 모두, 결과에 붙이는 건 tool_bridge 한 곳).
 
     `shell` 실행과 `monitor` **등록**이 공유한다 (v9.11.0). monitor 는 발화
     시점이 아니라 등록 시점에 이걸 부른다: 사람은 모니터를 거는 순간엔 있지만
@@ -157,17 +158,17 @@ def confirm_dangerous(cmd: str) -> tuple[str | None, str]:
     환경이 monitor 를 만드는 근거였다(docs/monitor/DESIGN.md §7.3).
     """
     if not _confirmation_enabled():
-        return None, ""
+        return None
     keyword = _detect_dangerous(cmd)
     if not keyword or keyword in _session_allowlist:
-        return None, ""
+        return None
     from agent_cli.tools import _confine
 
     # 대상이 전부 임시 자리(시스템 임시 루트·`.agent-cli/tmp`) 안이면 묻지 않는다
     # (v10.104.0) — 임시 파일을 지우는 데 사람을 세우지 않는다. 판정은 보수적
     # (`_confine.temp_targets_only`): 루트 자체·글로브 루트·상대 경로·파이프 뒤 `rm` 은 묻는다.
     if _confine.temp_targets_only(cmd, _DANGEROUS_KEYWORDS):
-        return None, ""
+        return None
 
     from agent_cli.render import get_renderer, interactive_lock
 
@@ -181,7 +182,7 @@ def confirm_dangerous(cmd: str) -> tuple[str | None, str]:
             "prompt for confirmation right now (non-interactive shell, or no "
             "connected client). Set AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 to "
             "bypass for non-interactive runs."
-        ), ""
+        )
     # Hold the shared interactive lock (re-entrant) across the allowlist
     # re-check + prompt: it serializes against confirm AND ask everywhere, and
     # ``renderer.confirm`` re-acquires it internally on this same thread.
@@ -189,13 +190,13 @@ def confirm_dangerous(cmd: str) -> tuple[str | None, str]:
     # "always" while we waited.
     with interactive_lock:
         if keyword in _session_allowlist:
-            return None, ""
+            return None
         decision, user_comment = _ask_confirmation(cmd, keyword)
+        from agent_cli.tools import human_note
+
+        human_note.record("denying" if decision == "n" else "approving", user_comment)
         if decision == "n":
-            err = f"User denied command containing `{keyword}`: {cmd}"
-            if user_comment:
-                err += f". User said: {user_comment}"
-            return err, ""
+            return f"User denied command containing `{keyword}`: {cmd}"
         if decision == "a":
             _session_allowlist.add(keyword)
             # 세션 정책이 바뀌는 순간이라 **기록**한다 (v9.8.0). 이후 같은
@@ -205,24 +206,22 @@ def confirm_dangerous(cmd: str) -> tuple[str | None, str]:
             get_renderer().note_next(
                 f"🔓 사용자가 `{keyword}` 포함 명령을 승인 — 이 세션 내내 재확인 없음"
             )
-        return None, user_comment
+        return None
 
 
-def _guard(cmd: str) -> tuple[str | None, list[str]]:
+def _guard(cmd: str) -> str | None:
     """위험 키워드 확인 + 워크스페이스 봉쇄 — 포그라운드·백그라운드가 같은 문.
-    ``(거부 사유 | None, 승인 코멘트들)`` — 두 확인이 모두 물었고 둘 다 말을 남겼으면
-    둘 다 (위험 키워드 쪽이 먼저, v10.120.1). 빈 코멘트는 빠진다."""
-    denied, keyword_comment = confirm_dangerous(cmd)
+    거부 사유 | None. 두 확인에서 남긴 말은 ``human_note`` 에 기록 순서대로 쌓이고
+    tool_bridge 가 결과 끝에 붙인다 (v10.120.2)."""
+    denied = confirm_dangerous(cmd)
     if denied:
-        return denied, []
+        return denied
     from agent_cli.tools import _confine
 
-    denial, path_comment = _confine.guard(
-        _confine.extract_shell_paths(cmd), "shell command", command=cmd
+    return (
+        _confine.guard(_confine.extract_shell_paths(cmd), "shell command", command=cmd)
+        or None
     )
-    if denial:
-        return denial, []
-    return None, [c for c in (keyword_comment, path_comment) if c]
 
 
 #: 전경 명령이 기다리는 시간의 기본값이자 상한 (v10.91.0). 종전엔 기본 120 에 상한이
@@ -310,7 +309,7 @@ def tool_shell_background(args: dict, *, owner: str, note: str = "") -> ToolResu
         )
     if not cmd:
         return ToolResult(False, error=f"{note}Nothing is left to run.")
-    denied, comments = _guard(cmd)
+    denied = _guard(cmd)
     if denied:
         return ToolResult(False, error=denied)
     reg = get_job_registry()
@@ -326,16 +325,13 @@ def tool_shell_background(args: dict, *, owner: str, note: str = "") -> ToolResu
         return ToolResult(False, error=str(exc))
     except OSError as exc:
         return ToolResult(False, error=f"could not start the job: {exc}")
-    from agent_cli.tools import _confine
-
     return ToolResult(
         True,
-        output=_confine.with_approval_note(
+        output=(
             f"{note}job #{job.id} started (pid {job.pid}) — output goes to "
             f"{job.log.as_posix()}. You will be told when it ends, with its exit "
             f"code and the log's last lines; keep working meanwhile. To stop it: "
-            f"{job.stop_hint}.",
-            *comments,
+            f"{job.stop_hint}."
         ),
     )
 
@@ -349,10 +345,9 @@ def tool_shell(args: dict) -> ToolResult:
             False, error="Empty command. Provide a shell command to execute."
         )
 
-    denied, comments = _guard(cmd)
+    denied = _guard(cmd)
     if denied:
         return ToolResult(False, error=denied)
-    from agent_cli.tools import _confine
 
     # (Workspace confinement rides in ``_guard`` — best-effort literal path
     # tokens, blind to $(...) / python -c / variables; documented in _confine.)
@@ -386,10 +381,6 @@ def tool_shell(args: dict) -> ToolResult:
             parts.append(f"[stderr]\n{err}")
         if proc.returncode != 0:
             parts.append(f"[exit code: {proc.returncode}]")
-        # When the user approved with a comment, surface it after the
-        # command output so the LLM sees the additional instruction
-        # alongside the result (위험 키워드·경로 확인 각각 한 줄).
-        parts.extend(_confine.approval_note(c) for c in comments)
         return ToolResult(True, output="\n".join(parts) if parts else "(no output)")
     except Exception as e:
         return ToolResult(False, error=f"shell failed: {e}")

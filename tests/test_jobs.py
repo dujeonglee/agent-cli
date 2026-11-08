@@ -256,9 +256,7 @@ class TestShellToolSurface:
         from agent_cli.tools import shell as shell_mod
         from agent_cli.tools.shell import ShellTool
 
-        monkeypatch.setattr(
-            shell_mod, "confirm_dangerous", lambda cmd: ("Refused: nope", "")
-        )
+        monkeypatch.setattr(shell_mod, "confirm_dangerous", lambda cmd: "Refused: nope")
         r = ShellTool()._run({"command": "rm -rf x", "background": True})
         assert not r.success and r.error == "Refused: nope" and reg.running() == []
 

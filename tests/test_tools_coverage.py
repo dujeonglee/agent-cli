@@ -640,10 +640,12 @@ class TestShellConfirmationComments:
         from unittest.mock import patch
 
         with patch("builtins.input", return_value="n wrong directory, try /tmp"):
-            result = tool_shell({"command": "rm /etc/passwd"})
+            result = _shell_with_notes({"command": "rm /etc/passwd"})
         assert not result.success
         assert "User denied" in (result.error or "")
-        assert "wrong directory, try /tmp" in (result.error or "")
+        assert result.error.endswith(
+            "\n[User note when denying: wrong directory, try /tmp]"
+        )
 
     def test_approve_comment_appears_after_output(self, monkeypatch):
         """`y` + comment → command runs and the comment is appended
@@ -657,7 +659,7 @@ class TestShellConfirmationComments:
         # Actually simpler: rm a non-existent path (fails harmlessly,
         # but ran).
         with patch("builtins.input", return_value="y also clean /tmp/y"):
-            result = tool_shell({"command": "rm /nonexistent/path"})
+            result = _shell_with_notes({"command": "rm /nonexistent/path"})
         # Output should contain the user's note line.
         assert "User note when approving: also clean /tmp/y" in (result.output or "")
 
@@ -667,7 +669,7 @@ class TestShellConfirmationComments:
         from unittest.mock import patch
 
         with patch("builtins.input", return_value="a but limit scope to build/"):
-            result = tool_shell({"command": "rm /nonexistent/x"})
+            result = _shell_with_notes({"command": "rm /nonexistent/x"})
         from agent_cli.tools import shell as shell_mod
 
         assert "rm" in shell_mod._session_allowlist
@@ -683,8 +685,17 @@ class TestShellConfirmationComments:
         from unittest.mock import patch
 
         with patch("builtins.input", return_value="y"):
-            result = tool_shell({"command": "rm /nonexistent/path"})
+            result = _shell_with_notes({"command": "rm /nonexistent/path"})
         assert "User note" not in (result.output or "")
+
+
+def _shell_with_notes(args):
+    """tool_bridge 가 하는 그대로 (v10.120.2) — 확인의 말은 도구가 아니라 실행
+    지점이 결과 끝에 붙인다(``human_note``)."""
+    from agent_cli.tools import human_note
+
+    human_note.clear()
+    return human_note.attach(tool_shell(args), human_note.take())
 
 
 class TestEditFile:

@@ -15,7 +15,7 @@ from agent_cli.context.token_estimator import estimate_tokens
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import LoopConfig, LoopState
 from agent_cli.providers.capabilities import MIN_CONTEXT_WINDOW
-from agent_cli.tools import TOOLS, RunContext, _execute_tool
+from agent_cli.tools import TOOLS, RunContext, _execute_tool, human_note
 from agent_cli.tools.base import (
     GENERIC_RETRY_HINT,
     display_path,
@@ -161,6 +161,11 @@ class ToolBridge:
         # *unexpected* — a tool author bug, a malformed input that
         # slipped past pre-validation, an underlying library raising
         # ``TypeError`` from inside ``re.py``, etc.
+        #
+        # 확인에서 사람이 남긴 말 (v10.120.2, ``tools/human_note``): 실행 전에 비우고
+        # (앞 호출의 남은 것이 새지 않게) 실행 뒤 이 호출의 결과 끝에 붙인다 — 성공·
+        # 실패 무관. 도구들은 붙이지 않는다; 여기와 ``dispatch_edit_batch`` 두 곳뿐.
+        human_note.clear()
         try:
             if tool_name == "agent":
                 result = self._invoke_agent(tool_input, input_dict)
@@ -177,6 +182,7 @@ class ToolBridge:
                 f"TOOL EXCEPTION turn={self.state.turn} tool={tool_name}\n{_tb.format_exc()}"
             )
             result = _tool_exception_result(tool_name, e)
+        result = human_note.attach(result, human_note.take())
 
         # 4. PostToolUse hooks
         self._run_post_hooks(tool_name, input_dict, result)
@@ -230,6 +236,7 @@ class ToolBridge:
             processed.append(args if isinstance(args, dict) else input_dict)
 
         parts: list[dict] | None = None
+        human_note.clear()  # 단건 경로와 같다 (v10.120.2)
         try:
             result, parts = apply_edits_batch_parts(path, processed)
         except Exception as e:  # 단건 경로와 동일 안전망 (KeyboardInterrupt 전파)
@@ -243,6 +250,11 @@ class ToolBridge:
 
         if parts is None:
             parts = [{"success": False, "content": result.error} for _ in edits]
+        # 사람이 남긴 말은 배치 결과의 끝 = 합친 결과와 마지막 조각 끝에.
+        notes = human_note.take()
+        if notes:
+            result = human_note.attach(result, notes)
+            parts[-1]["content"] = "\n".join([parts[-1]["content"], *notes])
         first = processed[0] if processed else {}
         self._run_post_hooks("edit_file", first, result)
         for args in processed:
