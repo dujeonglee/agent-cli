@@ -376,7 +376,12 @@ class SkillLoop(LoopKind):
         artifact = f"{self.dir_name}/" if self.skill_ctx is not None else ""
         if output:
             return ToolResult(True, output=output, artifact=artifact)
-        return ToolResult(False, error="Skill returned no result", artifact=artifact)
+        # 실패한 런의 사유를 잃지 않는다 (v10.121.1) — 종전엔 "Max turns (1) reached" 같은
+        # 엔진의 사유를 버리고 이 한 문구만 남겼다.
+        reason = "" if result is None or result.success else (result.error or "")
+        return ToolResult(
+            False, error=reason or "Skill returned no result", artifact=artifact
+        )
 
     def crashed(self, exc: BaseException, secs: float) -> ToolResult:
         from agent_cli.verbose import debug_log

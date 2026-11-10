@@ -69,5 +69,11 @@ def _handle_run_skill(skill_input: dict, caller: Caller) -> ToolResult:
 
     skill_header = f"SKILL: {name}({arguments})\n" if arguments else f"SKILL: {name}\n"
     body = skill_result.output or skill_result.error or "(skill returned no result)"
+    if not skill_result.success:
+        # 실패는 ``error`` 로 (v10.121.1) — 관찰은 실패 결과의 ``error`` 를 그린다. 종전엔
+        # ``output`` 에 "STATUS: success" 틀로 담아 실패 관찰의 본문이 비었다.
+        return ToolResult(
+            False, error=f"{skill_header}{body}", artifact=skill_result.artifact
+        )
     obs = OBS_SUCCESS.format(result=f"{skill_header}{body}")
-    return ToolResult(skill_result.success, output=obs, artifact=skill_result.artifact)
+    return ToolResult(True, output=obs, artifact=skill_result.artifact)
