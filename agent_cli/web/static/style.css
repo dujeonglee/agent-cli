@@ -978,6 +978,29 @@ footer {
 .stuck-stop { flex: none; padding: 2px 10px; font-size: 12px; }
 @media (max-width: 560px) { .stuck-asking { display: none; } }
 
+/* 🧵 백그라운드 작업 칩 (v10.121.0) — 🔁 띠 아래, 입력창 바로 위. 칩은 줄바꿈으로 흐른다.
+   중립 표면(surface-2) — 경고가 아니라 "이 방에 돌고 있는 것" 의 목록이다. */
+#job-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.job-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;
+  border: 1px solid var(--border-2); border-radius: 6px; background: var(--surface-2);
+  color: var(--text); padding: 2px 4px 2px 8px; font-size: 12px;
+}
+.job-id { flex: none; font-weight: 700; white-space: nowrap; }
+.job-cmd {
+  flex: 0 1 auto; min-width: 0; max-width: 360px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; font-size: 12px;
+}
+.job-owner, .job-elapsed { flex: none; color: var(--muted); white-space: nowrap; }
+.job-elapsed { font-variant-numeric: tabular-nums; }
+.job-state { flex: none; color: var(--muted); font-style: italic; white-space: nowrap; padding-right: 4px; }
+.job-ask { flex: none; font-weight: 700; white-space: nowrap; }
+.job-error { flex: none; color: var(--fail); white-space: nowrap; }
+.job-stop, .job-confirm, .job-cancel { flex: none; padding: 0 8px; font-size: 12px; line-height: 18px; }
+.job-chip.job-stopping { opacity: .7; }
+.job-chip.job-asking { border-color: var(--fail-soft-border); background: var(--fail-soft-bg); }
+@media (max-width: 560px) { .job-cmd { max-width: 160px; } .job-owner { display: none; } }
+
 /* 📋 열린 항목 장부 (v10.119.0, docs/ledger/DESIGN.md §15) — ❓ 트레이와 ⏳ 대기열
    사이. 간격·모서리는 .queue-item 과 맞추고, 테두리는 accent 계열(대기열 warn 과 구별).
    닫힌 행은 대기열 ✓ 영수증(q-injected)과 같은 ok 토큰. */

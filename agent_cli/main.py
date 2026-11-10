@@ -2391,6 +2391,10 @@ def web(
 
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
     job_registry = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
+    # 🧵 칩·status.json ``jobs`` (v10.121.0) — 띄움·멈춤·끝남이 스티키 하나로. 배달
+    # (`deliver`)은 워커 부트의 `wire_job_delivery` 가 꽂지만 관찰자는 렌더러의 것이라
+    # 여기서 — 예약의 `on_change` 와 같은 자리. run 은 화면이 없어 꽂지 않는다.
+    job_registry.on_change = renderer.jobs_changed
     build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
     build_snapshot_store(
         session.session_id

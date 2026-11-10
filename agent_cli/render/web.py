@@ -81,11 +81,11 @@ def _iso_to_epoch(ts) -> float | None:
 
 # Sticky slots whose change flips a field of ``status.json``: ``worker_state``
 # → busy, ``input_required`` → awaiting_input, ``agent_roster`` → agents,
-# ``open_items`` → open_items (v10.119.0), ``stuck`` → stuck (v10.120.0), and
-# every ``knob:<name>`` → knobs (+ grammar). A set_sticky/clear_sticky on any of
+# ``open_items`` → open_items (v10.119.0), ``stuck`` → stuck (v10.120.0),
+# ``jobs`` → jobs (v10.121.0), and every ``knob:<name>`` → knobs (+ grammar). A set_sticky/clear_sticky on any of
 # them republishes the status sidecar (viewers republish on register/unregister).
 _STATUS_STICKY_KEYS = frozenset(
-    {"worker_state", "input_required", "agent_roster", "open_items", "stuck"}
+    {"worker_state", "input_required", "agent_roster", "open_items", "stuck", "jobs"}
 )
 
 
@@ -1580,6 +1580,36 @@ class WebRenderer(Renderer):
             "asking": bool(payload.get("asking")),
         }
 
+    def jobs_changed(self, view: dict) -> None:
+        """백그라운드 작업 스티키 ``jobs`` (v10.121.0, docs/complete-while-running/
+        REVIEW-fable.md 후속 리뷰) — `JobRegistry.on_change` 가 띄움·멈춤 시작·끝남마다
+        부른다. 방의 🧵 칩과 status.json·``/api/health`` 의 ``jobs`` 가 이 한 슬롯을 읽는다.
+        빈 목록도 스티키로 둔다(칩이 내려가야 한다) — 처음부터 비어 있으면 보내지 않는다."""
+        payload = {
+            "count": int(view.get("count") or 0),
+            "list": [dict(j) for j in view.get("list") or []],
+        }
+        prev = self.hub.sticky_payload("jobs")
+        if prev == payload or (prev is None and not payload["list"]):
+            return
+        self.set_sticky("jobs", "jobs", payload)
+
+    def jobs_summary(self) -> dict | None:
+        """작업 요약 ``{count, list: [{id, pid, owner, command, started_at}]}`` —
+        status.json 과 ``/api/health`` 가 같이 쓴다(보드 🧵 칩). 없으면 None(생략)."""
+        return self._jobs_summary_from(self.hub.sticky_payload("jobs"))
+
+    @staticmethod
+    def _jobs_summary_from(payload: dict | None) -> dict | None:
+        jobs = (payload or {}).get("list") or []
+        if not jobs:
+            return None
+        keys = ("id", "pid", "owner", "command", "started_at")
+        return {
+            "count": len(jobs),
+            "list": [{k: j.get(k) for k in keys} for j in jobs],
+        }
+
     def context_view(self, view: dict) -> None:
         """스코프별 sticky ``ctx_view`` (v10.6.0, docs/inspector-model-view §3.1).
 
@@ -1817,6 +1847,7 @@ class WebRenderer(Renderer):
         }
         open_items = self._open_items_summary_from(sticky.get("open_items"))
         stuck = self._stuck_summary_from(sticky.get("stuck"))
+        jobs = self._jobs_summary_from(sticky.get("jobs"))
         try:
             from agent_cli.web.instance_file import write_status_file
 
@@ -1831,6 +1862,7 @@ class WebRenderer(Renderer):
                 knobs=knobs or None,
                 open_items=open_items,
                 stuck=stuck,
+                jobs=jobs,
             )
         except OSError:
             pass  # best-effort: a status write must never break the session
