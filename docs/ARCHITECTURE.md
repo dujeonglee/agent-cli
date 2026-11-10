@@ -5,7 +5,7 @@
 >
 > 최종 업데이트: 2026-11-08
 > 버전: 2.0.0-dev
-> 총 소스: ~67,200 LOC (182 Python 파일) + ~101,400 LOC 테스트 (257 파일) + 웹 프런트 ~6,150 LOC JS (`static/app.js` + `static/js/` 30 모듈)
+> 총 소스: ~67,200 LOC (182 Python 파일) + ~101,400 LOC 테스트 (257 파일) + 웹 프런트 ~6,340 LOC JS (`static/app.js` + `static/js/` 31 모듈)
 > 총 테스트: ~12,800 유닛 (pytest 수집 기준)
 
 ---
@@ -143,7 +143,7 @@ agent_cli/
 │       │   ├── sse.js           (108) **v10.117.0** [24] `export const es = new EventSource("api/stream")`·연결 표시·`copyToClipboard`. 핸들러는 각 소유 모듈이 `es` 를 import 해 건다
 │       │   ├── copy.js          (76) **v10.117.0** [9] 카드·타임라인 마크다운 복사, 훅 `window.__cardMarkdown`·`__timelineMarkdown`
 │       │   ├── attach.js        (147) **v10.117.0** [23] 📎 이미지 첨부(칩·붙여넣기·끌어놓기·vision 여부)
-│       │   ├── ledger.js        (122) **v10.119.1** 닫힘 영수증은 배경·`✓ closed` 글자로만(제목 취소선 제거 — 규칙은 style.css). **v10.119.0** 📋 열린 항목 띠 — SSE `open_items` 를 그린다(id 칩·who·머리말·닫는 법·N turns·`budget l/t`, 닫힘 `✓ closed` 1.5초). 순환 밖 잎(`dom`·`sse` 만 import, export 없음); 행 클릭은 `agentcli:jump` {hidx} 를 document 로(점프는 channels)
+│       │   ├── ledger.js        (178) **v10.122.0** 접기 — 행은 3개까지(열린 항목 먼저, `✓ closed` 영수증은 남는 자리에만·숨은 수에 안 셈), 넘치면 끝에 `<button class="oi-more">` `+N more ▾`/`Show less ▴`(`aria-expanded`), 펼친 `.oi-list` 는 `max(120px, 35vh)` 안 스크롤·머리와 토글은 목록 밖; 펼침은 페이지 메모리(스냅샷에도 유지, 열린 항목 ≤3 이면 접힘으로), 다시 그릴 때 초점·스크롤 보존. **v10.119.1** 닫힘 영수증은 배경·`✓ closed` 글자로만(제목 취소선 제거 — 규칙은 style.css). **v10.119.0** 📋 열린 항목 띠 — SSE `open_items` 를 그린다(id 칩·who·머리말·닫는 법·N turns·`budget l/t`, 닫힘 `✓ closed` 1.5초). 순환 밖 잎(`dom`·`sse` 만 import, export 없음); 행 클릭은 `agentcli:jump` {hidx} 를 document 로(점프는 channels)
 │       │   ├── stuck.js         (63) **v10.120.0** 🔁 제자리 고리 띠 — SSE `stuck` 를 그린다(`🔁 No new results for N turns — the model may be going in circles.` + Stop, 묻는 중엔 `The run is paused — answer above.`). 순환 밖 잎(`dom`·`state`·`sse` 만 import, export 없음); Stop 은 `/api/stop`, 묻는 중이면 확인에 `{kind:"confirm", key:"s"}`.
 │       │   ├── jobs.js          (133) **v10.121.0** 🧵 작업 칩 — SSE `jobs` 를 그린다(작업마다 `🧵 #N` · 명령 · (main 아니면 소유자) · 경과 · ■). 경과는 `started_at` 에서 1초마다 계산(칩 전체를 다시 그리지 않는다 — 포커스 보존). ■ 는 칩 안 확인(`Stop job #N?` Stop/Cancel — `confirm()` 대화상자는 브라우저가 막는다) → `POST api/jobs/stop {id, conn_id}`, 그동안 `stopping…`; 실패면 문구와 ■ 복귀. 순환 밖 잎(`dom`·`state`·`sse`).
 │       │   ├── channels.js      (471) **v10.119.0** `agentcli:jump` {hidx} 리스너 — main 채널 카드(`data-hidx`, delegate 그룹 밖)로 `scrollTimelineTo`, 다른 채널이면 main 으로 옮기고 돌아가기 한 단계. **v10.117.0** [28]+[30]+[31] 채널·트레이 상태·채널 필터·점프, 에이전트 아이콘·별명 해시. **순환 진입점**(채널 바 IIFE 가 top-level 에서 `ovSyncChannels`·`frameShowChannel` 을 부른다). `ovActiveChannel`·`ovBack` 의 setter
