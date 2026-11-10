@@ -14,6 +14,13 @@
 사라진다 — 폴링할 이유가 없고, PID 가 있으니 패턴 kill 이 필요 없고, 종료는
 확실히 통지된다.
 
+사람의 멈춤 (v10.121.0, docs/complete-while-running/REVIEW-fable.md 후속 리뷰):
+web 방의 🧵 칩 ■ 가 `kill(job, by=<닉네임>)` 을 부른다. 하니스가 스스로 죽인 것
+(소유자 사망·세션 종료, ``by`` 없음)은 조용하고, 사람이 멈춘 것은 보통 종료 보고와
+같은 모양의 메일로 소유자에게 간다 — 머리줄만 ``stopped by user <name>``. 그 사실이
+없으면 모델에게 rc=-15 는 "죽었다" 이고 같은 명령을 다시 띄운다. 변화는
+`on_change(view)` 로 렌더러에 간다(status.json ``jobs``·방 칩).
+
 수명: 돌고 있는 작업은 세션의 "할 일"(`runtime.session_has_live_work`) — run 은
 끝나길 기다리고 web 은 자기를 거두지 않는다. 소유자가 죽으면(`drop_owner`) 그
 작업은 죽이고, 세션이 끝날 때 남은 작업도 죽인다(우리가 띄운 것이므로 고아를
@@ -102,6 +109,15 @@ class Job:
     started_at: float = field(default_factory=time.time)
     rc: int | None = None
     ended_at: float | None = None
+    #: `kill` 이 시작됐다 — 폴링(`tick`)은 이 작업을 건드리지 않는다. TERM 뒤 `tick`
+    #: 이 먼저 rc=-15 를 보면 "finished rc=-15" 가 나가 사람의 멈춤이 지워진다.
+    stopping: bool = False
+    #: 사람이 멈췄으면 그 이름 (v10.121.0) — 로그 끝 줄·보고 머리줄이 이 사실을 든다.
+    #: ``""`` 은 이름 모를 사람("a user"), ``None`` 은 사람이 멈추지 않았다.
+    stopped_by: str | None = None
+    #: 멈춤이 닿기 전에 프로세스가 스스로 끝났다(TERM 전 rc 확정, 또는 rc >= 0) —
+    #: 보고가 "it had already exited, rc=R" 를 붙인다(멈춘 것처럼 말하면 거짓이다)
+    exited_before_stop: bool = False
 
     @property
     def running(self) -> bool:
@@ -142,6 +158,20 @@ def _short(cmd: str, n: int = 80) -> str:
     return one if len(one) <= n else one[: n - 1] + "…"
 
 
+def _stopped_text(job: Job) -> str:
+    """``stopped by user alice after 12m`` (+ 이미 끝났으면 ``· it had already exited,
+    rc=0``) — 보고 머리줄과 로그 끝 줄이 같은 사실.
+
+    신호 rc 는 싣지 않는다. 재생(docs/complete-while-running/MEASURE.md)에서 35B 는
+    ``stopped by alice … · rc=-15`` 를 "하니스가 signal -15 로 죽였다" 로 읽고 서버를
+    10/10 되살렸다. ``user`` 표지를 붙이면 rc 가 있어도 없어도 0/10 이라 짧은 쪽이다."""
+    who = f"user {job.stopped_by}" if job.stopped_by else "a user"
+    text = f"stopped by {who} after {job.elapsed()}"
+    if job.exited_before_stop:
+        return f"{text} · it had already exited, rc={job.rc}"
+    return text
+
+
 class JobRegistry:
     """프로세스당 하나. 스레드 하나가 돌고 있는 작업을 1초마다 `poll()` 한다."""
 
@@ -154,6 +184,9 @@ class JobRegistry:
         self._thread: threading.Thread | None = None
         #: 주소 배달 seam (`AgentRegistry.deliver`) — 조립기가 꽂는다
         self.deliver: Callable[..., str] | None = None
+        #: 변화 관찰자 (v10.121.0) — 띄움·끝남마다 `view()` 를 받는다. web 이 렌더러의
+        #: 스티키 ``jobs`` 로 꽂는다(status.json·방 칩·늦은 접속 재생이 한 경로).
+        self.on_change: Callable[[dict], None] | None = None
         self.closed = False
         self._inflight = 0
 
@@ -212,6 +245,7 @@ class JobRegistry:
         with self._lock:
             self._jobs[job_id] = job
         self._start_thread()
+        self._changed()
         return job
 
     def get(self, job_id: int) -> Job | None:
@@ -230,6 +264,36 @@ class JobRegistry:
         """``ts`` 이후에 띄운 작업(끝난 것 포함) — "이 런이 작업을 썼는가" 의 근거."""
         with self._lock:
             return [j for j in self._jobs.values() if j.started_at >= ts]
+
+    def view(self) -> dict:
+        """돌고 있는 작업의 모양 — status.json ``jobs``·``/api/health``·방 칩이 같이 쓴다.
+
+        ``started_at`` 은 epoch 초다: status.json 은 정적 파일이라 경과 문자열은 쓰는
+        순간부터 낡는다 — 보드·방이 시각에서 계산한다."""
+        jobs = self.running()
+        return {
+            "count": len(jobs),
+            "list": [
+                {
+                    "id": j.id,
+                    "pid": j.pid,
+                    "owner": j.owner,
+                    "command": _short(j.command),
+                    "started_at": j.started_at,
+                    "stopping": j.stopping,
+                }
+                for j in jobs
+            ],
+        }
+
+    def _changed(self) -> None:
+        fn = self.on_change
+        if fn is None:
+            return
+        try:
+            fn(self.view())
+        except Exception:  # 화면 갱신이 작업 관리를 깨면 안 된다
+            pass
 
     def has_active_work(self) -> bool:
         """돌고 있는 작업(또는 통지 배달 중)이 있으면 세션이 끝나면 안 된다."""
@@ -302,17 +366,35 @@ class JobRegistry:
 
     # ── 종료/정리 ─────────────────────────────
 
-    def kill(self, job: Job) -> None:
-        """부드럽게 멈추라 하고(`stop`), 잠시 뒤 남았으면 죽인다(`force`). 이미
-        끝났으면 no-op."""
-        if not job.running:
-            return
-        job.handle.stop()
-        rc = self._await(job.handle)
-        if rc is None:
-            job.handle.force()
+    def kill(self, job: Job, *, by: str | None = None) -> bool:
+        """부드럽게 멈추라 하고(`stop`), 잠시 뒤 남았으면 죽인다(`force`). 최대
+        ``KILL_GRACE_S`` × 2 초를 막는다. 이 호출이 작업을 끝냈으면 True — 이미
+        끝났거나 다른 `kill` 이 멈추는 중이면 False(no-op).
+
+        ``by`` (v10.121.0): 멈춘 사람의 이름. 있으면 소유자에게 보통 종료 보고와 같은
+        모양의 메일이 간다(머리줄 ``stopped by user <by>`` — ``""`` 이면 ``a user``;
+        신호 rc 는 싣지 않는다. 프로세스가 멈춤 전에 스스로 끝났으면
+        ``· it had already exited, rc=R`` 를 붙인다). 없으면 조용하다
+        (`drop_owner`·`stop_all` — 하니스가 죽인 것)."""
+        with self._lock:
+            if not job.running or job.stopping:
+                return False
+            job.stopping = True
+            job.stopped_by = by
+        self._changed()  # 칩이 "stopping…" 으로
+        rc = job.handle.poll()  # 폴링(≤ POLL_SECS)이 아직 못 본 자연 종료
+        if rc is not None:
+            job.exited_before_stop = True
+        else:
+            job.handle.stop()
             rc = self._await(job.handle)
-        self._finish(job, rc if rc is not None else -1, notify=False)
+            if rc is None:
+                job.handle.force()
+                rc = self._await(job.handle)
+            # 신호로 죽으면 음수다 — 0 이상이면 스스로 종료 코드를 냈다
+            job.exited_before_stop = rc is not None and rc >= 0
+        self._finish(job, rc if rc is not None else -1, notify=by is not None)
+        return True
 
     @staticmethod
     def _await(handle: ProcHandle) -> int | None:
@@ -363,6 +445,8 @@ class JobRegistry:
     def tick(self) -> None:
         """한 틱 — 테스트가 직접 부를 수 있도록 스레드와 분리."""
         for job in self.running():
+            if job.stopping:  # `kill` 이 끝낸다 — 여기서 끝내면 멈춘 사실이 지워진다
+                continue
             rc = job.handle.poll()
             if rc is not None:
                 self._finish(job, rc, notify=True)
@@ -373,11 +457,17 @@ class JobRegistry:
                 return
             job.rc = rc
             job.ended_at = time.time()
-            if self.closed or not notify:
-                return
-            self._inflight += 1
+            silent = self.closed or not notify
+            if not silent:
+                self._inflight += 1
+        self._changed()
+        if silent:
+            return
         try:
-            line = f"\n[job #{job.id} exited rc={job.rc} after {job.elapsed()}]\n"
+            if job.stopped_by is not None:
+                line = f"\n[job #{job.id} {_stopped_text(job)}]\n"
+            else:
+                line = f"\n[job #{job.id} exited rc={job.rc} after {job.elapsed()}]\n"
             try:
                 with (self._cwd / job.log).open("a", encoding="utf-8") as f:
                     f.write(line)
@@ -388,7 +478,12 @@ class JobRegistry:
             if fn is not None:
                 fn(
                     job.owner,
-                    mail={"kind": "job", "success": job.rc == 0, "output": report},
+                    mail={
+                        "kind": "job",
+                        # 사람이 멈춘 작업은 rc 와 무관하게 실패 — 일을 끝내지 않았다
+                        "success": job.rc == 0 and job.stopped_by is None,
+                        "output": report,
+                    },
                     text=report,
                     author="main",
                     expects_reply=False,
@@ -399,10 +494,14 @@ class JobRegistry:
 
     def _report(self, job: Job) -> str:
         tail = self._tail(job)
-        head = (
-            f"🧵 job #{job.id} finished rc={job.rc} after {job.elapsed()} — "
-            f"`{_short(job.command)}`"
-        )
+        if job.stopped_by is not None:
+            # 사실만 — "다시 띄우지 말라" 같은 지시는 없다(리뷰 (e), 측정 대상)
+            head = f"🧵 job #{job.id} {_stopped_text(job)} — `{_short(job.command)}`"
+        else:
+            head = (
+                f"🧵 job #{job.id} finished rc={job.rc} after {job.elapsed()} — "
+                f"`{_short(job.command)}`"
+            )
         body = [f"log: {job.log.as_posix()} (last {len(tail)} line(s))"]
         body += [ln[:TAIL_LINE_CHARS] for ln in tail]
         return "\n".join([head, *(f"  {ln}" for ln in body)])

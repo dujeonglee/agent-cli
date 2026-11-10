@@ -11,6 +11,7 @@ Endpoints:
   - ``GET  /api/workspace/file?path=`` — serve one workspace **image** (thumbnails)
   - ``POST /api/abort``  — interrupt the current ``prompt_user`` / ``confirm``
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn
+  - ``POST /api/jobs/stop`` — a viewer stops one background job (v10.121.0)
 
 Auth: the ``_AuthMiddleware`` is the SOLE enforcer, default-deny. Every
 ``/api/*`` path except ``/api/health`` requires authentication; ``/``, ``/static``
@@ -736,6 +737,8 @@ def create_app(server: WebServer) -> FastAPI:
             "open_items": server.renderer.open_items_summary(),
             # v10.120.0: 제자리 고리 (없으면 None) — status.json 과 같은 소스
             "stuck": server.renderer.stuck_summary(),
+            # v10.121.0: 돌고 있는 백그라운드 작업 (없으면 None) — status.json 과 같은 소스
+            "jobs": server.renderer.jobs_summary(),
         }
 
     @app.get("/api/share-url")
@@ -1492,6 +1495,44 @@ def create_app(server: WebServer) -> FastAPI:
         """Interrupt the current ``prompt_user`` / ``confirm`` wait."""
         server.renderer.push_abort()
         return JSONResponse({"accepted": True})
+
+    @app.post("/api/jobs/stop")
+    def stop_job(body: dict):
+        """A viewer stops one background job (🧵 chip ■, v10.121.0).
+
+        **Sync ``def`` on purpose**: `JobRegistry.kill` blocks up to
+        ``KILL_GRACE_S`` × 2 (TERM, wait, KILL, wait). FastAPI runs a sync handler in
+        its thread pool; as ``async def`` it would stall the event loop and every SSE
+        stream with it. The stopper's nickname (``conn_id`` → `nickname_for`, unknown →
+        "") goes into the owner's job mail: "🧵 job #N stopped by user <name> …" /
+        "stopped by a user …".
+        Unknown or already finished id → 404; another stop already in progress → 409.
+        Returns the updated running-jobs view."""
+        from agent_cli.jobs import get_job_registry
+
+        reg = get_job_registry()
+        if reg is None:
+            raise HTTPException(status_code=503, detail="no job registry")
+        try:
+            job_id = int(body.get("id"))
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400, detail="id must be a job number"
+            ) from None
+        job = reg.get(job_id)
+        if job is None or not job.running:
+            raise HTTPException(status_code=404, detail="no such running job")
+        name = server.renderer.hub.nickname_for(body.get("conn_id"))
+        if not name or name == "?":
+            name = ""  # 이름 모름 → "stopped by a user"
+        if not reg.kill(job, by=name):
+            if not job.running and job.stopped_by is None:
+                # 폴링이 먼저 자연 종료를 봤다 — 그 통지가 이미 갔다
+                raise HTTPException(status_code=404, detail="the job already finished")
+            raise HTTPException(
+                status_code=409, detail="the job is already being stopped"
+            )
+        return {"stopped": True, "id": job_id, "rc": job.rc, "jobs": reg.view()}
 
     @app.post("/api/stop")
     async def stop():
