@@ -1197,6 +1197,166 @@ class TestAgentLoopCompactorCallback:
             assert needle in system, f"summary prompt missing: {needle!r}"
 
 
+class TestCompactorStreams:
+    """v10.122.1: 요약 호출도 스트리밍 — 비스트리밍 요청은 prefill + 생성이
+    끝날 때까지 바이트가 안 흘러 게이트웨이(LiteLLM)가 504 로 끊었다. 실제
+    공급자를 가짜 HTTP 위에 올려 요청 본문과 스트림 조립을 본다."""
+
+    def _loop(self, provider, *, dialect=None):
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=4096, max_output_tokens=512, supports_thinking=True
+        )
+        kw = {"dialect": dialect} if dialect is not None else {}
+        return AgentLoop(
+            ports=TEST_PORTS,
+            query="x",
+            provider=provider,
+            capabilities=caps,
+            model="mock-model",
+            **kw,
+        )
+
+    @staticmethod
+    def _sse(lines):
+        from unittest.mock import MagicMock
+
+        r = MagicMock()
+        r.iter_lines.return_value = iter(lines)
+        r.raise_for_status.return_value = None
+        r.status_code = 200
+        return r
+
+    def test_openai_summary_request_streams_and_assembles(self):
+        from unittest.mock import patch
+
+        from agent_cli.providers.openai import OpenAIProvider
+
+        sse = [
+            # 사고 끔이어도 서버가 사고를 흘릴 수 있다 — 요약 글에 섞이면 안 된다
+            b'data: {"choices":[{"delta":{"reasoning_content":"hmm"}}]}',
+            b'data: {"choices":[{"delta":{"content":"TASK - fix"}}]}',
+            b'data: {"choices":[{"delta":{"content":" the bug"},"finish_reason":"stop"}]}',
+            b'data: {"choices":[],"usage":{"prompt_tokens":900,"completion_tokens":5}}',
+            b"data: [DONE]",
+        ]
+        with patch("agent_cli.providers.openai.requests.post") as post:
+            post.return_value = self._sse(sse)
+            loop = self._loop(OpenAIProvider("http://gw/v1", "k"))
+            out = loop._llm_compact_summarize([{"role": "user", "content": "t"}])
+        assert out == "TASK - fix the bug"
+        body = post.call_args.kwargs["json"]
+        assert body["stream"] is True
+        assert body["stream_options"] == {"include_usage": True}
+        assert post.call_args.kwargs["stream"] is True
+        # supports_thinking=False 로 덮었으니 사고 스위치는 싣지 않는다
+        assert "chat_template_kwargs" not in body
+
+    def test_openai_inline_think_is_stripped_from_summary(self):
+        from unittest.mock import patch
+
+        from agent_cli.providers.openai import OpenAIProvider
+
+        sse = [
+            b'data: {"choices":[{"delta":{"content":"<think>plan</think>"}}]}',
+            b'data: {"choices":[{"delta":{"content":"STATE - ok"}}]}',
+            b"data: [DONE]",
+        ]
+        with patch("agent_cli.providers.openai.requests.post") as post:
+            post.return_value = self._sse(sse)
+            loop = self._loop(OpenAIProvider("http://gw/v1", "k"))
+            out = loop._llm_compact_summarize([{"role": "user", "content": "t"}])
+        assert out.strip() == "STATE - ok"
+
+    def test_native_fc_summary_sends_no_tools(self):
+        """native_fc 본 호출은 ``tools[]`` 를 싣지만 요약 호출은 싣지 않는다."""
+        from unittest.mock import patch
+
+        from agent_cli import dialects
+        from agent_cli.providers.openai import OpenAIProvider
+
+        sse = [b'data: {"choices":[{"delta":{"content":"S"}}]}', b"data: [DONE]"]
+        with patch("agent_cli.providers.openai.requests.post") as post:
+            post.return_value = self._sse(sse)
+            loop = self._loop(
+                OpenAIProvider("http://gw/v1", "k"), dialect=dialects.get("native_fc")
+            )
+            assert (
+                loop._llm_compact_summarize([{"role": "user", "content": "t"}]) == "S"
+            )
+        body = post.call_args.kwargs["json"]
+        assert "tools" not in body and "tool_choice" not in body
+        assert body["stream"] is True
+
+    def _summarize_stream(self, sse):
+        from unittest.mock import patch
+
+        from agent_cli.providers.openai import OpenAIProvider
+
+        with patch("agent_cli.providers.openai.requests.post") as post:
+            post.return_value = self._sse(sse)
+            loop = self._loop(OpenAIProvider("http://gw/v1", "k"))
+            return loop._llm_compact_summarize([{"role": "user", "content": "t"}])
+
+    _ERR = b'data: {"error":{"code":"timeout","message":"upstream timed out"}}'
+
+    def test_mid_stream_error_after_partial_content_raises(self):
+        """스트림은 오류를 응답 필드로 돌려준다 — 잘린 부분 글이 요약으로
+        저장되면 안 된다(LiteLLM 의 mid-stream timeout 모양)."""
+        import pytest
+
+        sse = [b'data: {"choices":[{"delta":{"content":"TASK - half"}}]}', self._ERR]
+        with pytest.raises(RuntimeError, match="upstream timed out") as ei:
+            self._summarize_stream(sse)
+        assert "server_error" in str(ei.value)
+
+    def test_error_event_without_content_reports_server_text(self):
+        import pytest
+
+        with pytest.raises(RuntimeError, match="upstream timed out"):
+            self._summarize_stream([self._ERR])
+
+    def test_runaway_stream_raises(self):
+        import json
+
+        import pytest
+
+        chunk = json.dumps({"choices": [{"delta": {"content": " " * 4096}}]})
+        sse = [f"data: {chunk}".encode(), b"data: [DONE]"]
+        with pytest.raises(RuntimeError, match="runaway"):
+            self._summarize_stream(sse)
+
+    def test_length_stop_still_returns_summary(self):
+        sse = [
+            b'data: {"choices":[{"delta":{"content":"TASK - x"},"finish_reason":"length"}]}',
+            b"data: [DONE]",
+        ]
+        assert self._summarize_stream(sse) == "TASK - x"
+
+    def test_anthropic_summary_request_streams_and_assembles(self):
+        from unittest.mock import patch
+
+        from agent_cli.providers.anthropic import AnthropicProvider
+
+        sse = [
+            b'data: {"type":"message_start","message":{"usage":{"input_tokens":900}}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"DONE - "}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"edited a.py"}}',
+            b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}',
+            b'data: {"type":"message_stop"}',
+        ]
+        with patch("agent_cli.providers.anthropic.requests.post") as post:
+            post.return_value = self._sse(sse)
+            loop = self._loop(AnthropicProvider("http://gw/v1", "k"))
+            out = loop._llm_compact_summarize([{"role": "user", "content": "t"}])
+        assert out == "DONE - edited a.py"
+        body = post.call_args.kwargs["json"]
+        assert body["stream"] is True
+        assert "thinking" not in body
+
+
 # ── 13. CompactionError import sanity ────────────────
 
 

@@ -498,7 +498,8 @@ def _llm_compact_summarize(self, messages: list[dict]) -> str:
         model=self.model,
         messages=request_messages,
         max_tokens=2000,
-        # No streaming, no tool calling — pure text completion.
+        # No tool calling — pure text completion. (v10.122.1 부터는
+        # 스트리밍 — §8.8)
     )
     return response.content
 ```
@@ -651,6 +652,22 @@ finally:
 - 한계: 핀된 요청의 원문은 요약기 입력에서 빠지므로 요약의 TASK 는 그 요청을
   모른다(꼬리와 원문이 있으니 중복 없음). 측정: 창을 줄인 런처로 요청 흡수 →
   압축 → 답변에 그 요청의 세부가 남는지(아래 §9).
+
+### 8.8 요약 호출의 전송 — 스트리밍 (v10.122.1)
+
+- 문제: 요약 호출이 `on_chunk` 없이 나가 공급자가 비스트리밍 요청을 보냈다.
+  접두 캐시 0% 인 수만 토큰 prefill + 최대 2000 토큰 생성이 끝날 때까지 바이트가
+  하나도 안 흘러, 회사 게이트웨이(LiteLLM)가 504 로 끊었다(5xx 재시도 3회 동일).
+- 비정상 종료 = 실패: 스트림은 오류를 예외가 아니라 `stop_reason` 으로 돌려준다.
+  `server_error`(스트림 안 오류 이벤트)·`runaway`·`incomplete_tool_call` 이면 부분 글을
+  요약으로 저장하지 않고 예외 → `CompactionError`(서버 문구 포함). `length`·정상
+  종료·stop_reason 없음은 통과(finish_reason 을 안 보내는 서버가 있다).
+- 결정: 본 호출과 같은 경로(`stream_with_reconnect`, 무진전 재연결, 세션의
+  `stream_idle_timeout_s`·`stream_max_attempts`)를 탄다. 콜백은 no-op — 요약 글은
+  그리지 않고 응답의 `content` 만 쓴다. 사고 끔으로 덮었으니 사고 스위치는 안
+  싣고, 서버가 사고를 흘리면(`reasoning_content`·인라인 `<think>`) 스트림 조립이
+  content 에서 떼어 낸다. `tools[]` 는 싣지 않는다(native_fc 도). usage 는 요약에
+  쓰지 않는다.
 
 ## 9. 실측 — 미답 요청 원문 핀 (v10.41.0, 2026-10-16)
 
