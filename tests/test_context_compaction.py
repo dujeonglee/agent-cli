@@ -1170,20 +1170,19 @@ class TestAgentLoopCompactorCallback:
         assert received["model"] == "mock-model"
         assert received["capabilities"] is not None
 
-    def test_capabilities_disable_structured_output_and_thinking(self):
-        """Capabilities passed to the provider for the summary call MUST
-        have ``supports_structured_output=False`` (no JSON mode forced)
-        and ``supports_thinking=False`` (no reasoning trace eating the
-        response budget). The agent-loop's normal capabilities stay
-        untouched."""
+    def test_thinking_is_switched_off_not_hidden(self):
+        """v10.122.3: 요약 호출은 모델의 실제 capabilities 로 부르고 사고 끔은
+        ``CallSettings(thinking=False)`` 로 **명시**한다 — 종전처럼
+        ``supports_thinking=False`` 로 덮으면 공급자가 스위치를 빼서 서버 기본값
+        (Qwen 은 켬)이 됐다. 출력 상한도 같은 settings 로."""
         loop, received = self._make_loop()
         loop._llm_compact_summarize([{"role": "user", "content": "x"}])
 
-        passed_caps = received["capabilities"]
-        assert passed_caps.supports_thinking is False
-        # Original capabilities untouched (frozen dataclass — replace
-        # returns a new instance, doesn't mutate).
-        assert loop.capabilities.supports_thinking is True
+        assert received["capabilities"] is loop.capabilities
+        assert received["capabilities"].supports_thinking is True
+        settings = received["kwargs"]["settings"]
+        assert settings.thinking is False
+        assert settings.max_output_tokens == 512  # min(등록값 512, 16384)
 
     def test_summary_prompt_covers_agentic_resume_directives(self):
         """Guard the structured summary prompt against silent regression to
@@ -1251,8 +1250,52 @@ class TestCompactorStreams:
         assert body["stream"] is True
         assert body["stream_options"] == {"include_usage": True}
         assert post.call_args.kwargs["stream"] is True
-        # supports_thinking=False 로 덮었으니 사고 스위치는 싣지 않는다
-        assert "chat_template_kwargs" not in body
+        # v10.122.3: 사고 지원 모델이면 끔을 명시한다(빼면 서버 기본 — Qwen 은 켬)
+        assert body["chat_template_kwargs"]["enable_thinking"] is False
+        assert body["max_tokens"] == 512
+
+    def _summary_body(self, caps, tmp_path):
+        from unittest.mock import patch
+
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.openai import OpenAIProvider
+
+        sse = [b'data: {"choices":[{"delta":{"content":"TASK - x"}}]}', b"data: [DONE]"]
+        with patch("agent_cli.providers.openai.requests.post") as post:
+            post.return_value = self._sse(sse)
+            loop = AgentLoop(
+                ports=TEST_PORTS,
+                query="x",
+                provider=OpenAIProvider("http://gw/v1", "k"),
+                capabilities=caps,
+                model="mock-model",
+                ctx=ContextManager(tmp_path / "s", max_context_tokens=1_000_000),
+            )
+            loop.ctx.set_thinking(True)  # 세션이 사고를 켜도 요약은 끈다
+            assert loop._llm_compact_summarize([{"role": "user", "content": "t"}])
+        return post.call_args.kwargs["json"]
+
+    def test_unsupported_model_gets_no_thinking_switch(self, tmp_path):
+        """사고 스위치를 모르는 모델엔 종전대로 아무것도 싣지 않는다(400 방지 게이트)."""
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=4096, max_output_tokens=512, supports_thinking=False
+        )
+        assert "chat_template_kwargs" not in self._summary_body(caps, tmp_path)
+
+    def test_summary_output_is_capped(self, tmp_path):
+        """등록값이 커도(65,536) 요약 호출의 max_tokens 는 16,384 에서 멈춘다."""
+        from agent_cli.loop.llm import SUMMARY_MAX_OUTPUT_TOKENS
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=262_144, max_output_tokens=65_536, supports_thinking=True
+        )
+        body = self._summary_body(caps, tmp_path)
+        assert SUMMARY_MAX_OUTPUT_TOKENS == 16_384
+        assert body["max_tokens"] == 16_384
+        assert body["chat_template_kwargs"] == {"enable_thinking": False}
 
     def test_openai_inline_think_is_stripped_from_summary(self):
         from unittest.mock import patch
@@ -1354,7 +1397,9 @@ class TestCompactorStreams:
         assert out == "DONE - edited a.py"
         body = post.call_args.kwargs["json"]
         assert body["stream"] is True
+        # 사고 끔(``thinking=False``)이면 Anthropic 본문엔 ``thinking`` 블록이 없다
         assert "thinking" not in body
+        assert body["max_tokens"] == 512
 
 
 # ── 13. CompactionError import sanity ────────────────

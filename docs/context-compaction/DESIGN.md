@@ -664,8 +664,8 @@ finally:
   종료·stop_reason 없음은 통과(finish_reason 을 안 보내는 서버가 있다).
 - 결정: 본 호출과 같은 경로(`stream_with_reconnect`, 무진전 재연결, 세션의
   `stream_idle_timeout_s`·`stream_max_attempts`)를 탄다. 콜백은 no-op — 요약 글은
-  그리지 않고 응답의 `content` 만 쓴다. 사고 끔으로 덮었으니 사고 스위치는 안
-  싣고, 서버가 사고를 흘리면(`reasoning_content`·인라인 `<think>`) 스트림 조립이
+  그리지 않고 응답의 `content` 만 쓴다. 사고는 끈다(v10.122.3 부터 끔을 명시 —
+  §8.10), 서버가 사고를 흘리면(`reasoning_content`·인라인 `<think>`) 스트림 조립이
   content 에서 떼어 낸다. `tools[]` 는 싣지 않는다(native_fc 도). usage 는 요약에
   쓰지 않는다.
 
@@ -678,6 +678,22 @@ finally:
   this session.`(success=False), 줄었으면 `Compacted`, 아니면 `Nothing to compact`. 루프의
   context-clamp 재시도는 `compacted` 만 본다(종전과 같은 판정). CLI(`run`)에는 `/compact`
   처리가 없다(web 전용 명령).
+
+### 8.10 요약 호출의 사고 끔·출력 상한 (v10.122.3)
+
+- 문제: 요약 호출이 capabilities 를 `supports_thinking=False` 로 덮어 사고 스위치
+  (`chat_template_kwargs.enable_thinking`)가 요청에서 **빠졌다** → 서버 기본값. 기본이
+  켬인 모델(Qwen 35B)은 요약마다 사고 ~2,300 토큰을 썼고, 18회 중 3회는 `max_tokens`
+  65,536 을 전부 사고에 쓰고 본문 없이 끝났다(빈 요약 → `CompactionError`).
+- 결정: 모델의 실제 capabilities + `CallSettings(thinking=False)` 로 부른다. 공급자는
+  지원 모델에 스위치를 항상 명시하므로(`thinking_switch`) OpenAI 경로는
+  `enable_thinking: false` 를 싣고, Anthropic 경로는 `thinking` 블록을 싣지 않는다(끔 =
+  블록 없음). 스위치를 모르는 모델엔 종전대로 아무것도 안 싣는다(400 방지 게이트).
+  세션 🧠 이 켜져 있어도 요약은 끈다.
+- 출력 상한: `max_tokens = min(모델 등록값, SUMMARY_MAX_OUTPUT_TOKENS=16384)`. 요약 지시는
+  2000 토큰 이하라 본문은 여기 한참 못 미친다. 스위치를 무시하는 서버에서도 사고 2~3K +
+  요약이 들어가고, 폭주해도 65K 가 아니라 16K 에서 멈춘다(그때는 `length` — 본문이 있으면
+  통과, 없으면 빈 요약 실패).
 
 ## 9. 실측 — 미답 요청 원문 핀 (v10.41.0, 2026-10-16)
 

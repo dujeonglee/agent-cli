@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 from agent_cli import images as _images
 from agent_cli import verbose as _verbose
 from agent_cli.constants import (
@@ -582,11 +580,11 @@ class LLMCaller:
         ContextManager._compact does the natural-language conversion
         via the dialect plugin before calling here.
 
-        Capabilities are overridden for this one call:
-          - ``supports_thinking=False`` — summarisation doesn't benefit
-            from a reasoning trace, and the thinking tokens would
-            consume the response budget without ending up in the
-            persisted summary.
+        Thinking is switched off explicitly (``CallSettings(thinking=False)``
+        on the model's real capabilities, v10.122.3): summarisation doesn't
+        benefit from a reasoning trace, and the thinking tokens would consume
+        the response budget without ending up in the persisted summary. The
+        output is capped at :data:`SUMMARY_MAX_OUTPUT_TOKENS`.
         """
 
         summarisation_prompt = (
@@ -618,10 +616,14 @@ class LLMCaller:
             "Plain text only — no JSON, no code fences except to quote a "
             "short critical snippet."
         )
-        summary_capabilities = replace(
-            self.cfg.capabilities,
-            supports_thinking=False,
-        )
+        # 사고 끔은 **명시**한다 (v10.122.3, docs/context-compaction/DESIGN.md §8.10).
+        # 종전엔 ``supports_thinking=False`` 로 capabilities 를 덮어 스위치가 요청에서
+        # 빠졌다 → 서버 기본값. 기본이 켬인 모델(Qwen 35B)은 요약마다 사고 ~2,300
+        # 토큰을 썼고, 18회 중 3회는 max_tokens 전부를 사고에 쓰고 본문 없이 끝났다.
+        # 실제 capabilities + ``thinking=False`` 면 공급자가 지원 모델에 끔을 싣고
+        # (OpenAI ``enable_thinking: false``, Anthropic 은 ``thinking`` 블록 없음),
+        # 미지원 모델엔 종전대로 아무것도 안 싣는다(``thinking_switch``).
+        caps = self.cfg.capabilities
         # 요약기도 그림을 본다 (v10.77.0) — 압축이 내보내는 구간의 그림을
         # ContextManager 가 요약 입력에 붙인다(못 본다고 알려진 모델은 안 붙임).
         # 공급자 경계 ``images.expand`` 가 다른 요청처럼 조각으로 펼친다.
@@ -637,9 +639,11 @@ class LLMCaller:
             messages=messages,
             system=summarisation_prompt,
             model=self.cfg.model,
-            capabilities=summary_capabilities,
+            capabilities=caps,
             on_chunk=_discard_chunk,
             settings=CallSettings(
+                thinking=False,
+                max_output_tokens=summary_max_output_tokens(caps),
                 sampling=self.ctx.sampling if self.ctx else None,
                 stream_idle_timeout_s=(
                     self.ctx.stream_idle_timeout_s
@@ -666,6 +670,18 @@ class LLMCaller:
                 + ")"
             )
         return response.content if hasattr(response, "content") else str(response)
+
+
+#: 요약 호출의 출력 상한 (v10.122.3) — ``min(모델 등록값, 이 값)``. 요약 지시는
+#: 2000 토큰 이하라 본문은 여기 한참 못 미친다. 사고를 못 끄는 서버(스위치를 모르는
+#: 템플릿)에서도 사고 2~3K + 요약이 넉넉히 들어가고, 폭주해도 등록값(예: 65,536)이
+#: 아니라 16K 에서 멈춘다 — 실측에서 사고가 상한 전부를 쓰고 본문 없이 끝났다.
+SUMMARY_MAX_OUTPUT_TOKENS = 16_384
+
+
+def summary_max_output_tokens(capabilities) -> int:
+    """요약 호출의 ``max_tokens`` — 모델 등록값과 :data:`SUMMARY_MAX_OUTPUT_TOKENS` 중 작은 것."""
+    return min(capabilities.max_output_tokens, SUMMARY_MAX_OUTPUT_TOKENS)
 
 
 #: 요약 호출을 실패로 보는 stop_reason — 부분 글만 남는 스트림 종료들.
