@@ -1031,6 +1031,15 @@ footer {
 .oi-item.oi-closed { background: var(--ok-soft-bg); color: var(--ok); }
 .oi-state { flex: none; margin-left: auto; font-size: 11px; font-weight: 700; white-space: nowrap; }
 @media (max-width: 560px) { .oi-closer, .oi-turns { display: none; } }
+/* 접기 (v10.122.0, §15.7) — 접힌 목록은 3행이라 상한이 필요 없고, 펼친 목록만 화면의 35%
+   (최소 120px) 안에서 스크롤한다. 머리(제목·budget)와 토글은 목록 밖이라 늘 보인다. */
+.oi-list { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.oi-list.oi-list-open { max-height: max(120px, 35vh); overflow-y: auto; overscroll-behavior: contain; }
+.oi-more {
+  align-self: flex-start; font: inherit; font-size: 11px; color: var(--accent-soft-text);
+  background: none; border: none; border-radius: 4px; padding: 2px 4px; cursor: pointer;
+}
+.oi-more:hover, .oi-more:focus-visible { background: var(--accent-soft-bg); outline: none; }
 
 /* Action card variants — distinct from the generic <pre class="args">
    fallback so per-tool renderings stand out and stay readable. */
