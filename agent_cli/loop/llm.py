@@ -6,7 +6,12 @@ from dataclasses import replace
 
 from agent_cli import images as _images
 from agent_cli import verbose as _verbose
-from agent_cli.constants import DEFAULT_STREAM_IDLE_TIMEOUT_S, STREAM_MAX_ATTEMPTS
+from agent_cli.constants import (
+    DEFAULT_STREAM_IDLE_TIMEOUT_S,
+    STOP_INCOMPLETE_TOOL_CALL,
+    STOP_SERVER_ERROR,
+    STREAM_MAX_ATTEMPTS,
+)
 from agent_cli.context.overflow import classify_overflow
 from agent_cli.context.render import request_bytes
 from agent_cli.context.token_estimator import utf8_len
@@ -622,14 +627,55 @@ class LLMCaller:
         # 공급자 경계 ``images.expand`` 가 다른 요청처럼 조각으로 펼친다.
         # 🎲 세션 샘플링은 요약 호출에도 같이 간다 (v10.69.0) — "다음 LLM 요청부터"
         # 라는 칩의 약속에 요약이 예외가 아니게.
+        # 스트리밍으로 부른다 (v10.122.1): 공급자는 ``on_chunk`` 가 있을 때만
+        # ``stream: true`` 로 보낸다. 종전엔 콜백 없이 불러 비스트리밍 요청이
+        # 나갔고, 캐시 0% 인 수만 토큰 prefill + 요약 생성이 끝날 때까지 바이트가
+        # 하나도 안 흘러 게이트웨이(LiteLLM)가 504 로 끊었다(5xx 재시도도 같은
+        # 결과). 본 호출과 같은 ``stream_with_reconnect`` 경로·같은 무진전 노브를
+        # 탄다. 요약 글은 화면에 그리지 않는다 — 콜백은 no-op, 결과는 응답에서.
         response = self.provider.call(
             messages=messages,
             system=summarisation_prompt,
             model=self.cfg.model,
             capabilities=summary_capabilities,
-            settings=CallSettings(sampling=self.ctx.sampling if self.ctx else None),
+            on_chunk=_discard_chunk,
+            settings=CallSettings(
+                sampling=self.ctx.sampling if self.ctx else None,
+                stream_idle_timeout_s=(
+                    self.ctx.stream_idle_timeout_s
+                    if self.ctx
+                    else DEFAULT_STREAM_IDLE_TIMEOUT_S
+                ),
+                stream_max_attempts=(
+                    self.ctx.stream_max_attempts if self.ctx else STREAM_MAX_ATTEMPTS
+                ),
+            ),
         )
+        # 스트림은 오류를 예외가 아니라 응답 필드로 돌려준다 — 스트림 안 오류
+        # 이벤트(LiteLLM 의 mid-stream timeout)·폭주 감지·도구 호출 도중 끊김은
+        # 부분 글만 남긴다. 그 글을 요약으로 저장하면 내보낸 구간이 조용히
+        # 사라지므로 실패로 올린다(``_summarize_messages`` 가 CompactionError 로).
+        # 알려진 비정상 모양만 막는다: finish_reason 을 안 보내는 서버도 있어
+        # stop_reason 없음(None)·"length" 는 종전대로 통과.
+        stop = getattr(response, "stop_reason", None)
+        if stop in _SUMMARY_ABNORMAL_STOPS:
+            detail = getattr(response, "stop_detail", "") or ""
+            raise RuntimeError(
+                "summary stream ended abnormally ("
+                + (f"{stop}: {detail}" if detail else stop)
+                + ")"
+            )
         return response.content if hasattr(response, "content") else str(response)
+
+
+#: 요약 호출을 실패로 보는 stop_reason — 부분 글만 남는 스트림 종료들.
+_SUMMARY_ABNORMAL_STOPS = frozenset(
+    {STOP_SERVER_ERROR, STOP_INCOMPLETE_TOOL_CALL, "runaway"}
+)
+
+
+def _discard_chunk(_text: str) -> None:
+    """요약 호출의 스트림 콜백 — 요청을 스트리밍으로 만들 뿐 그리지 않는다."""
 
 
 def _build_token_stats(usage, context_window: int, total_out: int) -> dict:
