@@ -18,6 +18,7 @@ import pytest
 from agent_cli.context.manager import (
     COMPACTION_RATIO_MAX,
     DEFAULT_COMPACTION_RATIO,
+    CompactResult,
     ContextManager,
 )
 from agent_cli.loop import run_loop
@@ -81,7 +82,7 @@ class TestClampCutCompacts:
 
         def fake_compact_now():
             compacts.append(True)
-            return (30_000, 12_000)
+            return CompactResult(30_000, 12_000)
 
         # the loop's own clamp bookkeeping is what classify_output_cap reads
         real_call = LLMCaller._call_llm
@@ -158,7 +159,7 @@ class TestClampCutCompacts:
             return resp
 
         with (
-            patch.object(ctx, "compact_now", return_value=(500, 500)),
+            patch.object(ctx, "compact_now", return_value=CompactResult(500, 500)),
             patch.object(LLMCaller, "_call_llm", call_and_mark),
         ):
             run_loop(

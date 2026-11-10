@@ -1432,15 +1432,17 @@ class TestCompactNow:
         ctx.add({"role": "system", "content": "sys"})
         for i in range(20):
             ctx.add({"role": "user", "content": f"m{i} " * 10})
-        before, after = ctx.compact_now()
+        r = ctx.compact_now()
         assert len(calls) >= 1  # summariser ran
-        assert after < before  # cache shrank
+        assert r.after < r.before  # cache shrank
+        assert r.compacted and not r.error and not r.disabled
 
     def test_noop_when_nothing_to_evict(self, tmp_path):
         ctx, calls = _make_ctx(tmp_path, max_context_tokens=1_000_000)
         ctx.add({"role": "system", "content": "sys"})
-        before, after = ctx.compact_now()
-        assert before == after  # only anchor — nothing old enough to evict
+        r = ctx.compact_now()
+        assert r.before == r.after  # only anchor — nothing old enough to evict
+        assert not r.compacted and not r.error and not r.disabled
         assert calls == []
 
     def test_noop_when_compaction_disabled(self, tmp_path):
@@ -1449,9 +1451,55 @@ class TestCompactNow:
         )
         for i in range(20):
             ctx.add({"role": "user", "content": f"m{i} " * 10})
-        before, after = ctx.compact_now()
-        assert before == after  # disabled → no-op, no FIFO drop
+        r = ctx.compact_now()
+        assert r.before == r.after  # disabled → no-op, no FIFO drop
+        assert r.disabled and not r.error
         assert calls == []
+
+    def test_summariser_failure_is_reported_not_nothing(self, tmp_path):
+        """v10.122.2: 요약기 실패는 "할 것 없음" 과 구별된다 — 종전엔 경고만 내고
+        ``(before, before)`` 를 돌려 /compact 가 "Nothing to compact" 라고 했다."""
+        ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
+
+        def boom(_messages):
+            raise RuntimeError("504 Server Error: Gateway Timeout")
+
+        ctx.set_compactor(boom)
+        ctx.add({"role": "system", "content": "sys"})
+        for i in range(20):
+            ctx.add({"role": "user", "content": f"m{i} " * 10})
+        r = ctx.compact_now()
+        assert r.before == r.after  # 캐시는 그대로 — 조용히 버리지 않는다
+        assert not r.compacted
+        assert "504 Server Error: Gateway Timeout" in r.error
+
+    def test_mid_stream_server_error_fails_compaction_untouched(self, tmp_path):
+        """v10.122.1+2 한 겹 위: 실제 요약 호출(OpenAI 스트림)이 부분 글 뒤 오류
+        이벤트로 끝나면 ``compact_now`` 는 서버 문구를 담은 실패이고, 캐시와 요약은
+        그대로다 — 잘린 글이 요약으로 저장되지 않는다."""
+        from unittest.mock import patch
+
+        from agent_cli.providers.openai import OpenAIProvider
+
+        streams = TestCompactorStreams()
+        ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
+        loop = streams._loop(OpenAIProvider("http://gw/v1", "k"))
+        ctx.set_compactor(loop._llm_compact_summarize)
+        ctx.add({"role": "system", "content": "sys"})
+        for i in range(20):
+            ctx.add({"role": "user", "content": f"m{i} " * 10})
+        cache_before = list(ctx.get_messages())
+        sse = [
+            b'data: {"choices":[{"delta":{"content":"TASK - half"}}]}',
+            TestCompactorStreams._ERR,
+        ]
+        with patch("agent_cli.providers.openai.requests.post") as post:
+            post.return_value = streams._sse(sse)
+            r = ctx.compact_now()
+        assert "upstream timed out" in r.error
+        assert not r.compacted and r.before == r.after
+        assert ctx.summary == ""
+        assert ctx.get_messages() == cache_before
 
 
 class TestEstimateMessageTokensOps:
@@ -1701,8 +1749,8 @@ class TestOpenRequestsPinned:
 
     def test_open_request_survives_compaction_verbatim(self, tmp_path):
         ctx, calls = _pinned_ctx(tmp_path, ["q1", "q2"])
-        before, after = ctx.compact_now()
-        assert after < before and ctx.summary  # 압축은 일어났다
+        r = ctx.compact_now()
+        assert r.compacted and ctx.summary  # 압축은 일어났다
         reqs = _request_records(ctx)
         assert [r["content"] for r in reqs] == ["do the thing", "also fix the footer"]
         # 요약기 입력(빠진 구간의 transcript)에 요청 본문이 없다 — 요약 대상이 아니다

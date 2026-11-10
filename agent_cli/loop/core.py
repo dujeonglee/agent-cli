@@ -1347,10 +1347,12 @@ class AgentLoop:
         # v10.11.0: the clamp IS the window being full — compact now, before
         # the notice, so the retry sees the room back (ratio 1.0 means this
         # is the normal compaction trigger, not a rescue).
-        if detail == "context_clamp" and self.ctx is not None:
-            before, after = self.ctx.compact_now()
-            if after < before:
-                notice = CONTEXT_CLAMP_NOTICE
+        if (
+            detail == "context_clamp"
+            and self.ctx is not None
+            and self.ctx.compact_now().compacted
+        ):
+            notice = CONTEXT_CLAMP_NOTICE
         _append_observation(
             self.messages,
             self.ctx,

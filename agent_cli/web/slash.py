@@ -62,14 +62,24 @@ def handle_slash_command(message: str, renderer: WebRenderer, ctx=None) -> bool:
                 success=False,
             )
             return True
-        before, after = ctx.compact_now()
-        if after < before:
-            msg = f"Compacted: {before:,} → {after:,} tokens."
+        # 실패·꺼짐·할 것 없음을 구별한다 (v10.122.2) — 종전엔 요약기 실패(게이트웨이
+        # 504 등)도 "Nothing to compact" 로 보였다.
+        result = ctx.compact_now()
+        ok = False
+        if result.error:
+            msg = f"Compaction failed: {result.error}"
+        elif result.disabled:
+            msg = "Compaction is off in this session."
+        elif result.compacted:
+            msg = f"Compacted: {result.before:,} → {result.after:,} tokens."
+            ok = True
         else:
             msg = (
-                f"Nothing to compact ({before:,} / {ctx.max_context_tokens:,} tokens)."
+                f"Nothing to compact ({result.before:,} / "
+                f"{ctx.max_context_tokens:,} tokens)."
             )
-        renderer.observation(msg, turn=0, tool_name="compact", success=True)
+            ok = True
+        renderer.observation(msg, turn=0, tool_name="compact", success=ok)
         return True
 
     if message.startswith("/sh"):

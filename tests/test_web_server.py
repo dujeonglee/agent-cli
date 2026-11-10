@@ -220,8 +220,10 @@ class TestHandleSlashCommand:
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
         renderer.hub.register(conn)
+        from agent_cli.context.manager import CompactResult
+
         ctx = MagicMock()
-        ctx.compact_now.return_value = (5000, 2000)
+        ctx.compact_now.return_value = CompactResult(5000, 2000)
 
         handled = handle_slash_command("/compact", renderer, ctx=ctx)
 
@@ -233,21 +235,56 @@ class TestHandleSlashCommand:
         assert data["success"] is True
         assert "5,000" in data["content"] and "2,000" in data["content"]
 
-    def test_slash_compact_no_change(self):
-        from unittest.mock import MagicMock
+    @staticmethod
+    def _compact_ctx(tmp_path, *, compactor, turns=20, enabled=True):
+        from agent_cli.context.manager import ContextManager
 
+        ctx = ContextManager(
+            tmp_path / "s", max_context_tokens=1_000_000, compaction_enabled=enabled
+        )
+        ctx.set_compactor(compactor)
+        ctx.add({"role": "system", "content": "sys"})
+        for i in range(turns):
+            ctx.add({"role": "user", "content": f"m{i} " * 10})
+        return ctx
+
+    def _slash_compact(self, ctx):
         from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
         renderer.hub.register(conn)
-        ctx = MagicMock()
-        ctx.compact_now.return_value = (3000, 3000)
-        ctx.max_context_tokens = 100000
+        assert handle_slash_command("/compact", renderer, ctx=ctx) is True
+        while True:  # 압축 진행 status 이벤트는 건너뛴다
+            event, data = _qget(conn)
+            if event == "observation":
+                return data
 
-        handle_slash_command("/compact", renderer, ctx=ctx)
-        _, data = _qget(conn)
+    def test_slash_compact_no_change(self, tmp_path):
+        # 내보낼 것이 없다(system 앵커뿐) → 진짜 "할 것 없음"
+        ctx = self._compact_ctx(tmp_path, compactor=lambda m: "S", turns=0)
+        data = self._slash_compact(ctx)
         assert "Nothing to compact" in data["content"]
+        assert data["success"] is True
+
+    def test_slash_compact_summariser_failure_is_reported(self, tmp_path):
+        """v10.122.2: 요약기 예외(게이트웨이 504 등)는 "Nothing to compact" 가
+        아니라 사유를 단 실패다."""
+
+        def boom(_messages):
+            raise RuntimeError("504 Server Error: Gateway Timeout")
+
+        data = self._slash_compact(self._compact_ctx(tmp_path, compactor=boom))
+        assert data["success"] is False
+        assert data["content"].startswith("Compaction failed: ")
+        assert "504 Server Error: Gateway Timeout" in data["content"]
+        assert "Nothing to compact" not in data["content"]
+
+    def test_slash_compact_when_compaction_off(self, tmp_path):
+        ctx = self._compact_ctx(tmp_path, compactor=lambda m: "S", enabled=False)
+        data = self._slash_compact(ctx)
+        assert data["success"] is False
+        assert "Compaction is off" in data["content"]
 
     def test_slash_compact_without_ctx_reports_unavailable(self):
         from agent_cli.web.slash import handle_slash_command
