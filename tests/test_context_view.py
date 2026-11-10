@@ -83,8 +83,8 @@ class TestContextView:
 
     def test_compaction_sets_boundary_and_summary(self, tmp_path, capture):
         ctx = _ctx(tmp_path)
-        before, after = ctx.compact_now()
-        assert after < before
+        r = ctx.compact_now()
+        assert r.compacted
         view = ctx.context_view()
         # 경계 = 캐시에 남은 첫 **동적** 레코드의 서수 (맨 앞은 system 앵커, hidx 0)
         first_kept = next(
@@ -98,7 +98,7 @@ class TestContextView:
         s = view["summary"]
         assert s["text"] == "SUMMARY of earlier turns"
         assert s["turns"] == [records[1]["turn"], records[first_kept - 1]["turn"]]
-        assert s["before_tokens"] == before and s["after_tokens"] == after
+        assert s["before_tokens"] == r.before and s["after_tokens"] == r.after
         assert view["compactions"] == 1 and view["folded_nudges"] == 0
         # 렌더러 통지 — 마지막 통지가 현재 뷰와 같다
         assert capture.views and capture.views[-1] == view

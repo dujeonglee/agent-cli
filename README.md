@@ -1855,6 +1855,8 @@ python -m agent_cli.prompts.inventory --html inventory.html   # 훑어보는 페
 
 압축은 항상 켜져 있으며, LLM 요약이 실패하거나 재구성된 cache가 여전히 budget을 초과하면 belt-and-braces 플레인 FIFO drop으로 안전하게 폴백합니다. 이 동작은 agent·skill 서브에이전트에도 그대로 전파됩니다.
 
+**수동 `/compact` (web)**: 요약 호출도 본 호출처럼 스트리밍으로 나갑니다(v10.122.1 — 비스트리밍 요청은 게이트웨이가 첫 바이트를 기다리다 504 로 끊었다). 결과는 셋으로 구별됩니다(v10.122.2): 줄었으면 `Compacted: A → B tokens.`, 내보낼 것이 없으면 `Nothing to compact (…)`, 요약기가 실패하면 `Compaction failed: <사유>`(실패 카드), 압축이 꺼졌으면 `Compaction is off in this session.` — 실패해도 캐시는 그대로이고 FIFO 로 버리지 않습니다.
+
 압축이 일어나면 CLI는 한 줄 상태로, 웹은 **대화창 인라인 시스템 라인**(`⊙ 컨텍스트 압축됨 X→Y tok`)으로 진행을 표시합니다. 압축으로 흡수된 요약·파일 목록은 웹의 ⚡ Prompt Inspector 에서도 확인할 수 있습니다(위 참조).
 
 #### 디렉토리 구조

@@ -669,6 +669,16 @@ finally:
   content 에서 떼어 낸다. `tools[]` 는 싣지 않는다(native_fc 도). usage 는 요약에
   쓰지 않는다.
 
+### 8.9 `compact_now` 의 결과 — 실패는 실패로 (v10.122.2)
+
+- 문제: 요약기 실패(`CompactionError`)를 경고로만 내고 `(before, before)` 를 돌려,
+  web `/compact` 가 504 를 "Nothing to compact" 로 보고했다.
+- 결정: `CompactResult(before, after, error, disabled)` + `compacted` 속성. web `/compact` 는
+  `error` → `Compaction failed: <사유>`(success=False), `disabled` → `Compaction is off in
+  this session.`(success=False), 줄었으면 `Compacted`, 아니면 `Nothing to compact`. 루프의
+  context-clamp 재시도는 `compacted` 만 본다(종전과 같은 판정). CLI(`run`)에는 `/compact`
+  처리가 없다(web 전용 명령).
+
 ## 9. 실측 — 미답 요청 원문 핀 (v10.41.0, 2026-10-16)
 
 - 환경: Qwen3.8-Flash-Next-oQ4e-mtp, thinking off, 창 32,768 로 줄인 런처

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -202,6 +203,27 @@ class CompactionError(RuntimeError):
     """Raised when the summariser callback fails (provider error,
     empty/non-string return, etc.). ``ensure_within`` catches this and
     falls back to the belt-and-braces FIFO drop."""
+
+
+@dataclass(frozen=True)
+class CompactResult:
+    """``compact_now`` 의 결과 (v10.122.2). 종전 ``(before, after)`` 는 요약기
+    실패를 "줄지 않았다" 로만 보여, ``/compact`` 가 게이트웨이 504 를
+    "Nothing to compact" 라고 보고했다. 세 경우를 구별한다:
+
+    - ``disabled`` — 압축이 꺼졌거나 요약기가 연결되지 않아 시도하지 않았다.
+    - ``error`` — 요약기가 실패했다(``CompactionError`` 사유). 캐시는 그대로.
+    - 둘 다 아니면 ``compacted`` 가 줄었는지를 말한다(거짓이면 내보낼 것 없음).
+    """
+
+    before: int
+    after: int
+    error: str = ""
+    disabled: bool = False
+
+    @property
+    def compacted(self) -> bool:
+        return self.after < self.before
 
 
 class ContextManager:
@@ -860,27 +882,29 @@ class ContextManager:
         if self._cache_tokens > target_tokens:
             self._evict_fifo(target_tokens)
 
-    def compact_now(self) -> tuple[int, int]:
-        """Manual compaction — the ``/compact`` command. Run one
-        ``_compact`` pass (summarise the oldest ~half of the dynamic
-        cache) and return ``(tokens_before, tokens_after)``.
+    def compact_now(self) -> CompactResult:
+        """Manual compaction — the ``/compact`` command (and the loop's
+        context-clamp retry). Run one ``_compact`` pass (summarise the
+        oldest ~half of the dynamic cache) and return a ``CompactResult``.
 
-        No-op (equal values) when compaction is disabled, no compactor
-        callback is wired, or there's nothing old enough to evict
-        (``_split_for_compaction`` yields an empty set — e.g. only the
-        system anchor + one turn). A summariser failure surfaces a
-        warning and leaves the cache as-is; unlike ``ensure_within`` we
-        don't force a FIFO drop here, because a manual ``/compact`` asks
-        to *summarise*, not to silently discard turns.
+        ``disabled`` when compaction is off or no compactor callback is
+        wired. Equal before/after with no ``error`` means there's nothing
+        old enough to evict (``_split_for_compaction`` yields an empty
+        set — e.g. only the system anchor + one turn). A summariser
+        failure surfaces a warning, sets ``error`` and leaves the cache
+        as-is; unlike ``ensure_within`` we don't force a FIFO drop here,
+        because a manual ``/compact`` asks to *summarise*, not to
+        silently discard turns.
         """
         before = self._cache_tokens
         if not self._compaction_enabled or self._compactor_callback is None:
-            return before, before
+            return CompactResult(before, before, disabled=True)
         try:
             self._compact()
         except CompactionError as e:
             render_compaction_progress(phase="warning", reason=str(e))
-        return before, self._cache_tokens
+            return CompactResult(before, self._cache_tokens, error=str(e))
+        return CompactResult(before, self._cache_tokens)
 
     def _compact(self, target_tokens: int | None = None) -> None:
         """Execute one compaction pass — split, summarise, extract paths,
