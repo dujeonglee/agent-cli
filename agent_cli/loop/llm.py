@@ -20,6 +20,7 @@ from agent_cli.loop.prompt import SystemPromptSvc
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import _RETRY, LoopConfig, LoopState
+from agent_cli.prompts.compaction import SUMMARY_HEADINGS, SUMMARY_IMAGES_LINE
 from agent_cli.prompts.session_state import COMPACTION_NOTICE_STEPS
 from agent_cli.providers.base import CallSettings, thinking_switch
 from agent_cli.render import (
@@ -37,13 +38,8 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
 _MAX_OVERFLOW_RETRIES = 5
-#: 요약 프롬프트의 IMAGES 항목 — 내보내는 구간에 이미지가 있을 때만 FACTS 뒤에.
-_SUMMARY_IMAGES_LINE = (
-    'IMAGES — one line per image in the transcript (marked "[image: …]"): its '
-    "path, what it shows, and anything read from it that this summary does not "
-    "already record. Many images of one kind (e.g. video frames) may share one "
-    "line.\n"
-)
+# 요약 프롬프트의 제목·IMAGES 항목은 경계 지침과 한 벌 (v10.123.0, prompts/compaction).
+_SUMMARY_IMAGES_LINE = SUMMARY_IMAGES_LINE
 # Compaction ratio: the per-call target is ``context_window × ratio − system −
 # session state`` (default 0.8 = leave a 20% margin) and compaction runs the
 # moment the cache EXCEEDS that target — there is no separate trigger
@@ -428,10 +424,11 @@ class LLMCaller:
                 *self.state.messages,
                 {"role": "assistant", "content": prefill},
             ]
+        system, shared = self._request_head()
         try:
             response = self.provider.call(
                 messages=call_messages,
-                system=self.prompt.system,
+                system=system,
                 model=self.cfg.model,
                 capabilities=self.cfg.capabilities,
                 on_chunk=on_chunk,
@@ -453,22 +450,10 @@ class LLMCaller:
                 settings=CallSettings(
                     thinking=thinking,
                     grammar=grammar,
-                    stream_idle_timeout_s=(
-                        self.ctx.stream_idle_timeout_s
-                        if self.ctx
-                        else DEFAULT_STREAM_IDLE_TIMEOUT_S
-                    ),
-                    stream_max_attempts=(
-                        self.ctx.stream_max_attempts
-                        if self.ctx
-                        else STREAM_MAX_ATTEMPTS
-                    ),
                     max_output_tokens=clamped_max_tokens,
-                    tools=self._function_schemas(),
-                    # 🎲 (v10.69.0) — 세션이 정한 키만; 나머지는 프로바이더가
-                    # 모델 엔트리에서(resolve_sampling).
-                    sampling=self.ctx.sampling if self.ctx else None,
-                    blocked_images=frozenset(self._images_blocked),
+                    # 스트림 무진전 노브·tools·🎲 샘플링·막은 그림 — 경계 요약 호출과
+                    # 같은 한 곳에서(``_request_head``).
+                    **shared,
                 ),
                 **extra_call_kwargs,
             )
@@ -570,15 +555,59 @@ class LLMCaller:
 
     # ── C1 PR-3: 턴 디스패치는 TurnDispatcher 소유 — 기존 호출면 위임.
 
-    def _llm_compact_summarize(self, messages: list[dict]) -> str:
-        """Compactor callback: call the main provider with a
-        summarisation system prompt + the evicted messages, return
-        the summary text. Raised exceptions are converted to
-        ``CompactionError`` inside ContextManager._summarize_messages.
+    def _request_head(self) -> tuple[str, dict]:
+        """본 호출과 경계 요약 호출이 **같이 쓰는** 요청 머리 (v10.123.0) —
+        ``system`` 과 ``CallSettings`` 의 공통 필드(tools·샘플링·무진전 노브·막은
+        그림). 두 요청이 따로 만들면 접두가 어긋나 접두(KV) 캐시가 깨진다.
 
-        ``messages`` arrives in chat-ready ``{role, content}`` form —
-        ContextManager._compact does the natural-language conversion
-        via the dialect plugin before calling here.
+        - ``tools``: native_fc 의 함수 스키마(요청 ``tools[]``) — 텍스트 방언은 None.
+        - ``sampling``: 🎲 (v10.69.0) — 세션이 정한 키만; 나머지는 프로바이더가 모델
+          엔트리에서(resolve_sampling).
+        - ``blocked_images``: 디코딩 못 한 그림(v10.113.0) — 사유 줄로 바뀐 모양도 같게.
+        """
+        ctx = self.ctx
+        return self.prompt.system, {
+            "stream_idle_timeout_s": (
+                ctx.stream_idle_timeout_s if ctx else DEFAULT_STREAM_IDLE_TIMEOUT_S
+            ),
+            "stream_max_attempts": (
+                ctx.stream_max_attempts if ctx else STREAM_MAX_ATTEMPTS
+            ),
+            "tools": self._function_schemas(),
+            "sampling": ctx.sampling if ctx else None,
+            "blocked_images": frozenset(self._images_blocked),
+        }
+
+    def _boundary_room(self) -> int:
+        """경계 요약 요청의 messages 가 쓸 수 있는 토큰 (v10.123.0) — 창에서 요청
+        머리(system + 함수 스키마)와 요약 출력 상한을 뺀 것. ContextManager 가
+        자기 추정(``_scaled_tokens``·``estimate_text_tokens``)으로 잰 경계 messages 가
+        이걸 넘으면 경계 모양을 건너뛰고 전사 모양으로 간다."""
+        caps = self.cfg.capabilities
+        outside = self.prompt.system + self._function_schemas_text()
+        fixed = (
+            self.ctx.estimate_text_tokens(outside) if self.ctx else len(outside) // 4
+        )
+        return caps.context_window - fixed - summary_max_output_tokens(caps)
+
+    def _llm_compact_summarize(
+        self, messages: list[dict], *, shape: str = "transcript"
+    ) -> str:
+        """Compactor callback — one entry point, two request shapes; the
+        caller (``ContextManager._compact``) picks the shape. Returns the
+        response text; raised exceptions become ``CompactionError`` (or a
+        fallback) inside ContextManager.
+
+        ``shape="boundary"`` (v10.123.0, DESIGN §8.11): ``messages`` is the
+        main call's own request cut after the last evicted message, plus the
+        compaction instruction. Sent with the main call's request head
+        (``_request_head``: same ``system``, same ``tools[]``, same
+        capabilities / sampling) so the server's prefix cache covers it — no
+        grammar, no prefill, no ``json_mode``.
+
+        ``shape="transcript"``: a summarisation system prompt + one user
+        message holding the natural-language transcript of the evicted
+        records (``ContextManager._transcript_input``).
 
         Thinking is switched off explicitly (``CallSettings(thinking=False)``
         on the model's real capabilities, v10.122.3): summarisation doesn't
@@ -586,25 +615,17 @@ class LLMCaller:
         the response budget without ending up in the persisted summary. The
         output is capped at :data:`SUMMARY_MAX_OUTPUT_TOKENS`.
         """
+        if shape == "boundary":
+            return self._summary_text(self._boundary_summary_call(messages))
+        if shape != "transcript":
+            raise ValueError(f"unknown summary shape: {shape!r}")
 
         summarisation_prompt = (
             "You are compacting an agent's working transcript so it can "
             "continue the task with this summary in place of the raw "
             "history. Write a plain-text summary under these headings "
             "(omit a heading if it has no content):\n\n"
-            "TASK — the user's original request(s) and intent.\n"
-            "STATE — what is currently true: progress so far, what works.\n"
-            "DONE — actions taken: tools used and exact file paths / "
-            "symbols touched, and what changed.\n"
-            "PENDING — work not yet finished and the next step that was "
-            "about to run.\n"
-            "DECISIONS — choices made and why, including alternatives "
-            "rejected.\n"
-            "FAILURES — approaches that failed or errors encountered, so "
-            "they are not retried.\n"
-            "FACTS — keep verbatim: paths, identifiers, commands, config "
-            "values, signatures, error strings, and any user "
-            "correction/preference.\n"
+            + SUMMARY_HEADINGS
             # 이미지 (v10.77.0, docs/vision/DESIGN.md §12.3): 요약기는 그림을 못
             # 받는다 — 그림에서 읽은 것 중 아직 글로 남지 않은 것을 모델의 글에서
             # 끌어내게 한다. 이미지가 없는 압축의 프롬프트는 종전과 바이트 같다.
@@ -655,6 +676,36 @@ class LLMCaller:
                 ),
             ),
         )
+        return self._summary_text(response)
+
+    def _boundary_summary_call(self, messages: list[dict]):
+        """경계 모양 요청 (v10.123.0) — 본 호출과 같은 머리, 사고 끔, 출력 상한.
+
+        본 호출과 다른 것: ``thinking=False``(세션 🧠 이 켜져 있으면 스위치 값이 다르다 —
+        템플릿이 그 값을 접두에 그리는지는 실측 대상, DESIGN §8.11), ``max_tokens``,
+        문법·prefill·``json_mode``(``provider_call_kwargs``) 없음, 화면 콜백 없음.
+        """
+        caps = self.cfg.capabilities
+        system, shared = self._request_head()
+        return self.provider.call(
+            messages=messages,
+            system=system,
+            model=self.cfg.model,
+            capabilities=caps,
+            on_chunk=_discard_chunk,
+            settings=CallSettings(
+                thinking=False,
+                max_output_tokens=summary_max_output_tokens(caps),
+                **shared,
+            ),
+        )
+
+    @staticmethod
+    def _summary_text(response) -> str:
+        """두 모양이 공유하는 응답 처리 — 비정상 종료는 예외, 아니면 본문.
+
+        native_fc 응답의 ``tool_calls`` 는 버린다 — 본문만 요약이다(본문이 비면
+        ContextManager 가 빈 요약으로 판정한다)."""
         # 스트림은 오류를 예외가 아니라 응답 필드로 돌려준다 — 스트림 안 오류
         # 이벤트(LiteLLM 의 mid-stream timeout)·폭주 감지·도구 호출 도중 끊김은
         # 부분 글만 남긴다. 그 글을 요약으로 저장하면 내보낸 구간이 조용히

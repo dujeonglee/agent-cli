@@ -334,6 +334,9 @@ def get_messages(self) -> list[dict]:
   시작하는 0-based offset. 즉 ``history[0:dynamic_start_index]`` 가
   evict + 요약된 영역. Resume 시 정확히 ``history[dynamic_start_index:]``
   를 cache로 로드해 summary 와 시간적으로 어긋나지 않게 보장.
+- ``last_summary_shape``·``last_shape_fallback`` (v10.123.0) — 마지막 압축이 요약한
+  모양(``"boundary"``/``"transcript"``)과 경계 모양을 버린 사유(없으면 ``""``). 관측용 —
+  resume 은 읽기만 하고 동작에 쓰지 않는다(§8.11).
 
 ### Resume 흐름 (변경)
 
@@ -466,6 +469,11 @@ _PATH_TOOLS = {"write_file", "edit_file", "read_file", "code_index"}
 
 `ContextManager`는 provider 직접 핸들 없음. compactor callback 주입:
 
+> v10.123.0 의 계약(§8.11): `set_compactor(callback, boundary_room=…)`. 진입점은 하나
+> — `callback(messages)` 는 전사 모양, `callback(messages, shape="boundary")` 는 경계
+> 모양이고 `_compact` 가 모양을 고른다. `boundary_room` 이 없으면 전사 모양만 쓴다.
+> 아래 코드는 최초 설계 그대로다.
+
 ```python
 # loop.py AgentLoop._setup() 안
 if self.ctx is not None and self._compaction_enabled():
@@ -556,6 +564,9 @@ def record_compaction(
     self._fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     self._fh.flush()
 ```
+
+v10.123.0: `summary_shape`(`"boundary"`/`"transcript"`, 실패면 None)·`shape_fallback`
+(경계 모양을 건너뛰거나 버린 사유, 안 썼거나 성공이면 None) 두 키가 더 붙는다(§8.11).
 
 ContextManager 측에서 호출:
 
@@ -694,6 +705,65 @@ finally:
   2000 토큰 이하라 본문은 여기 한참 못 미친다. 스위치를 무시하는 서버에서도 사고 2~3K +
   요약이 들어가고, 폭주해도 65K 가 아니라 16K 에서 멈춘다(그때는 `length` — 본문이 있으면
   통과, 없으면 빈 요약 실패).
+
+### 8.11 경계 모양 — 본 호출 요청을 잘라 요약 (v10.123.0)
+
+- 왜: 전사 모양(§2 의 `_to_summary_text` 발췌 — 도구 결과 200자)은 요약이 사실을
+  잃고, 시스템 프롬프트가 달라 본 호출의 접두(KV) 캐시를 전혀 못 쓴다. 실사용 문맥은
+  500K~1M 토큰이고 백엔드(vLLM)는 접두 캐시가 듣는다 — 요약 호출마다 축출 구간 전체를
+  처음부터 prefill 했다.
+- 요청 모양: 본 호출과 **같은** 요청을 마지막 축출 메시지까지 자르고 그 뒤에 경계 줄
+  (`==== end of compaction boundary ====`) + 압축 지침을 붙인다.
+  - messages: `ContextManager._render_body`(본 호출 `get_messages` 와 같은 렌더 —
+    `system → 요약 → 파일 목록 → 그림 목록 → 캐시 레코드` + `pair_call_results`)를
+    그대로 자른다(`_boundary_prefix`). 꼬리(complete 넛지·세션 상태)는 없다. 핀된
+    요청은 제자리. 자른 끝이 `tool_calls` assistant 면 뒤따르는 `tool` 메시지(남는 쪽
+    레코드의 것이라도)를 포함한다 — 본 호출에 있는 메시지만 쓰고 합성하지 않는다; 그래도
+    결과 없는 호출로 끝나면 그 assistant 앞에서 자른다.
+  - 지침 자리: 꼬리와 같은 규칙 — 끝이 `user` 면 content 끝에 `"\n\n" + 지침`(복사
+    후 수정), `tool`·`assistant` 면 새 `user` 메시지. 그림은 접두 안에 본 호출과 같은
+    모양으로 이미 있다(접두에 그림이 있으면 IMAGES 항목을 싣는다).
+  - 요청 머리: `LLMCaller._request_head` 한 곳 — 본 호출과 같은 `system`·`tools[]`
+    (native_fc)·capabilities·🎲 샘플링·무진전 노브·막은 그림. 다른 것: 사고 끔·출력 상한
+    (§8.10), 문법·prefill·`json_mode` 없음.
+  - 지침 문구는 측정한 그대로(`prompts/compaction.py` `boundary_instruction`). 제목 일곱
+    줄(`SUMMARY_HEADINGS`)은 전사 모양 프롬프트와 한 상수. 이전 요약이 있을 때만 "Fold it
+    in" 줄.
+- 유효성·폴백: 경계 모양을 먼저, 아래면 전사 모양(종전 코드 그대로)으로 한 번. 둘 다
+  실패하면 `CompactionError`(사유에 경계 쪽 사유를 덧붙임), 캐시 불변.
+  - `too_large` — 경계 messages 추정(접두 레코드는 `_scaled_tokens`, 머리 합성 메시지·
+    지침은 `estimate_text_tokens`) > 창 − system·tools − 출력 상한(`boundary_room`).
+    이때는 호출 없이 바로 전사 모양.
+  - `error: …` — 호출 예외·비정상 종료(`_SUMMARY_ABNORMAL_STOPS`, 공유).
+  - `empty` — 본문이 빔(native_fc 에서 도구 호출만 한 응답 포함 — `tool_calls` 는 버린다).
+  - `not_summary` — 일곱 제목 중 두 개 미만이 줄 머리에 있음(과제를 이어 한 응답).
+    줄 머리의 공백·마크다운 장식(`##`·`**`·`-`·`>`)은 허용한다.
+  - 텍스트 방언에서 요약 뒤에 호출 블록이 딸려 오면 방언의 `parse_turn` 으로 찾고, 호출
+    앞 산문이 그 자체로 요약 검사를 통과할 때만 산문을 쓴다(호출 뒤 글은 버려진다).
+- 관측: `record_compaction` 의 `summary_shape`·`shape_fallback`, compaction.json 의
+  `last_summary_shape`·`last_shape_fallback`.
+- 계약: `set_compactor(callback, boundary_room=)` — `boundary_room` 이 없으면(테스트의
+  가짜 요약기) 전사 모양만, 종전 그대로.
+- 측정 근거: 35B·GLM 3사례 6/6 정상 요약(도구 호출 0), 가림 판독 4:1:1.
+- 출시 전 실측(2026-11-10, 35B, 실제 세션의 압축 지점 11곳을 실제 코드 경로로 재생 — 본
+  호출 직후라 접두 캐시가 데워진 상태):
+  - 경계 모양 9/11. 나머지 2건은 `not_summary`(산문 한두 문장 + 도구 호출로 과제를 이어
+    감 — 둘 다 문맥이 작아 요청 대부분이 system·tools 인 사례) → 전사 모양으로 정상 요약,
+    추가 비용 약 2.5 s. `empty`·`error`·`too_large` 0건, 사고 토큰 0.
+  - 접두 캐시 적중: 28K 요청 중 24.6K, 31K 중 28.7K, 103K 중 102.4K. 첫 토큰 1.0~2.0 s
+    (103K 포함), 전체 3.5~18 s 는 출력 길이가 정한다.
+  - 103K 사례에서 전사 모양은 과제를 "바이너리 조사" 로 적고 "node 없음" 이라는 틀린 사실을
+    남겼다. 경계 모양은 과제(`extract.js` 작성)와 Node 버전을 보존했다.
+  - 압축 뒤 상태(캐시·파일 목록·카운터·남은 토큰)는 두 모양이 같다 — 다른 것은 요약뿐.
+- 한계:
+  - 접두 캐시가 없는 서버에서는 요약 호출이 본 호출 절반 크기의 prefill 을 치른다(전사
+    모양은 발췌라 더 작았다). 폴백 때는 두 번 부른다.
+  - 세션 🧠 사고가 켜진 경우 요약 호출은 스위치가 다르다(`enable_thinking: false`).
+    템플릿이 그 값을 접두에 그리면 접두 캐시가 깨질 수 있다. 35B 는 8.5K 요청 한 사례에서
+    사고 끔 세션과 적중이 같았다(4,096) — 큰 문맥·다른 템플릿은 미실측.
+  - 추정이 창에 아슬아슬하면 서버가 400 으로 거절할 수 있다 → `error:` 로 전사 모양.
+    추정은 토큰 비율 보정에 기대므로, 보정 전에는 hex 덤프 같은 내용에서 크게 낮게 나온다
+    (재생 사례: 추정 28K, 실제 99K).
 
 ## 9. 실측 — 미답 요청 원문 핀 (v10.41.0, 2026-10-16)
 

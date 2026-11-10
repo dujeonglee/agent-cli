@@ -10,7 +10,10 @@ which triggers a *compaction* pass when the cache exceeds the target
 
   1. Split cache into system anchor + dynamic.
   2. Evict roughly half of dynamic (oldest, token-based).
-  3. LLM summarises the evicted half (via injected compactor callback).
+  3. LLM summarises the evicted half (via injected compactor callback) —
+     first in the *boundary* shape (the main request cut after the last
+     evicted message + an instruction, so the server's prefix cache covers
+     it), falling back once to the *transcript* shape (v10.123.0).
   4. Script extracts touched file paths from the evicted half.
   5. Cache rebuilt as ``[system, summary, file_list, retained dynamic]``.
   6. ``compaction.json`` persisted next to history.jsonl so a future
@@ -51,6 +54,7 @@ from agent_cli.context.render import (
 )
 from agent_cli.context.token_estimator import estimate_tokens, utf8_len
 from agent_cli.dialects import get as _get_dialect
+from agent_cli.prompts.compaction import boundary_instruction, looks_like_summary
 from agent_cli.render import (
     get_renderer,
     render_compaction_progress,
@@ -363,6 +367,8 @@ class ContextManager:
         self._image_viewer: str | None = None
         self._compaction_count: int = 0
         self._last_compacted_at: str = ""
+        self._last_summary_shape: str = ""
+        self._last_shape_fallback: str = ""
         self._dynamic_start_index: int = 0
         # 미답 사용자 요청의 id 를 돌려주는 콜백 (v10.41.0) — 그 요청의 user
         # 레코드는 압축·FIFO 에서 **원문 그대로** 남긴다. 루프가 등록한다
@@ -377,7 +383,10 @@ class ContextManager:
         # = function ``(messages) -> summary text``; ``_recorder`` =
         # TurnRecorder (or None for headless paths). Both stay optional
         # so unit tests can drive ContextManager without a full loop.
-        self._compactor_callback: Callable[[list[dict]], str] | None = None
+        self._compactor_callback: Callable[..., str] | None = None
+        # 경계 모양 (v10.123.0): 요청 머리를 아는 쪽(루프)이 경계 messages 가 쓸 수
+        # 있는 토큰을 알려 준다. None 이면 경계 모양을 쓰지 않는다(전사 모양만).
+        self._boundary_room: Callable[[], int] | None = None
         self._recorder = None
 
         self.session_dir.mkdir(parents=True, exist_ok=True)
@@ -394,10 +403,22 @@ class ContextManager:
 
     # ── Public API ────────────────────────────────────
 
-    def set_compactor(self, callback: Callable[[list[dict]], str]) -> None:
+    def set_compactor(
+        self,
+        callback: Callable[..., str] | None,
+        *,
+        boundary_room: Callable[[], int] | None = None,
+    ) -> None:
         """Register the LLM summariser callback. AgentLoop wires its
-        ``_llm_compact_summarize`` here at setup."""
+        ``_llm_compact_summarize`` here at setup.
+
+        계약 (v10.123.0, DESIGN §8.11): ``callback(messages)`` 는 전사 모양,
+        ``callback(messages, shape="boundary")`` 는 경계 모양 — 진입점 하나, 모양은
+        이쪽(``_compact``)이 고른다. ``boundary_room`` 은 경계 요청의 messages 가 쓸 수
+        있는 토큰(창 − system·tools − 출력 상한)을 돌려준다; 주어질 때만 경계 모양을
+        먼저 시도한다. 없으면(테스트의 가짜 요약기) 전사 모양만 — 종전 그대로."""
         self._compactor_callback = callback
+        self._boundary_room = boundary_room if callback is not None else None
 
     def set_image_viewer(self, tool: str | None) -> None:
         """이미지를 다시 보는 도구 이름 — 루프가 시작할 때 알려 준다 (v10.77.0).
@@ -619,6 +640,49 @@ class ContextManager:
         recursive summary and the accumulated file list. Wire-format
         plugins handle them as plain text (no format-specific shape).
         """
+        result = self._render_body()
+        cache = self._cache
+
+        # ── tail annotations (feed time only, never persisted) ──────────
+        # Both are appended to the LAST message rather than added as new ones:
+        # providers forward ``messages`` verbatim, so an extra trailing user
+        # message would create consecutive same-role turns whose handling
+        # differs per provider. Copy before mutating so _nl_cache and the
+        # stored records stay clean.
+        tail = ""
+        # (a) complete-nudge — CURRENT observation only (it is about how to end
+        # a turn, which only makes sense right after a tool result).
+        if cache and cache[-1].get("role") == "user" and cache[-1].get("tool"):
+            tail += _OBS_COMPLETE_NUDGE
+        # (b) session state — every turn, whatever the last message is (a fresh
+        # user request is exactly when the memory index and the agent roster
+        # matter most). Last, so the volatile state is the true tail: strongest
+        # recency, and zero KV-prefix cost (see prompts/session_state.py).
+        if self._session_state:
+            tail += "\n\n" + self._session_state
+        if tail and result and result[-1].get("role") == "tool":
+            # 서버 파싱 방언: 꼬리는 도구 결과가 아니라 하니스의 말 — `tool` 뒤에
+            # user 메시지로 따로 둔다 (OpenAI 규격상 허용; 종전엔 본문 끝에 붙여
+            # 도구가 한 말처럼 보였다).
+            result.append({"role": "user", "content": tail.strip()})
+        elif tail and result and result[-1].get("role") == "user":
+            last = dict(result[-1])
+            last["content"] = last.get("content", "") + tail
+            result[-1] = last
+        return result
+
+    def _render_rest_start(self) -> int:
+        """렌더 미러(``_nl_cache``)가 시작하는 캐시 인덱스 — 머리 system 레코드 뒤."""
+        return 1 if self._cache and self._cache[0].get("role") == "system" else 0
+
+    def _render_body(self) -> list[dict]:
+        """요청 messages 중 꼬리를 뺀 몸 — ``system → 요약 → 파일 목록 → 그림 목록 →
+        캐시 레코드들`` 을 렌더하고 방언의 ``pair_call_results`` 로 마무리한다.
+
+        본 호출(:meth:`get_messages`)과 경계 요약 접두(:meth:`_boundary_prefix`)가 이
+        한 경로를 쓴다 — 두 벌이면 접두가 어긋나 서버의 접두 캐시를 못 쓴다.
+        레코드 메시지는 ``_nl_cache`` 의 객체 그대로다(복사 안 함) — 경계 접두는 그
+        동일성으로 어느 레코드의 메시지인지 가린다."""
         result: list[dict] = []
         cache = self._cache
 
@@ -629,11 +693,9 @@ class ContextManager:
         # verbatim (no dialect conversion); ``_to_natural_language``
         # only handles user / assistant records and would misroute a
         # system entry through the assistant rendering path.
-        if cache and cache[0].get("role") == "system":
+        rest_start = self._render_rest_start()
+        if rest_start:
             result.append(dict(cache[0]))
-            rest_start = 1
-        else:
-            rest_start = 0
 
         if self._summary:
             result.append(
@@ -670,35 +732,7 @@ class ContextManager:
         for group in self._nl_cache:
             result.extend(group)
         # 서버 파싱 방언: 호출마다 결과가 있게 맞춘다 (v10.20.0).
-        result = self.dialect.pair_call_results(result)
-
-        # ── tail annotations (feed time only, never persisted) ──────────
-        # Both are appended to the LAST message rather than added as new ones:
-        # providers forward ``messages`` verbatim, so an extra trailing user
-        # message would create consecutive same-role turns whose handling
-        # differs per provider. Copy before mutating so _nl_cache and the
-        # stored records stay clean.
-        tail = ""
-        # (a) complete-nudge — CURRENT observation only (it is about how to end
-        # a turn, which only makes sense right after a tool result).
-        if cache and cache[-1].get("role") == "user" and cache[-1].get("tool"):
-            tail += _OBS_COMPLETE_NUDGE
-        # (b) session state — every turn, whatever the last message is (a fresh
-        # user request is exactly when the memory index and the agent roster
-        # matter most). Last, so the volatile state is the true tail: strongest
-        # recency, and zero KV-prefix cost (see prompts/session_state.py).
-        if self._session_state:
-            tail += "\n\n" + self._session_state
-        if tail and result and result[-1].get("role") == "tool":
-            # 서버 파싱 방언: 꼬리는 도구 결과가 아니라 하니스의 말 — `tool` 뒤에
-            # user 메시지로 따로 둔다 (OpenAI 규격상 허용; 종전엔 본문 끝에 붙여
-            # 도구가 한 말처럼 보였다).
-            result.append({"role": "user", "content": tail.strip()})
-        elif tail and result and result[-1].get("role") == "user":
-            last = dict(result[-1])
-            last["content"] = last.get("content", "") + tail
-            result[-1] = last
-        return result
+        return self.dialect.pair_call_results(result)
 
     def _render_record(self, i: int) -> list[dict]:
         """캐시 레코드 ``i`` → 요청 메시지 목록 (v10.2.0). 관찰은 바로 앞 assistant
@@ -909,7 +943,9 @@ class ContextManager:
     def _compact(self, target_tokens: int | None = None) -> None:
         """Execute one compaction pass — split, summarise, extract paths,
         rebuild cache, persist. Raises ``CompactionError`` on summariser
-        failure (callback exception or empty/non-string return).
+        failure (callback exception or empty/non-string return) — with the
+        boundary shape (v10.123.0) that means both shapes failed
+        (``_summarize_evicted``).
 
         ``target_tokens`` is the caller's goal — ``ensure_within`` passes
         the live per-call target so the recorded ``fallback_used`` says
@@ -929,53 +965,10 @@ class ContextManager:
         t0 = time.monotonic()
         failure_signal: str | None = None
         fallback_used = False
+        # 어느 모양으로 요약했는지와 경계 모양을 못 쓴 사유 (v10.123.0) — 기록용.
+        shape_info: dict = {"shape": None, "fallback": None}
         try:
-            # Recursive single-call summarisation: when a prior summary
-            # exists, fold it into the input so the LLM produces ONE
-            # consolidated summary in a single round-trip rather than
-            # two (evict → new summary → merge(prev, new)). Two calls
-            # cost twice as much and the intermediate ``new summary``
-            # loses prior context (e.g. "user originally asked for X")
-            # while it's generated, only to be glued back on merge.
-            # Single call with prior context wins on both axes.
-            # Render the evicted slice as a single natural-language
-            # *transcript* inside one user message — NOT a role-structured
-            # replay. assistant turns become prose (via ``_to_summary_text``)
-            # with tool args summarised (no file bodies), so the model sees
-            # "here is a transcript, summarise it" instead of a ReAct
-            # conversation whose next turn is its own — which made a small
-            # model continue the task (emit another ``write_file``) instead
-            # of summarising. Single user message = no dangling assistant
-            # turn to mimic. The callback still receives chat-ready
-            # ``{role, content}`` only.
-            transcript = "\n".join(_to_summary_text(m) for m in evict_set)
-            if self._summary:
-                content = (
-                    "## Running summary of earlier conversation\n\n"
-                    f"{self._summary}\n\n"
-                    "Below is a transcript of NEW messages to fold into the "
-                    "running summary. Produce one updated summary under the "
-                    "same section headings.\n\n"
-                    f"{transcript}"
-                )
-            else:
-                content = "Transcript to summarise:\n\n" + transcript
-            summary_msg: dict = {"role": "user", "content": content}
-            # 그림도 요약기에 (v10.77.0, docs/vision/DESIGN.md §12.3 c): 내보내는
-            # 구간의 그림은 이미 그 구간의 토큰 안에 있었으므로 요약 호출은
-            # 내보내는 절반을 넘지 않는다 — 상한을 따로 두지 않는다. 조각에는
-            # 이름이 없어 순서를 글로 적는다.
-            refs = _evicted_image_refs(evict_set) if self._shows_images() else []
-            if refs:
-                order = "\n".join(f"{i}. {r['path']}" for i, r in enumerate(refs, 1))
-                summary_msg["content"] = (
-                    f"{content}\n\nThe images from this transcript are attached "
-                    f"below, in this order:\n{order}"
-                )
-                summary_msg["images"] = refs
-            summarize_input = [summary_msg]
-
-            new_summary = self._summarize_messages(summarize_input)
+            new_summary = self._summarize_evicted(evict_set, shape_info)
             new_paths = extract_file_paths(evict_set)
 
             # Cap and store.
@@ -994,6 +987,8 @@ class ContextManager:
             self._cache_tokens = self._sum_tokens(self._cache)
             self._compaction_count += 1
             self._last_compacted_at = _now_iso()
+            self._last_summary_shape = shape_info["shape"] or ""
+            self._last_shape_fallback = shape_info["fallback"] or ""
             # P0-8a: resume 오프셋 = 마지막으로 빠진 레코드 **다음** 캐시 레코드의
             # 실제 history 위치(없으면 지금까지의 전체 서수) — ``+= len(evict_set)``
             # 은 fold 가 만든 공백을 몰라 과소 전진했다. 핀된 요청의 서수는 그
@@ -1028,6 +1023,8 @@ class ContextManager:
                     fallback_used=fallback_used,
                     failure_signal=failure_signal,
                     duration_ms=duration_ms,
+                    summary_shape=shape_info["shape"],
+                    shape_fallback=shape_info["fallback"],
                 )
 
         self._last_compaction_tokens = (old_tokens, self._cache_tokens)
@@ -1037,6 +1034,210 @@ class ContextManager:
             new_tokens=self._cache_tokens,
         )
         self._notify_context_view()
+
+    def _summarize_evicted(self, evict_set: list[dict], info: dict) -> str:
+        """축출 구간의 요약 — 경계 모양을 먼저, 안 되면 전사 모양으로 한 번 (v10.123.0,
+        DESIGN §8.11). 둘 다 실패하면 전사 모양의 ``CompactionError``.
+
+        ``info`` 에 ``shape``(요약을 낸 모양: "boundary"/"transcript", 실패면 None)와
+        ``fallback``(경계 모양을 건너뛰거나 버린 사유)을 적는다 — 압축 기록용.
+
+        경계 모양을 버리는 경우: 요청이 창을 넘을 추정(``too_large``), 호출 예외·
+        비정상 종료(``error: …``), 빈 본문(``empty`` — native_fc 에서 도구 호출만 한
+        응답 포함), 제목이 두 개 미만(``not_summary`` — 과제를 이어 한 응답)."""
+        if self._boundary_room is not None:
+            summary, reason = self._try_boundary(evict_set)
+            if summary is not None:
+                info["shape"] = "boundary"
+                return summary
+            info["fallback"] = reason
+        try:
+            summary = self._summarize_messages(self._transcript_input(evict_set))
+        except CompactionError as e:
+            if info["fallback"]:
+                raise CompactionError(
+                    f"{e} (boundary shape: {info['fallback']})"
+                ) from e
+            raise
+        info["shape"] = "transcript"
+        return summary
+
+    def _try_boundary(self, evict_set: list[dict]) -> tuple[str | None, str]:
+        """경계 모양 한 번 — ``(요약, "")`` 또는 ``(None, 버린 사유)``."""
+        built = self._boundary_messages(evict_set)
+        if built is None:
+            return None, "no_prefix"
+        messages, est = built
+        try:
+            room = int(self._boundary_room())
+        except Exception as e:  # 방을 못 재면 경계 모양을 쓰지 않는다
+            return None, _short_reason(f"error: room: {e}")
+        if est > room:
+            return None, f"too_large: ~{est} > {room} tokens"
+        try:
+            text = self._compactor_callback(messages, shape="boundary")
+        except Exception as e:
+            return None, _short_reason(f"error: {e}")
+        if not isinstance(text, str) or not text.strip():
+            return None, "empty"
+        text = self._strip_trailing_calls(text)
+        if not looks_like_summary(text):
+            return None, "not_summary"
+        return text.strip(), ""
+
+    def _strip_trailing_calls(self, text: str) -> str:
+        """텍스트 방언에서 요약 뒤에 호출 블록이 딸려 오면 떼어 낸다 (v10.123.0).
+
+        방언의 기존 파서(``parse_turn``)가 호출을 찾고, 호출 앞 산문(``thought``)이
+        그 자체로 요약 검사를 통과할 때만 산문을 쓴다 — 파서가 요약 글을 호출로
+        오인해도 요약을 잃지 않는다. 서버 파싱 방언(native_fc)은 호출이 본문 밖
+        ``tool_calls`` 로 와서 이미 버려졌다 — 본문은 그대로. 호출 블록 **뒤**의 글은
+        떼면서 함께 사라진다(요약이 호출 뒤에 오는 응답은 실측에서 없었다)."""
+        if getattr(getattr(self.dialect, "spec", None), "server_parsed", False):
+            return text
+        try:
+            turn = self.dialect.parse_turn(text)
+        except Exception:
+            return text
+        if not any(getattr(op, "action", None) for op in turn.ops):
+            return text
+        prose = turn.thought or ""
+        return prose if looks_like_summary(prose) else text
+
+    def _transcript_input(self, evict_set: list[dict]) -> list[dict]:
+        """전사 모양의 요약 입력 — 축출 구간을 발췌 전사 한 user 메시지로 (종전 그대로)."""
+        # Recursive single-call summarisation: when a prior summary
+        # exists, fold it into the input so the LLM produces ONE
+        # consolidated summary in a single round-trip rather than
+        # two (evict → new summary → merge(prev, new)). Two calls
+        # cost twice as much and the intermediate ``new summary``
+        # loses prior context (e.g. "user originally asked for X")
+        # while it's generated, only to be glued back on merge.
+        # Single call with prior context wins on both axes.
+        # Render the evicted slice as a single natural-language
+        # *transcript* inside one user message — NOT a role-structured
+        # replay. assistant turns become prose (via ``_to_summary_text``)
+        # with tool args summarised (no file bodies), so the model sees
+        # "here is a transcript, summarise it" instead of a ReAct
+        # conversation whose next turn is its own — which made a small
+        # model continue the task (emit another ``write_file``) instead
+        # of summarising. Single user message = no dangling assistant
+        # turn to mimic. The callback still receives chat-ready
+        # ``{role, content}`` only.
+        transcript = "\n".join(_to_summary_text(m) for m in evict_set)
+        if self._summary:
+            content = (
+                "## Running summary of earlier conversation\n\n"
+                f"{self._summary}\n\n"
+                "Below is a transcript of NEW messages to fold into the "
+                "running summary. Produce one updated summary under the "
+                "same section headings.\n\n"
+                f"{transcript}"
+            )
+        else:
+            content = "Transcript to summarise:\n\n" + transcript
+        summary_msg: dict = {"role": "user", "content": content}
+        # 그림도 요약기에 (v10.77.0, docs/vision/DESIGN.md §12.3 c): 내보내는
+        # 구간의 그림은 이미 그 구간의 토큰 안에 있었으므로 요약 호출은
+        # 내보내는 절반을 넘지 않는다 — 상한을 따로 두지 않는다. 조각에는
+        # 이름이 없어 순서를 글로 적는다.
+        refs = _evicted_image_refs(evict_set) if self._shows_images() else []
+        if refs:
+            order = "\n".join(f"{i}. {r['path']}" for i, r in enumerate(refs, 1))
+            summary_msg["content"] = (
+                f"{content}\n\nThe images from this transcript are attached "
+                f"below, in this order:\n{order}"
+            )
+            summary_msg["images"] = refs
+        return [summary_msg]
+
+    def _boundary_prefix(self, evict_set: list[dict]) -> tuple[list[dict], int] | None:
+        """본 호출 요청 messages 의 **진짜 접두** — 마지막 축출 레코드까지 (v10.123.0).
+
+        :meth:`_render_body` (본 호출과 같은 렌더·같은 ``pair_call_results``)를 그대로
+        자른다 — 따로 렌더하지 않으므로 앞 N 개가 본 호출과 같은 dict 다. 핀된 요청
+        (축출 구간 안에 있지만 남는 레코드)은 제자리에 그대로 있다.
+
+        자르는 자리: 마지막 축출 레코드의 메시지 뒤. 그 뒤에 ``tool`` 메시지가 이어지면
+        (자른 끝이 ``tool_calls`` 를 가진 assistant — 결과는 남는 쪽 레코드의 것이라도)
+        포함해 짝을 맞춘다. 결과를 합성하지 않는다: 본 호출에 있는 메시지만 쓴다.
+        그래도 끝이 결과 없는 호출이면 그 assistant 앞에서 자른다.
+
+        돌려주는 것: (접두, 접두에 든 마지막 캐시 레코드 인덱스). 자를 수 없으면 None."""
+        if not evict_set:
+            return None
+        evict_ids = {id(m) for m in evict_set}
+        last = max(
+            (i for i, m in enumerate(self._cache) if id(m) in evict_ids), default=None
+        )
+        if last is None:
+            return None
+        body = self._render_body()
+        rest_start = self._render_rest_start()
+        owner = {
+            id(m): rest_start + k
+            for k, group in enumerate(self._nl_cache or [])
+            for m in group
+        }
+        cut = 0
+        for pos, m in enumerate(body):
+            idx = owner.get(id(m))
+            if idx is not None and idx <= last:
+                cut = pos + 1
+        if cut == 0:
+            return None
+        through = last
+        while cut < len(body) and body[cut].get("role") == "tool":
+            idx = owner.get(id(body[cut]))
+            if idx is not None:
+                through = max(through, idx)
+            cut += 1
+        while (
+            cut
+            and body[cut - 1].get("role") == "assistant"
+            and body[cut - 1].get("tool_calls")
+        ):
+            cut -= 1  # 결과 없는 호출로 끝나지 않게
+        if cut == 0 or all(owner.get(id(m)) is None for m in body[:cut]):
+            return None
+        return body[:cut], through
+
+    def _boundary_messages(
+        self, evict_set: list[dict]
+    ) -> tuple[list[dict], int] | None:
+        """경계 모양 요청의 messages 와 그 추정 토큰 (v10.123.0).
+
+        접두(:meth:`_boundary_prefix`) 뒤에 지침을 붙인다 — 자리 규칙은 꼬리와 같다
+        (같은 역할 연속 메시지를 만들지 않는다): 끝이 ``user`` 면 그 content 끝에
+        ``"\n\n" + 지침`` (복사 후 수정 — 캐시·렌더 미러는 그대로), ``tool``·
+        ``assistant`` 면 새 ``user`` 메시지로. 그림은 접두 안에 본 호출과 같은 모양으로
+        이미 있다 — 따로 붙이지 않는다.
+
+        추정: 접두에 든 레코드는 캐시 척도(``_scaled_tokens`` — 실측 비율이 있으면
+        바이트 × 비율, 그림 포함), 머리의 합성 메시지와 지침은 ``estimate_text_tokens``."""
+        built = self._boundary_prefix(evict_set)
+        if built is None:
+            return None
+        prefix, through = built
+        images = _images.mentions_image(prefix) or any(m.get("images") for m in prefix)
+        instruction = boundary_instruction(
+            prior_summary=bool(self._summary), images=images
+        )
+        messages = list(prefix)
+        tail = messages[-1]
+        if tail.get("role") == "user" and isinstance(tail.get("content"), str):
+            tail = dict(tail)
+            tail["content"] = tail["content"] + "\n\n" + instruction
+            messages[-1] = tail
+        else:
+            messages.append({"role": "user", "content": instruction})
+        rest_start = self._render_rest_start()
+        est = self._sum_tokens(self._cache[rest_start : through + 1])
+        if rest_start:
+            est += self._scaled_tokens(self._cache[0])
+        heads = [self._summary, *self._file_list, *self._image_list, instruction]
+        est += sum(self.estimate_text_tokens(t) for t in heads if t)
+        return messages, est
 
     def _split_for_compaction(
         self,
@@ -1451,6 +1652,11 @@ class ContextManager:
                 "compaction_count": self._compaction_count,
                 "last_compacted_at": self._last_compacted_at,
                 "dynamic_start_index": self._dynamic_start_index,
+                # v10.123.0: 마지막 압축이 요약한 모양("boundary"/"transcript")과
+                # 경계 모양을 버린 사유("" = 없음) — 관측용. resume 은 읽기만 하고
+                # 동작에 쓰지 않는다.
+                "last_summary_shape": self._last_summary_shape,
+                "last_shape_fallback": self._last_shape_fallback,
             },
         )
 
@@ -1465,6 +1671,8 @@ class ContextManager:
         self._image_list = list(data.get("image_list", []) or [])
         self._compaction_count = int(data.get("compaction_count", 0) or 0)
         self._last_compacted_at = data.get("last_compacted_at", "") or ""
+        self._last_summary_shape = data.get("last_summary_shape", "") or ""
+        self._last_shape_fallback = data.get("last_shape_fallback", "") or ""
         self._dynamic_start_index = int(data.get("dynamic_start_index", 0) or 0)
 
     def _restore_cache(self) -> None:
@@ -1578,3 +1786,9 @@ def _evicted_images(records: list[dict]) -> list[str]:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _short_reason(text: str, limit: int = 300) -> str:
+    """기록에 남길 폴백 사유 — 서버 오류 본문이 길어도 한 줄 길이로."""
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
