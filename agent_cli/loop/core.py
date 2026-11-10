@@ -383,7 +383,12 @@ class AgentLoop:
         if self.ctx is not None:
             self.ctx.set_recorder(self.recorder)
             if self.compaction_enabled:
-                self.ctx.set_compactor(self._llm_compact_summarize)
+                # 경계 모양(v10.123.0)은 요청 머리를 아는 쪽이 방을 알려 준다 —
+                # 없으면 manager 는 전사 모양만 쓴다.
+                self.ctx.set_compactor(
+                    self._llm_compact_summarize,
+                    boundary_room=self._llm._boundary_room,
+                )
             # 미답 요청의 원문은 압축·FIFO 에서 핀 (v10.41.0) — 라이브로 읽는다:
             # 런 도중 흡수된 요청도, 답해서 빠진 요청도 다음 압축에 바로 반영.
             self.ctx.set_open_requests(self._state.ledger.pin_ids)
@@ -531,9 +536,11 @@ class AgentLoop:
     def stop_event(self, v):
         self._state.stop_event = v
 
-    def _llm_compact_summarize(self, messages: list[dict]) -> str:
+    def _llm_compact_summarize(
+        self, messages: list[dict], *, shape: str = "transcript"
+    ) -> str:
         """LLMCaller.compact-summarize 위임 (ctx.set_compactor 등록 대상)."""
-        return self._llm._llm_compact_summarize(messages)
+        return self._llm._llm_compact_summarize(messages, shape=shape)
 
     def _call_llm(self):
         """LLMCaller 위임 (기존 호출면 유지 — 테스트의 인스턴스 모킹 호환)."""

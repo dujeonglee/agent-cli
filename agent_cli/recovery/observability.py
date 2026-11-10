@@ -209,6 +209,8 @@ class TurnRecorder:
         fallback_used: bool,
         failure_signal: str | None = None,
         duration_ms: float = 0.0,
+        summary_shape: str | None = None,
+        shape_fallback: str | None = None,
     ) -> None:
         """Append a compaction event to ``turns.jsonl`` (NFR-CC-6).
 
@@ -223,6 +225,14 @@ class TurnRecorder:
         (``failure_signal`` None, ``fallback_used`` True). Both cases
         share the same downstream signal so threshold / cap tuning
         can sweep them together.
+
+        ``summary_shape`` (v10.123.0) — which request shape produced the
+        summary: ``"boundary"`` (the main request cut at the last evicted
+        message + instruction) or ``"transcript"`` (summarisation prompt +
+        excerpt transcript); None when summarisation failed.
+        ``shape_fallback`` — why the boundary shape was skipped or rejected
+        (``too_large: …``, ``error: …``, ``empty``, ``not_summary``,
+        ``no_prefix``); None when it was not tried or succeeded.
         """
         if self._path is None:
             return
@@ -236,5 +246,7 @@ class TurnRecorder:
             "fallback_used": fallback_used,
             "failure_signal": failure_signal,
             "duration_ms": duration_ms,
+            "summary_shape": summary_shape,
+            "shape_fallback": shape_fallback,
         }
         append_line(self._path, json.dumps(rec, ensure_ascii=False))
