@@ -26,6 +26,7 @@ __all__ = [
     "ModelCapabilities",
     "TokenUsage",
     "UnsupportedModelError",
+    "available_providers",
     "create_provider",
     "get_capabilities",
     "get_provider_class",
@@ -70,10 +71,16 @@ def get_provider_class(name: str) -> type | None:
     return _PROVIDERS.get(name)
 
 
+def available_providers() -> list[str]:
+    """등록된 프로바이더 이름 (정렬) — 모르는 이름 안내와 거절이 같은 목록을 본다."""
+    _ensure_builtins_loaded()
+    return sorted(_PROVIDERS)
+
+
 def create_provider(provider: str, base_url: str, api_key: str) -> LLMProvider:
     """Create a provider adapter instance by name."""
     cls = get_provider_class(provider)
     if cls is None:
-        available = ", ".join(sorted(_PROVIDERS))
+        available = ", ".join(available_providers())
         raise ValueError(f"Unknown provider: {provider}. Available: {available}")
     return cls(base_url, api_key)
