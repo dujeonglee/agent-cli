@@ -39,6 +39,9 @@ app = typer.Typer(
     "Run 'agent-cli sessions' to list previous sessions.\n"
     "Run 'agent-cli mcp' to register and diagnose MCP servers.",
     add_completion=False,
+    # 잡히지 않은 예외의 traceback 에 지역 변수를 찍지 않는다 (v10.123.2) — `api_key`·
+    # `resolved_key` 가 그대로 화면에 나갔다. 가드: tests/test_traceback_locals.py
+    pretty_exceptions_show_locals=False,
 )
 
 
@@ -1845,6 +1848,7 @@ mcp_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
     add_completion=False,
+    pretty_exceptions_show_locals=False,  # 위 `app` 과 같은 이유 (v10.123.2)
 )
 app.add_typer(mcp_app, name="mcp")
 
