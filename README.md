@@ -105,6 +105,11 @@ agent-cli setup
 }
 ```
 
+**`provider` 를 안 적으면 `openai`(OpenAI 호환) 설정입니다 (v10.123.1)** — 그 파일·env 의
+`base_url`·`default_model`·`api_key` 는 `-p` 없이 돌릴 때와 `-p openai` 일 때 쓰이고,
+`-p anthropic` 처럼 다른 provider 를 고르면 쓰이지 않습니다(설정 값은 그 설정의 provider 에만).
+모르는 provider 이름(`-p gemini`, 설정의 오타)은 사용 가능한 이름을 보여 주고 종료 코드 `2` 로 멈춥니다.
+
 **모델 이름은 부팅 때 검증됩니다 (v9.5.0)**. 서버의 `/v1/models` 에 그 이름이
 없으면 **그 자리에서 멈추고** 사용 가능한 목록을 보여줍니다 — 터미널에서 실행
 중이면 골라서 바로 저장할 수 있고, 다음부터 묻지 않습니다. 종전에는 없어진
@@ -189,7 +194,7 @@ agent-cli run "task" -m gpt-4o-mini
 
 | 변수 | config.json 키 | 설명 |
 |------|---------------|------|
-| `AGENT_CLI_PROVIDER` | `provider` | LLM 프로바이더 |
+| `AGENT_CLI_PROVIDER` | `provider` | LLM 프로바이더 — 파일에도 env 에도 없으면 `openai`(OpenAI 호환) |
 | `AGENT_CLI_BASE_URL` | `base_url` | API 엔드포인트 |
 | `AGENT_CLI_API_KEY` | `api_key` | API 키 |
 | `AGENT_CLI_MODEL` | — | 모델 ID — 노브 `model` 의 부팅값 (v10.43.0; `--model`/`-m`, 웹 🤖 칩 v10.45.0). 세션 도중 바꾸면 다음 LLM 호출부터 실린다. config.json 의 `default_model` 은 파일에서만 읽는다 |

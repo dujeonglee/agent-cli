@@ -115,23 +115,31 @@ def _resolve_provider(
     """Resolve provider settings: CLI args > config.json > provider defaults.
 
     ``provider`` is the ``-p`` flag value, or ``None`` when not passed.
-    Precedence: explicit flag → config.json's provider → "openai"
-    (OpenAI-compatible: covers OpenAI, vLLM, omlx, LM Studio).
+    Precedence: explicit flag → config's provider. A config (file or env)
+    that names no provider is an "openai" (OpenAI-compatible: OpenAI, vLLM,
+    omlx, LM Studio) config, so its URL·model·key apply to "openai".
+    An unknown provider name exits with code 2 and the available names.
     """
     from agent_cli.config import load_config
+    from agent_cli.providers import available_providers
 
     config = load_config()
 
-    config_provider = config.get("provider", "")
-    if provider:
-        # Explicit CLI flag (-p): use it.
-        effective_provider = provider
-    elif config_provider:
-        # No flag, but config.json specifies a provider.
-        effective_provider = config_provider
-    else:
-        # No flag, no config — default to OpenAI-compatible.
-        effective_provider = "openai"
+    # provider 를 안 적은 설정은 openai 의 것이다 (v10.123.1). 종전엔 빈 문자열이라
+    # 아래 "같은 provider 일 때만 설정 값" 검사에 늘 떨어져 사용자가 적은
+    # base_url·default_model·api_key 를 버리고 공개 엔드포인트로 갔다.
+    config_provider = config.get("provider") or "openai"
+    effective_provider = provider or config_provider
+    names = available_providers()
+    if effective_provider not in names:
+        source = "--provider" if provider else "config provider"
+        console.print(
+            f"Unknown {source} {effective_provider!r}. Available: {', '.join(names)}",
+            style=C["error"],
+            markup=False,
+            highlight=False,
+        )
+        raise typer.Exit(2)
 
     # Resolve: CLI args > config (only if same provider) > provider defaults
     defaults = get_provider_defaults(effective_provider)
