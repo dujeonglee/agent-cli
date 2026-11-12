@@ -2051,6 +2051,7 @@ agent-cli mcp remove <이름>
 - 스트리밍 완료 후 thought/action을 Markdown 렌더링
 - 토큰 throughput 표시: `ttft: 200ms | in: 1024 tok (892 tok/s) | out: 156 tok (201 tok/s)`
 - TTFT (Time-to-First-Token) 모든 프로바이더에서 클라이언트 측정
+- 프리픽스 캐시 적중 (v10.128.0): OpenAI 호환 서버가 `prompt_tokens_details.cached_tokens` 를 주면 줄 끝에 `cache hit: 98.0K` 가 붙고, `in` 의 속도(tok/s)는 캐시 아닌 토큰만으로 잰다 — 적중 턴의 프리필 속도가 부풀지 않는다. `in`·`ctx` 는 전과 같이 캐시를 포함한 프롬프트 전체다. 추론 토큰(`completion_tokens_details.reasoning_tokens`, `out` 안에 든 몫)은 `--verbose` 기록·`turns.jsonl` 에 실린다
 
 ### 안전장치
 

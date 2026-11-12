@@ -309,6 +309,7 @@ class TestOneSource:
             "output_tokens": 5,
             "cache_read_input_tokens": 0,
             "cache_creation_input_tokens": 0,
+            "reasoning_tokens": 0,
         }
 
     def test_helper_returns_exactly_the_shared_fields(self):

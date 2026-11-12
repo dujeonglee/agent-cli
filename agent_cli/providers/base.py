@@ -25,19 +25,26 @@ class TokenUsage:
     prompt_eval_ns: int = 0  # prefill / time-to-first-token
     eval_ns: int = 0  # decode / first-to-last token
     ttft_ns: int = 0  # client-measured TTFT (all providers, streaming only)
-    # Anthropic prompt cache. Non-zero only when cache_control is set on
-    # request blocks. ``input_tokens`` excludes both cache fields, so the
-    # billable input total is input_tokens + cache_creation + cache_read.
+    # Prompt cache. Anthropic: non-zero only when cache_control is set on
+    # request blocks. OpenAI-compatible servers (v10.128.0): cache_read is
+    # ``prompt_tokens_details.cached_tokens`` (prefix cache hit).
+    # ``input_tokens`` excludes both cache fields, so the billable input total
+    # is input_tokens + cache_creation + cache_read.
     cache_creation_input_tokens: int = 0  # tokens written to cache (25% premium)
     cache_read_input_tokens: int = 0  # tokens served from cache (10% cost)
+    # 추론(사고) 몫 (v10.128.0) — ``output_tokens`` **안에 든** 수다(더하지 않는다).
+    # OpenAI 모양 ``completion_tokens_details.reasoning_tokens``; 주지 않는 서버와
+    # Anthropic 경로는 0.
+    reasoning_tokens: int = 0
 
     @property
     def total_input_tokens(self) -> int:
         """The true prompt size / context occupancy: non-cached ``input_tokens``
         + cache writes + cache reads. ``input_tokens`` alone EXCLUDES both cache
-        fields (Anthropic prompt cache), so use this wherever you mean "how full
-        is the context" (budget reconcile, ctx% readout). For providers without a
-        prompt cache (omlx etc.) the cache fields are 0, so this == input_tokens."""
+        fields, so use this wherever you mean "how full is the context" (budget
+        reconcile, ctx% readout). On the OpenAI path it equals the server's
+        ``prompt_tokens``; without a cache hit the cache fields are 0, so this ==
+        input_tokens."""
         return (
             self.input_tokens
             + self.cache_creation_input_tokens
