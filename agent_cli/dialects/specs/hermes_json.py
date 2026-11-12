@@ -94,6 +94,8 @@ The login() function is implemented and the tests pass.
 
 HERMES_JSON = DialectSpec(
     name="hermes_json",
+    summary='<tool_call> blocks holding a JSON object {"name", "arguments"} (Hermes '
+    "shape), parsed from the text by agent-cli",
     call=("<tool_call>", "</tool_call>"),
     name_slot=NameSlot.JSON_KEY,
     args=ArgStyle.JSON_IN_TAG,

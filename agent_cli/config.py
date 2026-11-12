@@ -142,6 +142,40 @@ def fill_model_entry(model: str, fields: dict) -> bool:
     return True
 
 
+def bind_user_dialect(model: str, name: str | None = None) -> bool:
+    """사용자 models.json 의 그 엔트리에 방언을 묶는다 (v10.127.0) — 묻기 전 판정과 쓰기를 한 곳에서.
+
+    ``name`` 이 None 이면 **판정만**: 엔트리가 사용자 파일(``_GLOBAL_MODELS_PATH``)에 있고
+    ``dialect`` 가 빠졌거나 빈 값(``""``·``null`` — "묶이지 않음")이면 True. 패키지 기본 표에만
+    있는 모델·값이 있는 ``dialect`` 는 False — 답을 쓸 수 없는 질문을 하지 않게 묻기 **전에** 본다.
+    ``name`` 을 주면 같은 판정 뒤 그 값을 쓴다(성공 True, 읽기·쓰기 실패 False). 값이 있는
+    ``dialect`` 는 여전히 덮어쓰지 않는다 — `fill_model_entry` 와 같은 불변이고, 빈 값만
+    "빠진 키" 로 본다는 것이 다르다(`fill_model_entry` 는 키가 있으면 빈 값이어도 건너뛴다)."""
+    target = _GLOBAL_MODELS_PATH
+    if not target.is_file():
+        return False
+    try:
+        with open(target, encoding="utf-8") as f:
+            existing = json.load(f)
+    except Exception as e:
+        print(f"[warn] Cannot read {target}: {e}", file=sys.stderr)
+        return False
+    models = existing.get("models") if isinstance(existing, dict) else None
+    entry = models.get(model) if isinstance(models, dict) else None
+    if not isinstance(entry, dict) or entry.get("dialect") not in (None, ""):
+        return False
+    if name is None:
+        return True
+    entry["dialect"] = name
+    try:
+        atomic_write_json(target, existing, indent=2)
+    except Exception as e:
+        print(f"[warn] Cannot save to {target}: {e}", file=sys.stderr)
+        return False
+    reload_registry()
+    return True
+
+
 def save_model_entry(model: str, entry: dict) -> bool:
     """Save a runtime-detected model to ~/.agent-cli/models.json.
 

@@ -78,6 +78,10 @@ class DialectSpec:
 
     name: str
     """레지스트리 이름 (= ``--dialect`` 값, 세션 메타, models.json 바인딩)."""
+    summary: str
+    """사람이 읽는 한 줄 (v10.127.0) — 이 방언이 요구하는 것·모양, 사실만("추천" 없음).
+    `run --help` 의 ``--dialect`` 설명과 부트의 방언 질문이 이것으로 만든다.
+    **모델에게는 가지 않는다**(프롬프트는 ``prose``)."""
 
     # ── 네 축 ──
     call: tuple[str, str] | None

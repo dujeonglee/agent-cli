@@ -15,6 +15,9 @@ from agent_cli.config import get_provider_defaults
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import (
+    DialectUnbound as _DialectUnbound,
+)
+from agent_cli.dialects import (
     resolve_dialect as _resolve_dialect,
 )
 from agent_cli.dialects import (
@@ -983,6 +986,35 @@ def _require_vision(binding) -> None:
         raise typer.Exit(1)
 
 
+def _ask_dialect(renderer) -> str:
+    """방언 하나를 묻는다 — 묻는 코드는 여기 하나 (v10.127.0; 탐지 실패 뒤의 질문과
+    방언 없는 엔트리의 부트 질문이 같이 쓴다). 선택지마다 스펙의 한 줄 설명. 기본값·
+    auto 는 없다 (v10.3.0) — 등록된 이름 하나를 받을 때까지 재질문 (D2: 조용한 오타
+    폴백 금지). EOF·Ctrl-C 는 호출자에게 그대로."""
+    from agent_cli.dialects import summaries
+
+    choices = summaries()
+    names = [n for n, _ in choices]
+    width = max(len(n) for n in names)
+    console.print("  Dialect — how this model writes tool calls:", highlight=False)
+    for name, text in choices:
+        console.print(
+            f"    {name.ljust(width)}  {text}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+    prompt = f"  Dialect ({' / '.join(names)}): "
+    answer = renderer.prompt_user(prompt, multiline=False).strip().lower()
+    while answer not in names:
+        console.print(
+            f"[{C['muted']}]  Unknown dialect '{answer}'. "
+            f"Available: {', '.join(names)}[/]"
+        )
+        answer = renderer.prompt_user(prompt, multiline=False).strip().lower()
+    return answer
+
+
 def _prompt_model_capabilities(model: str):
     """Interactively ask user for model capabilities when detection fails."""
     from agent_cli.config import save_model_entry
@@ -1028,21 +1060,8 @@ def _prompt_model_capabilities(model: str):
         )
 
         # Dialect 바인딩: 엔트리가 대화형으로 생성되는 바로 이 지점에서
-        # 고른다. 기본값·auto 는 없다 (v10.3.0) — 등록된 이름 하나를
-        # 받을 때까지 재질문 (D2: 조용한 오타 폴백 금지).
-        from agent_cli.dialects import list_names
-
-        names = list_names()
-        prompt = f"  Dialect ({' / '.join(names)}): "
-        dialect_input = renderer.prompt_user(prompt, multiline=False).strip().lower()
-        while dialect_input not in names:
-            console.print(
-                f"[{C['muted']}]  Unknown dialect '{dialect_input}'. "
-                f"Available: {', '.join(names)}[/]"
-            )
-            dialect_input = (
-                renderer.prompt_user(prompt, multiline=False).strip().lower()
-            )
+        # 고른다. 기본값·auto 는 없다 (v10.3.0).
+        dialect_input = _ask_dialect(renderer)
 
         from agent_cli.providers.capabilities import caps_to_entry
 
@@ -1292,6 +1311,71 @@ def _setup_provider(
     )
 
 
+def _bind_dialect_or_exit(model: str, unbound, *, quiet: bool):
+    """방언이 안 묶인 모델 (v10.127.0) — 터미널이면 그 자리에서 묻고 models.json 의 그
+    엔트리에 저장한 뒤 진행, 아니면 종전 오류 그대로 ``Exit(2)``.
+
+    "기본값·auto 없음, 사용자가 모델에 방언을 묶는다"(v10.3.0)는 그대로다 — 바뀐 것은
+    묶을 기회를 주는 자리뿐. 종전엔 탐지가 **성공**하면 엔트리가 방언 없이 저장되고 곧바로
+    ``No dialect for model`` 이라, README 대로 설치한 첫 ``run`` 이 전부 여기서 멈췄다.
+    비대화식(보드·파이프·``AGENT_CLI_NO_INPUT``)·``quiet``(web — 탐지 실패 질문과 같은
+    규칙)는 묻지 않는다. ``--dialect`` 를 준 실행은 이 길에 오지 않는다.
+
+    답을 쓸 수 없는 질문은 하지 않는다: 그 엔트리가 사용자 파일에 없으면(패키지 기본 표에만
+    있거나 탐지 결과 저장이 실패) 묻기 **전에** 종전 오류 2. ``"dialect": ""``·``null`` 은
+    "묶이지 않음" 이라 묻고 채운다. 판정·쓰기는 `config.bind_user_dialect` 한 곳."""
+    from agent_cli.config import _GLOBAL_MODELS_PATH, bind_user_dialect
+    from agent_cli.model_check import is_interactive
+
+    def _fail():
+        console.print(
+            unbound.args[0] if unbound.args else str(unbound),
+            style=C["error"],
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+        return typer.Exit(2)
+
+    if quiet or not is_interactive() or not bind_user_dialect(model):
+        raise _fail() from unbound
+    console.print(
+        f"\nModel '{model}' has no dialect bound in {_GLOBAL_MODELS_PATH}.",
+        style=C["accent"],
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    try:
+        name = _ask_dialect(get_renderer())
+    except EOFError:
+        console.print()
+        raise _fail() from unbound
+    except KeyboardInterrupt:
+        console.print()
+        raise typer.Exit(130) from None
+    if not bind_user_dialect(model, name):
+        # 물은 뒤의 쓰기 실패(디스크·권한) — 이번 런만의 바인딩은 만들지 않는다
+        # (``--dialect`` 는 프로세스 전체 강제라 뜻이 다르다).
+        console.print(
+            f'Could not save the dialect to {_GLOBAL_MODELS_PATH}. Set "dialect" '
+            f"on the '{model}' entry there, or pass --dialect {name}.",
+            style=C["error"],
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+        raise typer.Exit(2)
+    console.print(
+        f"Saved dialect '{name}' to {_GLOBAL_MODELS_PATH}",
+        style=C["muted"],
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    return _resolve_dialect(model)
+
+
 def _bootstrap_provider(
     provider,
     model,
@@ -1317,6 +1401,8 @@ def _bootstrap_provider(
     _set_dialect_override(dialect)
     try:
         dialect_plugin = _resolve_dialect(resolved_model)
+    except _DialectUnbound as exc:
+        dialect_plugin = _bind_dialect_or_exit(resolved_model, exc, quiet=quiet)
     except KeyError as exc:
         console.print(f"[{C['error']}]{exc.args[0] if exc.args else exc}[/]")
         raise typer.Exit(2) from exc
@@ -1413,6 +1499,23 @@ def _apply_knobs(knob_args, *, ctx, registry, renderer, auditor) -> None:
     )
 
 
+def _dialect_help() -> str:
+    """``--dialect`` 도움말 (run·web) — 선택지 설명은 방언 스펙의 ``summary`` 에서
+    (v10.127.0; 종전엔 넷을 손으로 적어 native_fc 가 빠져 있었다)."""
+    from agent_cli.dialects import summaries
+
+    choices = "; ".join(f"{name}: {text}" for name, text in summaries())
+    return (
+        "Dialect (tool-call wire shape) name — forces it for the whole session (main "
+        "and every sub-agent). Unset: each agent uses its model's models.json "
+        "'dialect' binding — `run` in a terminal asks for a missing one and saves "
+        f"it; otherwise an unbound model is an error. Registered: {choices}."
+    )
+
+
+_DIALECT_HELP = _dialect_help()
+
+
 #: `run --image` (v10.59.0) — 모듈 단일체: 가변 타입(list) 인자 기본값의 함수
 #: 호출을 ruff B008 이 막는다(다른 옵션은 불변 타입이라 통과).
 _TITLE_OPTION = typer.Option(
@@ -1486,7 +1589,7 @@ def run(
     dialect: str | None = typer.Option(
         None,
         "--dialect",
-        help="Dialect (tool-call wire shape) name — forces it for the whole session (main and every sub-agent). Unset: each agent uses its model's models.json 'dialect' binding; an unbound model is an error. Built-ins: json_fc (plain-prose reasoning + a flat JSON op array; multi-op), xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping), hermes_json, glm_argkey. Specs live in agent_cli/dialects/specs/; the registered names list is the set of valid values.",
+        help=_DIALECT_HELP,
     ),
     resume: str = typer.Option(
         "",
@@ -2340,9 +2443,7 @@ def web(
     dialect: str | None = typer.Option(
         None,
         "--dialect",
-        help="Dialect (tool-call wire shape) name — forces it for the whole session "
-        "(main and every sub-agent). Unset: each agent uses its model's models.json "
-        "'dialect' binding; an unbound model is an error.",
+        help=_DIALECT_HELP,
     ),
     host: str = typer.Option(
         "127.0.0.1",

@@ -77,6 +77,8 @@ The login() function is implemented and the tests pass.
 
 JSON_FC = DialectSpec(
     name="json_fc",
+    summary="plain-prose reasoning, then one JSON array of tool ops, parsed from the "
+    "text by agent-cli",
     call=None,
     name_slot=NameSlot.JSON_KEY,
     args=ArgStyle.JSON_NATIVE,
