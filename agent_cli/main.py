@@ -608,7 +608,15 @@ class _ConsoleDispatchOutput(DispatchOutput):
 
     def skill_not_found(self, name: str) -> None:
         console.print(f"[{C['error']}]Unknown command: /{name}[/]")
-        console.print(f"[{C['muted']}]Type /help for available commands[/]")
+        # 둘째 줄은 실제로 되는 것을 가리킨다 (v10.127.1; 종전 "Type /help" 는 run 에서
+        # 그 /help 도 Unknown command 였다)
+        console.print(
+            "Run 'agent-cli run /help' for available commands",
+            style=C["muted"],
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
         self._report(None, False)
 
     def skill_result(self, name: str, result, *, ok: bool = True) -> None:
@@ -1516,6 +1524,33 @@ def _dialect_help() -> str:
 _DIALECT_HELP = _dialect_help()
 
 
+def _answers_before_boot(query: str, *, resume: bool) -> bool:
+    """``run`` 의 부트 전 명령 (v10.127.1) — 답했으면 True(종료 코드 0).
+
+    ``/help`` 는 늘(세션에 기대는 것이 없다). 목록(``/skills``·``@agents``·``@``)은
+    ``--resume`` 이 없을 때만 — 이어 가는 세션에선 살아난 상주 에이전트가 목록에
+    들어가야 하므로 종전 경로(펌프 라우팅)로 간다. ``@<name>`` 처럼 이름을 단 것은
+    여기서 다루지 않는다(상주 상태·spawn 은 부트 뒤의 일)."""
+    head = query.split(maxsplit=1)[0] if query.strip() else ""
+    if head == "/help":
+        from agent_cli.command_table import RUN, help_text
+
+        console.print(help_text(RUN), markup=False, highlight=False, soft_wrap=True)
+        return True
+    if resume:
+        return False
+    out = _ConsoleDispatchOutput()
+    if head == "/skills":
+        from agent_cli.skills import load_skills
+
+        out.list_skills(load_skills())
+        return True
+    if head in ("@", "@agents"):
+        out.list_agents(_collect_agents())
+        return True
+    return False
+
+
 #: `run --image` (v10.59.0) — 모듈 단일체: 가변 타입(list) 인자 기본값의 함수
 #: 호출을 ruff B008 이 막는다(다른 옵션은 불변 타입이라 통과).
 _TITLE_OPTION = typer.Option(
@@ -1621,6 +1656,11 @@ def run(
             console.print(f"[{C['error']}]No command to execute.[/]")
             raise typer.Exit(1)
         raise typer.Exit(_run_shell_inline(cmd))
+
+    # 목록 명령은 부트 전에 답한다 (v10.127.1) — provider·서버·세션이 필요 없다
+    # (종전엔 부트와 세션 생성을 거쳐 `sessions` 에 빈 세션을 남겼다).
+    if _answers_before_boot(query, resume=bool(resume)):
+        raise typer.Exit(0)
 
     # C4: run/web 공용 부트스트랩 — provider 6-튜플 + dialect fail-fast +
     # 예산 폴백(70% 통일 공식). resume pre-check 는 핸드셰이크보다 먼저
