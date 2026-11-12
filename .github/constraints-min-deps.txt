@@ -1,0 +1,10 @@
+# CI `min-deps` 잡의 제약 (v10.124.1) — `uv pip install --resolution lowest-direct` 는 직접 의존성만
+# 하한으로 깔고 전이 의존성은 최신을 고른다. 여기 적는 것은 **하한 버전이 스스로 막지 못한
+# 전이 패키지**뿐이다(직접 핀을 올리는 대신). 줄마다 이유를 적는다.
+
+# typer 0.12.4~0.15.3 은 click 상한이 없는데 click 8.2 에서 깨진다
+# ("Secondary flag is not valid for non-boolean flag", make_metavar() 인자 수). 0.15.4 부터 typer 가 `click<8.2`.
+click<8.2
+# mcp 1.6~1.21 은 pydantic 2.14 에서 import 가 깨진다
+# ("cannot import name 'eval_type_backport'"). mcp 1.22 부터 자체 해결.
+pydantic<2.14

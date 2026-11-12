@@ -803,6 +803,9 @@ FIRST_LINE = __import__("re").compile(r"^Fetch failed \([a-z-]+\): \S+$")
 
 
 def _dns_error():
+    """DNS 실패의 실제 사슬 — ConnectionError → MaxRetryError(reason=…) → 연결 오류 →
+    ``socket.gaierror``. 가운데 연결 오류는 urllib3 2.x 면 ``NameResolutionError``, 1.26 이면
+    ``NewConnectionError`` 라 버전에 안 묶이게 둘의 공통 부모로 만든다(v10.124.1)."""
     import socket
 
     import requests as req
@@ -812,9 +815,9 @@ def _dns_error():
         try:
             raise socket.gaierror(8, "nodename nor servname provided, or not known")
         except socket.gaierror as e:
-            raise u3.NameResolutionError("example.com", None, e) from e
-    except u3.NameResolutionError as nre:
-        return req.exceptions.ConnectionError(u3.MaxRetryError(None, "/p", nre))
+            raise u3.NewConnectionError(None, f"Failed to resolve: {e}") from e
+    except u3.NewConnectionError as nce:
+        return req.exceptions.ConnectionError(u3.MaxRetryError(None, "/p", nce))
 
 
 def _connect_error():

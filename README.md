@@ -7,7 +7,7 @@ ReAct 패턴 기반 에이전트 CLI. 멀티 프로바이더(OpenAI, Anthropic) 
 
 ## 설치
 
-Python 3.10+ 필요.
+Python 3.10+ 필요. 의존성 하한(`pyproject.toml`)은 쓰는 API 가 들어온 버전이고, CI `min-deps` 잡이 Python 3.10 에 하한 버전들을 실제로 깔아 유닛 수트를 돌린다(v10.124.1).
 
 ```bash
 # 릴리스 설치 (태그된 버전)

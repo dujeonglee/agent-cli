@@ -32,6 +32,34 @@ jobs:
       - name: Run unit tests
         run: pytest tests/ -m "not ollama_integration" -v
 
+  min-deps:
+    # 의존성 하한 조합 (v10.124.1) — pyproject 의 하한은 "쓰는 API 가 들어온 버전" 이다.
+    # 직접 의존성은 전부 하한으로(lowest-direct), 전이 의존성은 최신으로 깔고, 하한이 스스로
+    # 못 막는 전이 패키지만 제약 파일로 묶는다. 파이썬은 requires-python 의 최저(3.10) 하나.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Install uv
+        # 로컬에서 이 조합을 확인한 판과 같게 고정 — 해석기 동작이 바뀌면 조합이 바뀐다.
+        run: pip install uv==0.10.4
+
+      - name: Install lowest direct dependencies
+        run: >-
+          uv pip install --system --resolution lowest-direct
+          -c .github/constraints-min-deps.txt -e ".[dev,web]"
+
+      - name: Show resolved versions
+        run: uv pip list --system
+
+      - name: Run unit tests
+        run: pytest tests/ -m "not ollama_integration" -v
+
   browser:
     # 실브라우저(playwright) 테스트 — 별도 잡. 기본 유닛 스위트는
     # tests/browser 를 수집조차 안 하므로(collect_ignore), 여기서만
