@@ -61,6 +61,32 @@ def release_session(session_dir: str | Path) -> None:
         os.close(fd)
 
 
+def session_is_open(session_dir: str | Path) -> bool:
+    """그 세션을 쥔 프로세스가 지금 살아 있나 (v10.127.2) — 읽기 전용 질의.
+
+    ``sessions`` 가 "in progress" 를 살아 있는 것에만 쓰려고 묻는다. 잠금 파일이 없으면
+    False 이고 **만들지 않는다**. 있으면 ``O_RDONLY`` 로 열어 공유 잠금을 비차단으로
+    시도하고 곧바로 닫는다 — 실패하면 누가 배타 잠금을 쥐고 있다. 파일 속 pid 를 읽어
+    살아 있는지 보는 방식은 쓰지 않는다(pid 재사용에 속는다). 이 프로세스가 쥔 세션은 True.
+
+    경합: 이 질의가 공유 잠금을 쥔 찰나에 다른 프로세스의 :func:`claim_session` 이 겹치면
+    그쪽이 :class:`SessionBusy` 를 본다. 창은 열기·시도·닫기뿐이라 최소지만 0 은 아니다."""
+    sdir = Path(session_dir)
+    if str(sdir.resolve()) in _HELD:
+        return True
+    try:
+        fd = os.open(sdir / _NAME, os.O_RDONLY)
+    except OSError:
+        return False  # 없음(또는 못 엶) — 잠금을 쥔 프로세스가 만든 적이 없다
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    finally:
+        os.close(fd)  # 닫으면 공유 잠금도 풀린다
+    return False
+
+
 def _read_pid(fd: int) -> int | None:
     try:
         return int(os.pread(fd, 32, 0).decode().strip())

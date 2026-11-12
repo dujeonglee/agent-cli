@@ -755,7 +755,7 @@ agent-cli sessions --workspace /path/to/project
 agent-cli web -p openai -m gpt-4o --resume <session_id>
 ```
 
-각 세션은 id·시각과 함께 **마지막 사용자 요청(↳)** 과 **마지막 결과(→)** 를 한눈에 보여줍니다 (아직 끝나지 않은 run 은 `→ (in progress)`). 이 요약은 세션의 `history.jsonl` 에서 마지막 user↔complete 페어를 읽어 만듭니다 (별도의 `query` 메타 필드는 제거됨).
+각 세션은 id·시각과 함께 **마지막 사용자 요청(↳)** 과 **마지막 결과(→)** 를 한눈에 보여줍니다 (답이 없는 세션은 그 세션을 연 프로세스가 지금 살아 있으면 `→ (in progress)`, 아니면 `→ (no answer)` — v10.127.2; 종전엔 LLM 실패로 끝난 세션도 전부 "in progress" 였습니다. 판정은 세션 폴더의 `session.lock` 잠금으로 합니다). 이 요약은 세션의 `history.jsonl` 에서 마지막 user↔complete 페어를 읽어 만듭니다 (별도의 `query` 메타 필드는 제거됨).
 
 ```text
 Sessions for /path/to/project:
