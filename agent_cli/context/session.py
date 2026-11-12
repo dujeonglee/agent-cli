@@ -80,13 +80,37 @@ def get_session_dir(meta: SessionMeta) -> Path:
     return d
 
 
+#: 새 세션 id 를 하나씩 올려 보는 횟수의 상한 (v10.127.4) — 같은 초에 이만큼
+#: 붐비는 일은 없다; 넘으면 무언가 잘못된 것이라 조용히 돌지 않고 멈춘다.
+_ID_CLAIM_ATTEMPTS = 1000
+
+
 def create_session(workspace: str | None = None) -> SessionMeta:
-    """Create a new session for the given workspace (defaults to CWD)."""
+    """Create a new session for the given workspace (defaults to CWD).
+
+    새 세션은 디렉터리를 **배타적으로 차지하며** 태어난다 (v10.127.4). 종전엔 id 가
+    ``int(time.time())`` 뿐이라 같은 초에 뜬 두 프로세스(스크립트의 연속·병렬 ``run``)가
+    한 디렉터리에 history 를 섞어 썼다. ``mkdir(exist_ok=False)`` 가 원자적이므로
+    이미 있으면 id 를 1 올려 다시 — id 는 숫자 문자열로 남는다(정렬·표시·
+    ``--resume <id>`` 가 그것을 전제한다). 호출자(run·web)는 부트가 끝난 뒤 부르고
+    곧바로 ``save_meta`` 하므로 빈 디렉터리가 남는 길은 없다.
+    """
     ws = workspace or os.getcwd()
-    return SessionMeta(
-        session_id=str(int(time.time())),
-        workspace=ws,
-        updated_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+    _SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    base = int(time.time())
+    for n in range(_ID_CLAIM_ATTEMPTS):
+        sid = str(base + n)
+        try:
+            (_SESSIONS_DIR / sid).mkdir()
+        except FileExistsError:
+            continue
+        return SessionMeta(
+            session_id=sid,
+            workspace=ws,
+            updated_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+    raise RuntimeError(
+        f"no free session id in {_SESSIONS_DIR} after {_ID_CLAIM_ATTEMPTS} tries"
     )
 
 

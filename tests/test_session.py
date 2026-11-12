@@ -40,6 +40,92 @@ class TestCreateSession:
         assert not hasattr(meta, "workspace_hash") or meta.workspace_hash == ""
 
 
+class TestSessionIdClaim:
+    """v10.127.4: 같은 초에 만든 세션이 한 디렉터리를 쓰지 않는다 — 새 세션은
+    디렉터리를 배타적으로 차지하며 태어나고, 이미 있으면 id 를 1 올린다."""
+
+    def test_same_second_gives_two_dirs(self, monkeypatch):
+        monkeypatch.setattr(session_mod.time, "time", lambda: 1_800_000_000.5)
+        a = create_session("/tmp/ws")
+        b = create_session("/tmp/ws")
+        assert (a.session_id, b.session_id) == ("1800000000", "1800000001")
+        for m in (a, b):
+            assert (session_mod._SESSIONS_DIR / m.session_id).is_dir()
+
+    def test_concurrent_callers_all_differ(self, monkeypatch):
+        import threading
+
+        monkeypatch.setattr(session_mod.time, "time", lambda: 1_800_000_000.0)
+        ids: list[str] = []
+        lock = threading.Lock()
+        start = threading.Barrier(16)
+
+        def make():
+            start.wait()
+            sid = create_session("/tmp/ws").session_id
+            with lock:
+                ids.append(sid)
+
+        threads = [threading.Thread(target=make) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(ids) == 16
+        assert len(set(ids)) == 16
+        assert all(sid.isdigit() for sid in ids)
+
+    def test_concurrent_processes_all_differ(self, tmp_path):
+        """스레드가 아니라 프로세스 — 실제 사고 모양(같은 초에 뜬 ``run`` 여럿)."""
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = tmp_path / "proc-sessions"
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+        code = (
+            "import sys, agent_cli.context.session as s\n"
+            "from pathlib import Path\n"
+            "s._SESSIONS_DIR = Path(sys.argv[1])\n"
+            "s.time.time = lambda: 1800000000.0\n"
+            "print(s.create_session('/tmp/ws').session_id)\n"
+        )
+        procs = [
+            subprocess.Popen(
+                [sys.executable, "-c", code, str(root)],
+                stdout=subprocess.PIPE,
+                text=True,
+                env=env,
+                cwd=tmp_path,
+            )
+            for _ in range(6)
+        ]
+        ids = [p.communicate(timeout=60)[0].strip() for p in procs]
+        assert all(p.returncode == 0 for p in procs)
+        assert len(set(ids)) == 6
+        assert sorted(d.name for d in root.iterdir()) == sorted(ids)
+
+    def test_gives_up_after_the_cap(self, monkeypatch):
+        monkeypatch.setattr(session_mod.time, "time", lambda: 1_800_000_000.0)
+        monkeypatch.setattr(session_mod, "_ID_CLAIM_ATTEMPTS", 3)
+        for _ in range(3):
+            create_session("/tmp/ws")
+        with pytest.raises(RuntimeError, match="no free session id"):
+            create_session("/tmp/ws")
+
+    def test_resume_reuses_the_existing_dir(self, monkeypatch):
+        """``--resume`` 은 ``load_session`` 길 — 새 id 를 차지하지 않는다."""
+        monkeypatch.setattr(session_mod.time, "time", lambda: 1_800_000_000.0)
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+        before = sorted(p.name for p in session_mod._SESSIONS_DIR.iterdir())
+        loaded = load_session(meta.session_id)
+        save_meta(loaded)
+        assert session_mod.get_session_dir(loaded).name == meta.session_id
+        assert sorted(p.name for p in session_mod._SESSIONS_DIR.iterdir()) == before
+
+
 class TestLoadSession:
     def test_unknown_meta_keys_are_dropped(self, tmp_path):
         """v10.3.0 전 세션은 메타에 ``dialect`` 를 적었다 — 더 이상 읽지
