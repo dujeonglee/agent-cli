@@ -945,7 +945,7 @@ class TestRecorderIntegration:
 
         sdir = tmp_path / "s"
         sdir.mkdir(parents=True)
-        recorder = TurnRecorder(sdir, enabled=True)
+        recorder = TurnRecorder(sdir, enabled=True, dialect="json_fc")
         ctx, _ = _make_ctx(tmp_path, max_context_tokens=80)
         ctx.session_dir = sdir
         # Update history path to live alongside turns.jsonl.
@@ -972,7 +972,7 @@ class TestRecorderIntegration:
 
         sdir = tmp_path / "s"
         sdir.mkdir(parents=True)
-        recorder = TurnRecorder(sdir, enabled=True)
+        recorder = TurnRecorder(sdir, enabled=True, dialect="json_fc")
         ctx = ContextManager(sdir, max_context_tokens=80)
         ctx.set_compactor(lambda msgs: (_ for _ in ()).throw(RuntimeError("x")))
         ctx.set_recorder(recorder)
@@ -1010,7 +1010,7 @@ class TestRecorderIntegration:
         sdir.mkdir(parents=True)
         ctx = ContextManager(sdir, max_context_tokens=20)  # budget far below
         ctx.set_compactor(lambda msgs: "short")
-        ctx.set_recorder(TurnRecorder(sdir, enabled=True))
+        ctx.set_recorder(TurnRecorder(sdir, enabled=True, dialect="json_fc"))
         ctx.add({"role": "system", "content": "sys"})
         for _ in range(8):
             ctx.add({"role": "user", "content": "x" * 40})
@@ -1022,7 +1022,7 @@ class TestRecorderIntegration:
         sdir.mkdir(parents=True)
         ctx = ContextManager(sdir, max_context_tokens=100_000)  # budget huge
         ctx.set_compactor(lambda msgs: "s" * 400)  # summary alone is too big
-        ctx.set_recorder(TurnRecorder(sdir, enabled=True))
+        ctx.set_recorder(TurnRecorder(sdir, enabled=True, dialect="json_fc"))
         ctx.add({"role": "system", "content": "sys"})
         for _ in range(8):
             ctx.add({"role": "user", "content": "x" * 40})
@@ -1035,7 +1035,7 @@ class TestRecorderIntegration:
         sdir.mkdir(parents=True)
         ctx = ContextManager(sdir, max_context_tokens=20)
         ctx.set_compactor(lambda msgs: "s" * 400)
-        ctx.set_recorder(TurnRecorder(sdir, enabled=True))
+        ctx.set_recorder(TurnRecorder(sdir, enabled=True, dialect="json_fc"))
         ctx.add({"role": "system", "content": "sys"})
         for _ in range(8):
             ctx.add({"role": "user", "content": "x" * 40})

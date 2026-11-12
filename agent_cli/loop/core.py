@@ -367,6 +367,7 @@ class AgentLoop:
         self.recorder = TurnRecorder(
             session_dir=(self.ctx.session_dir if self.ctx else None),
             enabled=record_turns,
+            dialect=self.dialect.name,
         )
 
         # C1 PR-3: 턴 디스패치는 TurnDispatcher 소유(loop_detector 포함).
@@ -1290,6 +1291,7 @@ class AgentLoop:
             thinking=response.thinking,
             swallowed=getattr(self, "_swallowed_turn", False),
             server_ops=getattr(self, "_server_ops", None),
+            call=self._llm.last_call,
         )
 
         # OnTurnEnd hook
@@ -1381,6 +1383,7 @@ class AgentLoop:
             usage=usage,
             stop_reason=stop_reason,
             stop_detail=detail,
+            call=self._llm.last_call,
         )
         _debug_log(
             f"Output truncated (stop_reason={stop_reason}, {detail}) at turn "
@@ -1414,6 +1417,7 @@ class AgentLoop:
             usage=getattr(response, "usage", None),
             stop_reason=STOP_SERVER_ERROR,
             stop_detail=detail,
+            call=self._llm.last_call,
         )
         _debug_log(f"Server stream error ({detail}) at turn {self.turn}")
         return self._CONTINUE
@@ -1450,6 +1454,7 @@ class AgentLoop:
             usage=getattr(response, "usage", None),
             stop_reason="runaway",
             stop_detail=detail,
+            call=self._llm.last_call,
         )
         _debug_log(
             f"Runaway stopped ({detail}) at turn {self.turn}; action not dispatched"
@@ -1464,6 +1469,7 @@ class AgentLoop:
         thinking=None,
         swallowed: bool = False,
         server_ops=None,
+        call=None,
     ):
         return self._dispatch._handle_text_path(
             llm_text,
@@ -1471,6 +1477,7 @@ class AgentLoop:
             thinking=thinking,
             swallowed=swallowed,
             server_ops=server_ops,
+            call=call,
         )
 
     def _task_text(self) -> str:

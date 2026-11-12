@@ -16,8 +16,17 @@ primitive names, timing, token counts) is recorded.
 Token usage (v8.49.0): each row also carries the provider-reported
 ``TokenUsage`` counts for that turn — the only on-disk record of what a
 session cost. Session totals / cost / cache-hit ratio are derived by
-summing rows (KPI, board stats, benchmark harnesses); the loop itself
-keeps only an in-memory running output total for the live readout.
+summing rows (KPI, board stats, benchmark harnesses, ``agent-cli stats``);
+the loop itself keeps only an in-memory running output total for the live
+readout.
+
+Timing and identity (v10.129.0): every row also carries ``harness_version``
+and ``dialect`` (per row, not session meta — sessions resume across
+versions), and the turn's client-measured times and sizes (``llm_ms``,
+``ttft_ms``, ``tool_ms``, ``tools``, ``output_chars``, ``thinking_chars``,
+``reasoning_tokens``). A value that was not measured is an ABSENT key, never
+0 — readers count ``n`` per field. Full table: docs/ARCHITECTURE.md
+"turns.jsonl".
 
 See ``docs/robust-harness/DESIGN.md`` §3.3.
 """
@@ -30,6 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agent_cli import __version__
 from agent_cli.fsio import append_line
 
 if TYPE_CHECKING:
@@ -103,6 +113,21 @@ class TurnRecord:
     stop_detail: str | None = None
 
 
+@dataclass(frozen=True)
+class CallMetrics:
+    """One provider call as the client saw it (v10.129.0) — ``LLMCaller``
+    measures, the recorder writes. ``llm_ms`` is the wall clock around
+    ``provider.call`` (the provider's own retries and stream reconnects
+    included, request assembly before it excluded). ``output_chars`` /
+    ``thinking_chars`` are the lengths of the content and thinking text the
+    provider returned (a cut generation's partial text included; a
+    dialect's prefill, which the client wrote, excluded)."""
+
+    llm_ms: int
+    output_chars: int
+    thinking_chars: int
+
+
 def classify_output_cap(
     output_tokens: int | None, requested: int | None, clamped: bool
 ) -> str:
@@ -144,7 +169,11 @@ class TurnRecorder:
         self,
         session_dir: Path | None,
         enabled: bool = True,
+        *,
+        dialect: str,
     ):
+        #: 이 루프의 방언 이름 — 줄마다 적는다(v10.129.0).
+        self._dialect = dialect
         self._path: Path | None
         if session_dir is None or not enabled:
             self._path = None
@@ -154,6 +183,10 @@ class TurnRecorder:
     @property
     def enabled(self) -> bool:
         return self._path is not None
+
+    def _identity(self) -> dict:
+        """줄마다 붙는 두 필드 — 기록을 버전·방언별로 나눠 읽게 한다."""
+        return {"harness_version": __version__, "dialect": self._dialect}
 
     def record(
         self,
@@ -165,12 +198,20 @@ class TurnRecorder:
         usage: TokenUsage | None = None,
         stop_reason: str | None = None,
         stop_detail: str | None = None,
+        call: CallMetrics | None = None,
+        tool_ms: int | None = None,
+        tools: list[list] | None = None,
     ) -> None:
         """Append one record to ``turns.jsonl``. No-op when disabled.
 
         ``usage`` is the turn's ``LLMResponse.usage`` (None when the
         provider reported nothing → zero counts). ``stop_reason`` /
-        ``stop_detail`` (v10.10.0) are given only for a cut generation."""
+        ``stop_detail`` (v10.10.0) are given only for a cut generation.
+
+        v10.129.0 — ``call`` is the provider call's :class:`CallMetrics`;
+        ``tool_ms`` the dispatch wall clock (None = nothing was dispatched);
+        ``tools`` the executions as ``[name, ok, ms]`` (names only — never
+        arguments, results or paths). Absent values are left out of the row."""
         if self._path is None:
             return
 
@@ -190,7 +231,21 @@ class TurnRecorder:
             stop_reason=stop_reason,
             stop_detail=stop_detail,
         )
-        line = json.dumps(asdict(rec), ensure_ascii=False)
+        row = asdict(rec)
+        row.update(self._identity())
+        if usage is not None:
+            row["reasoning_tokens"] = usage.reasoning_tokens
+            if usage.ttft_ns > 0:
+                row["ttft_ms"] = round(usage.ttft_ns / 1e6)
+        if call is not None:
+            row["llm_ms"] = call.llm_ms
+            row["output_chars"] = call.output_chars
+            row["thinking_chars"] = call.thinking_chars
+        if tool_ms is not None:
+            row["tool_ms"] = tool_ms
+        if tools:
+            row["tools"] = [[str(n), bool(ok), int(ms)] for n, ok, ms in tools]
+        line = json.dumps(row, ensure_ascii=False)
         # Parent dir is normally created by ContextManager. Recreate
         # defensively in case it got removed between construction and
         # the first write (external cleanup, parallel `rm -rf` of
@@ -239,6 +294,7 @@ class TurnRecorder:
 
         rec = {
             "event": "compaction",
+            **self._identity(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "tokens_before": tokens_before,
             "tokens_after": tokens_after,

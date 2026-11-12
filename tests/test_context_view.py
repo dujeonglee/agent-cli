@@ -444,7 +444,9 @@ class TestLiveDispatchOrdinals:
                 st,
                 ctx=ctx,
                 tools=ToolBridge(cfg, st, ctx, None),
-                recorder=TurnRecorder(session_dir=None, enabled=False),
+                recorder=TurnRecorder(
+                    session_dir=None, enabled=False, dialect="json_fc"
+                ),
             )
             target = tmp_path / "f.txt"
             target.write_text("hello\n")
