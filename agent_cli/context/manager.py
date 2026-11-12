@@ -164,6 +164,14 @@ _OBS_COMPLETE_NUDGE = "\n\n(If nothing remains to do, call `complete`.)"
 TOKEN_RATIO_MIN = 0.05
 TOKEN_RATIO_MAX = 2.0
 
+#: 압축 기록의 ``summary_shape`` 값 (v10.123.0) — ``_summarize_evicted`` 가 적는다.
+#: ``agent-cli stats`` 가 이 어휘만 통과시킨다(v10.130.0).
+SUMMARY_SHAPES = ("boundary", "transcript")
+#: ``shape_fallback`` 의 머리말 — ``_summarize_evicted``·``_try_boundary`` 가 적는
+#: 사유는 이 중 하나로 시작한다(``too_large: …``·``error: …`` 는 뒤에 자유 글).
+#: 사유를 더하면 여기에 — 가드: tests/test_stats.py.
+SHAPE_FALLBACK_KINDS = ("no_prefix", "too_large", "error", "empty", "not_summary")
+
 
 def _clamp_token_ratio(ratio: float | None) -> float | None:
     if ratio is None or ratio <= 0:

@@ -64,6 +64,9 @@ agent-cli --help
 agent-cli run --help
 agent-cli web --help
 agent-cli sessions --help
+
+# 턴 기록의 숫자만 — 본문·경로 없이 (v10.130.0)
+agent-cli stats
 ```
 
 ## 설정
@@ -789,6 +792,23 @@ LLM은 `history` 도구로 현재 또는 이전 세션의 이력을 **SQL 로 �
 agent-cli knobs          # 표 — 노브 · 플래그 · env · 종류 · 기본값 · 라벨
 agent-cli knobs --json   # 같은 것을 JSON 배열로 (agent-board 가 spawn 폼을 이걸로 만든다)
 ```
+
+### `stats` — 본문 없는 집계 (v10.130.0)
+
+턴 기록(`turns.jsonl`)을 **숫자만** 남기고 접는다 — 회사 머신처럼 기록 원문을 들고 나올 수 없는 곳에서 "LLM 시간인가 도구 시간인가", "사고가 출력의 몇 %인가", "프리픽스 캐시가 듣는가" 를 버전·모델·방언별로 보려는 것. 모델 서버·설정 파일이 필요 없다.
+
+```bash
+agent-cli stats                                   # 이 프로젝트의 세션 디렉터리
+agent-cli stats ROOMS_DIR HARBOR_JOB_DIR          # 흩어진 루트 여럿을 한 번에(재귀)
+agent-cli stats --since 2026-11-01 --json --out stats.json
+```
+
+- **읽는 것**: 이름이 정확히 `turns.jsonl` 인 파일만(심볼릭 링크는 따라가지 않는다). **읽지 않는 것**: `history.jsonl`·`failures.jsonl`·`session.json`·`verbose.jsonl`·prompt_views — 대화·응답 본문이 든 파일은 열지 않는다.
+- **출력에 드는 것**: 하니스 버전, 모델 이름, 방언 이름, 내장 도구 이름, 고정 상태 라벨(`parse_stage`·`failure_signal`·`stop_reason`·`stop_detail`·압축 모양), 그리고 숫자. MCP·스킬 도구 이름이나 모르는 값은 `other` 로 묶이고, 서버 오류 문구 같은 자유 문장은 내지 않는다. 경로·작업 디렉터리·세션 id·제목은 없고 날짜는 일 단위(첫날·끝날)뿐. 출력 머리 한 줄이 이것을 말한다 — 들고 나가기 전에 확인한다.
+- **집계**: `harness_version × model × dialect` 묶음마다 세션·턴 수(세션당 중앙·p90·최대), 토큰(입력 합·출력·캐시 read·추론, 캐시 적중률·추론 비율), 시간(`ttft`·`llm`·`tool` ms 의 중앙·p90·합, LLM:도구 비), 결과 라벨별 개수와 잘린 턴, 도구별 호출·실패·시간, 압축 횟수·크기·시간. v10.129.0 이전 줄은 새 필드가 없어 그 항목의 분모에서 빠진다(항목마다 `n`), 버전·방언이 없는 줄은 `unknown`.
+- 모델 이름은 그대로 나가되, 경로 모양(`/`·`~`·`.`·`C:\` 로 시작 — vLLM 은 `--model` 경로를 서빙 이름으로 쓴다)이면 마지막 요소만, 한 줄·120자까지. `org/name` 은 그대로.
+- 표의 `sessions` 는 실제로는 `turns.jsonl` 파일 수다 — 에이전트 자리(`agents/<key>/`)의 기록도 하나로 센다.
+- `--json` 은 JSON 하나(`schema: 1`), `--out` 은 그 출력을 파일로. 깨진 줄은 건너뛰고 센다. 종료 코드 0(0건이어도)·2(인자 오류·없는 PATH·직접 준 PATH 가 심볼릭 링크·`--out` 쓰기 실패).
 
 ### 세션 메모리 (`memory` 도구)
 
