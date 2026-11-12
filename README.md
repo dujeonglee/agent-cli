@@ -49,8 +49,11 @@ agent-cli run "Analyze this project" -p openai
 # Anthropic
 agent-cli run "Read README.md and summarize" -p anthropic
 
-# 직접 셸 명령 (LLM 없이) — web 채팅 전용 (`/help`·`/sh`·`/compact`); run 에서 `/sh …` 는 모델에게 질의로 갑니다
-# (web)  /sh ls -la
+# 직접 셸 명령 (LLM 없이) — 종료 코드는 그 명령의 것 (시간 초과 124)
+agent-cli run "/sh ls -la"
+
+# 명령 목록 — 부트 전에 답한다 (서버·세션 불필요, v10.127.1). `/compact` 는 web 전용
+agent-cli run /help
 
 # 스킬 실행
 agent-cli run "/review-code src/auth.py"
@@ -541,7 +544,7 @@ agent-cli run "task description" [options]
 
 | 코드 | 뜻 |
 |---|---|
-| `0` | 답했다 — argv 질의의 답 사슬(질의 런 + 질의가 백그라운드 작업·`wait` 로 답을 미뤘으면 그 뒤 깨우기 런)의 **마지막 런**이 성공. 빈 답 성공도 0(파일은 안 생김). 목록 명령(`/skills`·`@agents`·`@`) |
+| `0` | 답했다 — argv 질의의 답 사슬(질의 런 + 질의가 백그라운드 작업·`wait` 로 답을 미뤘으면 그 뒤 깨우기 런)의 **마지막 런**이 성공. 빈 답 성공도 0(파일은 안 생김). 목록 명령(`/help`·`/skills`·`@agents`·`@`) — `--resume` 없이 부르면 provider·서버·세션 없이 부트 전에 답하고 `sessions` 에 빈 세션을 남기지 않습니다(v10.127.1; `/help` 는 `--resume` 이어도 부트 전, 목록은 `--resume` 이면 살아난 상주 에이전트까지 보이도록 종전 경로) |
 | `1` | 실패/무답 — LLM 호출 실패·max turns·실패한 `@agent task`·`/skill`, 못 찾은 명령(`Unknown command`·`Agent not found`). 잡히지 않은 예외도 1(traceback) |
 | `2` | 설정·사용법 오류 — 모르는 provider, 읽지 못한 `config.json`, 방언 없는 모델, 잘못된 옵션 |
 | `130` | 중단(Ctrl-C) |
@@ -710,8 +713,8 @@ UI 기능:
 
 **종료 (Ctrl+C):** 한 번의 Ctrl+C로 깨끗하게 종료됩니다. uvicorn의 lifespan shutdown 훅이 활성 SSE 연결을 정리하고, 백그라운드 worker는 `SHUTDOWN` sentinel로 깨어나 빠져나가며, 세션이 자동 저장됩니다. `agent-cli web --resume <session_id>`로 이어서 실행하면 이전 turn들이 SSE snapshot으로 재생되어 UI에 그대로 복원됩니다.
 
-CLI parity 명령어:
-- `/help` — 웹 모드 명령어 안내
+CLI parity 명령어 (웹 `/help` 와 `run /help` 는 같은 명령 표 하나에서 나옵니다 — `agent_cli/command_table.py`, v10.127.1):
+- `/help` — 명령어 안내
 - `/sh <command>` — LLM 우회 셸 실행
 - `/skills` — 사용 가능한 스킬 목록
 - `/<skill> <args>` — 스킬 직접 실행 (예: `/optimize ./`)

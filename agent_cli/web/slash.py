@@ -8,21 +8,12 @@ from __future__ import annotations
 
 import subprocess
 
+from agent_cli.command_table import WEB, help_text
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.render.web import WebRenderer
 
-_WEB_HELP_TEXT = (
-    "Web mode commands:\n"
-    "  /help                    Show this help\n"
-    "  /compact                 Compact context now (summarise oldest half)\n"
-    "  /sh <command>            Run a shell command directly (LLM bypass)\n"
-    "  /skills                  List available skills\n"
-    "  /<skill> <args>          Invoke a skill directly\n"
-    "  @agents                  List available agents\n"
-    "  @<agent> <task>          Delegate a task to an agent\n"
-    "\n"
-    "Any other input goes to the LLM as a chat turn."
-)
+#: 웹 ``/help`` — 명령 표 하나에서 (v10.127.1, ``agent_cli/command_table.py``)
+_WEB_HELP_TEXT = help_text(WEB)
 
 
 def handle_slash_command(message: str, renderer: WebRenderer, ctx=None) -> bool:
