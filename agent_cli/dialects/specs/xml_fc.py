@@ -97,6 +97,8 @@ Implemented login() in src/auth.py; all tests pass.
 
 XML_FC = DialectSpec(
     name="xml_fc",
+    summary="<tool_call> blocks with <function=NAME> and <parameter=KEY> raw-value tags "
+    "(Qwen3-Coder XML shape), parsed from the text by agent-cli",
     call=("<tool_call>", "</tool_call>"),
     name_slot=NameSlot.OPEN_TAG,
     name_wrap=("<function=", ">"),

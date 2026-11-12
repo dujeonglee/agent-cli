@@ -193,6 +193,9 @@ class DialectBase(ABC):
     """Short identifier used by the CLI ``--dialect`` option and
     the registry. Convention: lowercase, ``[a-z0-9_-]``."""
 
+    summary: str = ""
+    """사람이 읽는 한 줄 (v10.127.0) — 스펙 구동 방언은 ``DialectSpec.summary``."""
+
     action_required: bool = True
     """Whether a missing ``action`` triggers recovery vs. inference.
 

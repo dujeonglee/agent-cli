@@ -70,6 +70,14 @@ def get(name: str | None = None) -> DialectBase:
     return plugin
 
 
+def summaries() -> list[tuple[str, str]]:
+    """등록된 방언마다 ``(이름, 사람이 읽는 한 줄)`` — 이름순 (v10.127.0).
+
+    `run`·`web` 의 ``--dialect`` 도움말과 부트의 방언 질문이 같이 쓴다(종전 help 는
+    넷을 손으로 적어 native_fc 가 빠져 있었다)."""
+    return [(n, _registry[n].summary) for n in sorted(_registry)]
+
+
 def list_names() -> list[str]:
     """Return the sorted list of registered plugin names.
 
@@ -241,6 +249,7 @@ __all__ = [
     "register",
     "resolve_dialect",
     "set_dialect_override",
+    "summaries",
     "try_foreign_parse",
 ]
 

@@ -208,6 +208,7 @@ class Dialect(DialectBase):
         # 서브클래스가 클래스 속성 ``name`` 으로 다른 이름을 주면(A/B 변형 — bakeoff
         # 의 json_fc_fenced) 그것이 이긴다. ABC 는 ``name: str`` 주석만 둔다.
         self.name = getattr(type(self), "name", None) or spec.name
+        self.summary = spec.summary
         self.action_required = spec.action_required
         self.multi_op = spec.multi_op
         self.degeneration_trigger = spec.degeneration_trigger

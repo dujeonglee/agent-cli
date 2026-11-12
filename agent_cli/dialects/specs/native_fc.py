@@ -57,6 +57,8 @@ Rules:
 NATIVE_FC = replace(
     JSON_FC,
     name="native_fc",
+    summary="the server's own function calling — needs an OpenAI-compatible server "
+    "that accepts the request field `tools` and returns `tool_calls`",
     server_parsed=True,
     prose=Prose(
         rules=_FORMAT_RULES,

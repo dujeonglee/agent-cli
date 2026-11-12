@@ -109,6 +109,8 @@ Implemented login() in src/auth.py; all tests pass.
 
 GLM_ARGKEY = DialectSpec(
     name="glm_argkey",
+    summary="<tool_call>NAME followed by <arg_key>/<arg_value> pairs (GLM-4.5 to 5.3 shape), "
+    "parsed from the text by agent-cli",
     call=("<tool_call>", "</tool_call>"),
     name_slot=NameSlot.BODY_HEAD,
     args=ArgStyle.TAGGED_PAIR,
