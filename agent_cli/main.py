@@ -2267,8 +2267,13 @@ def _print_session(s, indent: str = "  ") -> None:
     last result (or 'in progress'). Shared by the ``sessions`` command and
     the resume prompt so both show the same format. ``session_summary`` reads
     the last user↔complete pair from history (the old ``query`` field is gone).
+
+    답이 없는 세션은 쥔 프로세스가 살아 있을 때만 ``(in progress)`` (v10.127.2) —
+    `session_lock.session_is_open`. 닫혀 있으면 ``(no answer)``(종전엔 LLM 실패로 끝난
+    세션까지 전부 "in progress" 였다).
     """
-    from agent_cli.context.session import session_summary
+    from agent_cli.context.session import get_session_dir, session_summary
+    from agent_cli.context.session_lock import session_is_open
 
     console.print(
         f"{indent}[{C['accent']}]{s.session_id}[/] [{C['muted']}]{s.updated_at}[/]"
@@ -2277,7 +2282,8 @@ def _print_session(s, indent: str = "  ") -> None:
     if user:
         console.print(f"{indent}    [{C['muted']}]↳ {_truncate(user, 80)}[/]")
     if result == "(no completion)":
-        console.print(f"{indent}    [{C['muted']}]→ (in progress)[/]")
+        state = "in progress" if session_is_open(get_session_dir(s)) else "no answer"
+        console.print(f"{indent}    [{C['muted']}]→ ({state})[/]")
     elif result:
         console.print(f"{indent}    [{C['final']}]→ {_truncate(result, 80)}[/]")
 
