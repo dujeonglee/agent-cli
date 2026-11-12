@@ -185,17 +185,45 @@ def _resolve_provider(
     return effective_provider, resolved_url, resolved_model, api_key
 
 
-def _maybe_setup() -> None:
-    """Trigger setup wizard if no config exists."""
+def _flags_complete(base_url: str | None, model: str | None) -> bool:
+    """설정 파일 없이 갈 만큼 주어졌나 (v10.125.0) — 판정은 이 한 곳.
+
+    provider 는 늘 해석된다(안 적으면 openai, 모르는 이름은 `_resolve_provider` 가
+    Exit(2)). 남는 둘 — base_url 과 모델 — 이 플래그나 환경변수로 정해졌으면 된다.
+    ``model`` 은 부트가 넘기는 값이라 이미 ``-m`` > ``AGENT_CLI_MODEL`` 로 해석돼 있다.
+    키는 묻지 않는다: 로컬 서버는 키가 없다."""
+    url = base_url or os.environ.get("AGENT_CLI_BASE_URL", "")
+    return bool(url and model)
+
+
+def _maybe_setup(base_url: str | None = None, model: str | None = None) -> None:
+    """설정이 없으면 마법사 — 단 대화형이고, 플래그로 다 주지 않았을 때만 (v10.125.0).
+
+    종전엔 설정이 없으면 무조건 마법사를 띄워, 플래그를 다 준 비대화식 첫 실행
+    (CI·컨테이너·스크립트)도 첫 질문에서 EOF → ``Aborted.`` rc=1 이었다.
+    벤치(harbor) 컨테이너는 config.json 이 없어도 ``AGENT_CLI_BASE_URL`` 환경변수가
+    `has_config` 를 참으로 만들어 이 길을 이미 지나갔다 — 그 조건은 그대로다."""
     from agent_cli.config import has_config
+    from agent_cli.model_check import is_interactive
 
-    if not has_config():
-        from agent_cli.setup import SetupWizard
-
+    if has_config() or _flags_complete(base_url, model):
+        return
+    if not is_interactive():
         console.print(
-            f"[{C['accent']}]No configuration found. Starting setup wizard...[/]\n"
+            f"No config file ({user_dir() / 'config.json'}). Run 'agent-cli setup' in a "
+            "terminal, or pass --base-url and -m.",
+            style=C["error"],
+            markup=False,
+            highlight=False,
+            soft_wrap=True,  # 경로를 rich 가 80칸에서 끊지 않게
         )
-        SetupWizard().run()
+        raise typer.Exit(2)
+    from agent_cli.setup import SetupWizard
+
+    console.print(
+        f"[{C['accent']}]No configuration found. Starting setup wizard...[/]\n"
+    )
+    SetupWizard().run()
 
 
 def _setup_mcp():
@@ -1141,7 +1169,7 @@ def _setup_provider(
     explicit: bool = False,
 ):
     """Resolve settings + create provider + get capabilities. Returns tuple."""
-    _maybe_setup()
+    _maybe_setup(base_url, model)
     from agent_cli.providers.capabilities import (
         DEFAULT_CAPABILITIES,
         set_progress_callback,

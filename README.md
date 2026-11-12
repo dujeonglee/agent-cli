@@ -67,7 +67,7 @@ agent-cli sessions --help
 
 ### 첫 실행 (Setup Wizard)
 
-설정 파일(`config.json`)이 없으면 자동으로 설정 마법사가 시작됩니다:
+설정 파일(`config.json`)이 없으면 터미널에서 실행할 때 자동으로 설정 마법사가 시작됩니다:
 
 ```
 $ agent-cli run "hello"
@@ -90,6 +90,19 @@ No configuration found. Starting setup wizard...
 수동으로 다시 실행:
 ```bash
 agent-cli setup
+```
+
+**설정 파일은 필수가 아닙니다 (v10.125.0)** — 접속할 곳과 모델을 플래그나 환경변수로 다 주면
+(`--base-url` 또는 `AGENT_CLI_BASE_URL`, 그리고 `-m` 또는 `AGENT_CLI_MODEL`) 마법사 없이 바로 진행합니다.
+키는 요구하지 않습니다(로컬 서버는 키가 없음). 터미널이 아닌 곳(CI·컨테이너·파이프·`AGENT_CLI_NO_INPUT=1`)에서
+설정 파일도 플래그도 모자라면 마법사를 띄우지 않고 한 줄과 종료 코드 `2` 로 멈춥니다:
+
+```
+No config file (~/.agent-cli/config.json). Run 'agent-cli setup' in a terminal, or pass --base-url and -m.
+```
+
+```bash
+agent-cli run "hello" --base-url http://127.0.0.1:8000/v1 -m Qwen3.6-35B-A3B-8bit </dev/null
 ```
 
 ### config.json
