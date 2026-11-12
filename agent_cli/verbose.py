@@ -58,6 +58,8 @@ _USAGE = {
         "output_tokens": {"type": "integer"},
         "cache_read_input_tokens": {"type": "integer"},
         "cache_creation_input_tokens": {"type": "integer"},
+        # v10.128.0: output_tokens 안에 든 추론 몫(더하지 않는다)
+        "reasoning_tokens": {"type": "integer"},
     },
 }
 

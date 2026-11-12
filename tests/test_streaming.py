@@ -443,7 +443,12 @@ class TestRunSseStreamSkeleton:
         )
         assert acc.content == "헬로" and chunks == ["헬", "로"]
         assert acc.stop_reason == "stop"
-        assert acc.usage_fields == {"input_tokens": 10, "output_tokens": 2}
+        assert acc.usage_fields == {
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "cache_read_input_tokens": 0,
+            "reasoning_tokens": 0,
+        }
         assert acc.ttft_ns > 0 and acc.decode_ns >= 0
 
     def test_incomplete_tool_call_error_becomes_a_stop_reason(self):

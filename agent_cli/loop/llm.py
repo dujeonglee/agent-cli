@@ -762,8 +762,10 @@ def _build_token_stats(usage, context_window: int, total_out: int) -> dict:
     ctx% readout is correct even on an Anthropic prompt-cache hit (where
     bare ``input_tokens`` would exclude the cached portion and under-report).
     ``"in_speed"`` deliberately uses bare ``input_tokens`` — prefill only
-    processes the non-cached tokens, so that's the true prefill tok/s.
-    ``cache_read``/``cache_write`` are surfaced separately as a breakdown.
+    processes the non-cached tokens, so that's the true prefill tok/s (on the
+    OpenAI path too since v10.128.0, which reads the server's
+    ``cached_tokens``). ``cache_read``/``cache_write`` are surfaced separately
+    as a breakdown; ``reasoning`` is the share of ``out`` spent thinking.
     Speeds/ttft are included when the provider reported durations (omlx and
     other OpenAI-compatible servers do; the Anthropic streaming path leaves
     them 0 → omitted by the renderer).
@@ -782,6 +784,7 @@ def _build_token_stats(usage, context_window: int, total_out: int) -> dict:
         "ttft_ms": usage.ttft_ns / 1e6 if usage.ttft_ns > 0 else 0,
         "cache_read": usage.cache_read_input_tokens,
         "cache_write": usage.cache_creation_input_tokens,
+        "reasoning": usage.reasoning_tokens,
         "context_window": context_window,
         "total_out": total_out,
     }

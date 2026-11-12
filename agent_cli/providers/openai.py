@@ -174,8 +174,7 @@ class OpenAIProvider:
         usage = None
         if acc.usage_fields:
             usage = TokenUsage(
-                input_tokens=acc.usage_fields.get("input_tokens", 0),
-                output_tokens=acc.usage_fields.get("output_tokens", 0),
+                **acc.usage_fields,
                 prompt_eval_ns=acc.ttft_ns,
                 eval_ns=acc.decode_ns,
                 ttft_ns=acc.ttft_ns,
@@ -234,10 +233,7 @@ class OpenAIProvider:
         usage = None
         usage_data = data.get("usage")
         if usage_data:
-            usage = TokenUsage(
-                input_tokens=usage_data.get("prompt_tokens", 0),
-                output_tokens=usage_data.get("completion_tokens", 0),
-            )
+            usage = TokenUsage(**_usage_counts(usage_data))
 
         return LLMResponse(
             content=content,
@@ -265,10 +261,54 @@ def _tool_call_input(arguments: str) -> dict:
     return {"input": parsed}
 
 
+def _count(value) -> int:
+    """usage 의 토큰 수 하나 — 음 아닌 정수만 믿고, 없음·``null``·엉뚱한 타입·음수는 0."""
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return 0
+
+
+def _usage_counts(usage_data: dict) -> dict:
+    """OpenAI 모양 ``usage`` 블록 → :class:`TokenUsage` 의 토큰 필드 (v10.128.0).
+
+    스트리밍·비스트리밍 두 경로가 이 한 함수로 읽는다. ``prompt_tokens`` 는 캐시
+    적중분을 **포함**하고(``prompt_tokens_details.cached_tokens``),
+    ``completion_tokens`` 는 추론분을 **포함**한다
+    (``completion_tokens_details.reasoning_tokens``) — omlx·vLLM·LiteLLM 이 같은
+    모양이고, 둘 다 없거나 ``null`` 일 수 있다. ``TokenUsage`` 의 뜻에 맞춰 캐시분을
+    ``input_tokens`` 에서 빼 ``cache_read_input_tokens`` 로 옮긴다 — 그래서
+    ``total_input_tokens`` 는 이전과 같은 ``prompt_tokens`` 이고(예산 재조정·ctx%·
+    압축 트리거 불변), ``in_speed`` 는 캐시 아닌 토큰 기준의 참값이 된다. 추론분은
+    ``output_tokens`` 안에 그대로 두고 따로 센다. 상세 값은 각자의 합계로 자른다.
+    """
+    prompt = _count(usage_data.get("prompt_tokens"))
+    completion = _count(usage_data.get("completion_tokens"))
+    prompt_details = usage_data.get("prompt_tokens_details")
+    completion_details = usage_data.get("completion_tokens_details")
+    cached = (
+        _count(prompt_details.get("cached_tokens"))
+        if isinstance(prompt_details, dict)
+        else 0
+    )
+    reasoning = (
+        _count(completion_details.get("reasoning_tokens"))
+        if isinstance(completion_details, dict)
+        else 0
+    )
+    cached = min(cached, prompt)
+    return {
+        "input_tokens": prompt - cached,
+        "output_tokens": completion,
+        "cache_read_input_tokens": cached,
+        "reasoning_tokens": min(reasoning, completion),
+    }
+
+
 def _map_openai_payload(data: dict) -> StreamEvent | None:
     """OpenAI-호환 chunk 하나 → 정규화 StreamEvent (provider 고유 부분 전부).
 
     - 최종 chunk 의 ``usage``(stream_options.include_usage) → usage_fields
+      (:func:`_usage_counts` — 캐시·추론 상세 포함)
     - ``choices[0].delta.content`` → text
     - ``delta.reasoning_content`` → thinking (vLLM 관례 — qwen3/R1 계열;
       OpenAI 호스티드는 미노출이라 자연 무시)
@@ -295,10 +335,7 @@ def _map_openai_payload(data: dict) -> StreamEvent | None:
         return ev
     usage_data = data.get("usage")
     if usage_data:
-        ev.usage_fields = {
-            "input_tokens": usage_data.get("prompt_tokens", 0),
-            "output_tokens": usage_data.get("completion_tokens", 0),
-        }
+        ev.usage_fields = _usage_counts(usage_data)
     choices = data.get("choices", [])
     if choices:
         delta = choices[0].get("delta", {})
