@@ -81,3 +81,35 @@ def test_missing_binary_is_still_a_harbor_error(tmp_path):
     )
     assert status == 0 and proc.returncode == 127
     assert (agent_dir / "exit-code.txt").read_text(encoding="utf-8").strip() == "127"
+
+
+def test_container_first_run_needs_no_config_or_wizard(tmp_path, monkeypatch):
+    """벤치 컨테이너의 첫 실행(config.json 없음·``</dev/null``) — 어댑터가 넘기는 ``-m`` 과
+    ``AGENT_CLI_BASE_URL`` 만으로 마법사 없이 지나간다 (agent-cli v10.125.0 의 "플래그 완비").
+    ``_runtime_env`` 는 ``AGENT_CLI_BASE_URL`` 이 없으면 거부하므로 그 env 는 늘 있다."""
+    import shlex
+
+    import agent_cli.config as config
+    import agent_cli.main as main
+
+    argv = shlex.split(
+        agent_command.build_run_command(
+            provider="openai", model="some/model", flags="", agent_dir="/logs/agent"
+        )
+    )
+    model = argv[argv.index("-m") + 1]
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        config, "_CONFIG_PATHS", [tmp_path / ".agent-cli" / "config.json"]
+    )
+    monkeypatch.setenv("AGENT_CLI_NO_INPUT", "1")
+    monkeypatch.setenv("AGENT_CLI_BASE_URL", "http://host.docker.internal:8000/v1")
+    config.reload_config()
+    assert main._flags_complete(None, model) is True
+
+    def _no_wizard():
+        raise AssertionError("wizard must not run")
+
+    monkeypatch.setattr("agent_cli.setup.SetupWizard", _no_wizard)
+    main._maybe_setup(None, model)
+    config.reload_config()
