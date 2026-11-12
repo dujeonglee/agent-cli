@@ -178,13 +178,14 @@ class WebDispatchOutput:
             success=False,
         )
 
-    def skill_result(self, name: str, result) -> None:
+    def skill_result(self, name: str, result, *, ok: bool = True) -> None:
         # Same rationale as ``agent_result``: ``_dispatch_skill`` calls
         # ``render_group_end`` which the frontend uses to close the
         # nested skill panel. Re-emitting the answer here would
         # duplicate. The ``None`` (stopped without final) case is
-        # already visible via the unsuccessful group_end.
-        del name, result
+        # already visible via the unsuccessful group_end — and so is a failed
+        # skill (``ok`` is the console adapter's exit-code/--result-file signal).
+        del name, result, ok
 
 
 def _handle_sh(message: str, renderer: WebRenderer) -> bool:

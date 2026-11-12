@@ -79,8 +79,11 @@ def _is_local_bind(host: str) -> bool:
     return host.strip().lower() in _LOCAL_BIND_HOSTS
 
 
-def _run_shell_inline(cmd: str) -> None:
-    """Run a shell command and print output directly. Shared by run and web."""
+def _run_shell_inline(cmd: str) -> int:
+    """Run a shell command and print output directly — the command's exit code.
+
+    ``run "/sh <cmd>"`` 의 종료 코드가 이것이다(v10.124.0; 종전 항상 0). 시간 초과는
+    ``timeout(1)`` 의 관례대로 124."""
     console.print(f"[{C['action']}]⚡ SHELL:[/] {cmd}")
     try:
         # Bytes + replace (not ``text=True``) so non-UTF-8 output (git show,
@@ -105,8 +108,10 @@ def _run_shell_inline(cmd: str) -> None:
             )
         if result.returncode != 0:
             console.print(f"[{C['muted']}][exit code: {result.returncode}][/]")
+        return result.returncode
     except subprocess.TimeoutExpired:
         console.print(f"[{C['error']}]Command timed out (30s)[/]")
+        return 124
 
 
 def _resolve_provider(
@@ -293,12 +298,14 @@ class DispatchOutput:
         """Surface an unknown slash command."""
         raise NotImplementedError
 
-    def skill_result(self, name: str, result) -> None:
+    def skill_result(self, name: str, result, *, ok: bool = True) -> None:
         """Final answer (or ``None``) from a ``/<skill>`` invocation.
 
         ``result is None`` means the skill stopped without producing a
         final answer (e.g. user aborted) — CLI prints a recovery hint
         so the user knows what to try next; other surfaces may ignore.
+        ``ok`` 는 스킬 루프의 실제 성공 여부 — 실패하면 ``result`` 는 오류문이지
+        답이 아니다(v10.124.0, ``agent_result`` 와 같은 신호).
         """
         raise NotImplementedError
 
@@ -312,7 +319,14 @@ class _ConsoleSurface:
     web 과 다른 것만 여기 있다: 유휴/바쁨 신호는 없고(프런트가 없다), 깨우기는
     따로 찍지 않고(관찰 줄이 말한다), 중단은 Ctrl-C(``graceful_interrupt=False``), 런 예외는 전파,
     런 성공은 ``--result-file``. ``/sh`` 는 run 에 핸들러가 없어 라우팅하지
-    않는다(web 은 ``handle_slash_command`` 가 먼저 받는다)."""
+    않는다(web 은 ``handle_slash_command`` 가 먼저 받는다).
+
+    ``exit_code`` (v10.124.0) — ``run`` 의 종료 코드. 결과 파일을 쓰는 바로 그
+    분기에서 정한다(두 판정이 갈라지지 않게): argv 질의의 답 사슬(질의 런 +
+    ``_continuing`` 인 동안의 깨우기 런, 또는 질의가 라우팅 명령이면 그 결과)의
+    **마지막** 판정이 성공이면 0, 실패면 1. 사슬 밖의 런(예약 발화·사슬이 닫힌
+    뒤의 깨우기·런 도중 주입된 명령)은 바꾸지 않는다. 사슬이 아무 판정도 못
+    냈으면 1(답이 없다)."""
 
     graceful_interrupt = False
 
@@ -323,6 +337,12 @@ class _ConsoleSurface:
         #: 통지로 깨어난 런들의 답이 질의의 나머지 답이므로 파일에 (덮어)쓴다.
         #: 사슬은 깨우기 런이 작업을 새로 띄우지도, 돌리고 있지도 않을 때 닫힌다.
         self._continuing = False
+        self.exit_code = 1
+        #: 방금 꺼낸 아이템이 argv 질의인가 — 펌프는 꺼낸 직후 ``echo`` → ``route``
+        #: 순으로 부른다. ``route`` 가 한 번 소비한다: 그 뒤의 ``route`` 는 런 도중
+        #: 주입(``SessionPump.route``)이라 질의의 답이 아니다.
+        self._item_is_query = False
+        self._routing_query = False
         self._run_started = 0.0
         self._dispatch = dispatch  # (text, stop_event) -> bool
         self._stop: threading.Event | None = None
@@ -334,7 +354,9 @@ class _ConsoleSurface:
         self._run_started = time.time()  # 이 런이 띄운 작업을 가르는 기준
 
     def echo(self, item: dict, *, wake: bool) -> None:
-        pass  # 깨우기 런은 그 런의 관찰 줄이 말한다 (v10.51.0)
+        # 그리지 않는다 — 깨우기 런은 그 런의 관찰 줄이 말한다 (v10.51.0).
+        # 판정용으로 질의 여부만 기억한다(``RunRequest.is_query`` 와 같은 규칙).
+        self._item_is_query = not wake and not item.get("nickname")
 
     def bind_stop(self, event: threading.Event | None) -> None:
         self._stop = event
@@ -342,7 +364,22 @@ class _ConsoleSurface:
     def route(self, text: str) -> bool:
         if text.startswith("/sh"):
             return False
-        return self._dispatch(text, self._stop)
+        self._routing_query, self._item_is_query = self._item_is_query, False
+        try:
+            return self._dispatch(text, self._stop)
+        finally:
+            self._routing_query = False
+
+    def routed(self, answer, ok: bool) -> None:
+        """라우팅 명령의 결과 — ``_ConsoleDispatchOutput`` 이 알린다 (v10.124.0).
+
+        argv 질의였던 명령만 판정·결과 파일이 된다(``run_ended`` 와 같은 규칙).
+        ``answer`` 는 파일에 쓸 원문(목록·오류는 None)."""
+        if not self._routing_query:
+            return
+        self.exit_code = 0 if ok else 1
+        if ok:
+            _write_result_file(self._result_file, answer)
 
     def run_ended(self, result, req) -> None:
         # 런이 끝난 자리에서 바로 쓴다 — 펌프는 살아 있는 모니터가 있으면 그
@@ -358,15 +395,16 @@ class _ConsoleSurface:
         # 미룬 것이다(실측 D-fix-1: 결과 파일엔 "still waiting on job #2" 만
         # 남고 진짜 요약은 깨우기 런에 있었다). 그래서 그 뒤 첫 깨우기 런의
         # 답까지 쓴다(덮어씀). 작업 없이 끝난 질의는 종전 규칙 그대로.
-        if not result.success:
+        # 종료 코드(v10.124.0)도 같은 분기 — 실패 런도 사슬 안이면 판정에 든다.
+        if not (req.is_query or req.wake and self._continuing):
             return
-        if req.is_query or req.wake and self._continuing:
-            _write_result_file(self._result_file, result.output)
-            # ``wait`` 로 끝난 런(v10.65.0)도 답을 미룬 것 — 작업뿐 아니라 모니터·
-            # 에이전트 회신을 기다릴 때도 다음 깨우기 런의 답이 질의의 답이다.
-            self._continuing = self._used_jobs() or bool(
-                getattr(result, "waiting", False)
-            )
+        self.exit_code = 0 if result.success else 1
+        if not result.success:
+            return  # 파일은 안 쓰고, 사슬 상태도 그대로
+        _write_result_file(self._result_file, result.output)
+        # ``wait`` 로 끝난 런(v10.65.0)도 답을 미룬 것 — 작업뿐 아니라 모니터·
+        # 에이전트 회신을 기다릴 때도 다음 깨우기 런의 답이 질의의 답이다.
+        self._continuing = self._used_jobs() or bool(getattr(result, "waiting", False))
 
     def _used_jobs(self) -> bool:
         """이 런이 작업을 띄웠거나(끝났어도 — 1초짜리 작업의 통지가 런 종료와
@@ -472,18 +510,20 @@ def _try_dispatch_agent_command(
 class _ConsoleDispatchOutput(DispatchOutput):
     """CLI-flavoured output — colour, Rich markup, plain ``console.print``.
 
-    ``result_file`` (v10.33.0): ``@agent task`` 의 답도 ``--result-file`` 에
-    기록한다 — 종전엔 run 의 전용 분기가 썼는데, 그 분기가 세션 펌프의
-    라우팅으로 흡수되면서 이 어댑터가 그 자리를 잇는다."""
+    ``report(answer, ok)`` (v10.124.0): 분기마다 결과를 표면
+    (``_ConsoleSurface.routed``)에 알린다 — 종료 코드와 ``--result-file`` 은 표면이
+    한 곳에서 정한다. ``answer`` 는 파일에 쓸 원문(목록·오류·상태는 None).
+    종전(v10.33.0~)엔 이 어댑터가 결과 파일을 직접 썼다."""
 
-    def __init__(self, result_file: str = ""):
-        self._result_file = result_file
+    def __init__(self, report=None):
+        self._report = report or (lambda answer, ok: None)
 
     def agent_dispatch_result(self, text: str, success: bool) -> None:
         # markup=False — 상태 텍스트의 [code-analyst] 같은 브래킷이 rich
         # 스타일 태그로 삼켜지지 않게 (v4.62.1 교훈과 동일 클래스).
         color = C["final"] if success else C["error"]
         console.print(text, style=color, markup=False)
+        self._report(None, success)
 
     def list_agents(self, agents: list[tuple[str, str]], live_status: str = "") -> None:
         console.print(f"\n[{C['accent']}]Agent profiles:[/]")
@@ -500,8 +540,10 @@ class _ConsoleDispatchOutput(DispatchOutput):
             f"\n[{C['muted']}]Usage: @<profile> <task> (one-shot run) · "
             f"@<profile>-spawn <task> (resident) · @agt-<key> <message> (direct send)[/]"
         )
+        self._report(None, True)
 
     def list_skills(self, skills: dict) -> None:
+        self._report(None, True)
         user_skills = {k: v for k, v in skills.items() if v.user_invocable}
         if not user_skills:
             console.print(f"[{C['muted']}]No skills found.[/]")
@@ -515,6 +557,7 @@ class _ConsoleDispatchOutput(DispatchOutput):
     def agent_not_found(self, name: str) -> None:
         console.print(f"[{C['error']}]Agent not found: @{name}[/]")
         console.print(f"[{C['muted']}]Type @ to list available agents[/]")
+        self._report(None, False)
 
     def agent_result(self, result, *, ok: bool = True) -> None:
         # ``_dispatch_agent`` already streams the agent's thoughts /
@@ -523,23 +566,32 @@ class _ConsoleDispatchOutput(DispatchOutput):
         # also immediately visible above the next prompt.
         if result is not None:
             console.print(f"\n[{C['final']}]{result}[/]")
-        # 성공 시에만, 관찰 래퍼(STATUS/RESULT/[activity])를 벗긴 원문만
-        # 기록 — 메인 경로(loop_result.output=원문)와 계약 일치.
-        if ok and result is not None and self._result_file:
+        # 결과 파일엔 관찰 래퍼(STATUS/RESULT/[activity])를 벗긴 원문 — 메인
+        # 경로(loop_result.output=원문)와 계약 일치. 쓸지는 표면이 ok 로 정한다.
+        answer = None
+        if ok and result is not None:
             from agent_cli.subagent.report import extract_result_body
 
-            _write_result_file(self._result_file, extract_result_body(str(result)))
+            answer = extract_result_body(str(result))
+        self._report(answer, ok)
 
     def skill_not_found(self, name: str) -> None:
         console.print(f"[{C['error']}]Unknown command: /{name}[/]")
         console.print(f"[{C['muted']}]Type /help for available commands[/]")
+        self._report(None, False)
 
-    def skill_result(self, name: str, result) -> None:
-        if result is not None:
+    def skill_result(self, name: str, result, *, ok: bool = True) -> None:
+        # `/skill` 의 답도 결과 파일로 (v10.34.1) — `@agent task` 와 같은
+        # "run 의 최종 답". 실패한 스킬의 오류문은 답이 아니다(v10.124.0): 종전엔
+        # 초록 답으로 찍히고 파일에도 써졌다.
+        self._report(result if ok else None, ok)
+        if ok and result is not None:
             console.print(f"\n[{C['final']}]{result}[/]")
-            # `/skill` 의 답도 결과 파일로 (v10.34.1) — `@agent task` 와 같은
-            # "run 의 최종 답" 인데 이 경로만 안 쓰던 비대칭.
-            _write_result_file(self._result_file, result)
+            return
+        if result is not None:
+            console.print(
+                f"\n{result}", style=C["error"], markup=False, highlight=False
+            )
             return
         console.print(
             f"\n[{C['accent']}]Skill /{name} stopped without final answer. "
@@ -679,7 +731,7 @@ def try_dispatch_agent_or_skill(
 
             output.list_skills(_load_skills())
             return True
-        result = _dispatch_skill(
+        result, _ok = _dispatch_skill(
             message,
             binding,
             max_turns=max_turns,
@@ -695,7 +747,7 @@ def try_dispatch_agent_or_skill(
             return True
         if session is not None:
             save_meta(session)  # refresh updated_at (query field removed)
-        output.skill_result(cmd_name, result)
+        output.skill_result(cmd_name, result, ok=_ok)
         return True
 
     return False
@@ -783,7 +835,12 @@ def _dispatch_skill(
     graceful_interrupt: bool = False,
     stop_event=None,
 ):
-    """Dispatch a /skill-name command. Returns _SKILL_NOT_FOUND if not a skill."""
+    """Dispatch a /skill-name command → ``(answer, success)``.
+
+    미발견 스킬은 ``(_SKILL_NOT_FOUND, False)``. 실패하면 ``answer`` 는 스킬 루프의
+    오류문이다 — 답이 아니므로 ``success`` 로 가린다(v10.124.0, ``_dispatch_agent`` 와
+    같은 모양; 종전엔 오류문만 돌려줘 결과 파일·종료 코드가 실패를 성공으로 봤다).
+    """
     from agent_cli.skills import SkillLoop, load_skills
 
     skills = load_skills()
@@ -791,7 +848,7 @@ def _dispatch_skill(
     cmd_name = parts[0][1:]  # strip leading /
 
     if cmd_name not in skills:
-        return _SKILL_NOT_FOUND
+        return _SKILL_NOT_FOUND, False
 
     skill = skills[cmd_name]
     arguments = parts[1] if len(parts) > 1 else ""
@@ -846,7 +903,7 @@ def _dispatch_skill(
             }
         )
 
-    return answer
+    return answer, skill_result.success
 
 
 def _stage_query_images(paths: list[str] | None) -> list[dict]:
@@ -1364,13 +1421,16 @@ def run(
         "--result-file",
         help="Write the final answer (raw) to this path — machine-readable, without renderer "
         "decoration (scripting, headless automation). On failure or no answer the "
-        "file is not created; use the exit code.",
+        "file is not created; use the exit code (0 answered, 1 failed or no answer).",
     ),
     image: list[str] | None = _IMAGE_OPTION,
     title: str = _TITLE_OPTION,
     knob_args: dict | None = None,  # `@knob_options` 가 채운다 (v10.43.0)
 ):
-    """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
+    """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result.
+
+    Exit status: 0 the run succeeded, 1 it failed (LLM error, max turns, failed skill, unknown command), 2 configuration or usage error, 130 interrupted. "/sh <cmd>" exits with the command's own status (124 on timeout).
+    """
     _apply_style(style)
     query_images = _stage_query_images(image)
     # /sh prefix: Run shell command directly without LLM
@@ -1379,8 +1439,7 @@ def run(
         if not cmd:
             console.print(f"[{C['error']}]No command to execute.[/]")
             raise typer.Exit(1)
-        _run_shell_inline(cmd)
-        raise typer.Exit(0)
+        raise typer.Exit(_run_shell_inline(cmd))
 
     # C4: run/web 공용 부트스트랩 — provider 6-튜플 + dialect fail-fast +
     # 예산 폴백(70% 통일 공식). resume pre-check 는 핸드셰이크보다 먼저
@@ -1464,6 +1523,7 @@ def run(
     # @agent 경로는 MCP 정리를 누락했다. ``warn_stuck`` 은 메인 펌프
     # 경로에서만 켠다 (종전 표면 보존).
     warn_stuck = False
+    exit_code = 1  # 펌프가 판정을 못 내고 끝나는 길은 없다 — 그래도 "답 없음"
     try:
         # 세션 펌프 (v10.33.0, docs/pump/DESIGN.md): web 과 같은 루프 —
         # 초기 질의를 InputQueue 에 넣고, teammate 회신의 wake 아이템
@@ -1517,7 +1577,8 @@ def run(
             jobs=job_registry,  # 질의가 작업을 남기고 끝나면 깨우기 답도 결과 파일에
             dispatch=lambda text, stop_event: try_dispatch_agent_or_skill(
                 text,
-                _ConsoleDispatchOutput(result_file=result_file),
+                # 결과는 표면이 판정한다 — 종료 코드·결과 파일 한 곳 (v10.124.0)
+                _ConsoleDispatchOutput(report=surface.routed),
                 binding=binding,
                 max_turns=max_turns,
                 verbose=verbose,
@@ -1606,8 +1667,10 @@ def run(
         warn_stuck = True
         try:
             pump.run()
+            exit_code = surface.exit_code
         except KeyboardInterrupt:
             console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
+            exit_code = 130
     finally:
         _finalize_run(
             session,
@@ -1620,6 +1683,9 @@ def run(
             warn_stuck=warn_stuck,
         )
         schedule_registry.stop()
+    # 정리가 끝난 **뒤에** 판정으로 끝낸다 (v10.124.0) — 0 답 · 1 실패/무답 · 130 중단.
+    # 잡히지 않은 예외는 여기 오지 않고 전파된다(typer 가 1).
+    raise typer.Exit(exit_code)
 
 
 def web_instance_is_active(

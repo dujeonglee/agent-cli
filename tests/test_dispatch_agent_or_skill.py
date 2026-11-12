@@ -60,8 +60,8 @@ class _RecordingOutput(DispatchOutput):
     def skill_not_found(self, name):
         self.calls.append(("skill_not_found", name))
 
-    def skill_result(self, name, result):
-        self.calls.append(("skill_result", name, result))
+    def skill_result(self, name, result, *, ok=True):
+        self.calls.append(("skill_result", name, result, ok))
 
 
 # ── Shared fixtures ─────────────────────────────────────
@@ -180,7 +180,7 @@ class TestDispatcherBranches:
 
         def fake_dispatch_skill(query, *args, **kwargs):
             captured["query"] = query
-            return "skill output"
+            return "skill output", True
 
         monkeypatch.setattr("agent_cli.main._dispatch_skill", fake_dispatch_skill)
 
@@ -192,7 +192,18 @@ class TestDispatcherBranches:
         )
         assert handled is True
         assert captured["query"] == "/plan ship feature X"
-        assert out.calls == [("skill_result", "plan", "skill output")]
+        assert out.calls == [("skill_result", "plan", "skill output", True)]
+
+    def test_failed_skill_is_reported_as_failed(self, base_state, monkeypatch):
+        """실패한 스킬의 오류문은 답이 아니다 (v10.124.0) — 종전엔 ``_dispatch_skill``
+        이 오류문만 돌려줘 어댑터가 성공 답처럼 찍고 결과 파일에 썼다."""
+        monkeypatch.setattr(
+            "agent_cli.main._dispatch_skill",
+            lambda *_a, **_kw: ("max turns reached", False),
+        )
+        out = _RecordingOutput()
+        assert try_dispatch_agent_or_skill("/plan x", out, **base_state) is True
+        assert out.calls == [("skill_result", "plan", "max turns reached", False)]
 
     def test_slash_unknown_command_emits_not_found(self, base_state, monkeypatch):
         """An unknown ``/<x>`` MUST emit ``skill_not_found`` AND return
@@ -201,7 +212,7 @@ class TestDispatcherBranches:
         shouldn't ever become a chat turn."""
         monkeypatch.setattr(
             "agent_cli.main._dispatch_skill",
-            lambda *_a, **_kw: _SKILL_NOT_FOUND,
+            lambda *_a, **_kw: (_SKILL_NOT_FOUND, False),
         )
         out = _RecordingOutput()
         handled = try_dispatch_agent_or_skill("/clera", out, **base_state)
@@ -400,6 +411,47 @@ class TestConsoleDispatchOutput:
         text = self._capture(lambda: out.skill_result("plan", "done"))
         assert "done" in text
 
+    def test_failed_skill_prints_the_error_and_reports_failure(self):
+        """실패한 스킬 (v10.124.0): 오류문은 보이되, 표면에는 답 없음·실패로 알린다."""
+        seen = []
+        out = _ConsoleDispatchOutput(
+            report=lambda answer, ok: seen.append((answer, ok))
+        )
+        text = self._capture(lambda: out.skill_result("plan", "[x] boom", ok=False))
+        assert "[x] boom" in text  # markup=False — 대괄호가 살아남는다
+        assert seen == [(None, False)]
+
+    def test_every_branch_reports_to_the_surface(self):
+        """종료 코드는 표면이 정한다 — 어댑터는 분기마다 결과를 한 번 알린다."""
+        from agent_cli.subagent.report import extract_result_body
+
+        seen = []
+        out = _ConsoleDispatchOutput(
+            report=lambda answer, ok: seen.append((answer, ok))
+        )
+        self._capture(lambda: out.list_agents([]))
+        self._capture(lambda: out.list_skills({}))
+        self._capture(lambda: out.agent_not_found("ghost"))
+        self._capture(lambda: out.skill_not_found("clera"))
+        self._capture(lambda: out.agent_result("body", ok=True))
+        self._capture(lambda: out.agent_result("failed body", ok=False))
+        self._capture(lambda: out.skill_result("plan", "done"))
+        self._capture(lambda: out.skill_result("plan", None, ok=False))
+        self._capture(lambda: out.agent_dispatch_result("sent", True))
+        self._capture(lambda: out.agent_dispatch_result("@x: no such agent", False))
+        assert seen == [
+            (None, True),
+            (None, True),
+            (None, False),
+            (None, False),
+            (extract_result_body("body"), True),
+            (None, False),
+            ("done", True),
+            (None, False),
+            (None, True),
+            (None, False),
+        ]
+
 
 # ── WebDispatchOutput ───────────────────────────────────
 
@@ -502,6 +554,19 @@ class TestWebDispatchOutput:
         out, conn = self._make()
         out.skill_result("plan", "done")
         out.skill_result("plan", None)
+        out.skill_result("plan", "boom", ok=False)
+        assert conn.queue.empty()
+
+    def test_failed_skill_through_the_dispatcher_changes_nothing_on_the_web(
+        self, base_state, monkeypatch
+    ):
+        """``(answer, ok)`` 로 바뀐 실패 스킬도 웹에는 종전과 같다 (v10.124.0) —
+        처리됨(True), 추가 카드 없음(실패는 스킬 그룹의 group_end 가 이미 보인다)."""
+        monkeypatch.setattr(
+            "agent_cli.main._dispatch_skill", lambda *_a, **_kw: ("boom", False)
+        )
+        out, conn = self._make()
+        assert try_dispatch_agent_or_skill("/plan x", out, **base_state) is True
         assert conn.queue.empty()
 
 
@@ -567,7 +632,7 @@ class TestStopEventThreading:
 
         def fake_skill(query, *args, **kwargs):
             captured["stop_event"] = kwargs.get("stop_event")
-            return "ok"
+            return "ok", True
 
         monkeypatch.setattr("agent_cli.main._dispatch_skill", fake_skill)
         ev = threading.Event()
