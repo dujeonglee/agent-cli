@@ -2161,7 +2161,7 @@ def mcp_root(
         help="List the config only, without connecting (for slow servers)",
     ),
 ):
-    """등록된 MCP 서버 목록 + 연결 진단."""
+    """List the registered MCP servers and check that each one connects."""
     if ctx.invoked_subcommand is not None:
         return
     from agent_cli.mcp.wizard import McpWizard
@@ -2172,7 +2172,7 @@ def mcp_root(
 
 @mcp_app.command("add")
 def mcp_add():
-    """대화형으로 서버를 추가합니다 — 저장 전에 실제로 연결해 봅니다."""
+    """Add a server interactively; it is connected to before it is saved."""
     from agent_cli.mcp.wizard import McpWizard
 
     raise typer.Exit(code=0 if McpWizard().add() else 1)
@@ -2180,7 +2180,7 @@ def mcp_add():
 
 @mcp_app.command("test")
 def mcp_test(name: str = typer.Argument(..., help="server name")):
-    """등록된 서버 하나에 실제로 연결해 도구 목록을 받아 봅니다."""
+    """Connect to one registered server and list its tools."""
     from agent_cli.mcp.wizard import McpWizard
 
     raise typer.Exit(code=0 if McpWizard().test(name) else 1)
@@ -2188,7 +2188,7 @@ def mcp_test(name: str = typer.Argument(..., help="server name")):
 
 @mcp_app.command("remove")
 def mcp_remove(name: str = typer.Argument(..., help="server name")):
-    """등록을 제거합니다 (.agent-cli/mcp.json 에서)."""
+    """Remove a server from .agent-cli/mcp.json."""
     from agent_cli.mcp.wizard import McpWizard
 
     raise typer.Exit(code=0 if McpWizard().remove(name) else 1)
