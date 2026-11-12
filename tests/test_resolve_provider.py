@@ -120,3 +120,58 @@ def test_unknown_provider_exits_2_with_names(cfg, capsys, flag, data, label):
     assert label in out
     assert "Available: anthropic, openai" in out
     assert "Traceback" not in out
+
+
+# ── 깨진 config.json 은 멈춘다 (v10.123.4) ────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("text", "needle"),
+    [
+        ('{"base_url": "http://127.0.0.1:1/v1",}', "line 1"),
+        ('["openai"]', "expected a JSON object, got list"),
+    ],
+)
+def test_unreadable_config_raises_with_path(cfg, text, needle):
+    path = _config._CONFIG_PATHS[0]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(_config.ConfigError) as exc:
+        _config.load_config(use_cache=False)
+    assert str(path) in str(exc.value)
+    assert needle in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("text", "needle"),
+    [
+        ('{\n  "base_url": "http://127.0.0.1:1/v1",\n}', "line 3"),
+        ("[1, 2]", "expected a JSON object, got list"),
+    ],
+)
+def test_run_stops_with_exit_2_on_unreadable_config(
+    cfg, tmp_path, monkeypatch, text, needle
+):
+    """계속 가면 기본값(공개 엔드포인트)이 된다 — 한 줄 오류 + Exit(2), traceback 없음.
+
+    경로는 80칸을 넘게, 콘솔 폭은 CI 와 같은 80 — 경로가 한 덩어리로 나와야 복사해 쓸 수
+    있다(rich 가 끊으면 "c onfig.json"; CI 에서 실측)."""
+    from typer.testing import CliRunner
+
+    from agent_cli.main import app
+    from agent_cli.render import console
+
+    path = tmp_path / ("d" * 40) / ("e" * 40) / ".agent-cli" / "config.json"
+    monkeypatch.setattr(_config, "_CONFIG_PATHS", [path])
+    monkeypatch.setattr(console, "_width", 80)
+    assert len(str(path)) > 80
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    r = CliRunner().invoke(
+        app, ["run", "hi", "-p", "openai", "--base-url", "http://127.0.0.1:1/v1"]
+    )
+    assert r.exit_code == 2, r.output
+    assert "Could not read config" in r.output
+    assert str(path) in r.output
+    assert needle in r.output
+    assert r.exception is None or isinstance(r.exception, SystemExit)

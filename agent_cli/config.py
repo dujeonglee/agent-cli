@@ -209,11 +209,37 @@ _ENV_MAP = {
 _cached_config: dict[str, str] | None = None
 
 
+class ConfigError(Exception):
+    """config.json 을 읽지 못했다 — 경로와 원문 오류(JSON 이면 줄·열)를 담는다 (v10.123.4).
+
+    종전엔 ``except Exception: pass`` 로 env·기본값으로 내려가 "No model is specified"
+    가 되거나, provider 기본값이면 공개 엔드포인트로 갔다. 계속 가지 않는다."""
+
+    def __init__(self, path: Path, detail: str):
+        super().__init__(f"{path}: {detail}")
+        self.path = path
+        self.detail = detail
+
+
+def read_config_file(path: Path) -> dict:
+    """config.json 하나의 원본 dict — 못 읽거나 객체가 아니면 :class:`ConfigError`.
+
+    ``load_config`` 와 setup 마법사의 "기존 설정" 표가 같은 판정을 쓴다."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise ConfigError(path, str(e)) from e
+    if not isinstance(data, dict):
+        raise ConfigError(path, f"expected a JSON object, got {type(data).__name__}")
+    return data
+
+
 def load_config(use_cache: bool = True) -> dict[str, str]:
     """Load config by merging: env vars → user config (v9.0.0: 유저 단일).
 
     Higher priority layers override lower ones per-field.
     Returns a dict with keys: provider, base_url, api_key, default_model.
+    Raises :class:`ConfigError` when a config file exists but cannot be read.
     """
     global _cached_config
     if use_cache and _cached_config is not None:
@@ -229,14 +255,9 @@ def load_config(use_cache: bool = True) -> dict[str, str]:
     # Layer 2+: config files (reversed so highest priority is applied last)
     for config_path in reversed(_CONFIG_PATHS):
         if config_path.is_file():
-            try:
-                data = json.loads(config_path.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    for k, v in data.items():
-                        if v:  # skip empty values
-                            merged[k] = str(v)
-            except Exception:
-                pass
+            for k, v in read_config_file(config_path).items():
+                if v:  # skip empty values
+                    merged[k] = str(v)
 
     _cached_config = merged
     return merged

@@ -110,6 +110,11 @@ agent-cli setup
 `-p anthropic` 처럼 다른 provider 를 고르면 쓰이지 않습니다(설정 값은 그 설정의 provider 에만).
 모르는 provider 이름(`-p gemini`, 설정의 오타)은 사용 가능한 이름을 보여 주고 종료 코드 `2` 로 멈춥니다.
 
+**읽지 못한 `config.json` 은 멈춥니다 (v10.123.4)** — JSON 오류(끝 쉼표 등)·객체가 아닌 내용이면
+`Could not read config <경로>: <오류, 줄·열>` 한 줄과 종료 코드 `2`. 종전엔 조용히 env·기본값으로
+내려가 "No model is specified" 가 되거나 공개 엔드포인트로 갔습니다. `agent-cli setup` 은 깨진 파일을
+고치는 길이라 멈추지 않고 읽지 못했다는 사실만 보여 준 뒤 진행합니다.
+
 **모델 이름은 부팅 때 검증됩니다 (v9.5.0)**. 서버의 `/v1/models` 에 그 이름이
 없으면 **그 자리에서 멈추고** 사용 가능한 목록을 보여줍니다 — 터미널에서 실행
 중이면 골라서 바로 저장할 수 있고, 다음부터 묻지 않습니다. 종전에는 없어진
@@ -1915,7 +1920,7 @@ agent-cli mcp test <이름>     # 하나만 다시 연결해 보기
 agent-cli mcp remove <이름>
 ```
 
-`agent-cli mcp` 의 종료 코드는 실패한 서버가 하나라도 있으면 1 입니다 (`agent-cli mcp && …` 로 스크립트에서 쓸 수 있게). 종전 `~/.agent-cli/mcp.json` 이 남아 있으면 마법사가 **이 프로젝트로 가져올지 묻습니다** — v9.0.0 스코프 정리의 마이그레이션 경로입니다(원본은 지우지 않습니다).
+`agent-cli mcp` 의 종료 코드는 실패한 서버가 하나라도 있으면 1 입니다 (`agent-cli mcp && …` 로 스크립트에서 쓸 수 있게). **`.agent-cli/mcp.json` 을 읽지 못하면(v10.123.4)** — JSON 오류·객체가 아님·`mcpServers` 가 객체가 아님 — `agent-cli mcp` 는 `Could not read <경로>: <오류>` 와 종료 코드 1, `mcp add`·`mcp remove`·`mcp test` 는 같은 문장으로 거절하고 **파일을 건드리지 않습니다**(종전엔 "No MCP servers registered" 라 하고, `mcp add` 가 빈 목록에 새 서버를 얹어 사용자 파일을 덮어썼습니다). `run`·`web` 부팅은 종전대로 `[warn]` 한 줄 뒤 MCP 없이 진행합니다. 종전 `~/.agent-cli/mcp.json` 이 남아 있으면 마법사가 **이 프로젝트로 가져올지 묻습니다** — v9.0.0 스코프 정리의 마이그레이션 경로입니다(원본은 지우지 않습니다).
 
 연결 실패 이유는 mcp SDK 가 `ExceptionGroup` 으로 감싼 것을 잎까지 풀어서 보여줍니다 — 종전엔 부팅 시 `[warn]` 줄에도 "unhandled errors in a TaskGroup" 만 찍혀 원인을 알 수 없었습니다.
 
