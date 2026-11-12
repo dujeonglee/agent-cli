@@ -10,11 +10,11 @@ ReAct 패턴 기반 에이전트 CLI. 멀티 프로바이더(OpenAI, Anthropic) 
 Python 3.10+ 필요. 의존성 하한(`pyproject.toml`)은 쓰는 API 가 들어온 버전이고, CI `min-deps` 잡이 Python 3.10 에 하한 버전들을 실제로 깔아 유닛 수트를 돌린다(v10.124.1).
 
 ```bash
-# 릴리스 설치 (태그된 버전)
-pip install "git+ssh://git@github.com/dujeonglee/agent-cli.git@v2.0.0"
+# 설치 (기본 브랜치의 최신 — 릴리스 태그로 고정하려면 URL 끝에 @<태그>, 목록은 GitHub Releases)
+pip install "git+ssh://git@github.com/dujeonglee/agent-cli.git"
 
 # 웹 UI 포함
-pip install "agent-cli[web] @ git+ssh://git@github.com/dujeonglee/agent-cli.git@v2.0.0"
+pip install "agent-cli[web] @ git+ssh://git@github.com/dujeonglee/agent-cli.git"
 
 # 개발 모드
 git clone git@github.com:dujeonglee/agent-cli.git
@@ -22,7 +22,7 @@ cd agent-cli
 pip install -e ".[dev]"
 ```
 
-설치 후 `agent-cli` 명령어가 PATH에 등록됩니다. 처음 실행하면 설정 마법사가 자동으로 시작됩니다.
+설치 후 `agent-cli` 명령어가 PATH에 등록됩니다. 터미널에서 처음 실행하면 설정 마법사가 자동으로 시작됩니다(접속할 곳과 모델을 플래그로 다 주면 묻지 않습니다 — [첫 실행](#첫-실행-setup-wizard)).
 버전 확인은 `agent-cli --version`. GitHub Release에 첨부된 wheel(`pip install agent_cli-*.whl`)로도 설치할 수 있습니다.
 
 ### 업데이트
@@ -246,6 +246,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `ANTHROPIC_API_KEY` | — | Anthropic API 키 (기존 호환) |
 | `OPENAI_API_KEY` | — | OpenAI API 키 (기존 호환) |
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
+| `AGENT_CLI_NO_INPUT` | — | 비어 있지 않으면 터미널에서도 묻지 않는다 — 비대화식으로 다룸(설정 마법사·모델 고르기·탐지 실패 질문·방언 질문 모두 건너뛰고 종전 오류로). 테스트·자동화용 |
 | `AGENT_CLI_WORKSPACE_CONFINE` | — | 워크스페이스 경로 봉쇄 + 민감 경로 사전 (기본 on). `0` 으로 끄면 둘 다 없음. [아래 참고](#워크스페이스-경로-봉쇄) |
 | `AGENT_CLI_WORKSPACE_ROOT` | — | 봉쇄 기준 루트 경로 override (기본: 프로세스 실행 디렉토리) |
 | `AGENT_CLI_BROWSER_TOOL` | — | `0` 이면 `browser` 도구를 끈다 (기본: playwright 가 깔려 있으면 켜짐) |
@@ -264,6 +265,13 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_COMPACTION_RATIO` | — | 컨텍스트 압축 목표 비율 (0.5~1.0, 기본 1.0 — 창에 잘릴 때만 압축, v10.11.0). 낮을수록 일찍·자주 압축. `--compaction-ratio` 또는 웹 🗜️ 노브로 세션 중 변경 (v8.61.0) |
 | `AGENT_CLI_MAX_AGENTS` | — | 동시 생존 서브에이전트 상한 (0 = 무제한, 기본 10). `--max-agents` 또는 웹 👥 노브로 세션 중 변경 (v8.61.0) |
 | `AGENT_CLI_AUTO_APPROVE` | — | `1` 이면 확인 프롬프트(위험 셸 명령·경로 가드)를 묻지 않고 허용 (v10.43.0, 기본 꺼짐). `--auto-approve` 또는 웹 ⚡ 노브. `run` 은 물을 사람이 없는 자리라 이 값이 곧 승인면 |
+| `AGENT_CLI_SNAPSHOT` | — | `0`·`false`·`no`·`off` 이면 워크스페이스 스냅샷(📸, `snapshot` 도구)을 끈다 (기본 켬, v10.36.0) |
+| `AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S` | — | 스냅샷 체크포인트 최소 간격 초 (기본 `10`) |
+| `AGENT_CLI_SNAPSHOT_FILE_MAX_BYTES` | — | 이보다 큰 파일은 스냅샷에서 제외 (기본 `-1` = 무제한) |
+| `AGENT_CLI_SNAPSHOT_FILE_COUNT_MAX` | — | 파일 수가 이를 넘으면 시작 스냅샷만 찍고 턴 단위 체크포인트를 끈다 (기본 `-1` = 무제한) |
+| `AGENT_CLI_MONITOR_REPLAY_MAX_BYTES` | — | `monitor` 의 `match` 등록 때 이미 있고 모델의 마지막 관찰 뒤 바뀐 파일을, 이 크기까지는 내용 전부를 새 줄로 본다 (기본 `65536`, `0` = 자동 발화 없음, `-1` = 무제한) |
+| `AGENT_CLI_DUMP_STREAM` | — | 파일 경로를 주면 서버가 보낸 스트림 줄을 해석 전에 그대로 그 파일에 덧붙인다(호출마다 구분선, v10.1.6) — 진단용 |
+| `AGENT_CLI_RECORD_EMISSIONS` | — | `1` 이면 모델이 낸 텍스트를 파싱 전에 `<세션>/emissions.jsonl` 에 한 줄씩 남긴다 (기본 꺼짐) — 파서 코퍼스·진단용 |
 | `AGENT_CLI_SESSIONS_DIR` | — | 세션 루트 override (기본: 작업 디렉토리의 `.agent-cli/sessions`). 작업 트리에 세션을 남기지 않을 곳 — 헤드리스/CI 자동화, 읽기 전용·공유 체크아웃, 벤치 컨테이너. `run`·`web`·`sessions`·`--resume`·`history` 가 모두 같은 루트를 봄 (v8.50.0) |
 
 > **LLM 요청 재시도**는 고정 상수로 동작한다(더 이상 env 로 조정 불가). 네트워크 에러(Timeout / ConnectionError)는 최대 10회, 일시적 게이트웨이 5xx(**502/503/504**)는 **독립 카운터**로 최대 3회, 재시도 간격 1초. **속도 제한(429, Anthropic 의 529)은 기다렸다 다시 보낸다 (v10.25.0)**: 또 하나의 독립 카운터로 최대 8회, 응답에 `Retry-After` 가 있으면 그만큼(상한 120초), 없으면 2·4·8·…·64초로 늘려 가며 기다린다(헤더 없이 다 쓰면 약 3분). 회사 게이트웨이(LiteLLM 등) 뒤에서 여러 사람이 한 벤더 키를 나눠 쓸 때 맞는 오류인데, 종전엔 4xx 라 첫 429 에 턴이 실패하고 런이 끝났다. 기다리는 동안 상태 줄에 `LLM rate limited (HTTP 429) — retrying in 17s (2/8)` 가 뜬다. 그 밖의 4xx·bare 500 은 무재시도. 스트리밍은 헤더 대기를 30초로 바운드하고, body 가 10분 연속 침묵하면 연결을 끊고 재전송한다 — **총 4회**(첫 전송 포함)까지, 즉 최장 40분 뒤 실패. 이 두 축만은 고정이 아니라 세션 노브다: 한도는 `--stall`, 횟수는 `--stall-attempts`(웹은 ⏳ 칩 하나에 두 입력, 팝업이 곱한 최대 대기를 같이 보여준다). 대기 중에는 남은 시간과 `시도 n/4` 가 웹·CLI 양쪽에 표시되고, 반복되는 대기는 한 줄을 제자리 갱신하며 재전송·실패만 기록으로 남는다. 스트림이 **중간에 끊긴 경우**(서버가 종결 청크 없이 연결을 닫음 — 재시작·프록시 끊김·OOM)도 재전송한다: 고정 10회, 1초 간격, 무진전 예산과 **별개**(즉시 실패라 공유하면 순식간에 소진된다). 재전송 전에는 항상 부분 출력을 걷는다 — 재전송은 생성을 처음부터 다시 하므로 남겨두면 새 출력이 옛 부분 뒤에 이어붙어 보인다. 자세한 동작은 `agent_cli/providers/http.py` 참고.
@@ -558,7 +566,7 @@ jq -c '{turn, failure_signal, stop_reason, stop_detail, chars: (.text|length)}' 
 # 거부된 호출과 그 인자 (native 함수 호출)
 jq -c 'select(.tool_calls) | {turn, failure_signal, calls: [.tool_calls[] | {name, input}]}' .agent-cli/sessions/<id>/failures.jsonl
 ```
-| `--dialect` | Dialect 플러그인 이름. 빌트인: `json_fc` (산문 reasoning + flat `{action, params}` op 들의 bare JSON 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. md_array 의 리네임+리셰이프 후계 — 마크다운 헤더 제거, v6.0.0 bakeoff A/B 140run 에서 구형과 동등 확인. 구 `## Thought/## Action` emission 도 drift 로 관용), `xml_fc` (태그-파라미터 `<tool_call><function=X><parameter=k>v</parameter></function></tool_call>` — 파라미터 값이 raw 텍스트라 파일 본문/최종 답변에 JSON escaping 불필요. `<tool_call>` XML 프라이어 모델용. **2026-07-17 Qwen 실측**: 27B=natively 동등, 35B-A3B=구제 하니스(lenient+foreign, 무-왕복)로 완주 100%·실재시도 0.06/run — 양쪽 바인딩 가능 — `docs/dialects/PHASE2.md` §8). `hermes_json` (`<tool_call>{"name": …, "arguments": {…}}</tool_call>` — Hermes 2~4·Qwen2.5/3/Next·Granite 4.0/4.1 의 네이티브 모양, **실모델 미검증**: 파서·문법·foreign 구제 테스트만), `glm_argkey` (`<tool_call>NAME<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>` — GLM-4.5~5.3, **실모델 미검증**). v9.27.0 부터 포맷은 코드가 아니라 **스펙(데이터)** 이다 — `agent_cli/dialects/specs/` 에 `DialectSpec` 하나를 추가하면 렌더·파서·문법·구제가 엔진에서 나온다(`docs/dialects/PHASE5.md`). `agent_cli/dialects/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패. **지정하면 세션 전체(main 과 모든 서브에이전트)에 강제**. 미지정이면 각 에이전트는 자기 모델의 models.json `dialect` 바인딩을 쓰고, **바인딩 없는 모델은 에러**(기본값 없음, v10.3.0) — 터미널의 `run` 은 main 모델의 방언을 그 자리에서 묻고 저장합니다(v10.127.0). `run --help` 의 이 옵션 설명은 등록된 방언 전부를 스펙의 한 줄 설명과 함께 나열합니다 | (모델 바인딩) |
+| `--dialect` | Dialect 플러그인 이름. 빌트인: `json_fc` (산문 reasoning + flat `{action, params}` op 들의 bare JSON 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. md_array 의 리네임+리셰이프 후계 — 마크다운 헤더 제거, v6.0.0 bakeoff A/B 140run 에서 구형과 동등 확인. 구 `## Thought/## Action` emission 도 drift 로 관용), `xml_fc` (태그-파라미터 `<tool_call><function=X><parameter=k>v</parameter></function></tool_call>` — 파라미터 값이 raw 텍스트라 파일 본문/최종 답변에 JSON escaping 불필요. `<tool_call>` XML 프라이어 모델용. **2026-07-17 Qwen 실측**: 27B=natively 동등, 35B-A3B=구제 하니스(lenient+foreign, 무-왕복)로 완주 100%·실재시도 0.06/run — 양쪽 바인딩 가능 — `docs/dialects/PHASE2.md` §8). `hermes_json` (`<tool_call>{"name": …, "arguments": {…}}</tool_call>` — Hermes 2~4·Qwen2.5/3/Next·Granite 4.0/4.1 의 네이티브 모양, **실모델 미검증**: 파서·문법·foreign 구제 테스트만), `glm_argkey` (`<tool_call>NAME<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>` — GLM-4.5~5.3, **실모델 미검증**), `native_fc` (서버 네이티브 함수 호출 — OpenAI 호환 서버가 요청의 `tools` 를 받고 `tool_calls` 를 돌려줘야 함, v10.2.0). v9.27.0 부터 포맷은 코드가 아니라 **스펙(데이터)** 이다 — `agent_cli/dialects/specs/` 에 `DialectSpec` 하나를 추가하면 렌더·파서·문법·구제가 엔진에서 나온다(`docs/dialects/PHASE5.md`). `agent_cli/dialects/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패. **지정하면 세션 전체(main 과 모든 서브에이전트)에 강제**. 미지정이면 각 에이전트는 자기 모델의 models.json `dialect` 바인딩을 쓰고, **바인딩 없는 모델은 에러**(기본값 없음, v10.3.0) — 터미널의 `run` 은 main 모델의 방언을 그 자리에서 묻고 저장합니다(v10.127.0). `run --help` 의 이 옵션 설명은 등록된 방언 전부를 스펙의 한 줄 설명과 함께 나열합니다 | (모델 바인딩) |
 | `--resume <id>` | 이전 세션을 로드해 복원된 컨텍스트 위에 QUERY 를 이어지는 요청으로 실행. `web --resume` 과 같은 on-disk 세션이라 **run↔web 상호 이어가기** 가능 (v4.46.0) | (새 세션) |
 
 **방언(dialect) 개명 (v10.0.0)**: 모델 응답의 tool-call 모양을 가리키던 "wire format" 을 **dialect(방언)** 으로 부릅니다 — 패키지 `agent_cli.dialects`, 플래그 `--dialect`, models.json 키 `dialect`. 방언은 이제 코드가 아니라 **데이터**입니다: `agent_cli/dialects/specs/` 의 `DialectSpec` 하나(호출 단위·이름 위치·인자 포맷·파라미터 템플릿 + 산문 조각)를 공용 엔진이 읽어 파서·문법·렌더·구제 문구를 전부 유도합니다. 옛 두 방언(`json_fc`·`xml_fc`)은 코퍼스 849건에서 옛 손 코딩 모듈과 **바이트 동일**을 확인했고, `hermes_json`(Hermes·Qwen2.5/3·Granite 4.0/4.1 프라이어)·`glm_argkey`(GLM-4.5~5.3)가 스펙만으로 추가됐습니다(실모델 미검증). **호환**: `--response-format` 은 같은 파라미터의 별칭, models.json 의 옛 키 `wire_format` 은 계속 읽고(자동 저장은 `dialect`), 옛 세션의 메타 키 `response_format` 은 resume 때 영구히 읽습니다. `import agent_cli.wire_formats` 는 재수출 shim(DeprecationWarning). 별칭·shim 은 v11 에서 빠집니다. 설계: `docs/dialects/PHASE5.md`.
@@ -697,7 +705,7 @@ UI 기능:
 
 채널의 "Tail" 은 입력창 바로 위에 있고 채널을 바꾸면 따라 바뀝니다. 머리말 아래 "Context" 줄은 지금 채널의 모델이 보는 양(시스템·함수 스키마·대화·꼬리)입니다. Head·Tail 막대에 마우스를 올리면 무엇이 들어 있는지 한 줄 풀이가 뜹니다. agent/skill 카드는 펼쳤을 때 머리 아래와 몸통 아래에 같은 두 줄이 보이고, 끝난 실행은 종료 시점 상태로 고정됩니다. 내용은 그 스코프의 **마지막 모델 호출** 기준이며(`GET /api/debug/prompt?task_id=`), 보이는 것만 가져오고 **모델 호출이 나가는 순간** 갱신합니다(v10.63.0 — 생성 중에도 Tail 은 지금 호출에 실린 꼬리; 사용량 줄은 그 호출이 끝난 뒤 채워집니다). 런이 끝나면 마지막 호출 뒤에 닫힌 Open Items(예: `complete` 로 답한 `[u-1]`) 줄 끝에 `✓ closed` 태그가 붙고, 막대에 `✓ N closed after` 가 섭니다(v10.119.1 — 글은 긋지 않습니다) — 꼬리 글 자체는 모델이 받은 그대로입니다. 🔍 버튼과 드로어는 없습니다 — 드로어가 보여 주던 것이 모두 이 틀 안에 있습니다. `--resume` 하면 세션 폴더의 `prompt_views/` 에서 틀을 되살려 재개 전과 같은 화면이 됩니다. 머리말 아래 사용량 줄은 **서버가 센 값만** 씁니다(v10.18.0): 그 스코프의 마지막 모델 호출에서 서버가 보고한 입력 토큰을 시스템·함수 스키마·꼬리·대화로 나눠 보이고, 아직 호출이 없으면 `N/A` 로 두었다가 다음 호출 뒤에 채웁니다. 마지막 실측은 `prompt_views/` 에 함께 저장되어 재개 직후에도 재개 전과 같은 숫자입니다. 아래 v10.7.0 · 8.11.0 설명의 드로어·🔍 버튼은 더 이상 없습니다.
 
-**🔍 프롬프트 인스펙션 (컨텍스트, 8.11.0 재설계):** 전역 인스펙터 메뉴 대신 **대화에서 바로** 프롬프트를 검사합니다 — 대화의 agent/skill 카드 헤더의 **🔍** 버튼을 누르면 그 스코프(그 카드의 `data-task-id`)의 프롬프트 인스펙션 드로어가 열립니다. **메인 루프**는 입력창 옆의 🔍(footer) 버튼으로 엽니다. 드로어는 **클릭한 스코프로 고정**(스코프 칩 없음)되고, 제목에 `agent`/`skill`/`main` 태그 + 이름이 표시됩니다. 내용은 **현재 턴에 실제로 전송된 시스템 프롬프트 + 그 시점 대화·관찰**을 섹션별로 보여줍니다: `System prompt` / `Conversation · observations` **스티키 그룹 헤더**로 나뉘고, 종류별 **의미색 좌측선**(system=accent, 대화=cyan)·섹션별 **점유율 바**·토큰 뱃지·**섹션 복사(⧉)**·**전체 접기/전체 복사**·검색 필터를 제공합니다. 열 때마다 최신 스냅샷을 가져오며(`GET /api/debug/prompt?task_id=`, 토큰 인증), 훅이 주입한 동적 섹션도 `Hook: <이름>`으로, compaction 요약·파일 목록도 함께 표시됩니다. **agent·skill 동일 뷰** — skill 도 카드 `data-task-id` 로 전체 스냅샷이 조회됩니다(8.11.0: skill 스코프 id 통일). LLM 호출 전이면 "아직 LLM 호출이 없습니다" 안내를 보여줍니다. native_fc(v10.2.1)에서는 요청 `tools[]` 의 함수 스키마가 `Function schemas` 그룹으로 시스템 프롬프트와 대화 사이에 보이고, assistant 카드에는 `tool_calls` 가 `⚡ 도구 {인자}  (call id)` 줄로, 관찰 카드 라벨에는 `[tool call_<n>_<i>]` 가 붙습니다.
+종전의 🔍 프롬프트 인스펙션 드로어(카드·footer 의 🔍 버튼)는 v10.17.0 에서 없어졌고, 그 내용은 위의 틀(Head·Evicted·Tail)이 챗 안에서 보여 줍니다. native_fc 의 요청 `tools[]` 함수 스키마도 Head 에 있습니다.
 
 **📝 Directive Editor (헤더 📝):** 헤더의 📝 버튼은 **에이전트 지시문 편집 전용** 드로어입니다(프롬프트 뷰어와 분리 — 8.11.0). 프로젝트 `.agent-cli/DIRECTIVE.md` 를 편집합니다 — **에디터 구조 = 파일 구조**: `🌐 Common`(main+모든 서브에이전트) / `🎯 Main`(`## @main`) / `🤖 Sub-agents`(`## @agents`) 세 탭이 파일의 스코프 블록과 1:1 로 대응하고(분해·조립은 서버의 U-C 파서 단일 출처), 내용 있는 탭엔 ● 뱃지가 붙습니다. 각 탭은 **직접 편집**하거나, 아래 입력줄에 넣고 싶은 내용을 대략적으로 적고 **✨ 생성**을 누르면 LLM 이 그 청중용 directive 초안을 써서 탭에 반영합니다(기존 내용이 있으면 병합/개정) — 초안은 **미저장** 상태로 들어와 검토 후 저장. 생성은 **산문 직접 호출**(provider 1콜 + 구조적 새니타이저)입니다 — Qwen3.6 세대에서 CoT 누출 무발생을 재실측(16/16)한 뒤 단순화(5.7.0). 메인 대화/워커와 무접촉이라 타임라인에 흔적이 없고, **탭별로 동시에 여러 생성**을 걸 수 있습니다. 저장하면 세 탭이 하나의 파일로 조립되어 기록되고 **다음 LLM 호출부터 적용**(KV 캐시 prefix 리셋), 여러 인스턴스 간 브로드캐스트 동기화. API: `GET/POST /api/directives`(scopes 계약) · `POST /api/directives/generate`, 토큰 인증, **프로젝트 파일 전용**.
 
@@ -1118,7 +1126,7 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
 | `context_window` | 컨텍스트 윈도우 크기 (토큰) |
 | `max_output_tokens` | 최대 출력 토큰 |
 | `supports_thinking` | Thinking/reasoning 지원 (단독 게이트, v8.21.0 — 이 키가 true 인 모델에만 🧠 스위치가 요청에 실린다; 정도는 서버 기본값, v10.72.0) |
-| `dialect` | **필수 (v10.3.0)** — 이 모델의 방언 바인딩 (`json_fc`, `xml_fc`, `hermes_json`, `glm_argkey`; v10.4.0 부터 옛 키 `wire_format` 은 읽지 않음). 모델마다 학습된 tool-call 포맷 프라이어가 다를 때 사용 — 지정하면 `--dialect` 미지정 시 이 포맷으로 실행되고, **서브에이전트도 자기 모델의 바인딩을 따릅니다** (프로필 `model` 오버라이드 포함 — main 과 다른 포맷으로 도는 서브에이전트 가능). 미등록 이름은 부트/spawn 시 즉시 실패. 설정 경로: 손편집 / 대화형 모델 등록 프롬프트("Dialect [auto]") / agent-board ⚙ admin 모델 행 드롭다운. 자동 감지 refresh 에도 보존됩니다 |
+| `dialect` | **필수 (v10.3.0)** — 이 모델의 방언 바인딩 (`json_fc`, `xml_fc`, `hermes_json`, `glm_argkey`, `native_fc`; v10.4.0 부터 옛 키 `wire_format` 은 읽지 않음). 모델마다 학습된 tool-call 포맷 프라이어가 다를 때 사용 — 지정하면 `--dialect` 미지정 시 이 포맷으로 실행되고, **서브에이전트도 자기 모델의 바인딩을 따릅니다** (프로필 `model` 오버라이드 포함 — main 과 다른 포맷으로 도는 서브에이전트 가능). 미등록 이름은 부트/spawn 시 즉시 실패. 설정 경로: 손편집 / 터미널의 질문("Dialect (glm_argkey / hermes_json / json_fc / native_fc / xml_fc): " — 탐지 실패 뒤의 모델 등록과, 방언 없는 엔트리의 `run` 부트(v10.127.0); 기본값 없음) / agent-board ⚙ admin 모델 행 드롭다운. 자동 감지 refresh 에도 보존됩니다 |
 
 **설정 우선순위**: `~/.agent-cli/models.json` (유저) > `default_models.json` (패키지) > 런타임 감지 > 보수적 기본값
 
@@ -1682,7 +1690,7 @@ spawn 하면 key 를 돌려받고, 그 key 로 몇 번이고 이어서 요청할
 - **세션 resume 시 자동 재생성**: `--resume` 하면 이전 세션에서 살아있던 상주 에이전트가 **자기 대화 이력을 전부 기억한 채** 자동으로 되살아납니다 (`agents.json` manifest — 역할 프롬프트도 저장돼 프로파일 md 파일이 지워져도 무관). 미배달 회신도 보존되어 첫 턴에 배달됩니다 (답변 대기 중이던 질문은 STALE 로 표시 — 재시작으로 더 이상 블록 상태가 아님을 안내). 명시적으로 `kill` 한 에이전트는 되살아나지 않습니다.
 - **재시작해도 줄 선 요청이 사라지지 않습니다 (v9.24.5)**: 에이전트의 받은편지함(아직 시작 안 한 요청)과 처리 중이던 요청이 `agents.json` 에 함께 저장됩니다. 종전엔 받은편지함이 메모리에만 있어, 긴 런 도중 세션이 재시작되면 줄 서 있던 요청이 통째로 사라지고 대화창엔 영원한 "대기" 로 남았습니다. 이제 되살아난 에이전트는 **끊긴 런을 맨 앞에서 이어 하고**(원래 요청에 "재시작으로 중단됐다 — 바꾸던 것의 현재 상태부터 확인하라, 마지막 편집이 반쯤 됐을 수 있다" 는 안내를 붙여 같은 발신자에게서 다시 받음), 그다음 줄 선 요청을 원래 순서대로 처리합니다. 이어 하던 중 또 재시작돼도 안내는 한 겹만 붙습니다. v9.24.4 이하가 저장한 세션에는 받은편지함 정보가 없어 이미 사라진 요청은 복구되지 않습니다 — 다시 보내 주세요.
 - **런 도중 도착한 요청도 바로 받습니다 (v9.25.0)**: 상주 에이전트가 런을 도는 동안 받은편지함에 들어온 요청·회신·질문을 **매 턴 경계에서 그 런으로 흡수**합니다. 종전엔 런이 끝나야 꺼내서, 11시간 런(1zfgc2) 동안 오케스트레이터 메시지 8건이, 50분 런(2an3cv) 동안 main 의 지시 2건이 읽히지 않았습니다. 흡수된 요청은 관찰(`── request [번호] from main (arrived while you were working) ──`)로 들어가고 요청별 빚으로 `## Owed Replies` 에 오르며, 각각 `reply(id=번호)` 로 갚습니다. 발신자가 달라도 받습니다(main·동료·사람). 사람이 그 에이전트 창에 쓴 메시지는 main 과 같은 회계(`## Open Requests`·`answers`)를 받고 그 런은 사람 런이 되어 `complete` 이 거부가 아니라 수락 후 독촉으로 처리됩니다. 흡수분은 처리 중 목록에 저장되어 재시작해도 남습니다. `ask` 의 `to` 는 `main` 이나 에이전트 키도 받습니다. 한계: 흡수는 턴 경계에서만 일어나므로 LLM 호출 하나가 도는 동안은 받지 못합니다.
-- **인스펙터**: 웹 Prompt Inspector 에 상주 에이전트 스코프 칩이 상시 표시되어 살아있는 동안 시스템 프롬프트·동적 컨텍스트를 실시간 검사할 수 있습니다. 요청 처리 과정은 run 과 같은 접이식 카드(🤝)로 표시됩니다.
+- **모델 시점**: 상주 에이전트 채널도 main 과 같은 틀(Head·Evicted·Tail)로 그 에이전트가 받는 시스템 프롬프트·꼬리를 보여 줍니다(종전의 Prompt Inspector 스코프 칩은 v10.17.0 에서 이 틀로 대체). 요청 처리 과정은 run 과 같은 접이식 카드(🤝)로 표시됩니다.
 - **사용자 직접 명령 (`@` 구문)**: 채팅박스(웹)나 CLI 에서 —
   - `@agents` — 프로파일 카탈로그 + live roster 통합 목록.
   - `@<profile> <task>` — 일회성 run (명시적으로 `@<profile>-run` 도 동일).
@@ -1923,7 +1931,7 @@ python -m agent_cli.prompts.inventory --html inventory.html   # 훑어보는 페
 
 **수동 `/compact` (web)**: 요약 호출도 본 호출처럼 스트리밍으로 나갑니다(v10.122.1 — 비스트리밍 요청은 게이트웨이가 첫 바이트를 기다리다 504 로 끊었다). 결과는 셋으로 구별됩니다(v10.122.2): 줄었으면 `Compacted: A → B tokens.`, 내보낼 것이 없으면 `Nothing to compact (…)`, 요약기가 실패하면 `Compaction failed: <사유>`(실패 카드), 압축이 꺼졌으면 `Compaction is off in this session.` — 실패해도 캐시는 그대로이고 FIFO 로 버리지 않습니다.
 
-압축이 일어나면 CLI는 한 줄 상태로, 웹은 **대화창 인라인 시스템 라인**(`⊙ 컨텍스트 압축됨 X→Y tok`)으로 진행을 표시합니다. 압축으로 흡수된 요약·파일 목록은 웹의 ⚡ Prompt Inspector 에서도 확인할 수 있습니다(위 참조).
+압축이 일어나면 CLI는 한 줄 상태로, 웹은 **대화창 인라인 시스템 라인**(`⊙ 컨텍스트 압축됨 X→Y tok`)으로 진행을 표시합니다. 압축으로 흡수된 요약·파일 목록은 웹 채널 맨 위 Head 틀에서도 확인할 수 있습니다(위 참조).
 
 #### 디렉토리 구조
 

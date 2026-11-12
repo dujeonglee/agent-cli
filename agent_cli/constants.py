@@ -4,8 +4,9 @@
 SHELL_COMMAND_TIMEOUT = 30
 # LLM request timeout as a requests ``(connect, read)`` tuple.
 #   - connect (30s): TCP/TLS connection establishment. Short so a DOWN /
-#     unreachable server fails fast — ConnectTimeout is retried up to
-#     AGENT_CLI_LLM_RETRY_ATTEMPTS times (default 10).
+#     unreachable server fails fast — ConnectTimeout is retried within the
+#     fixed network-error budget (``providers.http._DEFAULT_ATTEMPTS``, 10 —
+#     not tunable by env).
 #   - read: time between bytes once connected.
 # Two profiles:
 #   - LLM_API_TIMEOUT (non-streaming, read=1200s): the post() reads the whole
