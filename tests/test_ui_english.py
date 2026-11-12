@@ -78,3 +78,47 @@ def test_strippers_keep_comments_out_and_code_in():
     assert _hangul_lines(strip_js_comments(js)) == ['3: b = "본문";']
     html = "<!-- 주석 -->\n<p>본문</p>\n<!--\n 여러 줄\n-->\n"
     assert _hangul_lines(strip_html_comments(html)) == ["2: <p>본문</p>"]
+
+
+# ── CLI 도움말 (v10.127.5) ────────────────────────────────────────────
+# `agent-cli mcp --help` 에 한글 docstring 이 그대로 나왔다. 정적으로 docstring 을 긁지
+# 않고 typer 가 실제로 보여 주는 `--help` 출력을 명령 트리 전부에서 뽑아 본다 —
+# 숨긴 명령·하위 그룹·옵션 help 까지(typer 가 무엇을 고르는지가 기준이다).
+
+
+def _cli_command_paths() -> list[list[str]]:
+    from typer.main import get_command
+
+    from agent_cli.main import app
+
+    def walk(cmd, path):
+        yield path
+        for name, sub in sorted((getattr(cmd, "commands", None) or {}).items()):
+            yield from walk(sub, [*path, name])
+
+    return list(walk(get_command(app), []))
+
+
+def test_cli_command_tree_is_walked():
+    paths = {" ".join(p) for p in _cli_command_paths()}
+    assert {"", "run", "web", "sessions", "mcp", "mcp add", "mcp remove"} <= paths
+
+
+@pytest.mark.parametrize(
+    "path", _cli_command_paths(), ids=lambda p: " ".join(p) or "(root)"
+)
+def test_cli_help_has_no_korean(path, tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from agent_cli.main import app
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(app, [*path, "--help"])
+    assert r.exit_code == 0, r.output
+    # typer 는 GITHUB_ACTIONS 가 있으면 도움말에 색을 강제한다 — `--help` 가
+    # `-` 와 `-help` 로 따로 칠해져 평문 비교가 CI 에서만 빗나간다.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", r.output)
+    assert "--help" in plain
+    hits = [ln.strip() for ln in plain.splitlines() if HANGUL.search(ln)]
+    assert not hits, f"agent-cli {' '.join(path)} --help: " + "; ".join(hits[:5])
