@@ -6,7 +6,6 @@ Saves configuration to ~/.agent-cli/config.json or .agent-cli/config.json.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import requests
@@ -102,6 +101,7 @@ class SetupWizard:
         """Display the existing user config so the user can reference it
         before picking new values. Silent when none exists (first-time setup).
         v9.0.0: config.json 은 유저 스코프만 — 프로젝트 후보는 없다."""
+        from agent_cli.config import ConfigError, read_config_file
         from agent_cli.paths import user_dir
 
         candidates = [("User", user_dir() / "config.json")]
@@ -110,10 +110,17 @@ class SetupWizard:
             if not path.exists():
                 continue
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                continue
-            if not isinstance(data, dict):
+                data = read_config_file(path)
+            except ConfigError as e:
+                # setup 은 깨진 파일을 고치는 길이다 — 멈추지 않고 사실만 말한다 (v10.123.4)
+                self.console.print(
+                    f"Could not read the existing config {e}. "
+                    "Saving at the end of setup replaces it.\n",
+                    style="yellow",
+                    markup=False,
+                    highlight=False,
+                    soft_wrap=True,  # 경로를 rich 가 80칸에서 끊지 않게
+                )
                 continue
             entries.append((label, path, data))
 

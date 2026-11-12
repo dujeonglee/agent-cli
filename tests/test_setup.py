@@ -261,22 +261,32 @@ class TestShowExistingConfigs:
         assert "sk-supersecret-do-not-leak" not in output
         assert "***" in output
 
-    def test_malformed_config_skipped(self, tmp_path, monkeypatch):
-        """Unparseable config file doesn't crash the wizard — just
-        skipped as if absent."""
-        home = tmp_path / "home"
+    def test_malformed_config_is_reported_not_fatal(self, tmp_path, monkeypatch):
+        """Unparseable config file doesn't crash the wizard — setup is the way to
+        fix it — but it says so instead of acting as if absent (v10.123.4)."""
+        from io import StringIO
+
+        from rich.console import Console
+
+        # 경로는 80칸을 넘게, 폭은 80 — 경로가 한 덩어리로 나와야 복사해 쓸 수 있다
+        home = tmp_path / ("d" * 40) / ("e" * 40) / "home"
         monkeypatch.setattr("agent_cli.setup.Path.home", lambda: home)
         monkeypatch.chdir(tmp_path)
         bad = home / ".agent-cli" / "config.json"
         bad.parent.mkdir(parents=True)
-        bad.write_text("{{{ not valid json ", encoding="utf-8")
+        bad.write_text('{"provider": "openai",}', encoding="utf-8")
+        assert len(str(bad)) > 80
 
         wizard = SetupWizard()
-        wizard.console = MagicMock()
+        buf = StringIO()
+        wizard.console = Console(file=buf, force_terminal=False, width=80)
         # Must not raise.
         wizard._show_existing_configs()
-        # No valid entry → no panel.
-        wizard.console.print.assert_not_called()
+        out = buf.getvalue()
+        assert "Could not read the existing config" in out
+        assert str(bad) in out
+        assert "line 1" in out
+        assert "Existing configuration" not in out  # 표는 없다
 
 
 class TestSaveIsUserScopeOnly:

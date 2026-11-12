@@ -123,10 +123,22 @@ def _resolve_provider(
     omlx, LM Studio) config, so its URL·model·key apply to "openai".
     An unknown provider name exits with code 2 and the available names.
     """
-    from agent_cli.config import load_config
+    from agent_cli.config import ConfigError, load_config
     from agent_cli.providers import available_providers
 
-    config = load_config()
+    try:
+        config = load_config()
+    except ConfigError as e:
+        # 못 읽은 설정으로 계속 가면 기본값(공개 엔드포인트)이 된다 (v10.123.4)
+        console.print(
+            f"Could not read config {e}. Fix or delete the file, "
+            "or run 'agent-cli setup'.",
+            style=C["error"],
+            markup=False,
+            highlight=False,
+            soft_wrap=True,  # 경로를 rich 가 80칸에서 끊지 않게 — 복사해 쓸 수 있도록
+        )
+        raise typer.Exit(2) from None
 
     # provider 를 안 적은 설정은 openai 의 것이다 (v10.123.1). 종전엔 빈 문자열이라
     # 아래 "같은 provider 일 때만 설정 값" 검사에 늘 떨어져 사용자가 적은

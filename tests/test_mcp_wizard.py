@@ -24,10 +24,30 @@ class TestFileIO:
     def test_read_missing_is_empty(self, tmp_path):
         assert W.read_servers(tmp_path / "nope.json") == {}
 
-    def test_read_broken_json_is_empty(self, tmp_path):
+    @pytest.mark.parametrize(
+        ("text", "needle"),
+        [
+            ("{not json", "line 1"),
+            ("[1, 2]", "expected a JSON object, got list"),
+            ('{"mcpServers": []}', '"mcpServers" must be an object'),
+        ],
+    )
+    def test_read_unreadable_raises_with_path_and_reason(self, tmp_path, text, needle):
+        """빈 목록으로 읽으면 진단이 "등록 없음" 이라 하고 저장이 파일을 덮어쓴다 (v10.123.4)."""
         f = tmp_path / "mcp.json"
-        f.write_text("{not json")
-        assert W.read_servers(f) == {}
+        f.write_text(text)
+        with pytest.raises(W.McpConfigError) as exc:
+            W.read_servers(f)
+        assert str(f) in str(exc.value)
+        assert needle in str(exc.value)
+
+    def test_save_refuses_unreadable_file_and_leaves_bytes(self, tmp_path):
+        f = tmp_path / "mcp.json"
+        f.write_bytes(b'{"mcpServers": {"gh": {"command": "npx"},}}')
+        before = f.read_bytes()
+        with pytest.raises(W.McpConfigError):
+            W.save_server("new", {"command": "x"}, f)
+        assert f.read_bytes() == before
 
     def test_read_skips_non_dict_entries(self, tmp_path):
         f = tmp_path / "mcp.json"
@@ -452,6 +472,77 @@ class TestCliWiring:
         with patch.object(W, "probe_server", return_value=(True, "", [], 0.1)):
             r = CliRunner().invoke(app, ["mcp"])
         assert r.exit_code == 0
+
+
+class TestUnreadableMcpJson:
+    """깨진 mcp.json 은 깨졌다고 말하고, 대화형 명령은 그 파일을 덮어쓰지 않는다 (v10.123.4).
+
+    종전: 진단 `agent-cli mcp` 는 "No MCP servers registered" + 0, `mcp add` 는 빈 목록에
+    새 서버 하나를 얹어 저장 — 사용자 파일의 서버들이 사라졌다."""
+
+    _BROKEN = b'{"mcpServers": {"gh": {"command": "npx"},}, "note": "mine"}'
+
+    @pytest.fixture
+    def broken(self, proj, monkeypatch):
+        # 경로는 80칸을 넘게, 콘솔 폭은 CI 와 같은 80 — 경로가 한 덩어리로 나오는지 본다
+        # (rich 가 끊으면 "mcp.js\non" 처럼 복사해 쓸 수 없다; CI 에서 실측)
+        from agent_cli.mcp import wizard
+
+        deep = proj / ("d" * 40) / ("e" * 40)
+        deep.mkdir(parents=True)
+        monkeypatch.chdir(deep)
+        monkeypatch.setattr(wizard.console, "_width", 80)
+        f = deep / ".agent-cli" / "mcp.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(self._BROKEN)
+        assert len(str(f)) > 80
+        return f
+
+    def _invoke(self, *args):
+        from typer.testing import CliRunner
+
+        from agent_cli.main import app
+
+        return CliRunner().invoke(app, ["mcp", *args])
+
+    def test_diagnose_says_it_could_not_read_and_exits_1(self, broken):
+        r = self._invoke("--no-test")
+        assert r.exit_code == 1, r.output
+        assert "Could not read" in r.output
+        assert str(broken) in r.output
+        assert "line 1" in r.output
+        assert "No MCP servers registered" not in r.output
+
+    def test_add_refuses_before_asking_and_keeps_bytes(self, broken, monkeypatch):
+        _script_prompts(monkeypatch)  # 아무것도 묻지 않아야 한다 — 물으면 실패
+        r = self._invoke("add")
+        assert r.exit_code == 1, r.output
+        assert "it was not changed" in r.output
+        assert str(broken) in r.output
+        assert broken.read_bytes() == self._BROKEN
+
+    def test_remove_refuses_and_keeps_bytes(self, broken):
+        r = self._invoke("remove", "gh")
+        assert r.exit_code == 1, r.output
+        assert "Could not read" in r.output
+        assert str(broken) in r.output
+        assert broken.read_bytes() == self._BROKEN
+
+    def test_test_says_it_could_not_read(self, broken):
+        r = self._invoke("test", "gh")
+        assert r.exit_code == 1
+        assert "Could not read" in r.output
+        assert str(broken) in r.output
+
+    def test_broken_legacy_file_only_skips_the_import_offer(self, proj, monkeypatch):
+        legacy = proj / "home" / ".agent-cli" / "mcp.json"
+        legacy.write_text("{not json")
+        _script_prompts(monkeypatch)  # 가져오기를 묻지 않는다 — 물으면 실패
+        w, buf = _wizard()
+        target = proj / ".agent-cli" / "mcp.json"
+        w._offer_import({}, target)
+        assert not target.exists()
+        assert buf.getvalue() == ""
 
 
 class TestListIsScriptSafe:

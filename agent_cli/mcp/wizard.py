@@ -75,29 +75,45 @@ def legacy_user_mcp_path() -> Path:
     return user_dir() / "mcp.json"
 
 
-def read_servers(path: Path) -> dict[str, dict]:
-    """``mcpServers`` 원본 dict. 없거나 깨졌으면 빈 dict — 깨진 파일은
-    저장 시 통째로 덮어쓰지 않도록 호출자가 ``path.exists()`` 로 구분한다."""
+class McpConfigError(Exception):
+    """mcp.json 이 있는데 읽지 못했다 — 경로와 원문 오류 (v10.123.4).
+
+    종전엔 빈 목록으로 읽어 진단 명령이 "No MCP servers registered" 라고 했고,
+    ``mcp add`` 는 그 빈 목록에 새 서버 하나를 얹어 **사용자 파일을 통째로 덮어썼다**."""
+
+    def __init__(self, path: Path, detail: str):
+        super().__init__(f"{path}: {detail}")
+
+
+def _read_document(path: Path) -> dict:
+    """mcp.json 최상위 객체 — 없으면 빈 dict, 못 읽으면 :class:`McpConfigError`."""
     if not path.is_file():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-    servers = data.get("mcpServers", {}) if isinstance(data, dict) else {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise McpConfigError(path, str(e)) from e
+    if not isinstance(data, dict):
+        raise McpConfigError(path, f"expected a JSON object, got {type(data).__name__}")
+    servers = data.get("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise McpConfigError(
+            path, f'"mcpServers" must be an object, got {type(servers).__name__}'
+        )
+    return data
+
+
+def read_servers(path: Path) -> dict[str, dict]:
+    """``mcpServers`` 원본 dict. 없으면 빈 dict, 못 읽으면 :class:`McpConfigError`
+    — 읽지 못한 파일을 빈 목록으로 보고 저장하면 사용자 내용이 사라진다."""
+    servers = _read_document(path).get("mcpServers", {})
     return {k: v for k, v in servers.items() if isinstance(v, dict)}
 
 
 def write_servers(path: Path, servers: dict[str, dict]) -> None:
-    """``{"mcpServers": {...}}`` 로 원자적 저장 (다른 최상위 키는 보존)."""
-    data: dict = {}
-    if path.is_file():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-        except (json.JSONDecodeError, OSError):
-            data = {}
+    """``{"mcpServers": {...}}`` 로 원자적 저장 (다른 최상위 키는 보존).
+    읽지 못하는 파일은 덮어쓰지 않는다(:class:`McpConfigError`)."""
+    data = _read_document(path)
     data["mcpServers"] = servers
     atomic_write_json(path, data, indent=2)
 
@@ -236,7 +252,11 @@ class McpWizard:
         """등록 서버 표. ``test=True`` 면 하나씩 실제로 붙여 본다 — 지금까지
         stderr 한 줄에만 있던 실패 이유를 여기서 본다. 반환값은 실패 수."""
         path = mcp_json_path()
-        servers = read_servers(path)
+        try:
+            servers = read_servers(path)
+        except McpConfigError as e:
+            self._unreadable(e)
+            return 1
         # 목록은 **진단 명령**이라 스크립트·CI 에서 돈다 — 파이프 뒤에서
         # 프롬프트에 걸려 멈추면 안 된다(실장 검증에서 잡힘). 가져오기 제안은
         # TTY 일 때만; `mcp add` 는 원래 대화형이라 항상 제안한다.
@@ -285,7 +305,11 @@ class McpWizard:
     # ── mcp add ──
     def add(self) -> bool:
         path = mcp_json_path()
-        existing = read_servers(path)
+        try:
+            existing = read_servers(path)
+        except McpConfigError as e:
+            self._unreadable(e)
+            return False
         self._offer_import(existing, path)
         existing = read_servers(path)
 
@@ -321,7 +345,11 @@ class McpWizard:
 
     # ── mcp test <name> ──
     def test(self, name: str) -> bool:
-        servers = read_servers(mcp_json_path())
+        try:
+            servers = read_servers(mcp_json_path())
+        except McpConfigError as e:
+            self._unreadable(e)
+            return False
         if name not in servers:
             self.console.print(f"[red]'{name}' is not registered.[/]")
             self._hint_names(servers)
@@ -331,7 +359,12 @@ class McpWizard:
     # ── mcp remove <name> ──
     def remove(self, name: str) -> bool:
         path = mcp_json_path()
-        if not remove_server(name, path):
+        try:
+            removed = remove_server(name, path)
+        except McpConfigError as e:
+            self._unreadable(e)
+            return False
+        if not removed:
             self.console.print(f"[red]'{name}' is not registered.[/]")
             self._hint_names(read_servers(path))
             return False
@@ -339,6 +372,17 @@ class McpWizard:
         return True
 
     # ── 내부 ──
+    def _unreadable(self, e: McpConfigError) -> None:
+        # markup=False — JSON 오류 문구의 대괄호·경로가 rich 태그로 먹히지 않게.
+        # soft_wrap=True — 긴 경로를 rich 가 80칸에서 끊지 않게(복사해 쓸 수 있도록).
+        self.console.print(
+            f"Could not read {e}. Fix or delete the file — it was not changed.",
+            style="red",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+
     def _hint_names(self, servers: dict) -> None:
         if servers:
             self.console.print(f"  [dim]registered: {', '.join(servers)}[/]")
@@ -348,7 +392,10 @@ class McpWizard:
         경고 없이 간 스코프 정리의 마이그레이션 경로. 원본은 지우지 않는다 —
         이제 읽지 않을 뿐이다."""
         legacy = legacy_user_mcp_path()
-        legacy_servers = read_servers(legacy)
+        try:
+            legacy_servers = read_servers(legacy)
+        except McpConfigError:
+            return  # 이제 읽지 않는 파일 — 가져오기 제안만 안 한다
         new = {k: v for k, v in legacy_servers.items() if k not in existing}
         if not new:
             return
