@@ -986,7 +986,10 @@ def _require_vision(binding) -> None:
 def _prompt_model_capabilities(model: str):
     """Interactively ask user for model capabilities when detection fails."""
     from agent_cli.config import save_model_entry
-    from agent_cli.providers.capabilities import ModelCapabilities
+    from agent_cli.providers.capabilities import (
+        DEFAULT_CAPABILITIES,
+        ModelCapabilities,
+    )
 
     console.print(
         f"\n[{C['accent']}]Model '{model}' not found in registry and detection failed.[/]"
@@ -997,10 +1000,13 @@ def _prompt_model_capabilities(model: str):
 
     renderer = get_renderer()
     try:
+        # 빈 입력의 기본값 = 탐지 실패 때 실제로 쓰이는 값 (v10.126.0; 종전 질문은
+        # [4096] 이라 적고 빈 입력도 4096 이었는데, 묻지 않은 길은 256K 였다)
+        default_window = DEFAULT_CAPABILITIES.context_window
         ctx_input = renderer.prompt_user(
-            "  Context window size [4096]: ", multiline=False
+            f"  Context window size [{default_window}]: ", multiline=False
         )
-        context_window = int(ctx_input) if ctx_input else 4096
+        context_window = int(ctx_input) if ctx_input else default_window
 
         thinking_input = renderer.prompt_user(
             "  Supports thinking? (y/n) [n]: ", multiline=False
@@ -1090,12 +1096,53 @@ def _verify_model_or_exit(
         return _choose_model_or_exit(
             e.listing, base_url, e, origin, quiet, interactive=is_interactive()
         )
+    if listing.unreachable:
+        return _unreachable_or_exit(resolved_model, base_url, listing, quiet=quiet)
     if not quiet and not listing.available:
         console.print(
             f"[{C['warn']}]⚠ Could not read /v1/models, so the model name was not "
             f"verified ({listing.reason}) — continuing with the configured value.[/]"
         )
     return resolved_model
+
+
+def _unreachable_or_exit(model: str, base_url: str, listing, *, quiet: bool) -> str:
+    """서버에 닿지 못함 (v10.126.0) — "묻지 못함" 중에서 원인을 그 자리에서 말하는 갈래.
+
+    - **등록된 모델**(models.json·패키지 기본 표에 엔트리) → 계속. 능력은 엔트리에서
+      나오고, 서버를 나중에 켜는 상주 방·보드 되살리기가 이 경로에 기댄다 — 막지 않는다.
+    - **등록 안 된 모델** → 여기서 ``Exit(2)``(런이 시작되지 못함). 종전엔 프로브 3종 →
+      문맥 창 질문 → ``No dialect for model`` 까지 10~20초를 끌고 가 엉뚱한 원인으로 끝났다.
+      ``quiet`` 여도 멈춘다(종전 그 길의 끝도 2였다).
+    """
+    from agent_cli.config import _GLOBAL_MODELS_PATH, get_model_entry
+
+    if get_model_entry(model) is not None:
+        if not quiet:
+            console.print(
+                f"⚠ Cannot connect to {base_url} ({listing.reason}) — continuing with "
+                "the registered settings; calls fail until the server is up.",
+                style=C["warn"],
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
+        return model
+    for line in (
+        f"✗ Cannot connect to the server at {base_url} ({listing.reason}).",
+        (
+            f"  Model '{model}' is not registered in {_GLOBAL_MODELS_PATH}, so its "
+            "capabilities cannot be known without the server."
+        ),
+        (
+            "  Fix: start the server, or check --base-url / the base_url in "
+            f"{user_dir() / 'config.json'}."
+        ),
+    ):
+        console.print(
+            line, style=C["error"], markup=False, highlight=False, soft_wrap=True
+        )
+    raise typer.Exit(2)
 
 
 def _choose_model_or_exit(
@@ -1216,8 +1263,11 @@ def _setup_provider(
     finally:
         set_progress_callback(None)
 
-    # Interactive fallback: ask user when detection fails
-    if capabilities == DEFAULT_CAPABILITIES and not quiet:
+    # Interactive fallback: ask user when detection fails — 터미널일 때만 (v10.126.0;
+    # 종전엔 비대화식에서도 묻고 EOF 로 넘어갔다)
+    from agent_cli.model_check import is_interactive
+
+    if capabilities == DEFAULT_CAPABILITIES and not quiet and is_interactive():
         user_caps = _prompt_model_capabilities(resolved_model)
         if user_caps:
             capabilities = user_caps

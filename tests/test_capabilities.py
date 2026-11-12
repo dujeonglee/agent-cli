@@ -427,7 +427,8 @@ class TestPromptModelCapabilities:
 
         caps = _prompt_model_capabilities("test-model")
         assert caps is not None
-        assert caps.context_window == 4096
+        # 빈 입력 = 묻지 않았을 때 쓰이는 창 (v10.126.0; 종전 4096)
+        assert caps.context_window == DEFAULT_CAPABILITIES.context_window
         assert caps.supports_thinking is False
 
     def test_handles_ctrl_c(self, monkeypatch):

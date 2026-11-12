@@ -18,7 +18,6 @@ import mimetypes
 import os
 import re
 import socket
-import ssl
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
@@ -28,6 +27,9 @@ from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import requests
 
+from agent_cli.net_errors import exception_chain as _chain
+from agent_cli.net_errors import one_line as _one_line
+from agent_cli.net_errors import tls_detail as _tls_detail
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
@@ -516,40 +518,6 @@ def _proxy_facts() -> dict:
         return {}
     star = any(os.environ.get(v, "").strip() == "*" for v in ("NO_PROXY", "no_proxy"))
     return {"proxy": name, "no_proxy_all": star}
-
-
-def _chain(exc: BaseException):
-    """예외와 그 원인들 — ``__cause__``·``__context__``·urllib3 의 ``reason``·
-    ``args`` 안의 예외(requests 는 ``MaxRetryError`` 를 args 로 감싼다)."""
-    seen: set[int] = set()
-    todo: list[BaseException] = [exc]
-    while todo:
-        e = todo.pop(0)
-        if id(e) in seen:
-            continue
-        seen.add(id(e))
-        yield e
-        nxt = [e.__cause__, e.__context__, getattr(e, "reason", None), *e.args]
-        todo.extend(x for x in nxt if isinstance(x, BaseException))
-
-
-def _one_line(text: str) -> str:
-    return " ".join(str(text).split())
-
-
-def _tls_detail(exc: BaseException) -> str:
-    """TLS 실패의 이유 — 가장 안쪽 ``ssl.SSLError`` 의 말에서 ``[SSL: …]`` 머리와
-    ``(_ssl.c:N)`` 꼬리를 뗀다. requests 의 겉 문구(``HTTPSConnectionPool(…):
-    Max retries exceeded …``)는 이유를 300자 뒤에 묻는다."""
-    inner = next((e for e in _chain(exc) if isinstance(e, ssl.SSLError)), None)
-    if inner is not None:
-        verify = getattr(inner, "verify_message", None)
-        msg = f"certificate verify failed: {verify}" if verify else str(inner)
-        msg = re.sub(r"^\[SSL: [A-Z_]+\]\s*", "", _one_line(msg))
-        msg = re.sub(r"\s*\(_ssl\.c:\d+\)$", "", msg)
-        if msg:
-            return msg
-    return _one_line(exc) or type(exc).__name__
 
 
 def classify_exception(exc: BaseException) -> tuple[str, dict]:

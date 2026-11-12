@@ -139,6 +139,30 @@ agent-cli run "hello" --base-url http://127.0.0.1:8000/v1 -m Qwen3.6-35B-A3B-8bi
 작업이 통째로 막히기 때문입니다. 에이전트 역할 파일(`.agent-cli/agents/*.md`)이
 `model:` 로 다른 모델을 지정한 경우에도 **spawn 시점에** 같은 검사를 합니다.
 
+**서버에 아예 닿지 못하면(연결 거부·호스트 없음·TLS — v10.126.0)** 그 사실을 그 자리에서 말합니다.
+`models.json`(또는 패키지 기본 표)에 등록된 모델이면 등록된 설정으로 계속합니다 — 서버를
+나중에 켜는 상주 방·보드 되살리기가 이 길입니다:
+
+```
+⚠ Cannot connect to http://127.0.0.1:8000/v1 (connection refused) — continuing with the registered settings; calls fail until the server is up.
+```
+
+등록 안 된 모델은 서버 없이는 능력(문맥 창·사고·방언)을 알 수 없으므로 프로브를 돌리지 않고
+종료 코드 `2` 로 멈춥니다(종전엔 프로브 → 문맥 창 질문 → `No dialect for model` 까지 10~20초):
+
+```
+✗ Cannot connect to the server at http://127.0.0.1:8000/v1 (connection refused).
+  Model 'my-model' is not registered in ~/.agent-cli/models.json, so its capabilities cannot be known without the server.
+  Fix: start the server, or check --base-url / the base_url in ~/.agent-cli/config.json.
+```
+
+괄호 안은 사실 하나입니다: `connection refused`·`host not found`·`TLS error: <사유>`(예: `certificate verify failed: …`)·`cannot connect`(그 밖의 연결 수립 실패).
+타임아웃·프록시 오류·연결된 뒤 끊김(`connection closed by the server`)·HTTP 오류(404·401·500)·빈 목록은
+서버에 닿지 못했다고 단정할 수 없어 종전대로 경고 후 진행합니다.
+등록 안 된 모델의 능력 탐지가 실패했을 때의 질문(문맥 창·사고·이미지·방언)은 터미널에서만 묻고,
+빈 입력의 문맥 창 기본값은 묻지 않았을 때 실제로 쓰이는 값(262144)입니다. LLM 호출이 끝내
+실패한 줄의 연결 오류도 한 줄 분류로 찍습니다(`LLM call failed (…): ConnectionError: connection refused`, `ReadTimeout: no response (timeout)`).
+
 `default_model` 을 비워두면 추측하지 않고 "모델을 지정하라"고 말합니다 —
 `gpt-4o` 같은 이름을 몰래 끼워 넣던 동작은 v9.5.0 에서 제거됐습니다(로컬
 서버에는 있을 리 없는 이름이라, 원인을 가리기만 했습니다). 설계 근거는

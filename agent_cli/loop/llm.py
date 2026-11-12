@@ -540,9 +540,17 @@ class LLMCaller:
             _debug_log(
                 f"LLM call failed: model={self.cfg.model} iter={self.state.turn} skill={self.cfg.skill_name} error={e}"
             )
+            # 사람에게 보이는 줄의 연결 오류는 한 줄 분류로 (v10.126.0) — urllib3 객체
+            # repr(``<…HTTPConnection object at 0x…>``)를 화면에 내지 않는다. 원문은
+            # 위 디버그 로그에. 아래 ToolResult(호출자·모델이 받는 것)는 그대로다.
+            from agent_cli.providers.http import classify_connection_error
+
+            kind = classify_connection_error(e)
+            shown = f"{type(e).__name__}: {kind[0]}" if kind else str(e)
             render_step(
                 "error",
-                f"LLM call failed (model={self.cfg.model}, iter={self.state.turn}): {e}",
+                f"LLM call failed (model={self.cfg.model}, iter={self.state.turn}): "
+                f"{shown}",
                 self.state.turn,
             )
 

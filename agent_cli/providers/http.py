@@ -67,6 +67,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import socket
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -75,12 +76,14 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 import requests
+from urllib3.exceptions import NewConnectionError  # 1.26·2.x 모두에 있다
 
 from agent_cli.context.overflow import (
     ContextOverflowError,
     is_context_overflow,
     parse_overflow_amounts,
 )
+from agent_cli.net_errors import exception_chain, tls_detail
 from agent_cli.providers.runaway import RunawayDetector
 from agent_cli.verbose import debug_log
 
@@ -107,6 +110,40 @@ _INTERRUPT_POLL_SECONDS = 0.2
 
 # Sentinel marking the reader thread has finished (normally or via error).
 _STREAM_DONE = object()
+
+
+def classify_connection_error(exc: BaseException) -> tuple[str, bool] | None:
+    """연결 단계 예외의 한 줄 분류 (v10.126.0) — ``(사유, 서버에 닿지 못함)``, 아니면 None.
+
+    requests 의 예외 문자열은 urllib3 스택과 객체 repr(``<urllib3.connection…
+    object at 0x…>``)을 통째로 싣는다. 부트의 ``/v1/models`` 조회(`model_check`)와
+    LLM 호출의 최종 실패 줄(`loop.llm`)이 같은 분류를 쓴다.
+
+    판정은 ``isinstance`` + 예외 사슬(``net_errors.exception_chain``)이다. 이름 부분
+    문자열로 가르면 **연결된 뒤 끊긴 것**(받고 바로 닫는 서버 — ``ConnectionError`` →
+    ProtocolError → ``ConnectionResetError``)까지 "못 닿음" 이 된다 — 서버는 있다.
+    순서가 뜻이다: requests 2.x 에서 ``SSLError``·``ConnectTimeout``·``ProxyError`` 는
+    ``ConnectionError`` 의 하위 클래스다.
+
+    둘째 값은 "연결 자체가 안 됐다"(TLS·DNS·연결 거부·그 밖의 연결 수립 실패): 서버가
+    꺼졌거나 주소가 틀렸다. 타임아웃·프록시·연결 뒤 끊김은 단정하지 않는다(False)."""
+    exc_mod = requests.exceptions
+    if isinstance(exc, exc_mod.SSLError):
+        return f"TLS error: {tls_detail(exc)}", True
+    if isinstance(exc, exc_mod.Timeout):
+        return "no response (timeout)", False
+    if isinstance(exc, exc_mod.ProxyError):
+        return "proxy error", False
+    if isinstance(exc, exc_mod.ConnectionError):
+        chain = list(exception_chain(exc))
+        if any(isinstance(e, socket.gaierror) for e in chain):
+            return "host not found", True
+        if any(isinstance(e, ConnectionRefusedError) for e in chain):
+            return "connection refused", True
+        if any(isinstance(e, NewConnectionError) for e in chain):
+            return "cannot connect", True
+        return "connection closed by the server", False
+    return None
 
 
 def raise_for_status_with_body(r: requests.Response, max_body: int = 1000) -> None:

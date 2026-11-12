@@ -50,6 +50,10 @@ class ModelListing:
     models: tuple[str, ...]
     available: bool
     reason: str = ""
+    #: 서버에 **닿지 못했다**(연결 거부·DNS·TLS — v10.126.0). ``available`` 이 False 인
+    #: 갈래 중 하나로, 타임아웃·HTTP 오류·빈 목록(서버는 있다)과 가른다. 호출부가
+    #: ``reason`` 문자열을 다시 해석하지 않게 하는 필드다.
+    unreachable: bool = False
 
     def has(self, model: str) -> bool:
         return model in self.models
@@ -117,6 +121,11 @@ def _fetch(base_url: str, api_key: str, provider: str) -> ModelListing:
         # 이유는 **한 줄**이어야 한다. requests 의 예외 문자열은 urllib3 스택을
         # 통째로 실어 경고가 화면 절반을 먹었다(실장에서 확인). 사용자가 할 수
         # 있는 일은 어차피 "주소·기동 상태 확인" 하나라 분류면 충분하다.
+        from agent_cli.providers.http import classify_connection_error
+
+        kind = classify_connection_error(e)
+        if kind is not None:
+            return ModelListing((), False, kind[0], unreachable=kind[1])
         return ModelListing((), False, _short_reason(e))
     if r.status_code != 200:
         # 404 = `/models` 미지원 서버, 401/403 = 키 문제. 둘 다 "모델 없음"이
@@ -136,14 +145,9 @@ def _fetch(base_url: str, api_key: str, provider: str) -> ModelListing:
 
 
 def _short_reason(exc: Exception) -> str:
-    """예외를 한 줄 분류로. 원문은 길고 대부분 urllib3 내부 사정이다."""
+    """연결 단계가 아닌 예외의 한 줄 — 이름과 첫 줄 60자 (연결 단계는
+    ``providers.http.classify_connection_error``)."""
     name = type(exc).__name__
-    if "Timeout" in name:
-        return "no response (timeout)"
-    if "ConnectionError" in name or "Connection" in name:
-        return "cannot connect"
-    if "SSL" in name or "Certificate" in name:
-        return "TLS error"
     text = str(exc).splitlines()[0] if str(exc) else ""
     return f"{name}: {text[:60]}" if text else name
 
