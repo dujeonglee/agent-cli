@@ -113,3 +113,31 @@ def test_sh_timeout_is_124(isolated, monkeypatch):
     r = CliRunner().invoke(app, ["run", "/sh sleep 99"])
     assert r.exit_code == 124, r.output
     assert "timed out" in r.output
+
+
+def _session_dirs(root) -> list[str]:
+    import agent_cli.context.session as session_mod
+
+    d = root / session_mod._SESSIONS_DIR
+    return sorted(p.name for p in d.iterdir()) if d.is_dir() else []
+
+
+def test_config_error_leaves_no_session_dir(isolated):
+    """v10.127.4: 새 세션은 디렉터리를 차지하며 태어난다 — 그 자리는 부트 뒤라
+    설정 오류(Exit 2)로 끝난 ``run`` 은 빈 세션을 남기지 않는다."""
+    before = _session_dirs(isolated)
+    r = CliRunner().invoke(
+        app,
+        ["run", "hi", "-p", "no-such-provider", "--base-url", "http://127.0.0.1:1/v1"],
+    )
+    assert r.exit_code == 2, r.output
+    assert _session_dirs(isolated) == before
+
+
+def test_two_runs_in_one_second_get_two_sessions(isolated, monkeypatch):
+    import agent_cli.context.session as session_mod
+
+    monkeypatch.setattr(session_mod.time, "time", lambda: 1_800_000_000.0)
+    for _ in range(2):
+        assert _run(_Provider(_complete("done")), "hi").exit_code == 0
+    assert _session_dirs(isolated) == ["1800000000", "1800000001"]
