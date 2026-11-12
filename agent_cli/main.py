@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import typer
+from rich.markup import escape
 
 from agent_cli.config import get_provider_defaults
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
@@ -87,7 +88,7 @@ def _run_shell_inline(cmd: str) -> int:
 
     ``run "/sh <cmd>"`` 의 종료 코드가 이것이다(v10.124.0; 종전 항상 0). 시간 초과는
     ``timeout(1)`` 의 관례대로 124."""
-    console.print(f"[{C['action']}]⚡ SHELL:[/] {cmd}")
+    console.print(f"[{C['action']}]⚡ SHELL:[/] {escape(cmd)}", soft_wrap=True)
     try:
         # Bytes + replace (not ``text=True``) so non-UTF-8 output (git show,
         # binary diffs) doesn't raise UnicodeDecodeError mid-run.
@@ -102,12 +103,16 @@ def _run_shell_inline(cmd: str) -> int:
             console.print(
                 result.stdout.decode("utf-8", errors="replace"),
                 end="",
+                markup=False,
                 highlight=False,
             )
         if result.stderr:
             console.print(
-                f"[{C['error']}]{result.stderr.decode('utf-8', errors='replace')}[/]",
+                result.stderr.decode("utf-8", errors="replace"),
                 end="",
+                style=C["error"],
+                markup=False,
+                highlight=False,
             )
         if result.returncode != 0:
             console.print(f"[{C['muted']}][exit code: {result.returncode}][/]")
@@ -250,10 +255,11 @@ def _setup_mcp():
     for name, status in results.items():
         if status == "connected":
             tool_count = len(manager.list_tools(name))
-            console.print(f"  [green]●[/] MCP {name}: {tool_count} tools")
+            console.print(f"  [green]●[/] MCP {escape(name)}: {tool_count} tools")
         else:
             console.print(
-                f"  [red]●[/] MCP {name}: {humanize_error(status, configs.get(name))}"
+                f"  [red]●[/] MCP {escape(name)}: "
+                f"{escape(humanize_error(status, configs.get(name)))}"
             )
 
     mcp_tools = register_mcp_tools(manager)
@@ -268,7 +274,7 @@ def _apply_style(style: str | None) -> None:
         try:
             load_renderer_by_name(style)
         except ValueError as e:
-            console.print(f"[{C['error']}]{e}[/]")
+            console.print(str(e), style=C["error"], markup=False, highlight=False)
             raise typer.Exit(1)
 
 
@@ -563,7 +569,7 @@ class _ConsoleDispatchOutput(DispatchOutput):
         else:
             for name, desc in agents:
                 suffix = f"  — {desc}" if desc else ""
-                console.print(f"  @{name}{suffix}")
+                console.print(f"  @{name}{suffix}", markup=False, highlight=False)
         if live_status:
             console.print(f"\n[{C['accent']}]Live agents:[/]")
             console.print(live_status, markup=False)
@@ -582,11 +588,18 @@ class _ConsoleDispatchOutput(DispatchOutput):
         console.print(f"\n[{C['accent']}]Available skills:[/]")
         for s in user_skills.values():
             hint = f" {s.argument_hint}" if s.argument_hint else ""
-            console.print(f"  /{s.name}{hint}  — {s.description}")
+            console.print(
+                f"  /{s.name}{hint}  — {s.description}", markup=False, highlight=False
+            )
         console.print()
 
     def agent_not_found(self, name: str) -> None:
-        console.print(f"[{C['error']}]Agent not found: @{name}[/]")
+        console.print(
+            f"Agent not found: @{name}",
+            style=C["error"],
+            markup=False,
+            highlight=False,
+        )
         console.print(f"[{C['muted']}]Type @ to list available agents[/]")
         self._report(None, False)
 
@@ -596,7 +609,9 @@ class _ConsoleDispatchOutput(DispatchOutput):
         # trailing "headline" green print so the final answer is
         # also immediately visible above the next prompt.
         if result is not None:
-            console.print(f"\n[{C['final']}]{result}[/]")
+            console.print(
+                f"\n{result}", style=C["final"], markup=False, highlight=False
+            )
         # 결과 파일엔 관찰 래퍼(STATUS/RESULT/[activity])를 벗긴 원문 — 메인
         # 경로(loop_result.output=원문)와 계약 일치. 쓸지는 표면이 ok 로 정한다.
         answer = None
@@ -607,7 +622,12 @@ class _ConsoleDispatchOutput(DispatchOutput):
         self._report(answer, ok)
 
     def skill_not_found(self, name: str) -> None:
-        console.print(f"[{C['error']}]Unknown command: /{name}[/]")
+        console.print(
+            f"Unknown command: /{name}",
+            style=C["error"],
+            markup=False,
+            highlight=False,
+        )
         # 둘째 줄은 실제로 되는 것을 가리킨다 (v10.127.1; 종전 "Type /help" 는 run 에서
         # 그 /help 도 Unknown command 였다)
         console.print(
@@ -625,7 +645,9 @@ class _ConsoleDispatchOutput(DispatchOutput):
         # 초록 답으로 찍히고 파일에도 써졌다.
         self._report(result if ok else None, ok)
         if ok and result is not None:
-            console.print(f"\n[{C['final']}]{result}[/]")
+            console.print(
+                f"\n{result}", style=C["final"], markup=False, highlight=False
+            )
             return
         if result is not None:
             console.print(
@@ -633,7 +655,7 @@ class _ConsoleDispatchOutput(DispatchOutput):
             )
             return
         console.print(
-            f"\n[{C['accent']}]Skill /{name} stopped without final answer. "
+            f"\n[{C['accent']}]Skill /{escape(name)} stopped without final answer. "
             f"You can:[/]\n"
             f"  - Retry the skill with different arguments\n"
             f"  - /clear to reset context\n"
@@ -957,7 +979,9 @@ def _stage_query_images(paths: list[str] | None) -> list[dict]:
         try:
             refs.append(_images.stage_upload(p).to_dict())
         except ValueError as e:
-            console.print(f"[{C['error']}]--image: {e}[/]")
+            console.print(
+                f"--image: {e}", style=C["error"], markup=False, highlight=False
+            )
             raise typer.Exit(1) from None
     return refs
 
@@ -988,8 +1012,11 @@ def _require_vision(binding) -> None:
     없는 능력을 약속하지 않는다 (docs/vision/DESIGN.md §2.5)."""
     if not _vision_ok(binding):
         console.print(
-            f"[{C['error']}]--image: model '{binding.model}' cannot view images "
-            f"(supports_vision is false, or the vision probe failed).[/]"
+            f"--image: model '{binding.model}' cannot view images "
+            f"(supports_vision is false, or the vision probe failed).",
+            style=C["error"],
+            markup=False,
+            highlight=False,
         )
         raise typer.Exit(1)
 
@@ -1016,8 +1043,10 @@ def _ask_dialect(renderer) -> str:
     answer = renderer.prompt_user(prompt, multiline=False).strip().lower()
     while answer not in names:
         console.print(
-            f"[{C['muted']}]  Unknown dialect '{answer}'. "
-            f"Available: {', '.join(names)}[/]"
+            f"  Unknown dialect '{answer}'. Available: {', '.join(names)}",
+            style=C["muted"],
+            markup=False,
+            highlight=False,
         )
         answer = renderer.prompt_user(prompt, multiline=False).strip().lower()
     return answer
@@ -1032,7 +1061,10 @@ def _prompt_model_capabilities(model: str):
     )
 
     console.print(
-        f"\n[{C['accent']}]Model '{model}' not found in registry and detection failed.[/]"
+        f"\nModel '{model}' not found in registry and detection failed.",
+        style=C["accent"],
+        markup=False,
+        highlight=False,
     )
     console.print(
         f"[{C['muted']}]Please provide model info (saved for future use):[/]\n"
@@ -1127,8 +1159,11 @@ def _verify_model_or_exit(
         return _unreachable_or_exit(resolved_model, base_url, listing, quiet=quiet)
     if not quiet and not listing.available:
         console.print(
-            f"[{C['warn']}]⚠ Could not read /v1/models, so the model name was not "
-            f"verified ({listing.reason}) — continuing with the configured value.[/]"
+            f"⚠ Could not read /v1/models, so the model name was not "
+            f"verified ({listing.reason}) — continuing with the configured value.",
+            style=C["warn"],
+            markup=False,
+            highlight=False,
         )
     return resolved_model
 
@@ -1188,27 +1223,30 @@ def _choose_model_or_exit(
         console.print(
             f"\n[{C['error']}]✗ The configured model was not found on the server.[/]"
         )
-        console.print(f"  [{C['muted']}]model[/]  {err.model}")
+        console.print(f"  [{C['muted']}]model[/]  {escape(err.model)}")
         near = listing.suggest(err.model)
         if near:
-            console.print(f"  [{C['muted']}]similar[/]  {near}")
+            console.print(f"  [{C['muted']}]similar[/]  {escape(near)}")
     else:
         console.print(f"\n[{C['error']}]✗ No model is specified.[/]")
-    console.print(f"  [{C['muted']}]server[/]  {base_url}")
-    console.print(f"  [{C['muted']}]source[/]  {origin}")
+    console.print(f"  [{C['muted']}]server[/]  {escape(base_url)}", soft_wrap=True)
+    console.print(f"  [{C['muted']}]source[/]  {escape(origin)}", soft_wrap=True)
 
     if not listing.available:
         # 고를 목록조차 없다 — 이름을 대라고만 하면 맹목 타이핑을 유도한다.
         console.print(
-            f"\n  [{C['muted']}]The model list could not be read either ({listing.reason}). "
-            f"Check the server address and that it is running.[/]"
+            f"\n  The model list could not be read either ({listing.reason}). "
+            f"Check the server address and that it is running.",
+            style=C["muted"],
+            markup=False,
+            highlight=False,
         )
         console.print(f"  [{C['muted']}]Fix: agent-cli setup  or  --model <id>[/]\n")
         raise typer.Exit(1)
 
     console.print(f"\n  [{C['muted']}]Available:[/]")
     for i, m in enumerate(listing.models, 1):
-        console.print(f"    [{C['accent']}]{i}[/]) {m}")
+        console.print(f"    [{C['accent']}]{i}[/]) {escape(m)}")
 
     if not interactive or quiet:
         console.print(f"\n  [{C['muted']}]Fix: agent-cli setup  or  --model <id>[/]\n")
@@ -1285,7 +1323,9 @@ def _setup_provider(
     except UnsupportedModelError as e:
         # Context window below the agent's minimum — fail fast with a
         # clear message rather than degrading to a 4K default.
-        console.print(f"[{C['error']}]Unsupported model: {e}[/]")
+        console.print(
+            f"Unsupported model: {e}", style=C["error"], markup=False, highlight=False
+        )
         raise typer.Exit(1) from e
     finally:
         set_progress_callback(None)
@@ -1412,13 +1452,21 @@ def _bootstrap_provider(
     except _DialectUnbound as exc:
         dialect_plugin = _bind_dialect_or_exit(resolved_model, exc, quiet=quiet)
     except KeyError as exc:
-        console.print(f"[{C['error']}]{exc.args[0] if exc.args else exc}[/]")
+        console.print(
+            str(exc.args[0] if exc.args else exc),
+            style=C["error"],
+            markup=False,
+            highlight=False,
+        )
         raise typer.Exit(2) from exc
     if getattr(dialect_plugin, "server_parsed", False) and name != "openai":
         # v10.2.0: native_fc 는 OpenAI 호환 `tools`/`tool_calls` 만 안다 (NATIVE.md N4)
         console.print(
-            f"[{C['error']}]dialect '{dialect_plugin.name}' needs an OpenAI-compatible "
-            f"provider (tools/tool_calls); provider is '{name}'.[/]"
+            f"dialect '{dialect_plugin.name}' needs an OpenAI-compatible "
+            f"provider (tools/tool_calls); provider is '{name}'.",
+            style=C["error"],
+            markup=False,
+            highlight=False,
         )
         raise typer.Exit(2)
     from agent_cli.providers.binding import ModelBinding
@@ -1453,10 +1501,20 @@ def _load_resume_session(resume_id: str):
 
     session = load_session(resume_id)
     if session is None:
-        console.print(f"[{C['error']}]Session '{resume_id}' not found.[/]")
+        console.print(
+            f"Session '{resume_id}' not found.",
+            style=C["error"],
+            markup=False,
+            highlight=False,
+        )
         raise typer.Exit(code=1)
     _claim_session(session)
-    console.print(f"[{C['accent']}]Resuming session {resume_id}[/]")
+    console.print(
+        f"Resuming session {resume_id}",
+        style=C["accent"],
+        markup=False,
+        highlight=False,
+    )
     return session
 
 
@@ -1470,7 +1528,7 @@ def _claim_session(session) -> None:
     try:
         claim_session(get_session_dir(session))
     except SessionBusy as e:
-        console.print(f"[{C['error']}]{e}.[/]")
+        console.print(f"{e}.", style=C["error"], markup=False, highlight=False)
         raise typer.Exit(code=1) from None
 
 
@@ -1692,7 +1750,7 @@ def run(
     _claim_session(session)
     save_meta(session)
     if session.title:
-        console.print(f"  Title:   {session.title}")
+        console.print(f"  Title:   {session.title}", markup=False, highlight=False)
     ctx = _build_context(session, binding, resume=session_resumed is not None)
 
     from agent_cli.hooks import load_hooks as _load_hooks
@@ -1791,7 +1849,7 @@ def run(
             )
         _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
         if _mon_notice:
-            console.print(f"[{C['muted']}]{_mon_notice}[/]")
+            console.print(_mon_notice, style=C["muted"], markup=False, highlight=False)
 
         surface = _ConsoleSurface(
             result_file=result_file,
@@ -1878,11 +1936,17 @@ def run(
         schedule_registry.start()
         _sched_notice = _missed_schedules_notice(schedule_registry)
         if _sched_notice:
-            console.print(f"[{C['muted']}]{_sched_notice}[/]")
+            console.print(
+                _sched_notice, style=C["muted"], markup=False, highlight=False
+            )
 
         for ref in query_images:
             console.print(
-                f"[{C['muted']}]  🖼 {ref['path']} ({ref['width']}×{ref['height']})[/]"
+                f"  🖼 {ref['path']} ({ref['width']}×{ref['height']})",
+                style=C["muted"],
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
             )
         input_queue.enqueue(None, query, images=query_images)
         warn_stuck = True
@@ -2092,7 +2156,13 @@ def _write_result_file(path: str, answer) -> None:
             f.write(str(answer))
         os.replace(tmp, target)
     except OSError as e:
-        console.print(f"[{C['error']}]--result-file write failed: {e}[/]")
+        console.print(
+            f"--result-file write failed: {e}",
+            style=C["error"],
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
 
 
 def _finalize_run(
@@ -2426,7 +2496,7 @@ def update(
     )
     if r.returncode != 0:
         console.print(
-            f"[red]Could not fetch latest release:[/red] {r.stderr.strip()[:200]}"
+            f"[red]Could not fetch latest release:[/red] {escape(r.stderr.strip()[:200])}"
         )
         raise typer.Exit(1)
     latest = r.stdout.strip()
@@ -2434,12 +2504,14 @@ def update(
         console.print("No releases found.")
         raise typer.Exit(1)
 
-    console.print(f"current: [cyan]v{current}[/cyan]   latest: [cyan]{latest}[/cyan]")
+    console.print(
+        f"current: [cyan]v{current}[/cyan]   latest: [cyan]{escape(latest)}[/cyan]"
+    )
     if _parse_version(latest) <= _parse_version(current):
         console.print("[green]✓ Already up to date.[/green]")
         raise typer.Exit(0)
 
-    console.print(f"[yellow]Update available: v{current} → {latest}[/yellow]")
+    console.print(f"[yellow]Update available: v{current} → {escape(latest)}[/yellow]")
     if check:
         console.print("Run [cyan]agent-cli update[/cyan] to install.")
         raise typer.Exit(0)
@@ -2472,7 +2544,9 @@ def update(
         )
         wheels = list(Path(d).glob("*.whl"))
         if dl.returncode != 0 or not wheels:
-            console.print(f"[red]Download failed:[/red] {dl.stderr.strip()[:200]}")
+            console.print(
+                f"[red]Download failed:[/red] {escape(dl.stderr.strip()[:200])}"
+            )
             raise typer.Exit(1)
         pip = subprocess.run(
             [sys.executable, "-m", "pip", "install", "--upgrade", str(wheels[0])],
@@ -2481,7 +2555,9 @@ def update(
         if pip.returncode != 0:
             console.print("[red]pip install failed.[/red]")
             raise typer.Exit(1)
-    console.print(f"[green]✓ Updated to {latest}.[/green] Restart agent-cli to use it.")
+    console.print(
+        f"[green]✓ Updated to {escape(latest)}.[/green] Restart agent-cli to use it."
+    )
 
 
 @app.command()
@@ -2936,11 +3012,12 @@ def web(
     display_host = "localhost" if host in ("0.0.0.0", "::") else host
     ui_url = f"http://{display_host}:{resolved_port}/?token={server.token}"
     console.print(
-        f"\n[bright_cyan]agent-cli web[/]  ({binding.provider_name} · {binding.model})"
+        f"\n[bright_cyan]agent-cli web[/]  "
+        f"({escape(binding.provider_name)} · {escape(binding.model)})"
     )
     if session.title:
-        console.print(f"  Title:   {session.title}")
-    console.print(f"  UI:      [yellow]{ui_url}[/]")
+        console.print(f"  Title:   {session.title}", markup=False, highlight=False)
+    console.print(f"  UI:      [yellow]{escape(ui_url)}[/]", soft_wrap=True)
     console.print(f"  Token:   [yellow]{server.token}[/]")
     console.print(f"  Session: [{C['muted']}]{session.session_id}[/]\n")
 
@@ -3071,4 +3148,9 @@ def web(
             schedule_registry.stop()
             console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
         except Exception as exc:
-            console.print(f"[red]Failed to save session: {exc}[/]")
+            console.print(
+                f"Failed to save session: {exc}",
+                style="red",
+                markup=False,
+                highlight=False,
+            )
