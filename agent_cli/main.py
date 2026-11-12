@@ -2247,11 +2247,25 @@ def sessions(
 
     ws = workspace or os.getcwd()
     session_list = _list_sessions(ws)
+    # 경로가 든 줄은 마크업으로 읽지 않고(`[x]` 가 든 경로) 80칸에서 끊지 않는다 — 복사해 쓸 수
+    # 있도록 (v10.127.6, 1-A·1-B 의 경로 줄과 같은 방식).
     if not session_list:
-        console.print(f"[{C['muted']}]No sessions found for {ws}[/]")
+        console.print(
+            f"No sessions found for {ws}",
+            style=C["muted"],
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
         return
 
-    console.print(f"\n[{C['accent']}]Sessions for {ws}:[/]\n")
+    console.print(
+        f"\nSessions for {ws}:\n",
+        style=C["accent"],
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
     for s in session_list:
         _print_session(s)
     console.print()
