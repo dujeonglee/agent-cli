@@ -392,7 +392,7 @@ class TestExitPathConvergence:
 
 class _ItemsPump:
     """SessionPump 대역 — 큐 대신 ``items`` ``[(text, wake), …]`` 를 펌프와 같은
-    순서(라우팅 → run_main → run_ended)로 한 번씩 돌린다."""
+    순서(echo → 라우팅 → run_main → run_ended)로 한 번씩 돌린다."""
 
     items = (("hi", False),)
 
@@ -405,6 +405,7 @@ class _ItemsPump:
         from agent_cli.pump import WAKE_AUTHOR, RunRequest
 
         for text, wake in self.items:
+            self.deps.surface.echo({"text": text, "nickname": None}, wake=wake)
             if not wake and self.deps.surface.route(text):
                 continue
             req = RunRequest(
@@ -477,7 +478,11 @@ class TestRunCommandTeardownIntegration:
             st.enter_context(
                 patch(
                     "agent_cli.main.try_dispatch_agent_or_skill",
-                    return_value=dispatch_result,
+                    **(
+                        {"side_effect": dispatch_result}
+                        if callable(dispatch_result)
+                        else {"return_value": dispatch_result}
+                    ),
                 )
             )
             st.enter_context(patch("agent_cli.loop.run_loop", run_loop))
@@ -510,7 +515,12 @@ class TestRunCommandTeardownIntegration:
         _finalize_run(session, ctx) 만 — registry 미종료 + MCP 미해제).
         v10.33.0 부터 디스패치가 펌프 안의 라우팅이라 조기-반환 경로가 없고,
         답변-대기 경고(warn_stuck)도 메인 경로와 같이 켜진다."""
-        c = self._run_with("/some-skill args", dispatch_result=True)
+
+        def _skill(text, output, **_kw):
+            output.skill_result("some-skill", "done")
+            return True
+
+        c = self._run_with("/some-skill args", dispatch_result=_skill)
         assert c["result"].exit_code == 0, c["result"].output
         c["teardown"].assert_called_once()
         kw = c["teardown"].call_args.kwargs
@@ -619,7 +629,7 @@ class TestResultFileIsWrittenPerRun:
         c = TestRunCommandTeardownIntegration()._run_with(
             "hi", pump=_Two, run_loop=run_loop, args=("--result-file", str(out))
         )
-        assert c["result"].exit_code == 0, c["result"].output
+        assert c["result"].exit_code == 1, "종료 코드도 같은 판정 (v10.124.0)"
         assert not out.exists()
 
     def test_write_is_atomic_and_skips_an_empty_answer(self, tmp_path):
@@ -654,5 +664,5 @@ class TestResultFileIsWrittenPerRun:
         c = TestRunCommandTeardownIntegration()._run_with(
             "hi", run_loop=run_loop, args=("--result-file", str(out))
         )
-        assert c["result"].exit_code == 0, c["result"].output
+        assert c["result"].exit_code == 1, c["result"].output
         assert not out.exists()

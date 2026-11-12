@@ -10,6 +10,7 @@ harbor run … --agent agent_cli_harbor:AgentCli
   setup  → install():  wheel 업로드 ──→  uv tool install (py3.12 격리) + ~/.agent-cli/models.json
   run    → run():      env 주입    ──→  agent-cli run "$AGENT_CLI_TASK" -p openai -m <model> …
                                         세션 → /logs/agent/sessions (AGENT_CLI_SESSIONS_DIR)
+                                        종료 코드 → /logs/agent/exit-code.txt (0·1 은 검증으로, 2+ 는 harbor 예외)
   post   ← populate_context_post_run(): turns.jsonl 합산 → 토큰/헬스, history.jsonl → ATIF trajectory.json
   verify → tests/test.sh → reward
 ```
@@ -96,16 +97,30 @@ agent-cli(off) 4/9 · agent-cli(on) 4/9 · Hermes 4/9 — 점수는 같고 통�
 `bench/runs/harbor/<job>/<trial>/`:
 - `result.json` — reward + `agent_result{n_input_tokens, n_cache_tokens, n_output_tokens, metadata}`.
   `metadata` 는 종전 SWE-bench 하니스의 헬스 표와 같은 집계(`turns`·`failures`·`parse_stage`).
-- `agent/agent-cli.txt` 전체 출력, `agent/result.txt` 최종 답변, `agent/sessions/<id>/` 세션 원본
+- `agent/agent-cli.txt` 전체 출력, `agent/result.txt` 최종 답변, `agent/exit-code.txt` `agent-cli run` 의 종료 코드,
+  `agent/sessions/<id>/` 세션 원본
   (`history.jsonl`·`turns.jsonl`), `agent/trajectory.json` ATIF (`harbor view` 로 열람,
   `python -m harbor.utils.trajectory_validator agent/trajectory.json` 로 검증).
 - `verifier/` 테스트 출력.
 
 집계: `harbor view bench/runs/harbor/<job>` 또는 `result.json` 을 jq.
 
+### 종료 코드 (agent-cli v10.124.0~)
+
+`agent-cli run` 은 0 답 · 1 실패/무답(LLM 실패·max turns) · 2 설정/사용법 · 130 중단으로 끝난다(종전엔 늘 0).
+harbor 0.22.0 은 에이전트 명령을 `set -o pipefail; …` 로 돌려 0 이 아니면 예외를 던지고, 그러면 **검증을 건너뛴다**.
+종전 점수는 max_turns·LLM 실패 런도 검증기로 간 결과라, 어댑터(`agent_command.py`)는 **0·1 을 흡수**해 종전처럼
+검증기로 보내고 **2 이상**(설정/사용법 오류, 127 명령 없음, 130, 신호)만 종전처럼 harbor 예외로 둔다.
+코드 자체는 `agent/exit-code.txt` 에 남는다 — 실패 런을 가를 때 로그를 다시 해석하지 말고 이 파일을 읽는다.
+
+알려진 한계: 잡히지 않은 예외(파이썬 traceback, exit 1)도 1 이라 이제 harbor 예외가 아니라 **검증기 판정**이 된다
+(종전엔 pipefail 로 1 이 보여 harbor 예외였다). traceback 은 `agent/agent-cli.txt`, 코드는 `agent/exit-code.txt` 에 있다.
+
 ## 테스트
 
-`python3 -m pytest bench/harbor` — ATIF 변환기(`atif.py`, stdlib 전용)·wheel 선택 단위 테스트.
+`python3 -m pytest bench/harbor` — ATIF 변환기(`atif.py`, stdlib 전용)·wheel 선택 단위 테스트·
+실행 명령(`agent_command.py`)을 실제 `bash -c "set -o pipefail; …"` 로 돌려 가짜 `agent-cli` 의 0·1·2·130 이
+0·0·2·130 으로 보이고 `exit-code.txt` 가 맞는지 보는 테스트.
 제품 스위트(`tests/`)와 분리. `test_hermes_local.py` 는 harbor 가 import 될 때만 돈다 —
 `uvx --from harbor==0.24.0 --with pytest python -m pytest bench/harbor/test_hermes_local.py`.
 
@@ -126,5 +141,5 @@ agent-cli(off) 4/9 · agent-cli(on) 4/9 · Hermes 4/9 — 점수는 같고 통�
 - 코드 인덱스 캐시(`.agent-cli/code_index.db`)는 세션과 달리 워크스페이스에 남는다
   (`code_index` 도구 사용 시).
 
-`bench/runs` 는 gitignore 대상. 커밋되는 것은 `agent_cli_harbor.py`·`atif.py`·`prompt.j2`·
-`test_atif.py`·`wheels.py`·`test_wheels.py`·이 README.
+`bench/runs` 는 gitignore 대상. 커밋되는 것은 `agent_cli_harbor.py`·`agent_command.py`·`atif.py`·`prompt.j2`·
+`test_agent_command.py`·`test_atif.py`·`wheels.py`·`test_wheels.py`·`hermes_local.py`·`test_hermes_local.py`·이 README.

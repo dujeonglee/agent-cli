@@ -320,15 +320,28 @@ class TestConsoleSurface:
         s.run_ended(ToolResult(True, output="again"), self._req(wake=True))
         assert out.read_text(encoding="utf-8") == "ans"
 
-    def test_skill_result_also_lands_in_the_file(self, tmp_path):
+    def test_routed_skill_answer_lands_in_the_file(self, tmp_path):
+        """`/skill` 의 답도 결과 파일로 (v10.34.1) — v10.124.0 부터 어댑터가 아니라
+        표면이 쓴다(종료 코드와 같은 자리). 실패한 스킬의 오류문은 쓰지 않는다."""
         from agent_cli.main import _ConsoleDispatchOutput
 
-        out = tmp_path / "s.txt"
-        o = _ConsoleDispatchOutput(result_file=str(out))
-        o.skill_result("review", None)
-        assert not out.exists()
-        o.skill_result("review", "looks good")
+        def dispatch(text, stop):
+            o = _ConsoleDispatchOutput(report=s.routed)
+            o.skill_result(
+                "review",
+                "boom" if "fail" in text else "looks good",
+                ok="fail" not in text,
+            )
+            return True
+
+        s, out, _ = self._surface(tmp_path, dispatch=dispatch)
+        s.echo({"text": "/review fail"}, wake=False)
+        assert s.route("/review fail") is True
+        assert not out.exists() and s.exit_code == 1
+        s.echo({"text": "/review"}, wake=False)
+        s.route("/review")
         assert out.read_text(encoding="utf-8") == "looks good"
+        assert s.exit_code == 0
 
     def test_errors_propagate_and_ctrl_c_is_the_interrupt(self, tmp_path):
         s, _, _ = self._surface(tmp_path)
@@ -336,18 +349,135 @@ class TestConsoleSurface:
         assert s.graceful_interrupt is False
 
     def test_agent_result_file_follows_the_ok_flag(self, tmp_path):
-        """``@agent task`` 의 답은 run 의 전용 분기 대신 콘솔 디스패치 어댑터가
-        기록한다 — 실패 텍스트는 성공 답변처럼 기록하지 않는다(5.6.0 계약)."""
+        """``@agent task`` 의 답은 run 의 전용 분기 대신 라우팅이 기록한다 — 실패
+        텍스트는 성공 답변처럼 기록하지 않는다(5.6.0 계약)."""
         from agent_cli.main import _ConsoleDispatchOutput
 
-        out = tmp_path / "a.txt"
-        o = _ConsoleDispatchOutput(result_file=str(out))
-        o.agent_result("failed body", ok=False)
-        assert not out.exists()
-        o.agent_result(None, ok=True)
-        assert not out.exists()
-        o.agent_result("the answer", ok=True)
+        results = iter([("failed body", False), (None, True), ("the answer", True)])
+
+        def dispatch(text, stop):
+            body, ok = next(results)
+            _ConsoleDispatchOutput(report=s.routed).agent_result(body, ok=ok)
+            return True
+
+        s, out, _ = self._surface(tmp_path, dispatch=dispatch)
+        for code, written in ((1, False), (0, False), (0, True)):
+            s.echo({"text": "@a t"}, wake=False)
+            s.route("@a t")
+            assert s.exit_code == code and out.exists() is written
         assert out.read_text(encoding="utf-8") == "the answer"
+
+
+class TestConsoleExitCode:
+    """``run`` 의 종료 코드 (v10.124.0) — 결과 파일과 같은 판정. 0 답 · 1 실패/무답."""
+
+    def _surface(self, tmp_path, dispatch=None):
+        from agent_cli.main import _ConsoleSurface
+
+        out = tmp_path / "r.txt"
+        return _ConsoleSurface(
+            result_file=str(out), dispatch=dispatch or (lambda t, e: False)
+        ), out
+
+    _req = TestConsoleSurface._req
+
+    @staticmethod
+    def _res(ok, out="", *, waiting=False):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(success=ok, output=out, waiting=waiting)
+
+    def test_no_verdict_is_no_answer(self, tmp_path):
+        s, _ = self._surface(tmp_path)
+        assert s.exit_code == 1
+
+    def test_query_run_success_and_failure(self, tmp_path):
+        s, _ = self._surface(tmp_path)
+        s.run_ended(self._res(False, "max turns"), self._req())
+        assert s.exit_code == 1
+        s, _ = self._surface(tmp_path)
+        s.run_ended(self._res(True, "ans"), self._req())
+        assert s.exit_code == 0
+
+    def test_empty_successful_answer_is_0_without_a_file(self, tmp_path):
+        """README 의 "실패/무답" 구별이 이제 실제로 된다 — 빈 답 성공은 0, 파일 없음."""
+        s, out = self._surface(tmp_path)
+        s.run_ended(self._res(True, ""), self._req())
+        assert s.exit_code == 0 and not out.exists()
+
+    def test_runs_outside_the_chain_do_not_change_the_verdict(self, tmp_path):
+        s, _ = self._surface(tmp_path)
+        s.run_ended(self._res(False, "boom"), self._req())
+        s.run_ended(self._res(True, "rescued"), self._req(wake=True))
+        assert s.exit_code == 1, (
+            "닫힌 사슬 뒤의 깨우기가 실패를 성공으로 바꾸면 안 된다"
+        )
+        s.run_ended(self._res(True, "sched"), self._req(author="⏰ nightly"))
+        assert s.exit_code == 1, "예약 런도 판정 밖"
+        s, _ = self._surface(tmp_path)
+        s.run_ended(self._res(True, "ans"), self._req())
+        s.run_ended(self._res(False, "sched boom"), self._req(author="⏰ nightly"))
+        s.run_ended(self._res(False, "wake boom"), self._req(wake=True))
+        assert s.exit_code == 0
+
+    def test_the_last_run_of_a_waiting_chain_decides(self, tmp_path):
+        """질의가 `wait` 로 답을 미루면 깨우기 런이 사슬이다 — 마지막 판정이 코드."""
+        s, out = self._surface(tmp_path)
+        s.run_ended(self._res(True, "waiting on job", waiting=True), self._req())
+        assert s.exit_code == 0
+        s.run_ended(self._res(False, "llm error"), self._req(wake=True))
+        assert s.exit_code == 1
+        assert out.read_text(encoding="utf-8") == "waiting on job"
+        s.run_ended(self._res(True, "final"), self._req(wake=True))
+        assert s.exit_code == 0
+        assert out.read_text(encoding="utf-8") == "final"
+        s.run_ended(self._res(False, "after close"), self._req(wake=True))
+        assert s.exit_code == 0, "사슬이 닫힌 뒤의 깨우기는 판정 밖"
+
+    def test_only_the_argv_query_route_decides(self, tmp_path):
+        """라우팅: 질의였던 명령만 판정 — 런 도중 주입·예약 발화의 명령은 아니다."""
+        from agent_cli.main import _ConsoleDispatchOutput
+
+        verdicts = {"/ok": ("done", True), "/bad": (None, False)}
+
+        def dispatch(text, stop):
+            answer, ok = verdicts[text]
+            _ConsoleDispatchOutput(report=s.routed).skill_result(
+                text[1:], answer, ok=ok
+            )
+            return True
+
+        s, out = self._surface(tmp_path, dispatch=dispatch)
+        s.echo({"text": "/bad", "nickname": None}, wake=False)
+        s.route("/bad")
+        assert s.exit_code == 1
+        s.route("/ok")  # 런 도중 주입(echo 없이) — 질의의 답이 아니다
+        assert s.exit_code == 1 and not out.exists()
+        s.echo({"text": "/ok", "nickname": "⏰ nightly"}, wake=False)
+        s.route("/ok")  # 예약 발화
+        assert s.exit_code == 1 and not out.exists()
+        s.echo({"text": "/ok", "nickname": None}, wake=False)
+        s.route("/ok")
+        assert s.exit_code == 0 and out.read_text(encoding="utf-8") == "done"
+
+    def test_plain_query_route_does_not_leak_the_query_flag_into_the_run(
+        self, tmp_path
+    ):
+        """질의가 명령이 아니면(디스패치 False) 그 런 도중의 주입 명령이 질의 자리를
+        물려받지 않는다 — ``route`` 가 한 번 소비한다."""
+        from agent_cli.main import _ConsoleDispatchOutput
+
+        def dispatch(text, stop):
+            if not text.startswith("/"):
+                return False
+            _ConsoleDispatchOutput(report=s.routed).skill_result("x", "done")
+            return True
+
+        s, out = self._surface(tmp_path, dispatch=dispatch)
+        s.echo({"text": "plain", "nickname": None}, wake=False)
+        assert s.route("plain") is False
+        s.route("/x")  # 그 런 도중 주입
+        assert s.exit_code == 1 and not out.exists()
 
 
 class TestRunRequest:

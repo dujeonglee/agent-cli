@@ -495,10 +495,21 @@ agent-cli run "task description" [options]
 | `--title TEXT` | **방 제목** (v10.71.0) — 배너 `Title:` 줄에 보이고 세션 메타(`session.jsonl`)에 남아 `--resume` 이 지킨다(다시 주면 교체). `web` 도 같은 옵션 — 헤더 첫 줄(자기 줄, v10.74.1)·브라우저 탭·`web.json` 에. 보드는 글의 topic 을 넘긴다 | (없음) |
 
 > 위 노브 열 축(`--thinking`·`--grammar`·`--temperature`·`--top-p`·`--max-agents`·`--compaction-ratio`·`--stall`·`--stall-attempts`·`--auto-approve`·`--auditor`)은 `agent_cli/knobs.py` 가 **한 번 선언**하고 `run`·`web` 양쪽 플래그·env·웹 노브가 거기서 파생됩니다 (v10.43.0). 우선순위는 플래그 > env > 기본값, 전부 세션 한정입니다.
-| `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). **argv 질의 런의 답만** 씁니다 (v10.34.1): 깨우기 런(에이전트 회신·모니터 보고/만료 통지)과 예약 발화 런의 답은 그 통지에 대한 반응이라 쓰지 않고, 질의 런이 실패했으면 파일을 만들지 않습니다(뒤 런의 답으로 채우지도 않음 — 실패가 성공으로 둔갑하는 것을 막기 위해). `@profile task` 는 관찰 래퍼(STATUS/RESULT)를 벗긴 원문, `/skill` 의 답도 기록(v10.34.1). 런이 성공으로 끝나는 즉시(v10.31.2) 같은 디렉터리의 temp 를 거쳐 원자적으로 쓰고, 빈 답은 쓰지 않습니다. 실패/무답 시 파일 미생성 — exit code 와 함께 판별 | (없음) |
+| `--result-file` | 최종 답변(원문)을 지정 경로에 기록 — 렌더러 장식 없는 기계 소비용(스크립팅). **argv 질의 런의 답만** 씁니다 (v10.34.1): 깨우기 런(에이전트 회신·모니터 보고/만료 통지)과 예약 발화 런의 답은 그 통지에 대한 반응이라 쓰지 않고, 질의 런이 실패했으면 파일을 만들지 않습니다(뒤 런의 답으로 채우지도 않음 — 실패가 성공으로 둔갑하는 것을 막기 위해). `@profile task` 는 관찰 래퍼(STATUS/RESULT)를 벗긴 원문, `/skill` 의 답도 기록(v10.34.1). 런이 성공으로 끝나는 즉시(v10.31.2) 같은 디렉터리의 temp 를 거쳐 원자적으로 쓰고, 빈 답은 쓰지 않습니다. 실패/무답 시 파일 미생성 — 종료 코드(아래 표, v10.124.0)가 **같은 판정**이라 "파일 없음 + 0" 은 빈 답, "파일 없음 + 1" 은 실패입니다. 실패한 `/skill` 의 오류문은 답이 아니라 쓰지 않습니다(v10.124.0, 종전엔 썼다) | (없음) |
 | `-v, --verbose` | 모든 LLM 호출을 세션 폴더의 `verbose.jsonl` 에 기록 (화면 출력 없음) — 아래 **verbose 기록** 참고 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 — 턴별 parse 결과·실패 신호·회복 primitive 에 더해 **프로바이더 토큰 사용량**(`input_tokens`/`output_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`, `TokenUsage` 와 동일 의미 — 세션 비용·캐시 적중률은 행 합산으로 산출, v8.49.0). prompt·응답 본문 미포함 | `--record-turns` |
+
+**종료 코드 (v10.124.0)** — 종전엔 LLM 실패·max turns·Ctrl-C 도 전부 0 이었습니다. 이제 `--result-file` 과 **같은 판정**입니다(플래그를 줬는지와 무관):
+
+| 코드 | 뜻 |
+|---|---|
+| `0` | 답했다 — argv 질의의 답 사슬(질의 런 + 질의가 백그라운드 작업·`wait` 로 답을 미뤘으면 그 뒤 깨우기 런)의 **마지막 런**이 성공. 빈 답 성공도 0(파일은 안 생김). 목록 명령(`/skills`·`@agents`·`@`) |
+| `1` | 실패/무답 — LLM 호출 실패·max turns·실패한 `@agent task`·`/skill`, 못 찾은 명령(`Unknown command`·`Agent not found`). 잡히지 않은 예외도 1(traceback) |
+| `2` | 설정·사용법 오류 — 모르는 provider, 읽지 못한 `config.json`, 방언 없는 모델, 잘못된 옵션 |
+| `130` | 중단(Ctrl-C) |
+
+사슬 밖의 런(예약 발화, 사슬이 닫힌 뒤의 깨우기, 런 도중 합류한 명령)은 판정을 바꾸지 않습니다. `run "/sh <cmd>"` 는 그 명령의 종료 코드를 그대로 돌려줍니다(시간 초과 124, 종전 항상 0). Harbor 벤치 어댑터는 0·1 을 흡수해 검증기로 보냅니다(`bench/harbor/README.md`).
 
 **실패 기록 `failures.jsonl` (v10.11.0)**: 루프가 쓸 수 없었던 생성은 **본문과 함께** 세션 디렉터리(에이전트는 각자 디렉터리)의 `failures.jsonl` 에 한 줄씩 남습니다 — 형식 이탈(`NO_JSON`·`NO_ACTION`·`DEGENERATE`·`SCHEMA_MISMATCH` 등 dispatch 의 `failure_signal` 전부), 출력 절단(`OUTPUT_TRUNCATED`, `stop_detail` = model_cap/context_clamp/server_cap), 폭주(`RUNAWAY`, 감지 규칙), 삼켜진 출력. 필드: `v, ts, turn, model, dialect, failure_signal, stop_reason, stop_detail, parse_stage, primitives, usage, text, text_truncated, thinking, tool_calls, tool_calls_truncated`. **`tool_calls` (v10.38.0, 기록 `v`=2)** 는 서버가 구조로 준 호출 목록 그대로입니다 — `[{id, name, input}]`, 인자가 JSON 이 아니었으면 `input` 대신 원문 `arguments`. native 함수 호출은 호출이 `text` 밖에 있어, 종전엔 거부된 호출의 인자가 어느 로그에도 없었습니다(v10.37.0 회귀 런에서 `mode` 없이 거부된 `memory` 호출은 길이만 남았다). 인자 안의 문자열도 본문과 같은 1,000,000자 규칙으로 잘리고 `tool_calls_truncated` 가 켜집니다. `--verbose` 의 `llm_call` 도 같은 필드를 싣습니다(두 기록은 한 헬퍼에서 필드를 받는다). `turns.jsonl` 은 본문을 싣지 않고(사생활 계약) `verbose.jsonl` 은 `--verbose` 일 때만 쓰므로, 67qcmb 의 32K 폭주처럼 "모델이 실제로 뭘 냈나" 를 사후에 볼 길이 없던 구멍을 메웁니다. 항상 켜져 있고 깨끗한 세션은 파일이 생기지 않습니다. 본문은 1,000,000자에서 머리/꼬리로 잘리고 `text_truncated` 가 켜집니다.
 

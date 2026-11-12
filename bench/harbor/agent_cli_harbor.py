@@ -11,7 +11,8 @@ agent-cli 를 import 하지 않는다). 사용법은 README.md.
 trial 흐름 (Harbor BaseInstalledAgent 계약, harbor 0.22.0 배포판 기준):
   setup → install(): wheel 업로드 + uv 로 격리 파이썬에 설치, models.json 주입
   run():  ``agent-cli run "$AGENT_CLI_TASK"`` 를 컨테이너 안에서 비대화형 실행
-          (세션은 AGENT_CLI_SESSIONS_DIR=/logs/agent/sessions — 워크스페이스 무오염)
+          (세션은 AGENT_CLI_SESSIONS_DIR=/logs/agent/sessions — 워크스페이스 무오염;
+          종료 코드는 /logs/agent/exit-code.txt, 0·1 은 검증기로 — agent_command.py)
   populate_context_post_run(): 호스트로 동기화된 세션에서 토큰 합계·헬스 집계,
           ATIF trajectory.json 생성
 """
@@ -25,6 +26,7 @@ import shlex
 from pathlib import Path
 from typing import ClassVar
 
+import agent_command
 import atif
 import wheels
 from harbor.agents.installed.base import (
@@ -39,7 +41,7 @@ from harbor.models.trial.paths import EnvironmentPaths
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_DIR = str(EnvironmentPaths.agent_dir)  # /logs/agent
 _INSTALL_DIR = "/installed-agent"  # setup() 이 root 로 만들어 둔다
-_PATH_PREFIX = 'export PATH="$HOME/.local/bin:$PATH"; '
+_PATH_PREFIX = agent_command.PATH_PREFIX
 
 
 def _read_json(path: Path) -> dict:
@@ -224,13 +226,12 @@ class AgentCli(BaseInstalledAgent):
     async def run(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
     ) -> None:
-        flags = self.build_cli_flags()
-        command = (
-            _PATH_PREFIX + 'agent-cli run "$AGENT_CLI_TASK" '
-            f"-p {self._provider} -m {shlex.quote(self._model)} "
-            f"{flags + ' ' if flags else ''}"
-            f"--result-file {_AGENT_DIR}/result.txt "
-            f"</dev/null 2>&1 | tee {_AGENT_DIR}/agent-cli.txt"
+        # 종료 코드 0·1 은 흡수(검증기로), 2 이상은 harbor 예외 — agent_command.py
+        command = agent_command.build_run_command(
+            provider=self._provider,
+            model=self._model,
+            flags=self.build_cli_flags(),
+            agent_dir=_AGENT_DIR,
         )
         await self.exec_as_agent(
             environment, command=command, env=self._runtime_env(instruction)
