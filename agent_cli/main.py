@@ -2292,14 +2292,27 @@ def _print_session(s, indent: str = "  ") -> None:
     console.print(
         f"{indent}[{C['accent']}]{s.session_id}[/] [{C['muted']}]{s.updated_at}[/]"
     )
+    # 요청·결과는 사용자·모델이 쓴 글이라 마크업으로 읽지 않는다 (v10.127.8) — `[bold]` 가
+    # 서식으로 먹히고 `[/x]` 는 MarkupError 로 `sessions`·resume 프롬프트를 죽였다. 80자로
+    # 자른 요약이라 soft_wrap 은 켜지 않는다(종전처럼 터미널 폭에서 rich 가 줄을 바꾼다).
     user, result = session_summary(s)
     if user:
-        console.print(f"{indent}    [{C['muted']}]↳ {_truncate(user, 80)}[/]")
+        console.print(
+            f"{indent}    ↳ {_truncate(user, 80)}",
+            style=C["muted"],
+            markup=False,
+            highlight=False,
+        )
     if result == "(no completion)":
         state = "in progress" if session_is_open(get_session_dir(s)) else "no answer"
         console.print(f"{indent}    [{C['muted']}]→ ({state})[/]")
     elif result:
-        console.print(f"{indent}    [{C['final']}]→ {_truncate(result, 80)}[/]")
+        console.print(
+            f"{indent}    → {_truncate(result, 80)}",
+            style=C["final"],
+            markup=False,
+            highlight=False,
+        )
 
 
 def _maybe_resume_recent(workspace: str, prompt_fn) -> tuple:
