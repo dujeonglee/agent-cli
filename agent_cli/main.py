@@ -2262,9 +2262,20 @@ def web(
             suppress_incomplete_response_log,
         )
     except ImportError as e:
+        from agent_cli.extras import install_hint
+
+        # markup=False — 요구 사항의 `uvicorn[standard]` 가 rich 태그로 삼켜지지 않게
+        # (v10.123.3; 종전 `agent-cli[web]` 이 그렇게 `agent-cli` 만 보였다).
+        # soft_wrap=True — 설치 명령은 80칸을 넘는다; rich 가 줄을 끊으면 복사한 명령이
+        # 끊긴 자리에서 실행된다. 접기는 터미널에 맡긴다.
         console.print(
-            f"[red]Missing optional dependency for 'web' command: {e}.[/]\n"
-            "Install with: [bright_cyan]pip install agent-cli[web][/]"
+            f"Missing optional dependency for 'web' command: {e}.",
+            style="red",
+            markup=False,
+            soft_wrap=True,
+        )
+        console.print(
+            install_hint("web"), markup=False, highlight=False, soft_wrap=True
         )
         raise typer.Exit(code=1)
 
