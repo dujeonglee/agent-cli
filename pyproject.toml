@@ -10,11 +10,17 @@ dynamic = ["version"]
 description = "ReAct pattern agentic loop CLI for on-premise LLMs"
 requires-python = ">=3.10"
 dependencies = [
-    "typer>=0.9",
+    # 하한은 **우리가 쓰는 API 가 들어온 버전** (v10.124.1, CI `min-deps` 잡이 실제로 깔아 본다).
+    # 어떤 조합에서 깨지는 전이 의존성 때문에 직접 핀을 올리지 않는다 — 그건 멀쩡한 기존
+    # 환경(사내 미러 포함)에 업그레이드를 강요한다. 그런 것은 `.github/constraints-min-deps.txt`.
+    # typer 0.12.4: `str | None` 옵션 타입(0.9 는 "Type not yet supported: str | None").
+    "typer>=0.12.4",
     "rich>=13.0",
     "requests>=2.28",
     "pyyaml>=6.0",
-    "tree-sitter>=0.23",
+    # tree-sitter 0.25: `QueryCursor`(code_index/languages/*.py) — 0.24 는 ImportError.
+    # 문법 패키지는 0.23 그대로 0.25 코어로 code_index 수트가 돈다(실측).
+    "tree-sitter>=0.25",
     "tree-sitter-python>=0.23",
     "tree-sitter-javascript>=0.23",
     "tree-sitter-typescript>=0.23",
@@ -64,7 +70,9 @@ dev = [
     "playwright>=1.49",
     # 디코딩 문법 수용 감사 (tests/test_decoding_grammar_accept.py) — 서버(omlx)가
     # 쓰는 엔진으로 문법이 캐노니컬 출력을 막지 않는지 검사. 없으면 그 파일만 skip.
-    "xgrammar>=0.1",
+    # 0.1.20: `accept_string`·현재 EBNF 이스케이프 — 0.1.17~0.1.19 는 "Invalid escape sequence",
+    # 0.1 초기판엔 `accept_string` 이 없다(v10.124.1 실측).
+    "xgrammar>=0.1.20",
     "jsonschema>=4",  # tests/test_verbose_log.py — verbose.jsonl 스키마 검증
     "pillow>=10",  # 테스트 이미지 생성 + 축소 경로 검증 (런타임엔 선택, 아래 [image])
 ]

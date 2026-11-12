@@ -564,11 +564,11 @@ def classify_exception(exc: BaseException) -> tuple[str, dict]:
     if isinstance(exc, exc_mod.Timeout):
         return "timeout", {"seconds": FETCH_TIMEOUT}
     if isinstance(exc, exc_mod.ConnectionError):
-        from urllib3.exceptions import NameResolutionError
-
-        dns = any(
-            isinstance(e, (socket.gaierror, NameResolutionError)) for e in _chain(exc)
-        )
+        # 판정은 ``socket.gaierror`` 하나 (v10.124.1) — urllib3 2.x 의 ``NameResolutionError``
+        # 도 1.26 의 ``NewConnectionError`` 도 사슬(``__context__``·``reason``·``args``)에
+        # gaierror 를 담는다. 종전엔 ``NameResolutionError`` 를 import 해 requests 하한
+        # (2.28 → urllib3 1.26)에서 ImportError 였다.
+        dns = any(isinstance(e, socket.gaierror) for e in _chain(exc))
         return ("dns" if dns else "connect"), _proxy_facts()
     return "request", {"detail": _one_line(exc) or type(exc).__name__}
 
