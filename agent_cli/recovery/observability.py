@@ -128,6 +128,11 @@ class CallMetrics:
     thinking_chars: int
 
 
+#: ``classify_output_cap`` 이 내는 값 전부 — ``agent-cli stats`` 의 ``stop_detail``
+#: 어휘(v10.130.0).
+OUTPUT_CAP_KINDS = ("model_cap", "context_clamp", "server_cap", "unknown")
+
+
 def classify_output_cap(
     output_tokens: int | None, requested: int | None, clamped: bool
 ) -> str:

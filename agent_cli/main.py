@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import Annotated
 
 import typer
 from rich.markup import escape
@@ -41,6 +42,7 @@ app = typer.Typer(
     "Run 'agent-cli run <task>' for single-shot execution.\n"
     "Run 'agent-cli web' for the interactive browser UI.\n"
     "Run 'agent-cli sessions' to list previous sessions.\n"
+    "Run 'agent-cli stats' to summarize turn records (counts only).\n"
     "Run 'agent-cli mcp' to register and diagnose MCP servers.",
     add_completion=False,
     # 잡히지 않은 예외의 traceback 에 지역 변수를 찍지 않는다 (v10.123.2) — `api_key`·
@@ -2339,6 +2341,77 @@ def sessions(
     for s in session_list:
         _print_session(s)
     console.print()
+
+
+@app.command()
+def stats(
+    paths: Annotated[
+        list[Path] | None,
+        typer.Argument(
+            help="Directories (or turns.jsonl files) to scan recursively. "
+            "Default: this project's sessions directory.",
+            show_default=False,
+        ),
+    ] = None,
+    since: str | None = typer.Option(
+        None, "--since", help="Only count records on or after this day (YYYY-MM-DD)."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object."),
+    out: Annotated[
+        Path | None,
+        typer.Option(
+            "--out", help="Write the output to this file instead of the terminal."
+        ),
+    ] = None,
+):
+    """Summarize turn records as counts only — no prompts, responses or paths.
+
+    Reads only files named turns.jsonl (symlinks are not followed) and needs no
+    model server or config, so the output can be checked and shared. "sessions"
+    counts turns.jsonl files, so an agent's own record counts as one."""
+    import json
+    from datetime import date
+    from typing import NoReturn
+
+    from agent_cli.paths import sessions_dir
+    from agent_cli.recovery.stats import collect, format_table
+
+    def fail(msg: str) -> NoReturn:
+        console.print(
+            msg, style=C["error"], markup=False, highlight=False, soft_wrap=True
+        )
+        raise typer.Exit(2)
+
+    if since is not None:
+        try:
+            ok = re.fullmatch(r"\d{4}-\d{2}-\d{2}", since) and date.fromisoformat(since)
+        except ValueError:
+            ok = False
+        if not ok:
+            fail(f"--since must be a day as YYYY-MM-DD, got {since!r}")
+    roots = list(paths) if paths else [sessions_dir()]
+    for root in roots:
+        # 직접 준 PATH 가 링크면 조용히 0건이 아니라 사실을 말한다(트리 안의 링크는 조용히 건너뜀).
+        if root.is_symlink():
+            fail(f"Not following a symbolic link: {root}")
+        if not root.exists():
+            fail(f"No such path: {root}")
+    data = collect(roots, since=since)
+    text = (
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+        if as_json
+        else format_table(data)
+    )
+    if out is None:
+        typer.echo(text, nl=False)
+        return
+    try:
+        out.write_text(text, encoding="utf-8")
+    except OSError as e:
+        fail(f"Cannot write {out}: {e.strerror or type(e).__name__}")
+    console.print(
+        f"Wrote stats to {out}", markup=False, highlight=False, soft_wrap=True
+    )
 
 
 def _truncate(text: str, limit: int) -> str:
