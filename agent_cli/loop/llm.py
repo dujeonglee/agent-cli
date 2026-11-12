@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from agent_cli import images as _images
 from agent_cli import verbose as _verbose
 from agent_cli.constants import (
@@ -23,6 +25,7 @@ from agent_cli.loop.state import _RETRY, LoopConfig, LoopState
 from agent_cli.prompts.compaction import SUMMARY_HEADINGS, SUMMARY_IMAGES_LINE
 from agent_cli.prompts.session_state import COMPACTION_NOTICE_STEPS
 from agent_cli.providers.base import CallSettings, thinking_switch
+from agent_cli.recovery.observability import CallMetrics
 from agent_cli.render import (
     render_spinner_start,
     render_spinner_stop,
@@ -98,6 +101,9 @@ class LLMCaller:
         # length 절단이 어느 상한이었는지(classify_output_cap) 코어가 판정.
         self.last_max_tokens_requested: int | None = None
         self.last_max_tokens_clamped = False
+        # 직전 성공 호출의 클라이언트 측정 (v10.129.0, ``CallMetrics``) — 턴 기록이
+        # 싣는다. 호출마다 먼저 비우므로 실패한 호출 뒤에 앞 값이 남지 않는다.
+        self.last_call: CallMetrics | None = None
 
     # 요청 max_tokens 클램프 (v8.53.0): 예산은 더 이상 max_output 을 선제
     # 예약하지 않으므로(아래 _call_llm), 남은 창을 넘는 max_tokens 요청이
@@ -425,6 +431,8 @@ class LLMCaller:
                 {"role": "assistant", "content": prefill},
             ]
         system, shared = self._request_head()
+        self.last_call = None
+        started = time.monotonic()
         try:
             response = self.provider.call(
                 messages=call_messages,
@@ -456,6 +464,11 @@ class LLMCaller:
                     **shared,
                 ),
                 **extra_call_kwargs,
+            )
+            self.last_call = CallMetrics(
+                llm_ms=round((time.monotonic() - started) * 1000),
+                output_chars=len(response.content or ""),
+                thinking_chars=len(response.thinking or ""),
             )
             # Stitch the prefill back onto the response so downstream
             # parsers see a complete emission. Use dataclasses.replace

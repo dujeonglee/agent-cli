@@ -45,7 +45,7 @@ def _dispatcher(tmp_path, dialect_name="json_fc", **cfg_overrides):
         st,
         ctx=ctx,
         tools=ToolBridge(cfg, st, ctx, None),
-        recorder=TurnRecorder(session_dir=None, enabled=False),
+        recorder=TurnRecorder(session_dir=None, enabled=False, dialect="json_fc"),
     )
     return d, ctx, st
 

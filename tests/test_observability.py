@@ -42,31 +42,39 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 class TestTurnRecorderDisabled:
     def test_no_session_dir_is_no_op(self, tmp_path):
-        recorder = TurnRecorder(session_dir=None, enabled=True)
+        recorder = TurnRecorder(session_dir=None, enabled=True, dialect="json_fc")
         assert not recorder.enabled
         recorder.record(model="m", parse_stage=1)  # must not raise
         # Nothing should have been written anywhere
         assert list(tmp_path.glob("**/*.jsonl")) == []
 
     def test_opt_out_is_no_op(self, session_dir):
-        recorder = TurnRecorder(session_dir=session_dir, enabled=False)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=False, dialect="json_fc"
+        )
         assert not recorder.enabled
         recorder.record(model="m", parse_stage=1)
         assert _read_jsonl(session_dir / "turns.jsonl") == []
 
     def test_record_when_disabled_does_not_create_file(self, session_dir):
-        recorder = TurnRecorder(session_dir=session_dir, enabled=False)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=False, dialect="json_fc"
+        )
         recorder.record(model="m", parse_stage=0, failure_signal=FAILURE_NO_JSON)
         assert not (session_dir / "turns.jsonl").exists()
 
 
 class TestTurnRecorderEnabled:
     def test_enabled_when_session_dir_and_flag(self, session_dir):
-        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=True, dialect="json_fc"
+        )
         assert recorder.enabled
 
     def test_records_a_success_row(self, session_dir):
-        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=True, dialect="json_fc"
+        )
         recorder.record(model="qwen3.5", parse_stage=1)
         rows = _read_jsonl(session_dir / "turns.jsonl")
         assert len(rows) == 1
@@ -79,7 +87,9 @@ class TestTurnRecorderEnabled:
         assert "T" in row["timestamp"]
 
     def test_records_a_failure_row_with_primitives(self, session_dir):
-        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=True, dialect="json_fc"
+        )
         recorder.record(
             model="m",
             parse_stage=0,
@@ -98,7 +108,9 @@ class TestTurnRecorderEnabled:
     def test_appends_across_record_calls(self, session_dir):
         """Each record() call must add exactly one line — no buffering,
         no batched flush. This is the contract crash-tolerance relies on."""
-        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=True, dialect="json_fc"
+        )
         recorder.record(model="m", parse_stage=1)
         # File should be readable already (no buffering)
         rows1 = _read_jsonl(session_dir / "turns.jsonl")
@@ -113,8 +125,8 @@ class TestTurnRecorderEnabled:
         across instances. There is no per-row counter: row ordering is by
         timestamp, not seq (seq was removed — it was run-local and collided
         across run_loop invocations)."""
-        a = TurnRecorder(session_dir=session_dir, enabled=True)
-        b = TurnRecorder(session_dir=session_dir, enabled=True)
+        a = TurnRecorder(session_dir=session_dir, enabled=True, dialect="json_fc")
+        b = TurnRecorder(session_dir=session_dir, enabled=True, dialect="json_fc")
         a.record(model="m", parse_stage=1)
         b.record(model="m", parse_stage=1)
         rows = _read_jsonl(session_dir / "turns.jsonl")
@@ -130,7 +142,9 @@ class TestTurnRecorderEnabled:
         defensively re-mkdir rather than crash."""
         import shutil
 
-        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=True, dialect="json_fc"
+        )
         shutil.rmtree(session_dir)
         assert not session_dir.is_dir()
         recorder.record(model="m", parse_stage=0)
@@ -140,7 +154,9 @@ class TestTurnRecorderEnabled:
         """Same guard for the compaction event path."""
         import shutil
 
-        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=True, dialect="json_fc"
+        )
         shutil.rmtree(session_dir)
         recorder.record_compaction(
             tokens_before=1000,
@@ -155,7 +171,9 @@ class TestSchemaInvariants:
     def test_record_omits_no_prompt_or_response_text(self, session_dir):
         """Privacy contract: no LLM-generated content or user input
         appears in TurnRecord. Only structural metadata."""
-        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=True, dialect="json_fc"
+        )
         recorder.record(
             model="m",
             parse_stage=0,
@@ -176,6 +194,8 @@ class TestSchemaInvariants:
             "cache_creation_input_tokens",
             "stop_reason",  # v10.10.0: a label, never text
             "stop_detail",
+            "harness_version",  # v10.129.0: every row
+            "dialect",
         }
 
     def test_failure_signals_are_stable_strings(self):
@@ -197,7 +217,9 @@ class TestTokenUsage:
     ``TokenUsage`` verbatim."""
 
     def test_usage_fields_copied_verbatim(self, session_dir):
-        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=True, dialect="json_fc"
+        )
         recorder.record(
             model="m",
             parse_stage=1,
@@ -217,7 +239,9 @@ class TestTokenUsage:
     def test_no_usage_records_zero_counts(self, session_dir):
         # Providers/mocks without a usage block → zeros, never missing keys
         # (readers sum rows; a missing key would break the aggregate).
-        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=True, dialect="json_fc"
+        )
         recorder.record(model="m", parse_stage=1, usage=None)
         row = _read_jsonl(session_dir / "turns.jsonl")[0]
         assert (
@@ -228,7 +252,9 @@ class TestTokenUsage:
         ) == (0, 0, 0, 0)
 
     def test_session_totals_are_a_sum_over_rows(self, session_dir):
-        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        recorder = TurnRecorder(
+            session_dir=session_dir, enabled=True, dialect="json_fc"
+        )
         for i in (1, 2, 3):
             recorder.record(
                 model="m",

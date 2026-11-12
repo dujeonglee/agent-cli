@@ -91,6 +91,19 @@ class ToolBridge:
         self.recent_tool_history: list[dict] = []
         #: 모델이 마지막 도구 결과를 받은 시각 — RunContext.observed_at 이 읽는다.
         self.last_observation_at: float | None = None
+        #: 이 턴의 실행 기록 ``[이름, 성공, ms]`` (v10.129.0) — turns.jsonl 의 ``tools``.
+        #: 디스패처가 턴마다 ``take_turn_calls`` 로 비운다. 이름만 — 인자·결과는 없다.
+        self.turn_calls: list[list] = []
+
+    def take_turn_calls(self) -> list[list]:
+        """이 턴의 실행 기록을 넘기고 비운다."""
+        calls, self.turn_calls = self.turn_calls, []
+        return calls
+
+    def _note_call(self, tool_name: str, result: ToolResult, started: float) -> None:
+        """실행 한 번 = 한 줄. 블록된 호출(실행 안 됨)은 부르지 않는다."""
+        ms = round((time.monotonic() - started) * 1000)
+        self.turn_calls.append([tool_name, bool(result.success), ms])
 
     @property
     def _turn_obs_budget(self) -> int:
@@ -166,6 +179,7 @@ class ToolBridge:
         # (앞 호출의 남은 것이 새지 않게) 실행 뒤 이 호출의 결과 끝에 붙인다 — 성공·
         # 실패 무관. 도구들은 붙이지 않는다; 여기와 ``dispatch_edit_batch`` 두 곳뿐.
         human_note.clear()
+        started = time.monotonic()
         try:
             if tool_name == "agent":
                 result = self._invoke_agent(tool_input, input_dict)
@@ -182,6 +196,7 @@ class ToolBridge:
                 f"TOOL EXCEPTION turn={self.state.turn} tool={tool_name}\n{_tb.format_exc()}"
             )
             result = _tool_exception_result(tool_name, e)
+        self._note_call(tool_name, result, started)
         result = human_note.attach(result, human_note.take())
 
         # 4. PostToolUse hooks
@@ -237,6 +252,7 @@ class ToolBridge:
 
         parts: list[dict] | None = None
         human_note.clear()  # 단건 경로와 같다 (v10.120.2)
+        started = time.monotonic()
         try:
             result, parts = apply_edits_batch_parts(path, processed)
         except Exception as e:  # 단건 경로와 동일 안전망 (KeyboardInterrupt 전파)
@@ -247,6 +263,8 @@ class ToolBridge:
                 f"{_tb.format_exc()}"
             )
             result = _tool_exception_result("edit_file", e)
+        # 묶음은 물리 실행이 한 번이라 한 줄이다(편집 수가 아니라 실행 수).
+        self._note_call("edit_file", result, started)
 
         if parts is None:
             parts = [{"success": False, "content": result.error} for _ in edits]

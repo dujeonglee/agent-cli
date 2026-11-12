@@ -156,7 +156,7 @@ class TestDispatcherIntegration:
             st,
             ctx=ctx,
             tools=ToolBridge(cfg, st, ctx, None),
-            recorder=TurnRecorder(session_dir=None, enabled=False),
+            recorder=TurnRecorder(session_dir=None, enabled=False, dialect="json_fc"),
         )
 
         # 턴 N: 깨진 emission → NO_ACTION 개입 기록. (순수 산문은 v7.14 부터

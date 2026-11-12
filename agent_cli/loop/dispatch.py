@@ -318,6 +318,7 @@ class TurnDispatcher:
         thinking=None,
         swallowed: bool = False,
         server_ops: list | None = None,
+        call=None,
     ):
         """Handle text parsing response (non-JSON fallback).
 
@@ -339,6 +340,9 @@ class TurnDispatcher:
         op 들 — ``llm_text`` 는 산문(생각)뿐이라 파싱하지 않는다. 기록은
         ``turn.record`` 에 ops shape 로 한 번 만든다(산문만 직렬화하면 호출이
         사라진다).
+
+        ``call`` (v10.129.0): 이 턴 공급자 호출의 ``CallMetrics`` — 기록에 그대로.
+        디스패치 벽시계(``tool_ms``)와 실행 목록(``tools``)은 여기서 잰다.
         """
         self._record_emission(llm_text)
         # v10.1.4: 빈 content 의 재시도 문구가 사고 채널 유무로 갈린다
@@ -483,9 +487,12 @@ class TurnDispatcher:
 
         # 이 턴이 기록할 첫 레코드의 서수 — 턴 끝에 그 구간을 StaleGuard 에 먹인다
         turn_start = self._next_hidx()
+        self.tools.take_turn_calls()  # 앞 턴 밖에서 남은 것이 섞이지 않게
+        dispatch_started = time.monotonic()
         try:
             result = self._dispatch_turn(llm_text, turn, outcome)
         finally:
+            tool_ms = round((time.monotonic() - dispatch_started) * 1000)
             # 아무 출력 없이 끝난 턴의 생각도 사라지지 않게 (v9.24.11 안전망)
             flush_pending_thought()
             self.recorder.record(
@@ -494,6 +501,9 @@ class TurnDispatcher:
                 failure_signal=outcome["failure_signal"],
                 primitives_applied=outcome["primitives"],
                 usage=usage,
+                call=call,
+                tool_ms=tool_ms,
+                tools=self.tools.take_turn_calls(),
             )
             # --verbose 기록(v9.24.3)이 원문과 함께 싣는 이 턴의 판정 — 코어가
             # 응답(사고·종료 사유)과 합쳐 한 줄로 쓴다.
