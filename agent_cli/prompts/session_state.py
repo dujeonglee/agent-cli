@@ -14,11 +14,22 @@ the previous call. So WHERE volatile text sits decides what it costs.
   agent loop: the request sits near the FRONT (one query, then N turns of
   assistant/observation grow after it), so a per-turn block there invalidates
   every turn that follows it.
-- At the TAIL it is free. Turn N ends with ``… obs_{N-1} + STATE_N``; turn N+1
-  is ``… obs_{N-1}, assistant_N, obs_N + STATE_{N+1}``. The prefix match ends
-  at ``obs_{N-1}`` — exactly where it would have ended anyway, because
-  ``assistant_N`` and ``obs_N`` are new tokens regardless. The only thing lost
-  is the previous block's own ~50 cached tokens.
+- At the TAIL it is cheapest. Turn N ends with ``… obs_{N-1} + STATE_N``; turn
+  N+1 is ``… obs_{N-1}, assistant_N, obs_N + STATE_{N+1}``. The prefix match
+  ends at ``obs_{N-1}`` — exactly where it would have ended anyway, because
+  ``assistant_N`` and ``obs_N`` are new tokens regardless. What is lost is the
+  previous block itself, which was cached and is not reused: ~1.5K tokens per
+  turn (measured 2026-11; the block is the guidelines plus the state, almost
+  all static).
+
+  That is the cost on a server whose cache matches token by token (vLLM). A
+  server that can only resume from fixed checkpoints pays more: omlx 0.7.3
+  reuses the end of the previous prompt or a 4,096-token grid point, and a
+  block that moves every turn throws the first away. Measured there (synthetic
+  12-turn chat, ~0.5K new tokens per turn): ~3.3K tokens re-processed per turn
+  with this block, ~0.5K with none — on both local models. Holding the block
+  still for a few turns would recover most of it, and was rejected: it leaves
+  stale state mid-conversation and gives up the reason the block is at the end.
 
 The tail is also where recency attention is strongest, which is what this
 content wants: it is the state the model should be deciding against RIGHT NOW.
@@ -198,8 +209,8 @@ def build_session_state(
     ``guidelines`` is ``TASK_GUIDELINES`` verbatim (v8.52.0 — the WHOLE
     section moved here from the system prompt's primacy zone: bench-measured,
     the 35B-class model ignored these principles there but follows them at the
-    tail; static text, so the only cost is re-prefilling ~0.4K tokens that the
-    un-cacheable tail region would re-process anyway).
+    tail; static text, and by far the largest part of the block — see the
+    module docstring for what re-processing it every turn costs).
     ``web_sources`` (v10.57.0) is the ``## Web Sources`` block
     (`agent_cli.web_sources.render`) — only for a loop that has ``fetch``.
     ``items`` (v10.56.0, ledger P3) is the run's ``## Open Items`` block
