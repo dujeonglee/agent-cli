@@ -405,6 +405,19 @@ def _main_ports(q: InputQueue):
     )
 
 
+def _status_once_awaiting(status_dir, deadline: float) -> dict | None:
+    """``awaiting_input`` 이 선 status.json — 스티키가 먼저 서고 파일은 그 직후에 쓰이므로
+    (``set_sticky`` → ``_publish_status``) 스티키를 본 순간의 파일은 아직 옛 것일 수 있다.
+    마감까지 안 서면 마지막으로 읽은 것을 돌려줘 단언이 그 값으로 실패한다."""
+    if not status_dir:
+        return None
+    status = read_status_file(status_dir)
+    while not (status or {}).get("awaiting_input") and time.time() < deadline:
+        time.sleep(0.02)
+        status = read_status_file(status_dir)
+    return status
+
+
 def _answer_when_asked(r: WebRenderer, key: str, comment: str, seen: dict):
     """뷰어 대역 — confirm 이 뜨면 그때의 상태를 적고 답한다."""
 
@@ -414,8 +427,7 @@ def _answer_when_asked(r: WebRenderer, key: str, comment: str, seen: dict):
             if r.awaiting_input_kind() == "confirm":
                 seen["stuck"] = r.hub.sticky_payload("stuck")
                 seen["prompt"] = r.hub.sticky_payload("input_required")
-                status_dir = r._status_dir
-                seen["status"] = read_status_file(status_dir) if status_dir else None
+                seen["status"] = _status_once_awaiting(r._status_dir, deadline)
                 r.push_user_input(
                     "confirm", {"key": key, "comment": comment, "conn_id": "c1"}
                 )
