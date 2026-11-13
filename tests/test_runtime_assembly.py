@@ -16,6 +16,8 @@ from dataclasses import fields
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from agent_cli.runtime import (
     AgentRuntime,
     build_agent_registry,
@@ -427,6 +429,14 @@ class _ItemsPump:
         return self.deps.surface.route(text)
 
 
+@pytest.fixture
+def _run_in_tmp(tmp_path, monkeypatch):
+    """진짜 run 경로가 cwd 상대 ``.agent-cli/``(세션·스냅샷 저장소)에 쓴다 —
+    ``_run_with`` 를 타는 클래스는 임시 디렉터리에서 돈다."""
+    monkeypatch.chdir(tmp_path)
+
+
+@pytest.mark.usefixtures("_run_in_tmp")
 class TestRunCommandTeardownIntegration:
     """run 커맨드를 CliRunner 로 실제 구동해 경로별 teardown 수렴을 검증 —
     구조 핀(소스 스크레이프)보다 강한 실행 증거. 종전엔 skill 조기-반환이
@@ -571,6 +581,7 @@ class TestSessionHasLiveWork:
             assert "session_has_live_work(" in inspect.getsource(fn), fn.__name__
 
 
+@pytest.mark.usefixtures("_run_in_tmp")
 class TestResultFileIsWrittenPerRun:
     """`--result-file` 은 런이 성공으로 끝난 자리에서 쓴다 (v10.31.2).
 

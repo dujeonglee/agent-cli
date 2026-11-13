@@ -38,8 +38,51 @@ if os.environ.get("AGENT_CLI_BROWSER_TESTS") != "1":
 for _color_var in ("FORCE_COLOR", "CLICOLOR_FORCE"):
     os.environ.pop(_color_var, None)
 
+import shutil
+import tempfile
+from pathlib import Path
+
 import pytest
 import requests
+from hypothesis import settings as _hypothesis_settings
+from hypothesis.configuration import set_hypothesis_home_dir
+
+from tests import cwd_guard
+
+# hypothesis 는 cwd 에 ``.hypothesis/`` 를 만든다 — 예제 DB 뿐 아니라 수집 시점에
+# 쓰는 캐시(``constants/``·``unicode_data/``)도. DB 는 끄고(실패 재현은 hypothesis 가
+# 출력하는 ``@reproduce_failure``·seed 로 충분하다), 캐시 자리는 수트 임시 디렉터리로.
+# 테스트 모듈 수집보다 먼저여야 해서 conftest import 시각에 한다.
+_hypothesis_settings.register_profile("agent-cli-suite", database=None)
+_hypothesis_settings.load_profile("agent-cli-suite")
+_HYPOTHESIS_HOME = tempfile.mkdtemp(prefix="agent-cli-hypothesis-")
+set_hypothesis_home_dir(_HYPOTHESIS_HOME)
+
+
+def pytest_unconfigure(config):
+    shutil.rmtree(_HYPOTHESIS_HOME, ignore_errors=True)
+
+
+# 가드가 보는 자리 — cwd 가 아니라 이 파일 위치에서 구한다(cwd 를 옮긴 테스트도 본다).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(autouse=True)
+def _no_files_left_in_repo():
+    """테스트가 저장소 루트(·``.agent-cli/`` 두 단계)에 새 항목을 남기면 실패.
+
+    저장소에 쓰는 테스트는 서로의 상태를 보고 개발자의 진짜 ``.agent-cli/``
+    (세션·스냅샷 저장소)를 건드린다. 새는 테스트는 임시 디렉터리에서 돌게 한다.
+    """
+    before = cwd_guard.snapshot(_REPO_ROOT)
+    yield
+    leaked = cwd_guard.new_entries(before, cwd_guard.snapshot(_REPO_ROOT))
+    if leaked:
+        pytest.fail(
+            "test left files in the repository root (run it in tmp_path): "
+            + ", ".join(leaked),
+            pytrace=False,
+        )
 
 
 @pytest.fixture(autouse=True)

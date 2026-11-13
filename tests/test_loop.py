@@ -2176,8 +2176,9 @@ class TestEchoAsFinalAnswer:
         )
         assert result.output == "found"
 
-    def test_echo_with_redirect_not_intercepted(self, caps):
+    def test_echo_with_redirect_not_intercepted(self, caps, tmp_path, monkeypatch):
         """echo ... > file should NOT be treated as final answer."""
+        monkeypatch.chdir(tmp_path)  # 셸이 cwd 에 out.txt 를 쓴다
         provider = _make_provider(
             json.dumps({"action": "shell", "command": "echo hello > out.txt"}),
             _complete("written"),
