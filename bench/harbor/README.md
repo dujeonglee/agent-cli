@@ -44,7 +44,7 @@ harbor run -t NovitaAI/tb21-file-recovery --agent agent_cli_harbor:AgentCli -m o
 
 # Terminal-Bench 2 (89) / 샘플 10
 harbor run -d terminal-bench@2.0 --agent agent_cli_harbor:AgentCli -m openai/<model> $AE \
-  --ak prompt_template_path=bench/harbor/prompt.j2 --ak max_turns=60 -n 1 --job-name tb2 -o bench/runs/harbor
+  --ak prompt_template_path=bench/harbor/prompt.j2 -n 1 --job-name tb2 -o bench/runs/harbor
 harbor run -d terminal-bench-sample@2.0 …
 
 # SWE-bench Verified (x86 이미지 — Apple Silicon 에선 QEMU)
@@ -80,7 +80,7 @@ agent-cli(off) 4/9 · agent-cli(on) 4/9 · Hermes 4/9 — 점수는 같고 통�
 
 | kwarg | 기본 | 설명 |
 |---|---|---|
-| `max_turns` | 60 | `agent-cli run --max-turns` |
+| `max_turns` | (agent-cli 기본 — 상한 없음) | `agent-cli run --max-turns`. v10.130.0 까지 기본 60 — 그때 기록과 맞출 때만 `--ak max_turns=60` |
 | `response_format` | (해석 체인) | `--response-format json_fc|xml_fc` |
 | `max_depth` | (agent-cli 기본) | `--max-depth` |
 | `prompt_template_path` | (없음) | Jinja 템플릿(`{{ instruction }}`) — `prompt.j2` 는 비대화형 규칙(`ask` 금지·검증 후 `complete`) 추가 |
@@ -121,13 +121,15 @@ harbor 0.22.0 은 에이전트 명령을 `set -o pipefail; …` 로 돌려 0 이
 `python3 -m pytest bench/harbor` — ATIF 변환기(`atif.py`, stdlib 전용)·wheel 선택 단위 테스트·
 실행 명령(`agent_command.py`)을 실제 `bash -c "set -o pipefail; …"` 로 돌려 가짜 `agent-cli` 의 0·1·2·130 이
 0·0·2·130 으로 보이고 `exit-code.txt` 가 맞는지 보는 테스트.
-제품 스위트(`tests/`)와 분리. `test_hermes_local.py` 는 harbor 가 import 될 때만 돈다 —
+제품 스위트(`tests/`)와 분리. `test_hermes_local.py`·`test_agent_cli_harbor.py`(어댑터가 기본으로 `--max-turns` 를
+보내지 않는다) 는 harbor 가 import 될 때만 돈다 —
 `uvx --from harbor==0.24.0 --with pytest python -m pytest bench/harbor/test_hermes_local.py`.
 
 ## 벤치 정책 (2026-11 확정)
 
 - **모델·횟수**: GLM-5.3-Flash(`GLM-5.3-Flash-oQ4-mtp`) 로 기준·후보를 **교차** 2회 이상(base-r1 → cand-r1 → cand-r2 → base-r2). 고정 기준 한 런에 변형들을 대지 않는다 — 같은 main 이 낮 7/9·심야 4/9 를 낸 적이 있다. 모델 서버는 한 번에 한 소비자.
 - **사고 조건**: `--ae AGENT_CLI_THINKING=off` 를 넘기지만 GLM 에는 닿지 않는다 — 모델 표가 `supports_thinking: false` 라 하니스는 스위치를 보내지 않고, GLM 템플릿은 끄는 변수 없이 항상 `<think>` 를 연다(2026-11-12 `/v1/tokenize` 렌더 실측). 실제 조건은 "사고 상시 켜짐, 정도는 서버 설정(omlx `reasoning_effort: low`)" 이다. 이전 측정 기록의 "GLM 사고 off" 는 이 조건을 가리킨다. 서버 설정을 바꾸면 측정 조건이 바뀐 것이므로 기준과 짝으로 다시 잰다.
+- **턴 상한 없음 (v10.130.1~)**: 어댑터는 `--max-turns` 를 보내지 않는다 — 제품 기본과 같고, 끝은 과제의 시간 제한이 정한다. v10.130.0 까지는 60 이었으므로 **그 전 기록과는 조건이 다르다**. 35B·v10.130.0 실측(2026-11-13, `-n 1`·T1.0): 60 상한 5/9·5/9, 상한 없음 5/9 — 통과 수는 같고, 60 에서 멈추던 실패 과제(large-scale-text-editing)가 94턴까지 가서 시간 제한(20분)으로 끝났다. 실패 런 하나가 4분에서 20분이 된 것이 비용이다. 턴 수가 더 적은 채 끝나는 실패(`exit-code.txt` 1, 60턴 미만)는 루프 감지기의 중단이지 상한이 아니다.
 - **gcode-to-text 는 합계에서 빼고 따로 보고한다.** 그림 판독 과제라 하니스 변화를 재지 못하고, 같은 휠 10회 배치가 7·5·5·0·5 (/10) 로 흔들린다(2026-11-06~07). 9과제 합계는 8과제 합계 + "gcode n/3" 로 적는다.
 - **동시성**: harbor 기본 `-n 4` 는 omlx 하나를 네 trial 이 나눠 쓴다 — 첫 토큰 대기(프리필)가 과제 예산 900 s 의 55~95% 였다. 통과율이 움직이면 먼저 시간 예산 효과인지 보고, 시간 경계 과제(gcode·video·extract-moves)는 `-n 1` 로 다시 잰다.
 - **극단값은 같은 휠을 다른 배치에서 재현부터.** 10회 배치의 0/10 과 7/10 이 모두 재현 런에서 5/10 으로 돌아왔다 — 한 배치의 극단은 코드에 귀속하지 않는다.
@@ -143,4 +145,5 @@ harbor 0.22.0 은 에이전트 명령을 `set -o pipefail; …` 로 돌려 0 이
   (`code_index` 도구 사용 시).
 
 `bench/runs` 는 gitignore 대상. 커밋되는 것은 `agent_cli_harbor.py`·`agent_command.py`·`atif.py`·`prompt.j2`·
-`test_agent_command.py`·`test_atif.py`·`wheels.py`·`test_wheels.py`·`hermes_local.py`·`test_hermes_local.py`·이 README.
+`test_agent_command.py`·`test_atif.py`·`wheels.py`·`test_wheels.py`·`hermes_local.py`·`test_hermes_local.py`·
+`test_agent_cli_harbor.py`·이 README.
