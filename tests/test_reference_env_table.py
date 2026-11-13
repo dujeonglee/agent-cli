@@ -1,4 +1,4 @@
-"""README 환경변수 표 ⊇ 코드가 읽는 ``AGENT_CLI_*`` 이름 (v10.127.3).
+"""docs/REFERENCE.md 환경변수 표 ⊇ 코드가 읽는 ``AGENT_CLI_*`` 이름 (v10.127.3).
 
 표가 코드와 어긋나 있었다 — 코드가 읽는 8개(`AGENT_CLI_NO_INPUT`·스냅샷 넷·monitor 재생 상한·
 스트림 덤프·원문 기록)가 표에 없었다. "코드가 읽는 이름" = 패키지 소스의 **문자열 리터럴 전체가**
@@ -31,17 +31,17 @@ def _code_names() -> dict[str, str]:
     return found
 
 
-def _readme_env_section() -> str:
-    text = (_ROOT / "README.md").read_text(encoding="utf-8")
+def _reference_env_section() -> str:
+    text = (_ROOT / "docs" / "REFERENCE.md").read_text(encoding="utf-8")
     start = text.index("### 환경변수")
     end = text.index("\n#", start + 1)
     return text[start:end]
 
 
 def test_env_table_covers_every_name_the_code_reads():
-    table = set(_ROW.findall(_readme_env_section()))
+    table = set(_ROW.findall(_reference_env_section()))
     missing = {n: where for n, where in _code_names().items() if n not in table}
-    assert not missing, f"README 환경변수 표에 없는 이름: {missing}"
+    assert not missing, f"docs/REFERENCE.md 환경변수 표에 없는 이름: {missing}"
 
 
 def test_scan_sees_the_known_readers():

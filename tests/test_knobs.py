@@ -4,7 +4,7 @@
 문법·자동 승인)과 감사는 `run` 에 플래그가 없었다. 여기서 고정하는 것은 **표에서
 파생된 대칭**이다: `run`/`web` 둘 다 표의 플래그 전부를 노출하고, env 는 표가
 적은 이름만 읽히며(소스 어디에도 표 밖의 노브 env 읽기가 없다), 각 노브의 set 이
-자기 소유자를 실제로 바꾸고, 우선순위는 CLI > env > 기본값이다. README 의 env
+자기 소유자를 실제로 바꾸고, 우선순위는 CLI > env > 기본값이다. docs/REFERENCE.md 의 env
 표도 표를 다 싣는다.
 """
 
@@ -74,11 +74,11 @@ class TestTableIsTheSingleDefinition:
                     offenders.append((path.relative_to(_PKG).as_posix(), k.env))
         assert offenders == []
 
-    def test_readme_env_table_lists_every_knob_env(self):
-        readme = (_PKG.parent / "README.md").read_text(encoding="utf-8")
+    def test_reference_env_table_lists_every_knob_env(self):
+        ref = (_PKG.parent / "docs" / "REFERENCE.md").read_text(encoding="utf-8")
         for k in KNOBS:
-            assert f"| `{k.env}` |" in readme, k.env
-            assert f"`{k.flag}`" in readme, k.flag
+            assert f"| `{k.env}` |" in ref, k.env
+            assert f"`{k.flag}`" in ref, k.flag
 
 
 class TestKinds:
@@ -601,21 +601,21 @@ class TestKnobsCommand:
             assert k.name[:8] in out, k.name  # 좁은 터미널은 열을 줄임표로 접는다
 
 
-class TestReadmeFollowsTheTable:
+class TestReferenceFollowsTheTable:
     def test_cli_table_rows_carry_env_and_chip_icon(self):
-        """README 의 CLI 표 한 줄에 그 노브의 env 와 칩 아이콘(묶음은 묶음 아이콘)이
+        """docs/REFERENCE.md 의 CLI 표 한 줄에 그 노브의 env 와 칩 아이콘(묶음은 묶음 아이콘)이
         함께 적혀 있다 — 세 표면이 한 노브라는 사실이 문서에서도 한 줄이다."""
-        readme = (_PKG.parent / "README.md").read_text(encoding="utf-8")
+        ref = (_PKG.parent / "docs" / "REFERENCE.md").read_text(encoding="utf-8")
         for k in KNOBS:
             row = next(
-                (ln for ln in readme.splitlines() if ln.startswith(f"| `{k.flag}`")),
+                (ln for ln in ref.splitlines() if ln.startswith(f"| `{k.flag}`")),
                 None,
             )
             assert row, k.flag
             assert k.env in row, (k.flag, k.env)
             icon = k.ui.icon or K.KNOB_GROUPS[k.ui.group].icon
             assert icon in row, (k.flag, icon)
-        assert "agent-cli knobs" in readme
+        assert "agent-cli knobs" in ref
 
 
 class TestSamplingKnobs:
