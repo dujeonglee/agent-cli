@@ -444,6 +444,31 @@ class TestExitPathConvergence:
             assert start < body.index("_previous_monitors_notice("), name
             assert start < body.index("pump.run()"), name
 
+    def test_web_server_handles_are_one_block_before_agents_revive(self):
+        """v10.130.7: web 의 서버 손잡이(레지스트리·MCP·감사자·노브 상태)는 레지스트리
+        → 감사자 → 노브 적용이 끝난 뒤 한 블록으로, 그리고 에이전트가 살아나기
+        (`wire_agent_mail` 의 복원·auto-spawn) **전에** — 되살아난 에이전트의 창을
+        서버가 찾을 수 있어야 한다. 메일 대기열 훅은 `wire_agent_mail` 뒤."""
+        body = self._body("web")
+        handles = [
+            "server.agent_registry =",
+            "server.mcp_manager =",
+            "server.auditor =",
+            "renderer.knob_state =",
+            "renderer.broadcast_knobs(",
+        ]
+        at = [body.index(h) for h in handles]
+        assert all(body.count(h) == 1 for h in handles)
+        assert at == sorted(at), "손잡이 블록의 순서가 바뀌었다"
+        assert body.index("_apply_knobs(") < at[0], "노브 적용보다 먼저 서버에 꽂는다"
+        block = body[at[0] : at[-1]]
+        for between in ("build_auditor(", "_apply_knobs(", "wire_agent_mail("):
+            assert between not in block, f"손잡이 사이에 {between} — 한 블록이 아니다"
+        revive = body.index("wire_agent_mail(")
+        assert at[-1] < revive, "에이전트가 살아난 뒤에야 서버가 레지스트리를 안다"
+        for hook in ("server.mail_source =", "on_pending_change ="):
+            assert revive < body.index(hook), hook
+
     def test_run_and_web_share_assembly_helpers(self):
         for name in ("run", "web"):
             body = self._body(name)

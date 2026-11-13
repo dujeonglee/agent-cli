@@ -2942,9 +2942,6 @@ def web(
             jobs=job_registry,
         )
         _registry = agent_registry  # 클로저 고정 (nonlocal 재대입과 분리)
-        # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.
-        server.agent_registry = _registry
-        server.mcp_manager = mcp_manager  # 🔌 칩 (읽기 전용, v9.2.0)
 
         # P4 (D3): idle 자동 재기동 — 조율 로직은 MailWaker (단위 테스트
         # 가능한 순수 조율자) 가 소유; restore/auto_spawn 포함 조립 공용.
@@ -2954,15 +2951,22 @@ def web(
         auditor = build_auditor(
             _registry, parent_ctx=ctx, on_change=renderer.note_harness
         )
-        # 노브 적용 — 소유자 넷이 선 뒤, 복원·auto-spawn 전 (v10.43.0). 📐 sticky
-        # 는 부트 초기값이 이미 나갔으니 적용 뒤 다시 낸다.
+        # 노브 적용 — 소유자 넷이 선 뒤, 복원·auto-spawn 전 (v10.43.0).
         _apply_knobs(
             knob_args, ctx=ctx, registry=_registry, renderer=renderer, auditor=auditor
         )
+
+        # 서버 손잡이 — 한 블록 (v10.130.7). 제약은 하나: 에이전트가 살아나기(복원·
+        # auto-spawn, 아래 `wire_agent_mail`) 전에 서버가 레지스트리를 안다. 그 전까지
+        # 핸들러는 None 을 견딘다(에이전트 창 503·🔌 빈 목록·소유자 없는 노브 거절).
+        # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.
+        server.agent_registry = _registry
+        server.mcp_manager = mcp_manager  # 🔌 칩 (읽기 전용, v9.2.0)
         server.auditor = auditor  # 🔎 칩(`/api/knobs/auditor`)이 켜고 끈다
         # 감사 진행 수가 바뀌면 렌더러가 🔎 상태 한 장을 다시 받아 싣는다 (v10.45.0)
         renderer.knob_state = lambda name: _knob_state(name, server)
         # 노브 전부의 초기 sticky — 칩·status.json(문법)이 첫 요청 전에도 사실을 본다.
+        # 📐 sticky 는 부트 초기값이 이미 나갔으니 적용 뒤 다시 낸다.
         from agent_cli.knobs import web_states
 
         renderer.broadcast_knobs(web_states(server.knob_session()))
