@@ -819,6 +819,32 @@ def try_dispatch_agent_or_skill(
     return False
 
 
+def _command_dispatch(spec, owners, output, *, graceful_interrupt: bool):
+    """펌프 표면의 명령 라우팅 — ``(text, stop_event) -> bool`` (run·web 공용, v10.131.0).
+
+    두 호스트가 같은 키워드로 `try_dispatch_agent_or_skill` 을 부른다; 다른 것은 결과를
+    받을 표면(``output()`` — 부를 때마다 하나를 돌려주는 콜러블: run 은 표면의 판정에
+    잇는 새 `_ConsoleDispatchOutput`, web 은 렌더러의 `WebDispatchOutput` 하나)과 중단
+    방식(``graceful_interrupt`` — 표면의 것)뿐이다."""
+
+    def dispatch(text: str, stop_event) -> bool:
+        return try_dispatch_agent_or_skill(
+            text,
+            output(),
+            binding=spec.binding,
+            max_turns=spec.max_turns,
+            verbose=spec.verbose,
+            max_depth=spec.max_depth,
+            ctx=spec.ctx,
+            session=spec.session,
+            graceful_interrupt=graceful_interrupt,
+            stop_event=stop_event,
+            agent_registry=owners.agent_registry,
+        )
+
+    return dispatch
+
+
 def _dispatch_agent(
     query: str,
     binding,
@@ -1541,17 +1567,6 @@ def _boot_model(knob_args) -> str | None:
     return KNOB_BY_NAME["model"].resolve((knob_args or {}).get("model"))
 
 
-def _apply_knobs(knob_args, *, ctx, registry, renderer, auditor) -> None:
-    """부팅 노브 적용 — run/web 공용 한 줄. 소유자 넷이 선 뒤, 상주 에이전트
-    복원·auto-spawn **전에**(상한이 그 게이트다)."""
-    from agent_cli.knobs import KnobSession, apply_all, resolve_all
-
-    apply_all(
-        KnobSession(ctx=ctx, registry=registry, renderer=renderer, auditor=auditor),
-        resolve_all(knob_args),
-    )
-
-
 def _dialect_help() -> str:
     """``--dialect`` 도움말 (run·web) — 선택지 설명은 방언 스펙의 ``summary`` 에서
     (v10.127.0; 종전엔 넷을 손으로 적어 native_fc 가 빠져 있었다)."""
@@ -1740,63 +1755,33 @@ def run(
         console.print(f"  Title:   {session.title}", markup=False, highlight=False)
     ctx = _build_context(session, binding, resume=session_resumed is not None)
 
-    from agent_cli.hooks import load_hooks as _load_hooks
     from agent_cli.input_queue import InputQueue
+    from agent_cli.pump import QuietPolicy
     from agent_cli.runtime import (
-        AgentRuntime,
-        MainLoop,
-        build_agent_registry,
-        build_hook_runner,
-        build_job_registry,
-        build_monitor_registry,
-        build_schedule_registry,
-        build_snapshot_store,
-        wire_agent_mail,
+        SessionSpec,
+        build_session_owners,
+        build_session_stores,
+        wire_session,
     )
 
     # 입력 큐는 저장소보다 먼저 선다 — 예약의 발화 자리를 저장소를 만드는 자리에서
     # 묶는다(web 은 서버가 이미 들고 있다, v10.130.5).
     input_queue = InputQueue()
-    # monitor·schedule 은 native — 시간을 재는 것도 발화도 이 프로세스 안에서
-    # 일어난다. board 도 env 도 없이 항상 조립된다.
-    monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
-    job_registry = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
-    build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
-    build_snapshot_store(
-        session.session_id
-    )  # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
-    schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
-    # 예약 발화도 같은 큐로 들어온다 — 켜진 예약이 있는 동안 펌프는 끝나지
-    # 않는다 (docs/schedule/DESIGN.md §6.3). 스레드는 배선의 마지막에 켠다.
-    schedule_registry.enqueue = lambda prompt, nickname: input_queue.enqueue(
-        None, prompt, nickname=nickname
+    spec = SessionSpec.for_session(
+        binding=binding,
+        session=session,
+        ctx=ctx,
+        mcp_manager=mcp_manager,
+        knob_args=knob_args,
+        max_turns=max_turns,
+        max_depth=max_depth,
+        verbose=verbose,
+        record_turns=record_turns,
     )
-
-    _disk_hooks = _load_hooks() or None
-    # teammate P1: main 루프에만 레지스트리 주입 (서브에이전트는 도구
-    # 자동 strip). run 은 프로세스 단명이라 종료 시 전원 정리 — 미배달
-    # 회신의 세션-넘김 보존은 P3(manifest/outbox). 생성은 skill dispatch
-    # 앞 (v7.17.0 배선 통일 — `/skill` 의 `SkillLoop` 가 main 레지스트리를 상속),
-    # restore/auto_spawn/waker 배선은 종전 위치 그대로 dispatch 뒤.
-    auditor = None  # 🔎 아래서 만든다 — finally 가 먼저 닿아도 안전
-    agent_registry = build_agent_registry(
-        ctx.session_dir if ctx else None,
-        AgentRuntime(
-            binding=binding,
-            max_turns=max_turns,
-            depth=0,
-            max_depth=max_depth,
-            session=session,
-            hooks_config=_disk_hooks,
-        ),
-        # 모니터 보고·작업 종료 통지의 주소 배달 — 어떤 루프보다 먼저 서야 한다
-        monitors=monitor_registry,
-        jobs=job_registry,
-    )
-    # 종료 시퀀스는 아래 finally 하나로 수렴 (teardown 단일화 — 리뷰 §4.1).
-    # 종전엔 조기-반환 경로들이 각자 나열하다 skill 경로는 registry/MCP,
-    # @agent 경로는 MCP 정리를 누락했다. ``warn_stuck`` 은 메인 펌프
-    # 경로에서만 켠다 (종전 표면 보존).
+    # 종료 시퀀스는 아래 finally 하나로 수렴 (teardown 단일화 — 리뷰 §4.1). 조립도
+    # try 안이다(v10.131.0): 저장소·레지스트리·감사자를 만들다 죽어도 MCP 해제·세션
+    # 마감이 돈다. ``warn_stuck`` 은 메인 펌프 경로에서만 켠다 (종전 표면 보존).
+    stores = owners = None
     warn_stuck = False
     exit_code = 1  # 펌프가 판정을 못 내고 끝나는 길은 없다 — 그래도 "답 없음"
     try:
@@ -1806,111 +1791,59 @@ def run(
         # 는 펌프 안의 라우팅(_ConsoleSurface.route)이 web 의 route_one 과
         # 같은 공용 입구(try_dispatch_agent_or_skill)로 처리한다. 정지 =
         # 큐·에이전트·모니터·예약 전부 조용(QuietPolicy).
-        from agent_cli.harness.auditor import build_auditor
-        from agent_cli.pump import PumpDeps, QuietPolicy, RunRequest, SessionPump
-
-        # 노브는 소유자 넷(ctx·registry·renderer·auditor)이 선 뒤, 복원·auto-spawn
-        # 전에 — `--max-agents` 가 그 게이트다 (v10.43.0).
-        auditor = build_auditor(agent_registry, parent_ctx=ctx)
-        _apply_knobs(
-            knob_args,
-            ctx=ctx,
-            registry=agent_registry,
-            renderer=get_renderer(),
-            auditor=auditor,
-        )
+        # monitor·schedule 은 native — 시간을 재는 것도 발화도 이 프로세스 안에서
+        # 일어난다. board 도 env 도 없이 항상 조립된다.
+        stores = build_session_stores(spec, queue=input_queue)
+        owners = build_session_owners(spec, stores, renderer=get_renderer())
         surface = _ConsoleSurface(
             result_file=result_file,
-            jobs=job_registry,  # 질의가 작업을 남기고 끝나면 깨우기 답도 결과 파일에
-            dispatch=lambda text, stop_event: try_dispatch_agent_or_skill(
-                text,
-                # 결과는 표면이 판정한다 — 종료 코드·결과 파일 한 곳 (v10.124.0)
-                _ConsoleDispatchOutput(report=surface.routed),
-                binding=binding,
-                max_turns=max_turns,
-                verbose=verbose,
-                max_depth=max_depth,
-                ctx=ctx,
-                session=session,
-                graceful_interrupt=False,
-                stop_event=stop_event,
-                agent_registry=agent_registry,
+            jobs=stores.jobs,  # 질의가 작업을 남기고 끝나면 깨우기 답도 결과 파일에
+            # 결과는 표면이 판정한다 — 종료 코드·결과 파일 한 곳 (v10.124.0)
+            dispatch=_command_dispatch(
+                spec,
+                owners,
+                lambda: _ConsoleDispatchOutput(report=surface.routed),
+                graceful_interrupt=_ConsoleSurface.graceful_interrupt,
             ),
         )
         policy = QuietPolicy(
             queue=input_queue,
-            agent_registry=agent_registry,
-            monitors=monitor_registry,
-            schedules=schedule_registry,
-            harness=auditor,
-            jobs=job_registry,
+            agent_registry=owners.agent_registry,
+            monitors=stores.monitors,
+            schedules=stores.schedules,
+            harness=owners.auditor,
+            jobs=stores.jobs,
             on_wait=lambda kind: console.print(
                 f"[{C['muted']}]"
                 + (
-                    _jobs_wait_notice(job_registry)
+                    _jobs_wait_notice(stores.jobs)
                     if kind == "jobs"
-                    else _monitor_wait_notice(monitor_registry)
+                    else _monitor_wait_notice(stores.monitors)
                     if kind == "monitors"
                     else _HARNESS_WAIT_NOTICE
                     if kind == "harness"
-                    else _schedule_wait_notice(schedule_registry)
+                    else _schedule_wait_notice(stores.schedules)
                 )
                 + "[/]"
             ),
         )
-        waker, revived, auto = wire_agent_mail(
-            agent_registry,
-            # 합성 입력 — 화면 대기열에 뜨지 않는다 (web 과 같은 규약).
-            enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True),
+        wired = wire_session(
+            spec,
+            stores,
+            owners,
+            queue=input_queue,
+            surface=surface,
+            policy=policy,
             on_mail_notice=_agent_mail_notice,
-            parent_ctx=ctx,
         )
 
-        # main 루프의 종류 (v10.87.0) — 세션에 하나. 런 도중 주입도 web 과 같다: 예약
-        # 발화가 다음 턴 경계에 요청으로 합류하고, 합성 깨우기는 pump.route 가 소비한다
-        # (펌프는 아래서 만들어지므로 호출 시점에 푸는 콜러블).
-        main_kind = MainLoop(
-            binding=binding,
-            ctx=ctx,
-            session=session,
-            agent_registry=agent_registry,
-            mcp_manager=mcp_manager,
-            dequeue_user_message=input_queue.dequeue_nowait,
-            # run 은 묻지 않는다(StaleGuard) — 그래도 큐는 같은 큐다: 예약 발화와 같은 모양
-            enqueue_user_message=lambda text, nickname: input_queue.enqueue(
-                None, text, nickname=nickname
-            ),
-            route_message=lambda text: pump.route(text),
-            max_turns=max_turns,
-            max_depth=max_depth,
-            verbose=verbose,
-            record_turns=record_turns,
-            hooks_config=_disk_hooks,
-            graceful_interrupt=surface.graceful_interrupt,
-        )
-
-        def _run_main(req: RunRequest):
-            return main_kind.run(main_kind.start(req))
-
-        pump = SessionPump(
-            PumpDeps(
-                queue=input_queue,
-                waker=waker,
-                agent_registry=agent_registry,
-                run_main=_run_main,
-                surface=surface,
-                auditor=auditor,
-                policy=policy,
+        agent_registry = owners.agent_registry
+        if wired.revived:
+            console.print(
+                f"[{C['muted']}]🤝 {wired.revived} resident agent(s) revived[/]"
             )
-        )
-        # 소비자를 다 세운 뒤에 생산자를 켠다 (v10.130.5) — 첫 정산이 꺼져 있던 동안
-        # 지난 발화를 질문으로 남긴다. 그 사이 발화한 예약은 큐에 들어갈 뿐이다.
-        schedule_registry.start()
-
-        if revived:
-            console.print(f"[{C['muted']}]🤝 {revived} resident agent(s) revived[/]")
-        if _auditor_boot_line(auditor):
-            console.print(f"[{C['muted']}]{_auditor_boot_line(auditor)}[/]")
+        if _auditor_boot_line(owners.auditor):
+            console.print(f"[{C['muted']}]{_auditor_boot_line(owners.auditor)}[/]")
         if agent_registry.stale_questions:
             # 열린 질문은 되살린다(§3.9) — 여기 세는 것은 **되살리지 못한**
             # 것, 즉 묻거나 답할 쪽이 돌아오지 않은 질문뿐이다.
@@ -1918,14 +1851,14 @@ def run(
                 f"[{C['muted']}]❓ {agent_registry.stale_questions} unanswered question(s) "
                 f"not restored — the asking agent did not come back[/]"
             )
-        if auto:
+        if wired.auto:
             console.print(
-                f"[{C['muted']}]🤝 {auto} auto-spawn specialist(s) now resident[/]"
+                f"[{C['muted']}]🤝 {wired.auto} auto-spawn specialist(s) now resident[/]"
             )
-        _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
+        _mon_notice = _previous_monitors_notice(spec.session_dir)
         if _mon_notice:
             console.print(_mon_notice, style=C["muted"], markup=False, highlight=False)
-        _sched_notice = _missed_schedules_notice(schedule_registry)
+        _sched_notice = _missed_schedules_notice(stores.schedules)
         if _sched_notice:
             console.print(
                 _sched_notice, style=C["muted"], markup=False, highlight=False
@@ -1942,23 +1875,13 @@ def run(
         input_queue.enqueue(None, query, images=query_images)
         warn_stuck = True
         try:
-            pump.run()
+            wired.pump.run()
             exit_code = surface.exit_code
         except KeyboardInterrupt:
             console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
             exit_code = 130
     finally:
-        _finalize_run(
-            session,
-            ctx,
-            mcp_manager,
-            agent_registry=agent_registry,
-            monitors=monitor_registry,
-            schedules=schedule_registry,
-            harness=auditor,
-            jobs=job_registry,
-            warn_stuck=warn_stuck,
-        )
+        _finalize_run(spec, stores, owners, warn_stuck=warn_stuck)
     # 정리가 끝난 **뒤에** 판정으로 끝낸다 (v10.124.0) — 0 답 · 1 실패/무답 · 130 중단.
     # 잡히지 않은 예외는 여기 오지 않고 전파된다(typer 가 1).
     raise typer.Exit(exit_code)
@@ -2156,34 +2079,14 @@ def _write_result_file(path: str, answer) -> None:
         )
 
 
-def _finalize_run(
-    session,
-    ctx,
-    mcp_manager=None,
-    *,
-    agent_registry=None,
-    monitors=None,
-    schedules=None,
-    harness=None,
-    jobs=None,
-    warn_stuck=False,
-) -> None:
-    """Finalize session after run command — 공용 teardown_session 위임
-    (조립기 v8.39.0: registry 종료→스피너→MCP 해제→세션 저장 순서를 한
-    곳이 소유) + run 표면의 resume 힌트 출력."""
-    from agent_cli.runtime import teardown_session
+def _finalize_run(spec, stores, owners, *, warn_stuck: bool) -> None:
+    """Finalize session after run command — 공용 정리(`runtime.close_session` →
+    `teardown_session`: 생산자 정지→registry 종료→스피너→MCP 해제→세션 저장 순서를
+    한 곳이 소유) + run 표면의 resume 힌트 출력."""
+    from agent_cli.runtime import close_session
 
-    teardown_session(
-        session,
-        ctx,
-        agent_registry=agent_registry,
-        mcp_manager=mcp_manager,
-        monitors=monitors,
-        schedules=schedules,
-        harness=harness,
-        jobs=jobs,
-        warn_stuck=warn_stuck,
-    )
+    close_session(spec, stores, owners, warn_stuck=warn_stuck)
+    session = spec.session
     if session is None:
         return
     console.print(
@@ -2772,14 +2675,6 @@ def web(
 
         TOOLS.update(mcp_tools)
 
-    # 디스크 훅 (.agent-cli/hooks.json) — run 과 동형 배선 (v8.39.0 수리).
-    # 종전엔 web 만 로드하지 않아 채팅 턴·상주 에이전트에서 PreToolUse/
-    # PostToolUse shell 훅이 조용히 미발화했다 (문서 계약엔 모드 제한 없음;
-    # /skill·@agent 디스패치는 자체 로드라 발화 — web 내부에서도 갈렸다).
-    from agent_cli.hooks import load_hooks as _load_hooks
-
-    _disk_hooks = _load_hooks() or None
-
     # 2. Session + ContextManager.
     import sys
 
@@ -2864,44 +2759,44 @@ def web(
             max_depth=max_depth,
         )
 
-    from agent_cli.pump import ForeverPolicy, PumpDeps, RunRequest, SessionPump
+    from agent_cli.pump import ForeverPolicy
+    from agent_cli.runtime import (
+        SessionSpec,
+        build_session_owners,
+        build_session_stores,
+        wire_session,
+    )
     from agent_cli.web.slash import WebDispatchOutput
     from agent_cli.web.surface import WebSurface
 
-    # teammate P1: worker 가 생성(nonlocal)하고 서버 teardown 이 정리.
-    agent_registry = None
-    auditor = None  # 🔎 세션 감사자 핸들 — worker 부트가 채운다 (v10.42.0)
-    # monitor 는 native — worker 부트스트랩을 기다리지 않고 여기서 조립한다
-    # (`--idle-timeout` 술어가 첫 메시지 전에도 이걸 봐야 한다).
-    from agent_cli.runtime import (
-        MainLoop,
-        build_hook_runner,
-        build_job_registry,
-        build_monitor_registry,
-        build_schedule_registry,
-        build_snapshot_store,
+    # 디스크 훅(.agent-cli/hooks.json)은 spec 을 만들 때 읽는다 — run 과 같은 배선
+    # (v8.39.0 수리: 종전 web 만 로드하지 않아 채팅 턴·상주 에이전트에서 shell 훅이
+    # 조용히 미발화했다).
+    spec = SessionSpec.for_session(
+        binding=binding,
+        session=session,
+        ctx=ctx,
+        mcp_manager=mcp_manager,
+        knob_args=knob_args,
+        max_turns=max_turns,
+        max_depth=max_depth,
+        verbose=verbose,
+        record_turns=record_turns,
     )
-
-    # 입력 큐는 서버가 들고 있다 — 배선은 run 과 글자까지 같다 (v10.130.8)
+    # 입력 큐는 서버가 들고 있다 — 배선은 run 과 같다 (v10.130.8)
     input_queue = server.queue
-    monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
-    job_registry = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
-    # 🧵 칩·status.json ``jobs`` (v10.121.0) — 띄움·멈춤·끝남이 스티키 하나로. 배달
-    # (`deliver`)은 워커 부트의 `wire_job_delivery` 가 꽂지만 관찰자는 렌더러의 것이라
-    # 여기서 — 예약의 `on_change` 와 같은 자리. run 은 화면이 없어 꽂지 않는다.
-    job_registry.on_change = renderer.jobs_changed
-    build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
-    build_snapshot_store(
-        session.session_id
-    )  # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
-    # 예약 발화는 사용자 요청처럼 큐로 들어온다 (docs/schedule/DESIGN.md §5). 스레드는
-    # 워커가 배선을 끝낸 뒤에 켠다(v10.130.5) — 워커가 부트에서 죽으면 아무도 읽지
-    # 않는 큐로 발화하고 "발화함" 으로 적었다.
-    schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
-    schedule_registry.enqueue = lambda prompt, nickname: input_queue.enqueue(
-        None, prompt, nickname=nickname
+    # 저장소는 worker 부트스트랩을 기다리지 않고 여기서 조립한다(`--idle-timeout`
+    # 술어가 첫 메시지 전에도 모니터·예약을 봐야 한다). 🧵 칩·status.json ``jobs``
+    # (v10.121.0)와 예약 칩의 관찰자는 렌더러의 것 — run 은 화면이 없어 꽂지 않는다.
+    stores = build_session_stores(
+        spec,
+        queue=input_queue,
+        on_jobs_change=renderer.jobs_changed,
+        on_schedules_change=renderer.broadcast_schedules_changed,
     )
-    schedule_registry.on_change = renderer.broadcast_schedules_changed
+    # teammate P1: 세션 소유자(레지스트리·감사자)는 worker 가 만들고(nonlocal) 서버
+    # teardown 이 정리한다 — 만들기 전에 죽었으면 None.
+    owners = None
 
     def _worker_loop() -> None:
         """Assemble the session and drive the session pump in a background
@@ -2917,56 +2812,22 @@ def web(
              covers ``@``/``/`` listings + invocations + not-found
           3. Otherwise the message is a conversation turn → ``run_loop``.
         """
+        nonlocal owners
         web_output = WebDispatchOutput(renderer)
-        # teammate P1: 서버 수명의 레지스트리 — 매 run_loop 에 주입되어
-        # teammate 가 run 경계를 넘어 생존한다. 종료는 서버 teardown 의
-        # teardown_session (아래 finally). 조립은 run 과 공용
-        # (build_agent_registry/wire_agent_mail — v8.39.0 조립기): runtime
-        # 프리필로 restore/auto-spawn 분이 스폰 도구 호출 없이 웹 창 첫
-        # 접촉을 받아도 돌고, hooks_config 는 run 과 동형 배선(수리).
-        from agent_cli.runtime import (
-            AgentRuntime,
-            build_agent_registry,
-            wire_agent_mail,
+        # 서버 수명의 레지스트리 — 매 런에 주입되어 teammate 가 런 경계를 넘어
+        # 생존한다. 감사 런 진행 중 → status.json `auditing` (board "결과 확인 중").
+        owners = build_session_owners(
+            spec, stores, renderer=renderer, on_harness_change=renderer.note_harness
         )
-
-        nonlocal agent_registry, auditor
-        agent_registry = build_agent_registry(
-            ctx.session_dir if ctx else None,
-            AgentRuntime(
-                binding=binding,
-                max_turns=max_turns,
-                depth=0,
-                max_depth=max_depth,
-                session=session,
-                hooks_config=_disk_hooks,
-            ),
-            # 모니터 보고·작업 종료 통지의 주소 배달 — 어떤 루프보다 먼저 서야 한다
-            monitors=monitor_registry,
-            jobs=job_registry,
-        )
-        _registry = agent_registry  # 클로저 고정 (nonlocal 재대입과 분리)
-
-        # P4 (D3): idle 자동 재기동 — 조율 로직은 MailWaker (단위 테스트
-        # 가능한 순수 조율자) 가 소유; restore/auto_spawn 포함 조립 공용.
-        from agent_cli.harness.auditor import build_auditor
-
-        # 감사 런 진행 중 → status.json `auditing` (board "결과 확인 중")
-        auditor = build_auditor(
-            _registry, parent_ctx=ctx, on_change=renderer.note_harness
-        )
-        # 노브 적용 — 소유자 넷이 선 뒤, 복원·auto-spawn 전 (v10.43.0).
-        _apply_knobs(
-            knob_args, ctx=ctx, registry=_registry, renderer=renderer, auditor=auditor
-        )
+        registry = owners.agent_registry
 
         # 서버 손잡이 — 한 블록 (v10.130.7). 제약은 하나: 에이전트가 살아나기(복원·
-        # auto-spawn, 아래 `wire_agent_mail`) 전에 서버가 레지스트리를 안다. 그 전까지
+        # auto-spawn, 아래 `wire_session`) 전에 서버가 레지스트리를 안다. 그 전까지
         # 핸들러는 None 을 견딘다(에이전트 창 503·🔌 빈 목록·소유자 없는 노브 거절).
         # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.
-        server.agent_registry = _registry
+        server.agent_registry = registry
         server.mcp_manager = mcp_manager  # 🔌 칩 (읽기 전용, v9.2.0)
-        server.auditor = auditor  # 🔎 칩(`/api/knobs/auditor`)이 켜고 끈다
+        server.auditor = owners.auditor  # 🔎 칩(`/api/knobs/auditor`)이 켜고 끈다
         # 감사 진행 수가 바뀌면 렌더러가 🔎 상태 한 장을 다시 받아 싣는다 (v10.45.0)
         renderer.knob_state = lambda name: _knob_state(name, server)
         # 노브 전부의 초기 sticky — 칩·status.json(문법)이 첫 요청 전에도 사실을 본다.
@@ -2979,77 +2840,38 @@ def web(
             server=server,
             ctx=ctx,
             binding=binding,
-            dispatch=lambda text, stop_event: try_dispatch_agent_or_skill(
-                text,
-                web_output,
-                agent_registry=_registry,
-                binding=binding,
-                max_turns=max_turns,
-                verbose=verbose,
-                max_depth=max_depth,
-                ctx=ctx,
-                session=session,
-                graceful_interrupt=True,
-                stop_event=stop_event,
+            dispatch=_command_dispatch(
+                spec,
+                owners,
+                lambda: web_output,
+                graceful_interrupt=WebSurface.graceful_interrupt,
             ),
         )
-        _waker, revived, auto = wire_agent_mail(
-            _registry,
-            # 합성 입력 — 화면 대기열에 뜨지 않는다 (run 과 같은 규약).
-            enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True),
-            parent_ctx=ctx,
-        )
-
-        def _run_main(req: RunRequest):
-            return main_kind.run(main_kind.start(req))
-
-        # run 과 동형 (v8.39.0 수리: 종전 web 은 hooks_config 미전달로 채팅 턴에서 디스크
-        # 훅이 미발화했다) — 종류 하나가 그 동형을 보장한다 (v10.87.0).
-        main_kind = MainLoop(
-            binding=binding,
-            ctx=ctx,
-            session=session,
-            agent_registry=agent_registry,
-            mcp_manager=mcp_manager,
-            dequeue_user_message=input_queue.dequeue_nowait,
-            enqueue_user_message=lambda text, nickname: input_queue.enqueue(
-                None, text, nickname=nickname
-            ),
-            route_message=lambda text: pump.route(text),
-            max_turns=max_turns,
-            max_depth=max_depth,
-            verbose=verbose,
-            record_turns=record_turns,
-            hooks_config=_disk_hooks,
-            graceful_interrupt=surface.graceful_interrupt,
-        )
-
         # 세션 펌프 (v10.33.1, docs/pump/DESIGN.md): run 과 같은 루프 —
         # 수명은 ForeverPolicy(서버 종료의 SHUTDOWN 까지), 표면은 WebSurface.
-        pump = SessionPump(
-            PumpDeps(
-                queue=input_queue,
-                waker=_waker,
-                agent_registry=_registry,
-                run_main=_run_main,
-                surface=surface,
-                auditor=auditor,
-                policy=ForeverPolicy(),
-            )
+        wired = wire_session(
+            spec,
+            stores,
+            owners,
+            queue=input_queue,
+            surface=surface,
+            policy=ForeverPolicy(),
         )
-        # 소비자를 다 세운 뒤에 생산자를 켠다 (v10.130.5) — run 과 같은 자리.
-        schedule_registry.start()
         # 미배달 메일은 입력창 위 대기열에 사용자 요청과 같은 줄로 선다(v10.51.0)
-        server.mail_source = _registry.pending_mail
-        _registry.on_pending_change = server.broadcast_queue
+        server.mail_source = registry.pending_mail
+        registry.on_pending_change = server.broadcast_queue
         server.broadcast_queue()  # resume 이 되살린 미배달 메일도 줄을 선다
         _announce_agent_boot(
-            renderer, revived, auto, agent_registry.stale_questions, auditor=auditor
+            renderer,
+            wired.revived,
+            wired.auto,
+            registry.stale_questions,
+            auditor=owners.auditor,
         )
-        _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
+        _mon_notice = _previous_monitors_notice(spec.session_dir)
         if _mon_notice:
             renderer.status("running", _mon_notice)
-        pump.run()
+        wired.pump.run()
 
     def _worker_loop_guarded() -> None:
         """worker 사망 = 세션 무력화(큐만 쌓이고 소비 불가) — 조용히 죽는
@@ -3171,11 +2993,11 @@ def web(
             is_active=lambda: web_instance_is_active(
                 renderer,
                 server,
-                agent_registry,
-                monitor_registry,
-                schedule_registry,
-                harness=auditor,
-                jobs=job_registry,
+                owners.agent_registry if owners is not None else None,
+                stores.monitors,
+                stores.schedules,
+                harness=owners.auditor if owners is not None else None,
+                jobs=stores.jobs,
             ),
             timeout_s=idle_timeout,
             on_idle=lambda: setattr(server_obj, "should_exit", True),
@@ -3204,21 +3026,12 @@ def web(
         server.shutdown()
         worker.join(timeout=2.0)
         console.print(f"[{C['muted']}]Saving session...[/]")
-        # 공용 teardown (v8.39.0 조립기): 상주 에이전트 전원 종료 → MCP
-        # 해제 → 세션 저장 — run 의 종료 경로들과 같은 시퀀스 소유자.
+        # 공용 정리 (v8.39.0 조립기 → v10.131.0 `close_session`): 생산자 정지 →
+        # 상주 에이전트 전원 종료 → MCP 해제 → 세션 저장 — run 과 같은 시퀀스 소유자.
         try:
-            from agent_cli.runtime import teardown_session
+            from agent_cli.runtime import close_session
 
-            teardown_session(
-                session,
-                ctx,
-                agent_registry=agent_registry,
-                mcp_manager=mcp_manager,
-                monitors=monitor_registry,
-                schedules=schedule_registry,
-                harness=auditor,
-                jobs=job_registry,
-            )
+            close_session(spec, stores, owners, warn_stuck=False)
             console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
         except Exception as exc:
             console.print(

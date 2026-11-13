@@ -378,14 +378,14 @@ class TestSubagentsInheritTheSessionValues:
 
 class TestRunBootApplies:
     def test_apply_knobs_helper_orders_cli_over_env(self, tmp_path, monkeypatch):
-        from agent_cli.main import _apply_knobs
+        from agent_cli.runtime import apply_knobs
 
         monkeypatch.setenv("AGENT_CLI_MAX_AGENTS", "3")
         monkeypatch.setenv("AGENT_CLI_THINKING", "on")
         ctx = ContextManager(tmp_path / "s", max_context_tokens=10_000)
         reg = _Registry()
         auditor = SimpleNamespace(enabled=False)
-        _apply_knobs(
+        apply_knobs(
             {"max_agents": 7},
             ctx=ctx,
             registry=reg,

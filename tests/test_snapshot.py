@@ -617,7 +617,38 @@ class TestToolAdvertising:
             and isinstance(n.func, ast.Name)
             and n.func.id == "build_snapshot_store"
         ]
-        assert len(calls) == 2, f"호출부가 {len(calls)}개 — run/web 둘 다여야 한다"
+        assert calls == [], "호스트가 직접 부른다 — 조립이 두 벌로 돌아갔다"
+        # v10.131.0: 자리는 run·web 공용 조립 `runtime.build_session_stores` 하나이고,
+        # 두 호스트가 그것을 부른다 — 한쪽만 고치면 run 과 web 이 갈리던 자리.
+        rt = Path(__import__("agent_cli.runtime", fromlist=["x"]).__file__).read_text()
+        tree = ast.parse(rt)
+        (stores,) = [
+            n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == "build_session_stores"
+        ]
+        inside = [
+            n
+            for n in ast.walk(stores)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "build_snapshot_store"
+        ]
+        everywhere = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "build_snapshot_store"
+        ]
+        assert len(inside) == len(everywhere) == 1
+        for host in ("run", "web"):
+            (fn,) = [
+                n
+                for n in ast.parse(src).body
+                if isinstance(n, ast.FunctionDef) and n.name == host
+            ]
+            assert "build_session_stores(" in ast.get_source_segment(src, fn), host
 
 
 def test_scan_cost_is_bounded_when_unchanged(ws):

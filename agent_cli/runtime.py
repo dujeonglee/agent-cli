@@ -16,6 +16,11 @@
   경로 4갈래 + web 1갈래가 각자 나열했고, 그 결과 2경로는 MCP 미해제
   (stdio 자식 프로세스 잔존), 1경로는 registry 미종료였다 — 모든 경로가
   이 함수 하나로 수렴하면 그 누락 클래스가 구조적으로 사라진다.
+- 세션 조립 (v10.131.0) — :class:`SessionSpec` → :func:`build_session_stores` →
+  :func:`build_session_owners` → :func:`wire_session` → :func:`close_session`.
+  값을 돌려주는 평범한 함수 넷이라 run/web 은 위에서 아래로 읽히는 스크립트로
+  남고(화면·서버 손잡이·스레드·수명만 호스트의 것), 종전 두 벌이던 조립의 순서
+  차이는 한 곳의 순서가 됐다. 이 모듈은 `main` 을 import 하지 않는다.
 """
 
 from __future__ import annotations
@@ -366,6 +371,253 @@ def teardown_session(
         from agent_cli.context.session import finalize_session
 
         finalize_session(session, ctx)
+
+
+# ── 세션 조립 — run·web 이 같은 함수 넷 (v10.131.0) ─────────────────────────────
+#
+# 종전엔 `main.run()`·`main.web()` 이 같은 세션을 두 번 조립했다 — 세션에 뭔가
+# 붙을 때마다 두 곳을 고치고, 한쪽만 고친 비대칭이 버그가 됐다(v10.31.2·v10.32.1,
+# `pump.py` 머리말). 지금은 값을 돌려주는 평범한 함수 넷이고, 호스트는 위에서
+# 아래로 읽히는 스크립트로 남는다: 호스트마다 다른 것(화면·서버 손잡이·스레드·
+# 수명)은 호스트에, 호스트마다 다른 값은 기본값 None 의 키워드 인자로만 들어온다.
+# 이 함수들은 어느 호스트에서 불리는지 모른다.
+
+
+@dataclass(frozen=True, kw_only=True)
+class SessionSpec:
+    """세션이 무엇인가 — 부트 단계(공급자·MCP·세션 고르기·ctx)가 정한 것. 살아 있는
+    것(스레드·레지스트리)은 없다. 디스크 훅은 spec 을 만들 때 읽는다
+    (:meth:`for_session`)."""
+
+    binding: Any
+    session: Any
+    ctx: Any
+    mcp_manager: Any
+    knob_args: dict | None
+    hooks_config: dict | None
+    max_turns: int
+    max_depth: int
+    verbose: bool
+    record_turns: bool
+
+    @classmethod
+    def for_session(
+        cls,
+        *,
+        binding,
+        session,
+        ctx,
+        mcp_manager,
+        knob_args: dict | None,
+        max_turns: int,
+        max_depth: int,
+        verbose: bool,
+        record_turns: bool,
+    ) -> SessionSpec:
+        """부트가 정한 값 + 디스크 훅(`.agent-cli/hooks.json`, 순수 읽기·캐시) — 그 훅이
+        `AgentRuntime`(상주 에이전트)과 `MainLoop`(main 루프) 양쪽에 닿는다."""
+        from agent_cli.hooks import load_hooks
+
+        return cls(
+            binding=binding,
+            session=session,
+            ctx=ctx,
+            mcp_manager=mcp_manager,
+            knob_args=knob_args,
+            hooks_config=load_hooks() or None,
+            max_turns=max_turns,
+            max_depth=max_depth,
+            verbose=verbose,
+            record_turns=record_turns,
+        )
+
+    @property
+    def session_dir(self):
+        return self.ctx.session_dir if self.ctx else None
+
+
+@dataclass(frozen=True, kw_only=True)
+class SessionStores:
+    """스레드를 띄우지 않는 저장소들 — 모니터·백그라운드 작업·예약."""
+
+    monitors: Any
+    jobs: Any
+    schedules: Any
+
+
+@dataclass(frozen=True, kw_only=True)
+class SessionOwners:
+    """세션을 소유하는 둘 — 에이전트 레지스트리와 감사자. 아직 아무것도 살아 있지
+    않다(복원·auto-spawn 은 :func:`wire_session`)."""
+
+    agent_registry: Any
+    auditor: Any
+
+
+@dataclass(frozen=True, kw_only=True)
+class WiredSession:
+    """배선이 끝난 세션 — ``pump.run()`` 만 남았다. ``revived``·``auto`` 는 호스트가
+    자기 화면으로 알린다."""
+
+    pump: Any
+    revived: int
+    auto: int
+
+
+def build_session_stores(
+    spec: SessionSpec, *, queue, on_jobs_change=None, on_schedules_change=None
+) -> SessionStores:
+    """모니터 → 작업 → 훅 러너 → 스냅샷 저장소 → 예약. 예약의 발화 자리(``enqueue``)는
+    여기서 ``queue`` 에 묶는다 — 스레드는 :func:`wire_session` 의 끝에서 켠다.
+    ``on_*_change`` 는 화면이 있는 호스트의 관찰자(web 칩·status.json)."""
+    monitors = build_monitor_registry(spec.session_dir)
+    jobs = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
+    if on_jobs_change is not None:
+        jobs.on_change = on_jobs_change  # 띄움·멈춤·끝남 → 스티키 하나 (v10.121.0)
+    build_hook_runner()  # Python 훅 — 네 루프가 같은 러너 (v10.35.0)
+    # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
+    build_snapshot_store(spec.session.session_id)
+    schedules = build_schedule_registry(spec.session_dir)
+    # 예약 발화는 사용자 요청처럼 같은 큐로 들어온다 (docs/schedule/DESIGN.md §5·§6.3)
+    schedules.enqueue = lambda prompt, nickname: queue.enqueue(
+        None, prompt, nickname=nickname
+    )
+    if on_schedules_change is not None:
+        schedules.on_change = on_schedules_change
+    return SessionStores(monitors=monitors, jobs=jobs, schedules=schedules)
+
+
+def apply_knobs(knob_args, *, ctx, registry, renderer, auditor) -> None:
+    """부팅 노브 적용 — 소유자 넷이 선 뒤, 상주 에이전트 복원·auto-spawn **전에**
+    (상한이 그 게이트다, v10.43.0)."""
+    from agent_cli.knobs import KnobSession, apply_all, resolve_all
+
+    apply_all(
+        KnobSession(ctx=ctx, registry=registry, renderer=renderer, auditor=auditor),
+        resolve_all(knob_args),
+    )
+
+
+def build_session_owners(
+    spec: SessionSpec, stores: SessionStores, *, renderer, on_harness_change=None
+) -> SessionOwners:
+    """에이전트 레지스트리 → 감사자 → 노브 적용. 레지스트리는 main 루프에만 주입된다
+    (서브에이전트는 도구가 자동으로 빠진다). 모니터 보고·작업 종료 통지의 주소 배달은
+    여기서 — 어떤 루프보다 먼저 서야 한다(`wire_monitor_delivery`).
+    ``on_harness_change`` — 감사 진행 수가 바뀔 때(web: status.json ``auditing``)."""
+    from agent_cli.harness.auditor import build_auditor
+
+    registry = build_agent_registry(
+        spec.session_dir,
+        AgentRuntime(
+            binding=spec.binding,
+            max_turns=spec.max_turns,
+            depth=0,
+            max_depth=spec.max_depth,
+            session=spec.session,
+            hooks_config=spec.hooks_config,
+        ),
+        monitors=stores.monitors,
+        jobs=stores.jobs,
+    )
+    auditor = build_auditor(registry, parent_ctx=spec.ctx, on_change=on_harness_change)
+    apply_knobs(
+        spec.knob_args,
+        ctx=spec.ctx,
+        registry=registry,
+        renderer=renderer,
+        auditor=auditor,
+    )
+    return SessionOwners(agent_registry=registry, auditor=auditor)
+
+
+def wire_session(
+    spec: SessionSpec,
+    stores: SessionStores,
+    owners: SessionOwners,
+    *,
+    queue,
+    surface,
+    policy,
+    on_mail_notice=None,
+) -> WiredSession:
+    """메일 복원·자동 스폰(`wire_agent_mail`) → `MainLoop` → `SessionPump` → 예약 스레드.
+    **소비자를 다 세운 뒤에 생산자를 켠다** 가 이 함수 하나에서 보장된다 — 도중에
+    죽으면 예약은 켜지지 않는다. ``surface``·``policy`` 는 호스트의 것(펌프 표면·수명),
+    ``on_mail_notice`` 는 main 이 바쁠 때의 메일 알림(run 만 — web 은 대기열이 그 자리)."""
+    from agent_cli.pump import PumpDeps, SessionPump
+
+    registry = owners.agent_registry
+    waker, revived, auto = wire_agent_mail(
+        registry,
+        # 합성 입력 — 화면 대기열에 뜨지 않는다.
+        enqueue_wake=lambda cid, t: queue.enqueue(cid, t, system=True),
+        on_mail_notice=on_mail_notice,
+        parent_ctx=spec.ctx,
+    )
+    # main 루프의 종류 (v10.87.0) — 세션에 하나. 런 도중 주입: 예약 발화가 다음 턴
+    # 경계에 요청으로 합류하고, 합성 깨우기는 pump.route 가 소비한다(펌프는 아래서
+    # 만들어지므로 호출 시점에 푸는 콜러블).
+    main_kind = MainLoop(
+        binding=spec.binding,
+        ctx=spec.ctx,
+        session=spec.session,
+        agent_registry=registry,
+        mcp_manager=spec.mcp_manager,
+        dequeue_user_message=queue.dequeue_nowait,
+        enqueue_user_message=lambda text, nickname: queue.enqueue(
+            None, text, nickname=nickname
+        ),
+        route_message=lambda text: pump.route(text),
+        max_turns=spec.max_turns,
+        max_depth=spec.max_depth,
+        verbose=spec.verbose,
+        record_turns=spec.record_turns,
+        hooks_config=spec.hooks_config,
+        graceful_interrupt=surface.graceful_interrupt,
+    )
+    pump = SessionPump(
+        PumpDeps(
+            queue=queue,
+            waker=waker,
+            agent_registry=registry,
+            run_main=lambda req: main_kind.run(main_kind.start(req)),
+            surface=surface,
+            auditor=owners.auditor,
+            policy=policy,
+        )
+    )
+    # 첫 정산이 꺼져 있던 동안 지난 발화를 질문으로 남긴다. 펌프가 돌기 전에 발화한
+    # 예약은 큐에 들어갈 뿐이다 (v10.130.5).
+    stores.schedules.start()
+    return WiredSession(pump=pump, revived=revived, auto=auto)
+
+
+def close_session(
+    spec: SessionSpec,
+    stores: SessionStores | None,
+    owners: SessionOwners | None,
+    *,
+    warn_stuck: bool,
+) -> None:
+    """세션 정리 — `teardown_session` 으로. 조립 도중 죽었으면 ``stores``·``owners`` 가
+    None 이다: 있는 것만 정리하고, MCP 해제·세션 마감은 늘 돈다.
+
+    ``owners`` 는 통째로만 선다 — 레지스트리를 만든 뒤 감사자·노브에서 죽으면 그
+    레지스트리는 여기 닿지 않는다(종전 호스트는 `shutdown_all` 까지 불렀다). 복원
+    전이라 멈출 에이전트가 없고, `shutdown_all` 의 마지막 저장이 빈 명단으로
+    ``agents.json`` 을 덮어쓰는 일도 그 길에서는 없다."""
+    teardown_session(
+        spec.session,
+        spec.ctx,
+        agent_registry=owners.agent_registry if owners is not None else None,
+        mcp_manager=spec.mcp_manager,
+        monitors=stores.monitors if stores is not None else None,
+        schedules=stores.schedules if stores is not None else None,
+        harness=owners.auditor if owners is not None else None,
+        jobs=stores.jobs if stores is not None else None,
+        warn_stuck=warn_stuck,
+    )
 
 
 # ── 루프 포트 — 종류마다 `make_ports` (v10.87.0 LoopKind; 종전 `ports_for_*` 넷) ──

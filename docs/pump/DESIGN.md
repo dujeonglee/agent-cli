@@ -158,6 +158,15 @@ class PumpSurface(Protocol):
 
 ### 3.4 조립 — `runtime.assemble_main_session(...)`
 
+> **v10.131.0 현재**: 이 절의 `assemble_main_session` 은 만들어지지 않았고, 조립은
+> `runtime` 의 값을 돌려주는 함수 넷이다 — `SessionSpec.for_session`(부트가 정한 것 +
+> 디스크 훅) → `build_session_stores(spec, *, queue, on_jobs_change, on_schedules_change)`
+> → `build_session_owners(spec, stores, *, renderer, on_harness_change)` →
+> `wire_session(spec, stores, owners, *, queue, surface, policy, on_mail_notice)`
+> (메일 복원 → `MainLoop` → `SessionPump` → 예약 스레드) → `close_session`. 호스트가
+> 꽂는 것은 표면·수명 정책·화면(부트 알림)·web 의 서버 손잡이와 스레드 배치뿐이고,
+> 호스트별 값은 기본값 None 의 `on_*` 키워드로만 들어온다. 아래는 v10.33.0 당시 설계.
+
 지금 run(1381-1465) 과 web(2401-2437) 이 각자 하는 것: `build_agent_registry`
 → `wire_agent_mail` → 부트 알림 → 이전 모니터 통지. 한 함수로:
 

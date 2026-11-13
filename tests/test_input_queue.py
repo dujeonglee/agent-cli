@@ -108,15 +108,20 @@ class TestSyntheticInput:
     def test_wake_entry_point_marks_it_in_both_hosts(self):
         """깨우기 진입점이 MailWaker 의 호출 규약(conn_id, text)을 받으면서 플래그를
         붙인다 — 배선이 되돌아가면 여기서 잡힌다. v10.130.8 부터 run·web 이 같은
-        큐에 같은 람다를 쓴다(종전 web 은 `server.enqueue_system` 대리 메서드)."""
+        큐에 같은 람다를 쓰고(종전 web 은 `server.enqueue_system` 대리 메서드),
+        v10.131.0 부터 그 람다는 조립 함수(`runtime.wire_session`) 한 곳에 있다."""
         import inspect
 
         import agent_cli.main as main_mod
+        from agent_cli import runtime
 
-        wake = "enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True)"
-        assert inspect.getsource(main_mod).count(wake) == 2, "run·web 두 호스트 모두"
+        wake = "enqueue_wake=lambda cid, t: queue.enqueue(cid, t, system=True)"
+        assert inspect.getsource(runtime.wire_session).count(wake) == 1
+        main_src = inspect.getsource(main_mod)
+        assert "enqueue_wake" not in main_src, "호스트가 깨우기를 따로 배선한다"
+        assert main_src.count("queue=input_queue,\n") >= 2, "두 호스트가 큐를 넘긴다"
         # 그 람다 모양 그대로 넣으면 화면엔 안 뜨고 워커엔 간다
         q = InputQueue()
-        enqueue_wake = eval(wake.split("=", 1)[1], {"input_queue": q})
+        enqueue_wake = eval(wake.split("=", 1)[1], {"queue": q})
         enqueue_wake(None, "wake")
         assert q.snapshot() == [] and q.dequeue_nowait()["system"] is True
