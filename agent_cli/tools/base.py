@@ -88,6 +88,11 @@ class RunContext:
     #: 묶어 둔 콜러블 — 모르는 이름이면 None. `tool_help` 와 A5 자동 전문이 같은
     #: 글을 내도록 한 출처. 루프 상수라 위 캐시 조건에 맞는다.
     tool_guide: Callable[[str], str | None] | None = None
+    #: 이 루프가 광고하는 도구 이름 — 항상 있는 도구(`complete`)까지. 내장은 프롬프트
+    #: 순서, 레지스트리가 모르는 이름(MCP)은 그 뒤에 이름순. `tool_help` 가 모르는
+    #: 이름을 받았을 때 이 목록을 그대로 나열한다. 루프가 `tool_guide` 와 함께 묶어
+    #: 준다(도구가 레지스트리를 올려다보지 않게). 루프 상수라 위 캐시 조건에 맞는다.
+    tool_names: tuple[str, ...] = ()
 
 
 # ── Oversized-output policy (ONE policy, every tool) ─────────────

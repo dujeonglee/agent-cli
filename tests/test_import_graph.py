@@ -37,8 +37,6 @@ CYCLE_AVOIDING_LAZY: set[tuple[str, str]] = {
     ("context.render", "tools.registry"),
     ("dialects.base", "tools"),
     ("dialects.base", "tools.registry"),
-    # ③ 낱개.
-    ("tools.tool_help", "tools.registry"),  # effective_tool_names
 }
 
 

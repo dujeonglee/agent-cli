@@ -356,13 +356,12 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 - **모듈 수준 import 순환은 0 이다.** `tests/test_import_graph.py::test_no_module_level_import_cycle` 이 지킨다.
 - **순환을 피하려고 지연인 import** — 대상 모듈이 모듈 수준 import 만으로 출발 모듈에 닿는 간선 — 는 테스트 안의 이름 붙은 목록
   `CYCLE_AVOIDING_LAZY` 와 정확히 같아야 한다(`test_cycle_avoiding_lazy_imports_are_the_named_list`). 간선 목록 자체는 테스트가 주인이다.
-  세 무리가 있다:
+  두 무리가 있다:
   - **루프 엔진이 세션·구체 종류를 올려다본다** — `loop.core`·`loop.dispatch`·`loop.kind`·`loop.tool_bridge` → `runtime`
     (세션 자원 `browser_resource`·`skills_resource`·`snapshot_resource`, 깨우기 판정 `wake_sources`·`arrived_mail`·`harness_work_running`,
     `release_owner`, `AgentRuntime`)·`subagent.agents_live`(`main_registry`·`tool_agent`·메일 레코드)·`subagent.oneshot`(`tool_delegate`),
     `loop.skill_invoke` → `skills.executor`(`SkillLoop`).
   - **아래층이 도구 목록을 읽는다** — `context._file_extract`·`context.render`·`dialects.base` → `tools`(`TOOLS`).
-  - **낱개** — `tools.tool_help` → `tools.registry`(`effective_tool_names`).
 - 그 밖의 지연 import 는 순환과 무관하고 가드하지 않는다. 출발 모듈로는 `main`·`runtime`·`prompts.inventory` 에 가장 많다.
   이유는 자리마다 다르다 — 예컨대 `main` 의 `web` 명령은 `agent_cli.web.server`(fastapi 선택 의존성)를 명령 안에서 import 해,
   없으면 그 명령만 안내와 함께 실패한다.
