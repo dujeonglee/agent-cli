@@ -6,6 +6,7 @@
 > - 고칠 때: 파일이 생기거나 없어지거나 이름·역할이 바뀔 때, 의존 방향이 바뀔 때, 데이터 구조·흐름이 바뀔 때. 커밋마다 고치는 문서가 아니다.
 > - `tests/test_architecture_doc.py` 가 지키는 것:
 >   §2 트리의 경로가 전부 있다 · `agent_cli/` 의 `.py` 와 `web/static/` 의 `app.js`·`js/*.js` 가 전부 §2 에 있다 · §2 의 줄은 200자 이하이고 줄 수 표기가 없다.
+> - `tests/test_import_graph.py` 가 지키는 것: 모듈 수준 import 순환 0 · 순환을 피하는 지연 import 는 테스트의 이름 붙은 목록과 같다(§3).
 
 ---
 
@@ -329,107 +330,45 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 
 ## 3. 모듈 의존성 그래프
 
-### 3.1 전체 의존성 플로우
+여기서 **모듈 수준 import** 는 모듈이 import 될 때 실행되는 import(모듈·클래스 본문, 모듈 수준 `if`/`try` 안,
+`if TYPE_CHECKING:` 블록 제외), **지연 import** 는 함수 본문 안의 import 다. 정의와 계산은 `tests/import_graph.py`.
 
-```
-┌─────────────┐
-│  main.py    │ ← __main__.py, agent-cli.py
-│ (CLI 진입)  │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  loop.py    │
-│ (에이전트   │
-│  루프)      │
-└──────┬──────┘
-       ├────────┬────────┬────────┬────────┐
-       ▼        ▼        ▼        ▼        ▼
-┌──────────┐┌───────┐┌────────┐┌────────┐┌──────────┐
-│providers/││tools/ ││context/││prompts/││wire_     │
-│          ││       ││        ││        ││formats/  │
-│anthropic ││regis- ││manager ││system_ ││base      │
-│openai_   ││try    ││overflow││prompt  ││json_fc   │
-│compat    ││read_  ││token_  ││        ││  (parser │
-│http      ││write_ ││estima- ││        ││  + repair│
-│capab.    ││edit_  ││tor     ││        ││  + rules)│
-│base      ││shell  ││session ││        ││registry  │
-│          ││fetch  ││        ││        ││+ all_    │
-│          ││dele-  ││        ││        ││system_   │
-│          ││gate   ││        ││        ││user_     │
-│          ││action_││        ││        ││prefixes()│
-│          ││summary││        ││        ││          │
-└──────────┘└───────┘└────────┘└────────┘└──────────┘
-       │                  │         │
-       ▼                  ▼         ▼
-┌──────────┐       ┌──────────┐┌──────────┐
-│config.py │       │render.py ││models.   │
-│          │       │          ││json      │
-└──────────┘       └──────────┘└──────────┘
-```
+### 3.1 층
 
-### 3.2 모듈별 import 관계
+최상위 패키지·모듈을 모듈 수준 import 방향으로 쌓은 것이다. 각 항목은 아래 층의 것만 모듈 수준에서 import 한다
+(같은 층끼리는 서로 import 하지 않는다). 위층으로 가는 import 는 전부 지연 import 다(§3.2).
 
-**순환 의존 없음.** 단방향 흐름: config → capabilities → base → adapters → loop → main
+| 층 | 항목 |
+|----|------|
+| 6 | `runtime` · `subagent/` · `skills/` · `harness/` |
+| 5 | `loop/` · `__main__` |
+| 4 | `main` · `recovery/` · `mcp/` · `browser` |
+| 3 | `context/` · `prompts/` · `providers/` · `tools/` (한 묶음) · `web/` |
+| 2 | `render/` · `pump` · `setup` |
+| 1 | `config` · `dialects/` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` |
+| 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `web_sources` · `agent_icon` · `agents/` |
 
-```
-config.py           → (외부만: json, pathlib)
-constants.py        → (외부만: 없음, 순수 상수)
-verbose.py          → fsio(append_line) — providers/http, loop 가 공유
-providers/capabilities.py → config
-providers/base.py   → providers/capabilities
-providers/http.py   → verbose, render (lazy), context/overflow
-                      (ContextOverflowError·is_context_overflow·parse_overflow_amounts
-                       — 400 overflow 를 경계에서 typed error 로 승격. context/overflow
-                       는 내부 의존 0 이라 acyclic)
-providers/*.py      → providers/base, providers/capabilities, providers/http
-dialects/base   → (외부만: dataclasses, typing)
-dialects/recovery/json   → thinking_tags (외부: json, re) — JSON 수리·진단·op 추출 (옛 _json_repair/_json_diag/json_fc 블록)
-dialects/recovery/tagged → (외부만: re; 지연: tools/registry — 등록 도구명 앵커) — 태그 변종 구제
-dialects/recovery        → (외부만: re) — 인용 영역 공용 앞단
-dialects/spec   → (외부만: dataclasses, enum, re) — 데이터
-dialects/engine → dialects/base, dialects/spec, dialects/recovery(+tagged), thinking_tags, (지연: grammar, tools/registry)
-dialects/specs/* → dialects/spec, dialects/base(NO_ACTION_FRAMING)
-dialects/__init__ → dialects/base, dialects/engine, dialects/specs/{json_fc,xml_fc,hermes_json,glm_argkey} (넷 다 `Dialect(spec)` 직접 등록 — v10.0.1 에서 json_fc/xml_fc 껍데기 클래스 삭제)
-tools/result.py     → (외부만: dataclasses, 순수 데이터 타입)
-tools/read_file.py  → tools/result, (외부만: re, zlib, pathlib)
-tools/_confine.py   → render (lazy: guard 시 confirm), (외부만: os, re, shlex, pathlib)
-tools/edit_file.py  → tools/read_file, tools/result, tools/_confine (lazy)
-tools/shell.py      → jobs, tools/result, tools/_confine (lazy)
-tools/write_file.py → tools/result, tools/read_file (format_hashlines), tools/_confine (lazy)
-tools/history.py    → tools/result, context/session
-harness/jobs.py     → context/session, loop/kind, resource_loader (+ lazy: runtime, subagent/runner)
-harness/auditor.py  → constants, harness/jobs
-subagent/oneshot.py → loop/kind, tools/result, subagent/profiles·report (+ lazy: subagent/runner·agents_live)
-subagent/resident_loop.py → loop/kind, tools/result (+ lazy: prompts/system_prompt, runtime, subagent/runner)
-subagent/runner.py  → (전부 lazy: context/manager, render, hooks — 순환 회피)
-loop/kind.py        → (lazy: agent_cli.loop.run_loop 호출 시점, runtime — 순환 회피)
-subagent/profiles.py→ resource_loader
-subagent/agents_live.py → tools/result, constants, context/session (+ lazy: subagent/runner·profiles, render, context/token_estimator)
-tools/agent_tool.py → tools/base, tools/result
-tools/registry.py   → tools/base + 12개 tool 모듈 (인스턴스 수집). detectors는 validate_tool_input을 lazy import (registry→tool→recovery 순환 회피)
-context/token_est.  → (외부만: 없음)
-context/overflow.py → (no internal deps — pure error-string patterns)
-context/manager.py  → context/token_estimator, tools/registry (lazy: summary_arg), dialects
-prompts/system_pr.  → providers/capabilities, tools/registry, dialects
-context/session.py  → dialects (recent_exchanges가 all_system_user_prefixes 호출)
-recovery/common_recovery → recovery/intervention, recovery/primitives
-                      (WF 의존 없음 — 모든 plugin이 같은 텍스트를 봄)
-recovery/dialect_recovery   → recovery/intervention, recovery/primitives, dialects
-                      (recovery/__init__.py 는 dialect_recovery 를 re-export 안 함 —
-                       패키지 자체는 format-agnostic, 직접 import 만이 dialects 끌어옴)
-loop.py             → constants, context/manager, context/overflow,
-                      prompts/system_prompt, providers/base, providers/capabilities,
-                      render, tools, subagent/oneshot·agents_live, tools/registry,
-                      verbose, dialects
-skills/loader.py    → skills/models, resource_loader
-resource_loader.py  → yaml (optional)
-skills/executor.py  → loop/kind, skills/models, tools/result (+ lazy: subagent/runner, render, hooks)
-main.py             → config, context/manager, loop, providers, render, skills, knobs
-knobs.py            → (순수 선언 — 소유자는 KnobSession 으로 주입; lazy: typer, constants.parse_duration)
-providers/binding.py → providers/capabilities (+ lazy: config, dialects, context/manager.compute_token_budget)
-loop/state.py       → providers/binding (참조만 — 속성이 매번 읽는다)
-```
+`context/`·`prompts/`·`providers/`·`tools/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).
+그래서 한 층의 한 묶음으로 적는다. `main` 은 명령 함수 안에서 지연 import 하는 것이 많아(`runtime`·`loop/` 등) 층이 낮게 나온다.
+
+### 3.2 규칙
+
+- **모듈 수준 import 순환은 0 이다.** `tests/test_import_graph.py::test_no_module_level_import_cycle` 이 지킨다.
+- **순환을 피하려고 지연인 import** — 대상 모듈이 모듈 수준 import 만으로 출발 모듈에 닿는 간선 — 는 테스트 안의 이름 붙은 목록
+  `CYCLE_AVOIDING_LAZY` 와 정확히 같아야 한다(`test_cycle_avoiding_lazy_imports_are_the_named_list`). 간선 목록 자체는 테스트가 주인이다.
+  세 무리가 있다:
+  - **루프 엔진이 세션·구체 종류를 올려다본다** — `loop.core`·`loop.dispatch`·`loop.kind`·`loop.tool_bridge` → `runtime`
+    (세션 자원 `browser_resource`·`skills_resource`·`snapshot_resource`, 깨우기 판정 `wake_sources`·`arrived_mail`·`harness_work_running`,
+    `release_owner`, `AgentRuntime`)·`subagent.agents_live`(`main_registry`·`tool_agent`·메일 레코드)·`subagent.oneshot`(`tool_delegate`),
+    `loop.skill_invoke` → `skills`(`load_skills`·`SkillLoop`).
+  - **아래층이 도구 목록을 읽는다** — `context._file_extract`·`context.render`·`dialects.base` → `tools`(`TOOLS`).
+  - **낱개** — `images` → `tools`(`display_path`), `prompts.system_prompt` → `skills`(`load_skills`),
+    `providers.capabilities` → `providers.anthropic`, `render.minimal` → `context`(`estimate_tokens`),
+    `render.web` → `web`(`write_status_file`), `tools.tool_help` → `tools.registry`(`effective_tool_names`).
+- 그 밖의 지연 import 는 순환과 무관하고 가드하지 않는다. 출발 모듈로는 `main`·`runtime`·`prompts.inventory` 에 가장 많다.
+  이유는 자리마다 다르다 — 예컨대 `main` 의 `web` 명령은 `agent_cli.web.server`(fastapi 선택 의존성)를 명령 안에서 import 해,
+  없으면 그 명령만 안내와 함께 실패한다.
+- 실제 콜드 스타트 순서(진입점 하나만 먼저 import 했을 때 터지는지)는 `tests/test_import_cycles.py` 가 서브프로세스로 본다.
 
 ---
 
@@ -1706,4 +1645,4 @@ AgentLoop.run()
 3. **소형 모델 우선 설계** — 보수적 기본값, 적응형 출력 압축, 스키마 자동 변환
 4. **비용 제로 보정 우선** — LLM 재호출 없이 harness에서 보정 (퍼지 매칭, 타입 변환)
 5. **점진적 기능 저하** — 기능 미지원 시 에러 대신 다음 폴백으로 graceful degradation
-6. **순환 의존 없는 단방향 모듈 구조** — config → capabilities → base → adapters → loop → main
+6. **모듈 수준 import 순환 0** — 위층을 올려다보는 지연 import 는 이름 붙인 목록으로만 둔다 (§3.2, `tests/test_import_graph.py`)
