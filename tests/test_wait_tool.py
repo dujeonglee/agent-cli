@@ -326,7 +326,7 @@ class TestResidentRunEndingInWait:
 
         from tests.test_agents_live import make_registry, wait_until
 
-        def runner(query, ctx, **kwargs):
+        def runner(kind, start, ctx):
             return SimpleNamespace(
                 success=True, output="⏸ waiting on job #1", waiting=True
             ), 0.01

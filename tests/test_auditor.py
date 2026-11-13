@@ -254,9 +254,9 @@ class TestLiveDelivery:
         # 가짜 러너는 기록을 남기지 않으므로, 런 디렉토리 검증용으로 한 줄 적는다
         inner = runner
 
-        def runner(query, ctx, **kw):
-            ctx.add({"role": "user", "content": query})
-            return inner(query, ctx, **kw)
+        def runner(kind, start, ctx):
+            ctx.add({"role": "user", "content": start.query})
+            return inner(kind, start, ctx)
 
         reg = make_registry(tmp_path)
         ctx = _ctx(tmp_path)
@@ -284,7 +284,7 @@ class TestLiveDelivery:
     def test_unfinished_run_delivers_the_reason_instead(self, tmp_path):
         """턴 소진·오류로 complete 가 없어도 main 은 결과 한 장을 받는다."""
 
-        def runner(query, ctx, **kw):
+        def runner(kind, start, ctx):
             return ToolResult(False, error="Max turns (16) reached"), 0.0
 
         reg, ctx, auditor = self._live(tmp_path, runner)

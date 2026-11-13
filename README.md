@@ -2113,9 +2113,11 @@ agent_cli/
 pytest tests/ -v
 ```
 
+엔진(`agent_cli.loop.run_loop(kind, start, ctx)`)은 루프 종류를 받는다. 종류 없이 부품(provider·capabilities·model·ports·ctx)으로 엔진을 돌리거나 세우는 테스트는 `tests/loopkit.py` 의 `run_loop(...)`·`make_loop(...)` 를 쓴다 — 정적 바인딩과 맨 종류를 거기서 만든다.
+
 ### omlx 통합 테스트 (실 서버 필요)
 
-`omlx_integration` 마커가 붙은 E2E 테스트는 실제 OpenAI 호환 omlx 서버를 대상으로 run_loop·툴 사용·스킬·agent run·런타임 capability 감지를 검증합니다. 서버가 없으면 자동으로 skip되므로 `pytest tests/`는 항상 green입니다.
+`omlx_integration` 마커가 붙은 E2E 테스트는 실제 OpenAI 호환 omlx 서버를 대상으로 엔진 루프·툴 사용·스킬·agent run·런타임 capability 감지를 검증합니다. 서버가 없으면 자동으로 skip되므로 `pytest tests/`는 항상 green입니다.
 
 ```bash
 # 실 서버를 띄운 뒤 실행

@@ -2079,25 +2079,32 @@ class TestRunLoopForwarding:
             "main.py 가 넘기는 순간 TypeError 로 죽는다"
         )
 
-    def test_accepts_what_main_actually_passes(self):
-        """시그니처 일치만으로는 부족하다 — 실제 호출부가 쓰는 이름이
-        그 집합 안에 있는지까지 본다(오타·개명 회귀)."""
+    def test_accepts_what_main_actually_passes(self, monkeypatch):
+        """시그니처 일치만으로는 부족하다 — 실제 호출부가 넘기는 모양이
+        그 서명에 묶이는지까지 본다(오타·개명 회귀)."""
         import inspect
 
-        # v10.87.0: main 은 run_loop 을 직접 부르지 않는다 — 종류(`LoopKind.loop_kwargs`)가
-        # 한 벌을 적고 엔진에 넘긴다. 그 한 벌이 서명 안에 있는지 본다.
+        # v10.87.0: main 은 run_loop 을 직접 부르지 않는다 — 종류(`LoopKind.run`)가 기본
+        # 엔진으로 부른다. v10.132.0: 넘기는 것은 ``(kind, start, ctx)`` — 그 호출이
+        # 진짜 서명에 묶이는지 본다.
         from agent_cli.loop import run_loop
         from agent_cli.loop.kind import LoopKind, Start
         from tests.loop_ports import make_ports
 
+        sig = inspect.signature(run_loop)
+        calls = []
+
+        def spy(*args, **kwargs):
+            sig.bind(*args, **kwargs)  # 못 묶이면 TypeError — main 이 죽는 자리
+            calls.append(args)
+            return ToolResult(True, output="ok")
+
+        monkeypatch.setattr("agent_cli.loop.run_loop", spy)
         kind = LoopKind()
         kind.owner, kind.ports = "main", make_ports()
-        used = set(kind.loop_kwargs(Start(query="q"))) | {"query", "ctx"}
-        assert used
-        unknown = used - set(inspect.signature(run_loop).parameters)
-        assert not unknown, (
-            f"종류가 넘기는데 run_loop 이 모르는 인자: {sorted(unknown)}"
-        )
+        start = Start(query="q")
+        kind.run(start)
+        assert calls == [(kind, start, None)]
 
 
 class TestRunLoopMaxIter:

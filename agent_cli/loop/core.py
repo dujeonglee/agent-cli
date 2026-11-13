@@ -24,16 +24,13 @@ from agent_cli.context.manager import ContextManager
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
-from agent_cli.dialects import get as _get_dialect
 from agent_cli.loop.dispatch import TurnDispatcher, _append_observation, show_open_items
+from agent_cli.loop.kind import LoopKind, Start
 from agent_cli.loop.llm import LLMCaller, _build_token_stats
-from agent_cli.loop.ports import LoopPorts
 from agent_cli.loop.prompt import SystemPromptSvc
 from agent_cli.loop.state import _CONTINUE, _RETRY, LoopConfig, LoopState
 from agent_cli.loop.tool_bridge import ToolBridge
 from agent_cli.memory import consume_memory_reload
-from agent_cli.providers.base import LLMProvider
-from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.recovery.failures import record_failure
 from agent_cli.recovery.observability import (
     FAILURE_NO_OUTPUT,
@@ -59,21 +56,6 @@ from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.registry import strip_depth_gated
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
-
-
-def _bare_kind(*, ports, tools, **attrs):
-    """`run_loop` 를 종류 없이 부른 쪽(테스트·임베더)을 위한 맨 종류 (v10.88.0) — `LoopKind`
-    기본 구현이 포트·깊이·이름에서 답을 유도한다. 프로덕션 다섯 종류는 자기 정책을 명시한다."""
-    from agent_cli.loop.kind import LoopKind
-
-    k = LoopKind()
-    k.owner = ports.owner
-    k.ports = ports
-    k.tools = tools
-    for name, value in attrs.items():
-        if value is not None:
-            setattr(k, name, value)
-    return k
 
 
 def mail_item(reply: dict) -> tuple[str, str] | None:
@@ -105,65 +87,16 @@ class AgentLoop:
 
     def __init__(
         self,
-        query: str,
-        provider: LLMProvider | None = None,
-        capabilities: ModelCapabilities | None = None,
-        model: str = "",
-        ports: LoopPorts | None = None,
-        provider_name: str = "openai",
-        base_url: str = "",
-        api_key: str = "",
-        *,
-        binding=None,
-        max_turns: int = 0,
-        verbose: bool = False,
-        ctx: ContextManager | None = None,
-        depth: int = 0,
-        max_depth: int = 2,
-        active_tools: list[str] | None = None,
-        session=None,  # SessionMeta — avoid circular import
-        hooks_config: dict | None = None,
-        skill_name: str = "",
-        skill_stack: list[str] | None = None,
-        agent_stack: list[str] | None = None,
-        skill_args: str = "",
-        graceful_interrupt: bool = False,
-        stop_event=None,
-        query_author: str | None = None,
-        query_author_is_user: bool = True,
-        query_request_id: str = "",
-        user_requests: list | None = None,
-        agent_role: str = "",
-        agent_name: str = "",
-        record_turns: bool = True,
-        dialect=None,
-        compaction_enabled: bool = True,
-        peer_agents_section: str = "",
-        query_images: list[dict] | None = None,
-        kind=None,
+        kind: LoopKind,
+        start: Start,
+        ctx: ContextManager | None,
     ):
-        # 모델·능력·방언·프로바이더는 ``binding``(providers/binding, v10.43.0) 의
-        # 것 — LoopConfig 의 속성이 매 호출 읽는다(I2 불변식: loop 의 방언 ≡ ctx
-        # 의 방언 — ctx 도 같은 바인딩에서 만들어진다). 세션 코드는 바인딩을
-        # 넘기고, 부품(provider/capabilities/model/…/dialect)은 바인딩 없이 부르는
-        # 쪽(테스트·일회성)을 위한 **정적 바인딩의 유일한 조립 자리**다: 방언 폴백은
-        # 명시 > ctx > 기본(G2 — ctx 와 loop 의 포맷이 갈리는 split-brain 방지).
-        if binding is None:
-            from agent_cli.providers.binding import ModelBinding
-
-            if isinstance(dialect, str):
-                dialect = _get_dialect(dialect)
-            binding = ModelBinding(
-                provider=provider,
-                provider_name=provider_name,
-                base_url=base_url,
-                api_key=api_key,
-                model=model,
-                capabilities=capabilities,
-                dialect=dialect
-                if dialect is not None
-                else (ctx.dialect if ctx is not None else _get_dialect()),
-            )
+        # 엔진은 종류를 받는다 (v10.132.0) — 정체·설정·포트는 ``kind``, 런마다 다른 것(질의·
+        # 귀속·이미지·사람 요청·중단 핸들)은 ``start``. 모델·능력·방언·프로바이더는
+        # ``kind.binding``(providers/binding, v10.43.0) 의 것 — LoopConfig 의 속성이 매 호출
+        # 읽는다(I2 불변식: loop 의 방언 ≡ ctx 의 방언 — ctx 도 같은 바인딩에서 만들어진다).
+        binding = kind.binding
+        ports = kind.ports
         # Web multi-user intake. ``query_author`` = nickname of whoever sent the
         # run-STARTING message (None for CLI / single user). ``dequeue_user_message``
         # pulls ONE queued message at each turn boundary; ``route_message(text)``
@@ -182,23 +115,23 @@ class AgentLoop:
         # this run services (starter + injected plain chat, first-seen order);
         # mirrored to the web renderer via ``set_run_authors`` so the final's
         # ``answers`` field is stamped by whoever owns the fact (this loop).
-        self.query_author_is_user = query_author_is_user
+        self.query_author_is_user = start.author_is_user
         #: 시작 메시지에 딸린 이미지 참조 (v10.59.0, `run --image`).
-        self.query_images = list(query_images or [])
+        self.query_images = list(start.images)
         # 런을 연 요청의 id — 펌프가 `dequeue_blocking()` 한 아이템의 것(run·web
         # 공통, v10.33.1). 깨우기 런과 하위 루프는 빈 문자열.
-        self.query_request_id = query_request_id
+        self.query_request_id = start.request_id
         # v9.22.0 — 상주 에이전트 창에 사람이 직접 입력한 요청(단건·배치).
         # main 의 스타터 id/드레인과 같은 회계(장부 `state.ledger`)에 올린다 —
         # 유형별 일관성: 사용자 요청은 어디로 오든 `complete` 과 짝이다.
-        self.user_requests = list(user_requests or [])
+        self.user_requests = list(start.user_requests)
         self.run_authors: list[str] = []
         self.provider = binding.provider  # 엔드포인트 객체는 세션 수명 — 모델만 바뀐다
         self.ctx = ctx
-        self.agent_role = agent_role
+        self.agent_role = kind.agent_role
 
         # Derived wiring (finalized below, then frozen into LoopConfig)
-        tools_list = active_tools or list(TOOLS.keys())
+        tools_list = kind.tools or list(TOOLS.keys())
         # 도구 정책 선언 적용 (T3 선언화, 리뷰 §4.1 — Tool 클래스 속성이
         # 단일 소스; 종전 도구명 문자열 하드코딩 대체. 필터는 순서 보존이라
         # 프롬프트 렌더 순서 불변):
@@ -212,7 +145,7 @@ class AgentLoop:
         #    ``force_mount``(message, v5.11)면 자원이 있을 때 프로파일
         #    allowed-tools 와 무관하게 커널이 강제 탑재(상주 서브에이전트의
         #    기본 능력).
-        tools_list = strip_depth_gated(tools_list, depth, max_depth)
+        tools_list = strip_depth_gated(tools_list, kind.depth, kind.max_depth)
         # 포트에서 **파생**한다 — 종전엔 여기 3키짜리 dict 리터럴이었고,
         # 새 포트가 생길 때마다 이 줄을 기억해서 고쳐야 했다. ``ctx`` 는
         # 포트가 아니므로(§4.2) 여기서 얹는다.
@@ -277,15 +210,13 @@ class AgentLoop:
         # 상주 모드는 디스패치가 거부한다. depth 상한에서는 run 도 불가라
         # 위에서 도구째 strip.
         # Build skill stack for recursive call prevention
-        if skill_stack is None:
-            skill_stack = []
-        if skill_name:
-            skill_stack = [*skill_stack, skill_name]
+        skill_stack = list(kind.skill_stack)
+        if kind.skill_name:
+            skill_stack = [*skill_stack, kind.skill_name]
         # Build agent stack for recursive call prevention
-        if agent_stack is None:
-            agent_stack = []
-        if agent_name:
-            agent_stack = [*agent_stack, agent_name]
+        agent_stack = list(kind.agent_stack)
+        if kind.agent_name:
+            agent_stack = [*agent_stack, kind.agent_name]
 
         # C1 PR-1: 불변 배선은 LoopConfig 로, 공유 가변 상태는 LoopState 로.
         # 기존 ``self.X`` 표면은 아래 property 브리지가 유지한다 — 메서드
@@ -294,52 +225,34 @@ class AgentLoop:
         self._config = LoopConfig(
             owner=ports.owner,
             binding=binding,
-            depth=depth,
-            max_depth=max_depth,
-            max_turns=max_turns,
+            depth=kind.depth,
+            max_depth=kind.max_depth,
+            max_turns=kind.max_turns,
             tools_list=tools_list,
-            skill_name=skill_name,
-            skill_args=skill_args,
+            skill_name=kind.skill_name,
+            skill_args=kind.skill_args,
             skill_stack=skill_stack,
             agent_stack=agent_stack,
             mcp_manager=ports.mcp_manager,
             hook_runner=ports.hook_runner,
-            hooks_config=hooks_config,
-            session=session,
-            agent_role=agent_role,
-            graceful_interrupt=graceful_interrupt,
-            compaction_enabled=compaction_enabled,
-            verbose=verbose,
+            hooks_config=kind.hooks_config,
+            session=kind.session,
+            agent_role=kind.agent_role,
+            graceful_interrupt=kind.graceful_interrupt,
+            compaction_enabled=kind.compaction_enabled,
+            verbose=kind.verbose,
             agent_registry=ports.agent_registry,
             message_handler=ports.message_handler,
             questions=ports.questions,
-            kind=kind
-            if kind is not None
-            else _bare_kind(
-                ports=ports,
-                depth=depth,
-                max_depth=max_depth,
-                max_turns=max_turns,
-                tools=active_tools,
-                hooks_config=hooks_config,
-                stop_event=stop_event,
-                agent_name=agent_name,
-                skill_name=skill_name,
-                skill_args=skill_args,
-                skill_stack=skill_stack,
-                agent_stack=agent_stack,
-                agent_role=agent_role,
-                peer_agents_section=peer_agents_section,
-                session=session,
-                compaction_enabled=compaction_enabled,
-                graceful_interrupt=graceful_interrupt,
-                verbose=verbose,
-                record_turns=record_turns,
-            ),
+            kind=kind,
+        )
+        # 중단 핸들: 런의 것(main — 펌프가 런마다 새로) > 종류의 것 > 새 Event.
+        stop_event = (
+            start.stop_event if start.stop_event is not None else kind.stop_event
         )
         self._state = LoopState(
-            query=query,
-            query_author=query_author,
+            query=start.query,
+            query_author=start.author,
             stop_event=stop_event if stop_event is not None else threading.Event(),
         )
         self._state.ledger.bind_questions(ports.questions)
@@ -366,7 +279,7 @@ class AgentLoop:
         # (headless / subagent) or when user opted out.
         self.recorder = TurnRecorder(
             session_dir=(self.ctx.session_dir if self.ctx else None),
-            enabled=record_turns,
+            enabled=kind.record_turns,
             dialect=self.dialect.name,
         )
 

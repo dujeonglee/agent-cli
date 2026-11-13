@@ -17,8 +17,9 @@
 스레드와 수명(펌프·워커·작업 스레드·병렬 one-shot)은 종류 밖 — 호스트의 것이다. 주소는
 문자열 그대로라 레지스트리의 라우팅(`deliver`·`fire_checkin`·`arrived_for`)은 바뀌지 않는다.
 
-엔진 호출은 ``engine(query, ctx, **kwargs) -> (ToolResult, secs)`` 한 모양 — 테스트·하니스가
-가짜 러너를 꽂는 자리(`AgentRegistry(runner=)`·`HarnessJobs(runner=)`)와 같다. 기본은
+엔진 호출은 ``engine(kind, start, ctx) -> (ToolResult, secs)`` 한 모양 (v10.132.0) — 엔진이
+종류를 받아 거기서 읽는다(종전엔 종류가 자기를 30여 키워드로 펴서 넘겼다). 테스트가 가짜
+러너를 꽂는 자리(`AgentRegistry(runner=)`·`HarnessJobs(runner=)`)와 같다. 기본은
 ``agent_cli.loop.run_loop`` 를 **호출 시점에** 읽으므로 ``patch("agent_cli.loop.run_loop")`` 가
 다섯 종류 전부에 닿는다.
 """
@@ -202,7 +203,7 @@ class LoopKind:
     graceful_interrupt: bool = False
     verbose: bool = False
     record_turns: bool = True
-    #: ``(query, ctx, **kwargs) -> (ToolResult, secs)`` — ``None`` 이면 `run_loop`.
+    #: ``(kind, start, ctx) -> (ToolResult, secs)`` — ``None`` 이면 `run_loop`.
     engine: Callable | None = None
     ctx: Any = None
 
@@ -249,9 +250,7 @@ class LoopKind:
                 return finished
             result = None
             try:
-                result, _secs = self._engine()(
-                    start.query, self.ctx, **self.loop_kwargs(start)
-                )
+                result, _secs = self._engine()(self, start, self.ctx)
             finally:
                 released = self.release()
             finished = self.finish(result, time.monotonic() - t0, released)
@@ -262,42 +261,9 @@ class LoopKind:
         finally:
             self.close_scope(handle, finished, time.monotonic() - t0)
 
-    def loop_kwargs(self, start: Start) -> dict:
-        """엔진(`run_loop`)에 넘기는 전부 — 종류 하나가 한 벌을 적는다. 종전엔
-        `run_loop`·`AgentLoop.__init__`·`run_subagent_message` 가 같은 30여 인자를 세 번 나열했다."""
-        return {
-            "query_images": list(start.images),
-            "query_author": start.author,
-            "query_author_is_user": start.author_is_user,
-            "query_request_id": start.request_id,
-            "user_requests": list(start.user_requests),
-            "stop_event": (
-                start.stop_event if start.stop_event is not None else self.stop_event
-            ),
-            "graceful_interrupt": self.graceful_interrupt,
-            "binding": self.binding,
-            "max_turns": self.max_turns,
-            "verbose": self.verbose,
-            "depth": self.depth,
-            "max_depth": self.max_depth,
-            "active_tools": self.tools,
-            "session": self.session,
-            "hooks_config": self.hooks_config,
-            "skill_name": self.skill_name,
-            "skill_args": self.skill_args,
-            "skill_stack": list(self.skill_stack),
-            "agent_stack": list(self.agent_stack),
-            "agent_name": self.agent_name,
-            "agent_role": self.agent_role,
-            "record_turns": self.record_turns,
-            "compaction_enabled": self.compaction_enabled,
-            "ports": self.ports,
-            "kind": self,
-        }
-
     # ── B·C 엔진이 묻는 것 (PR 2, v10.88.0) — 기본 구현은 정체(포트·깊이·이름)에서 유도한다.
-    # 다섯 종류는 자기 정책을 **명시**해 덮어쓴다; 기본은 `run_loop` 를 직접 부르는 쪽(테스트·
-    # 임베더)의 맨 종류(`AgentLoop` 가 만든다)를 위한 것이다.
+    # 다섯 종류는 자기 정책을 **명시**해 덮어쓴다; 기본은 맨 종류(엔진을 종류 없이 세우는
+    # 테스트가 `tests/loopkit.py` 에서 만든다)를 위한 것이다.
     def wait_policy(self) -> str:
         """⑯ `wait` 가 런을 끝내나(main·상주), 제자리에서 막나(private), 거부하나(인라인)."""
         from agent_cli.constants import is_private_owner
@@ -367,12 +333,12 @@ class LoopKind:
         return self.engine if self.engine is not None else self._run_loop
 
     @staticmethod
-    def _run_loop(query: str, ctx, **kwargs):
+    def _run_loop(kind: LoopKind, start: Start, ctx):
         """기본 엔진 — ``agent_cli.loop.run_loop`` 를 호출 시점에 읽는다(패치 가능)."""
         from agent_cli import loop as loop_pkg
 
         t0 = time.monotonic()
-        return loop_pkg.run_loop(query=query, ctx=ctx, **kwargs), time.monotonic() - t0
+        return loop_pkg.run_loop(kind, start, ctx), time.monotonic() - t0
 
     # ── 가변부 — 서브클래스가 덮어쓴다 ──
     def make_ctx(self, start: Start):

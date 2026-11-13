@@ -237,8 +237,8 @@ class TestAnswer:
         사람 런이라 그 id 는 ``u-`` 이고 `complete` 의 `answers` 로 닫는다."""
         seen = []
 
-        def runner(query, ctx, **kw):
-            seen.append((query, kw.get("user_requests")))
+        def runner(kind, start, ctx):
+            seen.append((start.query, start.user_requests))
             return _FakeLoopResult(output="ok"), 0.01
 
         reg = mkreg()
@@ -414,9 +414,9 @@ class TestSurfaces:
 
         ran = []
 
-        def runner(query, ctx, **kw):
+        def runner(kind, start, ctx):
             reg.register_question(b, "덮어쓸까요?")
-            ran.append(query)
+            ran.append(start.query)
             return _FakeLoopResult(output="정리 완료"), 0.01
 
         reg._runner = runner
@@ -445,10 +445,10 @@ class TestSurfaces:
         reg = mkreg()
         ran = []
 
-        def runner(query, ctx, **kw):
-            if "일감" in query:
+        def runner(kind, start, ctx):
+            if "일감" in start.query:
                 reg.register_question(b, "어느 쪽인가요?")
-            ran.append(query)
+            ran.append(start.query)
             return _FakeLoopResult(output="부분 결과"), 0.01
 
         reg._runner = runner
@@ -572,9 +572,9 @@ class TestReplyFreshness:
         reg = mkreg()
         ids, n = [], []
 
-        def runner(query, ctx, **kw):
-            n.append(query)
-            if "일감" in query:
+        def runner(kind, start, ctx):
+            n.append(start.query)
+            if "일감" in start.query:
                 qid, err = reg.register_question(b, "똑같은 질문")
                 assert not err
                 ids.append(qid)
@@ -594,7 +594,7 @@ class TestReplyFreshness:
         reg = mkreg()
         ids = []
 
-        def runner(query, ctx, **kw):
+        def runner(kind, start, ctx):
             for _ in range(3):
                 qid, err = reg.register_question(b, "반복 질문")
                 assert not err
@@ -615,9 +615,9 @@ class TestReplyFreshness:
 
         ran = []
 
-        def runner(query, ctx, **kw):
+        def runner(kind, start, ctx):
             reg.register_question(b, "덮어쓸까요?")
-            ran.append(query)
+            ran.append(start.query)
             return _FakeLoopResult(output="정리 완료"), 0.01
 
         reg._runner = runner
@@ -792,8 +792,8 @@ class TestUncoveredSurfaces:
         gate = threading.Event()
         reg = mkreg()
 
-        def runner(query, ctx, **kw):
-            if "선행" in query:
+        def runner(kind, start, ctx):
+            if "선행" in start.query:
                 gate.wait(5)
                 return _FakeLoopResult(output="선행 끝"), 0.01
             reg.register_question(b, "덮어쓸까요?")
@@ -1213,8 +1213,8 @@ class TestTrafficRowsAreRealSendsOnly:
         reg = mkreg()
         ran = []
 
-        def runner(query, ctx, **kw):
-            ran.append(query)
+        def runner(kind, start, ctx):
+            ran.append(start.query)
             return _FakeLoopResult(output="산출물"), 0.01
 
         reg._runner = runner
@@ -1403,12 +1403,12 @@ class TestCompleteIsLocal:
     def _run(self, reg, b, requester, body, **req):
         ran = []
 
-        def runner(query, ctx, **kw):
+        def runner(kind, start, ctx):
             # 레지스트리 전체가 이 러너를 쓴다 — 상대 에이전트의 런(회신을
             # 받은 런)에서도 몸체가 돌면 서로 message 를 주고받으며 무한히
             # 돈다. 원 요청("일감") 런에서만 몸체를 돌린다.
-            ran.append(query)
-            if "일감" in query:
+            ran.append(start.query)
+            if "일감" in start.query:
                 body()
             return _FakeLoopResult(output="런 요약"), 0.01
 
@@ -1482,13 +1482,13 @@ class TestCompleteIsLocal:
         reg = mkreg()
         got, box = [], {}
 
-        def runner(query, ctx, **kw):
-            if query == "원 일감":  # a 의 런 — b 에게 묻는다
+        def runner(kind, start, ctx):
+            if start.query == "원 일감":  # a 의 런 — b 에게 묻는다
                 box["res"] = reg._make_message_handler(reg.get(a))(b, "정책?")
-            elif query.startswith("── request ["):  # b 의 런 — 답하지 않는다
+            elif start.query.startswith("── request ["):  # b 의 런 — 답하지 않는다
                 pass
-            elif query.startswith("── reply ["):  # a 가 받은 것
-                got.append(query)
+            elif start.query.startswith("── reply ["):  # a 가 받은 것
+                got.append(start.query)
             return _FakeLoopResult(output="b 의 런 요약"), 0.01
 
         reg._runner = runner
@@ -1756,8 +1756,8 @@ class TestUnifiedDebtRules:
         reg = mkreg()
         seen = {}
 
-        def runner(query, ctx, **kw):
-            seen["user_requests"] = kw.get("user_requests")
+        def runner(kind, start, ctx):
+            seen["user_requests"] = start.user_requests
             return _FakeLoopResult(output="ok"), 0.01
 
         reg._runner = runner
@@ -1771,8 +1771,8 @@ class TestUnifiedDebtRules:
         reg = mkreg()
         seen = {}
 
-        def runner(query, ctx, **kw):
-            seen["user_requests"] = kw.get("user_requests")
+        def runner(kind, start, ctx):
+            seen["user_requests"] = start.user_requests
             return _FakeLoopResult(output="ok"), 0.01
 
         reg._runner = runner
@@ -1954,9 +1954,9 @@ class TestAskKeepsTheRequesterDebt:
         me = f"agent:{b}"
         seen = []
 
-        def runner(query, ctx, **kw):
-            seen.append(query)
-            if query == "일감":  # 첫 런 — 다른 데 묻고 기다린다
+        def runner(kind, start, ctx):
+            seen.append(start.query)
+            if start.query == "일감":  # 첫 런 — 다른 데 묻고 기다린다
                 return SimpleNamespace(
                     success=True, output="⏸ waiting", waiting=True
                 ), 0.01

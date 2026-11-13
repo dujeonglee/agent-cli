@@ -2,7 +2,7 @@
 
 해석 체인(``--dialect`` 강제 > 모델 바인딩 > 에러 — 기본값·세션 메타·
 부모 상속 없음), models.json ``dialect`` 필드 조회, 서브에이전트
-effective-model 바인딩, AgentLoop ctx-우선 폴백(G2), 부트스트랩 배선을
+effective-model 바인딩, 정적 바인딩의 ctx-우선 폴백(G2), 부트스트랩 배선을
 고정한다. 스위트 전역 픽스처가 json_fc 를 강제하므로 체인 테스트는
 ``_override`` 를 None 으로 되돌린다.
 """
@@ -187,7 +187,9 @@ class TestSubagentBinding:
         assert ctx.dialect.name == "json_fc"
 
 
-# ── AgentLoop ctx-우선 폴백 (G2 — split-brain 수리) ──────────
+# ── 정적 바인딩의 ctx-우선 폴백 (G2 — split-brain 수리) ──────────
+# v10.132.0: 엔진은 종류의 바인딩을 쓴다 — 부품 → 바인딩 조립과 이 폴백은
+# `tests/loopkit.static_binding` 의 것이다(제품은 이 길을 쓰지 않는다).
 
 
 class TestLoopCtxFallback:

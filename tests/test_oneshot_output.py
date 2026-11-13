@@ -513,8 +513,7 @@ class TestIterationsAreTurnsRun:
 
         from agent_cli.tools.result import ToolResult
 
-        def fake_run(**kw):
-            ctx = kw["ctx"]
+        def fake_run(kind, start, ctx):
             for t in range(1, 61):  # 루프가 매 턴 찍는 것과 같이
                 ctx.set_turn(t)
                 ctx.add(_make_action_msg("shell", {"command": f"echo {t}"}))

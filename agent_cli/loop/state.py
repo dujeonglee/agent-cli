@@ -67,8 +67,8 @@ class LoopConfig:
     # teammate 금지" 가드는 그대로다. main 도 받는다(답할 수단이 필요).
     questions: object = None
     #: 이 루프의 종류 (`loop.kind.LoopKind`, v10.88.0) — 엔진이 묻는다: `wait` 정책,
-    #: 턴 경계 흡수, 프롬프트 윤곽, 꼬리 로스터, 렌더 여부. `run_loop` 를 종류 없이
-    #: 부르면(테스트·임베더) `AgentLoop` 가 포트·깊이에서 답을 유도하는 맨 종류를 만든다.
+    #: 턴 경계 흡수, 프롬프트 윤곽, 꼬리 로스터, 렌더 여부. 엔진(`AgentLoop`)은 늘 종류를
+    #: 받아 여기 싣는다(v10.132.0); 비어 있는 것은 설정을 직접 만든 쪽(아래)뿐이다.
     kind: object = None
 
     def __post_init__(self) -> None:

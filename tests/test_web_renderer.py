@@ -3023,7 +3023,7 @@ class TestCtxDirWiring:
 
             from agent_cli.skills.executor import SkillLoop
 
-            def fake_run_loop(**kw):
+            def fake_run_loop(kind, start, ctx):
                 from agent_cli.tools.result import ToolResult
 
                 return ToolResult(True, output="done")
@@ -3085,7 +3085,7 @@ class TestCtxDirWiring:
             success = True
             output = "ok"
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", lambda **kw: R())
+        monkeypatch.setattr("agent_cli.loop.run_loop", lambda kind, start, ctx: R())
         ctx = ContextManager(tmp_path, max_context_tokens=10000)
         caps = ModelCapabilities(
             context_window=32768,
@@ -3125,7 +3125,7 @@ class TestCtxDirWiring:
             success = True
             output = "ok"
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", lambda **kw: LR())
+        monkeypatch.setattr("agent_cli.loop.run_loop", lambda kind, start, ctx: LR())
         from agent_cli.context.manager import ContextManager
 
         parent = ContextManager(tmp_path, max_context_tokens=10000)

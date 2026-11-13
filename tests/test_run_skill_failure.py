@@ -20,7 +20,7 @@ from tests.loop_kinds import make_caller
 
 
 def _engine_returns(result):
-    def engine(query, ctx, **kwargs):
+    def engine(kind, start, ctx):
         return result, 0.1
 
     return engine
