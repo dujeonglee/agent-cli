@@ -653,6 +653,13 @@ class _OpenAITransport(_ProbeTransport):
         return self._text(r.json()).strip() == _GRAMMAR_PROBE_ANSWER
 
 
+# 사고 켬의 Anthropic 모양 (v10.72.0). 현행 Claude 모델(4.6 이후)은 ``budget_tokens``
+# 를 거절(400)하고 정도는 서버 기본값(``output_config.effort``)이 정한다 — 하니스는
+# 켬/끔만 말한다. Anthropic-호환 로컬 서버(omlx)도 같은 ``type`` 어휘를 받는다.
+# 프로바이더(``anthropic.py``)와 아래 프로브가 같이 쓴다.
+ANTHROPIC_THINKING_ON = {"type": "adaptive"}
+
+
 class _AnthropicTransport(_ProbeTransport):
     """Anthropic Messages API(실 Anthropic 또는 omlx 같은 호환 서버) —
     ``/messages`` · ``anthropic-version`` + ``x-api-key`` · ``content[]`` 블록.
@@ -682,12 +689,10 @@ class _AnthropicTransport(_ProbeTransport):
             "messages": [{"role": "user", "content": content}],
         }
         # 사고 켜기는 프로바이더가 실제로 보내는 모양과 같다
-        # (``anthropic._THINKING_ON``, v10.72.0: 현행 Claude 는 ``budget_tokens``
+        # (``ANTHROPIC_THINKING_ON``, v10.72.0: 현행 Claude 는 ``budget_tokens``
         # 를 거절한다).
         if enable_thinking:
-            from agent_cli.providers.anthropic import _THINKING_ON
-
-            body["thinking"] = dict(_THINKING_ON)
+            body["thinking"] = dict(ANTHROPIC_THINKING_ON)
         return body
 
     @staticmethod

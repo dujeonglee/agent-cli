@@ -16,7 +16,11 @@ from agent_cli.providers.base import (
     strip_think_blocks,
     thinking_switch,
 )
-from agent_cli.providers.capabilities import ModelCapabilities, vision_support
+from agent_cli.providers.capabilities import (
+    ANTHROPIC_THINKING_ON,
+    ModelCapabilities,
+    vision_support,
+)
 from agent_cli.providers.http import (
     StreamEvent,
     post_with_retry,
@@ -24,11 +28,6 @@ from agent_cli.providers.http import (
     run_sse_stream,
     stream_with_reconnect,
 )
-
-# 사고 켬의 Anthropic 모양 (v10.72.0). 현행 Claude 모델(4.6 이후)은 ``budget_tokens``
-# 를 거절(400)하고 정도는 서버 기본값(``output_config.effort``)이 정한다 — 하니스는
-# 켬/끔만 말한다. Anthropic-호환 로컬 서버(omlx)도 같은 ``type`` 어휘를 받는다.
-_THINKING_ON = {"type": "adaptive"}
 
 # P0-1: stop_reason 정규화 — LLMResponse.stop_reason 은 **루프 어휘**(OpenAI
 # finish_reason 계열: "length"=출력 절단, "stop"=정상 종료)로 통일한다. 루프의
@@ -109,15 +108,15 @@ class AnthropicProvider:
         }
 
         # 사고 스위치 (v10.72.0): 지원 모델이고 세션이 켰을 때만 ``thinking`` 블록
-        # (``_THINKING_ON``), 끔이면 블록 없음(모델 기본 — 끔을 말하는 ``disabled`` 는
-        # 현행 모델 일부가 거절한다). 정도는 보내지 않는다(위 ``_THINKING_ON`` 주석).
+        # (``ANTHROPIC_THINKING_ON``), 끔이면 블록 없음(모델 기본 — 끔을 말하는 ``disabled`` 는
+        # 현행 모델 일부가 거절한다). 정도는 보내지 않는다(``capabilities.ANTHROPIC_THINKING_ON`` 주석).
         # 세션-런타임 노브 (v8.55.0, base.CallSettings): 사고 스위치·스트림 무진전
         # 한도·요청-시 클램프 max_tokens 가 한 컨테이너로 온다.
         settings = kwargs.get("settings") or CallSettings()
         if settings.max_output_tokens is not None:
             body["max_tokens"] = settings.max_output_tokens
         if thinking_switch(capabilities, settings.thinking):
-            body["thinking"] = dict(_THINKING_ON)
+            body["thinking"] = dict(ANTHROPIC_THINKING_ON)
         # 🎲 샘플링 (v10.69.0): OpenAI 와 같은 이름·같은 규칙(세션 > 엔트리 > 미주입).
         # Anthropic 의 범위(temperature 0~1, 확장 사고 중 temperature 고정)는 서버가
         # 거절로 말한다 — 하니스가 미리 좁히지 않는다.
