@@ -757,6 +757,9 @@ class AgentRegistry:
         self.runtime = runtime or {}
         self._runner = runner
         self.session_dir = Path(session_dir) if session_dir else None
+        #: ``agents.json`` 이 이 레지스트리의 것인가 — 읽었거나(`restore`) 처음 만들었을
+        #: 때 참. 그 전에는 있는 파일을 덮어쓰지 않는다(`_save_state`).
+        self._state_owned = False
         # 동시 생존 상한 (세션 한정, web UI 조절). 0 = 무제한. None = 기본값 —
         # env·CLI 는 부트가 `knobs.apply_all` 로 적용한다 (v10.43.0).
         self.max_agents = clamp_max_agents(
@@ -2593,6 +2596,12 @@ class AgentRegistry:
         path = self._state_path()
         if path is None:
             return
+        # 읽지 않은 파일은 덮어쓰지 않는다 (v10.131.1). 복원 전의 명단은 비어 있어서,
+        # 그때 쓰면 resume 세션의 상주 에이전트와 미배달 메일이 지워진다 — 조립 도중
+        # 죽어 `shutdown_all` 만 불린 길. 건너뛴 저장은
+        # 잃지 않는다: `restore` 는 메모리의 pending 에 덧붙이고, 그 뒤 첫 저장이 다 쓴다.
+        if not self._state_owned and path.is_file():
+            return
         entries = []
         # Snapshot under the GIL — ``_save_state`` runs on worker threads while
         # the main thread mutates ``_agents``; iterating the live view raced a
@@ -2643,6 +2652,7 @@ class AgentRegistry:
                     "questions": questions,
                 },
             )
+            self._state_owned = True
         except OSError:
             pass
 
@@ -2658,6 +2668,7 @@ class AgentRegistry:
           없다. 되살리지 못하는 것은 asker 나 target 이 돌아오지 않은 것뿐.
         - 파일 부재/파손/버전 불일치는 조용히 no-op (fresh 세션과 동일).
         """
+        self._state_owned = True  # 읽으려 했다 — 이제부터 이 파일은 이 레지스트리의 것
         path = self._state_path()
         if path is None or not path.is_file():
             return 0
