@@ -31,7 +31,7 @@
 | C 런 (템플릿 순서) | ⑫ `start` ⑬ `make_ctx` ⑭ `open_scope`/`close_scope` ⑮ `intake` ⑯ `wait_policy` ⑰ `finish` ⑱ `release` | ⑫⑬⑭⑰⑱ 은 PR 1, ⑮⑯ 은 PR 2 |
 
 `run(start)` 템플릿: 스코프 열기 → `make_ctx`(실패 = `LoopKindError` → `rejected`) → 엔진
-`engine(query, ctx, **loop_kwargs)` → `finally: release()` → `finish` → (예외는 `crashed`) →
+`engine(kind, start, ctx)`(v10.132.0 — 종전 `engine(query, ctx, **loop_kwargs)`, §3.4) → `finally: release()` → `finish` → (예외는 `crashed`) →
 스코프 닫기. 엔진 호출 모양은 가짜 러너 계약과 같고, 기본은 `agent_cli.loop.run_loop` 를
 호출 시점에 읽으므로 `patch("agent_cli.loop.run_loop")` 하나가 다섯 종류에 닿는다.
 
@@ -114,7 +114,8 @@ history·result.md, 관찰 `run_skill` ⑤ 감사 노브 on → 런 뒤 `harness
 | `tracks_run_authors` | `core._mirror_run_authors` | `dequeue_user_message is None` |
 
 - `LoopConfig.kind` 가 들어왔고 `wakeable`·`peer_roster`·`peer_agents_section` 필드는 나갔다.
-  `run_loop(kind=None)` — 종류 없이 부르면(테스트·임베더) `AgentLoop` 가 **맨 종류**를 만든다:
+  `run_loop(kind=None)` — 종류 없이 부르면(테스트·임베더) `AgentLoop` 가 **맨 종류**를 만든다
+  (v10.132.0 부터 엔진은 종류를 반드시 받고 맨 종류는 `tests/loopkit.py` 가 만든다, §3.4):
   `LoopKind` 기본 구현이 포트·깊이·이름에서 답을 유도한다(종전 추측 규칙이 한 곳에). 다섯
   종류는 자기 정책을 명시해 덮어쓴다. 종류 없이 만든 `LoopConfig` 도 `__post_init__` 이
   맨 종류를 세운다(`LoopKind.make_ports` — `LoopPorts` 를 만드는 자리는 여전히 `make_ports` 뿐).
@@ -151,6 +152,23 @@ history·result.md, 관찰 `run_skill` ⑤ 감사 노브 on → 런 뒤 `harness
   PR 3 코드로 재시작, 같은 세션 resume — 상주 둘 복원): main → 복원된 상주 request → `reply [n-28]
   re [r-27]` → `pong-55` · 사람 창 단건(`sleep 12`) 도중 도착한 사람 메시지 둘이 런 도중 흡수되어 한
   out 레코드로 답(`handled` 4) · one-shot 잡 → 제자리 `wait` → `6161`.
+
+### 3.4 엔진이 종류를 받는다 (v10.131.2~)
+
+프로덕션에서 엔진에 들어가는 길은 하나였다 — `LoopKind.run` → `_run_loop` → `run_loop(**kwargs)`
+→ `AgentLoop(**같은 인자)`. 그 길 위에 같은 목록이 여섯 번 적혀 있었다(종류 속성 · `loop_kwargs`
+25키 · `run_loop` 서명과 통과 호출 · `AgentLoop.__init__` 서명 · `_bare_kind` 호출 · `LoopConfig`
+생성과 필드). 설정 하나를 더하면 네 파일 여섯 군데를 고쳐야 했다.
+
+- **v10.131.2** 테스트 274곳의 직접 호출(`run_loop` 190·`AgentLoop` 84)이 `tests/loopkit.py` 의
+  `run_loop`·`make_loop` 를 부른다 — 이 판의 도우미는 같은 인자를 제품에 그대로 넘겼다.
+- **v10.132.0** `AgentLoop(kind, start, ctx)`·`run_loop(kind, start, ctx)` — 정체·설정·포트는
+  종류에서, 런마다 다른 것(질의·귀속·이미지·사람 요청·중단 핸들)은 `Start` 에서 읽는다. 중단
+  핸들은 종전 순서 그대로(시작의 것 > 종류의 것 > 새 Event). 엔진(`LoopKind.engine`·
+  `AgentRegistry(runner=)`·`HarnessJobs(runner=)`)의 계약도 `(kind, start, ctx) -> (ToolResult,
+  secs)`. `loop_kwargs`·`_bare_kind`·`binding is None` 분기(부품 → 정적 바인딩)는 제품에서
+  빠졌다 — 쓰는 쪽은 테스트뿐이었고, 정적 바인딩·맨 종류·방언 폴백(명시 > ctx > 기본)은
+  `tests/loopkit.py` 가 만든다. `LoopConfig` 는 이 판에서 22필드 그대로(만드는 자리만 한 곳).
 
 ## 4. 결정 (2026-10-31, 사용자 승인 "D1~D5 추천대로")
 

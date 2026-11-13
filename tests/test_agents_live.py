@@ -102,12 +102,12 @@ class _FakeLoopResult:
 def make_runner(reply_text="done", block: threading.Event | None = None, exc=None):
     """가짜 run_subagent_message — query 를 echo 하는 회신."""
 
-    def runner(query, ctx, **kwargs):
+    def runner(kind, start, ctx):
         if block is not None:
             block.wait(3)
         if exc is not None:
             raise exc
-        return _FakeLoopResult(output=f"{reply_text}:{query}"), 0.01
+        return _FakeLoopResult(output=f"{reply_text}:{start.query}"), 0.01
 
     return runner
 
@@ -121,10 +121,10 @@ class _RecordingRunner:
         self.seen = []
         self.lock = threading.Lock()
 
-    def __call__(self, query, ctx, **kwargs):
+    def __call__(self, kind, start, ctx):
         with self.lock:
-            self.seen.append(query)
-        return _FakeLoopResult(output=f"{self.reply}:{query}"), 0.01
+            self.seen.append(start.query)
+        return _FakeLoopResult(output=f"{self.reply}:{start.query}"), 0.01
 
     def queries(self):
         with self.lock:
@@ -1175,17 +1175,17 @@ def make_asking_runner(question="which branch?"):
     **막지 않는다**(docs/agent-ask/DESIGN.md §3.1). 등록하고 즉시 돌아와
     부분 결과로 끝내고, 답은 나중에 새 런으로 온다."""
 
-    def runner(query, ctx, **kwargs):
+    def runner(kind, start, ctx):
         # 상주 에이전트는 **블로킹 핸들러를 받지 않는다**. 받으면 슬롯
         # 경로가 되살아나 `_answer_kind` 가 비동기 답을 먹어치울 수 있다.
         # C3 에서 포트 자체가 사라졌으므로 그 부재를 여기서 고정한다.
-        ports = kwargs["ports"]
+        ports = kind.ports
         assert not hasattr(ports, "ask_handler"), "블로킹 ask 포트가 되살아났다"
         assert ports.owner.startswith("agent:"), ports.owner
         assert ports.questions.nonblocking is True
         # 답 런에서는 다시 묻지 않는다 — 묻고 또 묻는 고리가 테스트를 멈춘다.
-        if query.startswith("── answer ["):
-            return _FakeLoopResult(output=f"resumed with: {query}"), 0.01
+        if start.query.startswith("── answer ["):
+            return _FakeLoopResult(output=f"resumed with: {start.query}"), 0.01
         qid, err = ports.questions.ask(question)
         return _FakeLoopResult(output=f"asked {qid or err}"), 0.01
 
@@ -1232,10 +1232,10 @@ class TestAskRouting:
         (v10.77.0, D). 어느 질문의 답인지 봉투가 말한다."""
         seen = []
 
-        def runner(query, ctx, **kwargs):
-            seen.append(query)
-            if not query.startswith("── answer ["):
-                kwargs["ports"].questions.ask("which branch?")
+        def runner(kind, start, ctx):
+            seen.append(start.query)
+            if not start.query.startswith("── answer ["):
+                kind.ports.questions.ask("which branch?")
             return _FakeLoopResult(output="ok"), 0.01
 
         reg = make_registry(tmp_path, runner=runner)
@@ -1495,14 +1495,14 @@ def make_gated_recording_runner():
     lock = threading.Lock()
     state = {"first": True}
 
-    def runner(query, ctx, **kwargs):
+    def runner(kind, start, ctx):
         with lock:
-            seen.append(query)
+            seen.append(start.query)
             is_first = state["first"]
             state["first"] = False
         if is_first:
             gate.wait(3)  # 첫(warmup) 호출을 묶어둔다
-        return _FakeLoopResult(output=f"done:{query}"), 0.01
+        return _FakeLoopResult(output=f"done:{start.query}"), 0.01
 
     runner.seen = seen
     runner.gate = gate
@@ -3685,11 +3685,11 @@ class TestInstantAgent:
 
     def test_tool_spawn_threads_instructions(self, tmp_path, renderer):
         # spy 러너를 처음부터 주입 — worker 가 실제로 합성 역할(agent_role)
-        # 로 도는지 러너 수신 kwargs 로 검증 (교체 타이밍 레이스 없음).
+        # 로 도는지 러너가 받은 종류로 검증 (교체 타이밍 레이스 없음).
         captured = {}
 
-        def spy_runner(query, ctx, **kw):
-            captured.update(kw)
+        def spy_runner(kind, start, ctx):
+            captured["kind"] = kind
             return _FakeLoopResult(output="ok"), 0.01
 
         reg = make_registry(tmp_path, runner=spy_runner)
@@ -3701,7 +3701,7 @@ class TestInstantAgent:
         key = next(iter(reg._agents))
         assert reg.get(key).role_prompt == "ad-hoc 전문가"
         assert wait_until(lambda: reg.get(key).handled == 1)
-        assert captured.get("agent_role") == "ad-hoc 전문가"
+        assert captured["kind"].agent_role == "ad-hoc 전문가"
         reg.shutdown_all()
 
 
@@ -4319,10 +4319,10 @@ class TestRestartRequeue:
         gate = threading.Event()
         started = threading.Event()
 
-        def runner(query, ctx, **kw):
+        def runner(kind, start, ctx):
             started.set()
             gate.wait(5)
-            return _FakeLoopResult(output=f"done:{query}"), 0.01
+            return _FakeLoopResult(output=f"done:{start.query}"), 0.01
 
         reg1 = make_registry(tmp_path, runner=runner)
         key, _ = reg1.spawn()
@@ -4413,7 +4413,7 @@ class TestRestartRequeue:
         gate2 = threading.Event()
         started2 = threading.Event()
 
-        def blocking(query, ctx, **kw):
+        def blocking(kind, start, ctx):
             started2.set()
             gate2.wait(5)
             return _FakeLoopResult(output="x"), 0.01
@@ -4552,8 +4552,8 @@ class TestRequestImages:
     def test_images_ride_the_item_the_window_and_the_runner(self, tmp_path, renderer):
         seen = []
 
-        def runner(query, ctx, **kwargs):
-            seen.append((query, kwargs.get("query_images")))
+        def runner(kind, start, ctx):
+            seen.append((start.query, start.images))
             return _FakeLoopResult(output="ok"), 0.01
 
         reg = make_registry(tmp_path, runner=runner)
@@ -4575,8 +4575,8 @@ class TestRequestImages:
     def test_without_images_nothing_changes(self, tmp_path, renderer):
         seen = []
 
-        def runner(query, ctx, **kwargs):
-            seen.append(kwargs.get("query_images"))
+        def runner(kind, start, ctx):
+            seen.append(start.images)
             return _FakeLoopResult(output="ok"), 0.01
 
         reg = make_registry(tmp_path, runner=runner)

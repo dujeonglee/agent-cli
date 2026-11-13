@@ -32,7 +32,7 @@ WAKE_AUTHOR = "🤝 agent"
 
 @dataclass(frozen=True, kw_only=True)
 class RunRequest:
-    """런 하나의 입력 — ``run_loop`` 의 ``query*``·``stop_event`` 인자 묶음."""
+    """런 하나의 입력 — `MainLoop.start` 가 엔진의 `Start`(질의·귀속·이미지·중단 핸들)로 옮긴다."""
 
     text: str
     author: str | None  # None = run 의 argv 질의; 깨우기는 WAKE_AUTHOR; 예약은 그 이름
@@ -148,7 +148,7 @@ class QuietPolicy:
 class PumpSurface(Protocol):
     """호스트 표면 — 펌프가 사람/프런트에 알리거나 호스트 정책을 묻는 자리."""
 
-    #: ``run_loop(graceful_interrupt=)`` — web True(Stop 버튼), run False(Ctrl-C)
+    #: `MainLoop.graceful_interrupt` — web True(Stop 버튼), run False(Ctrl-C)
     graceful_interrupt: bool
 
     def idle(self) -> None:

@@ -57,10 +57,8 @@ class TestToolIntersection:
                     tools=["read_file", "shell"],
                 ),
             ).run()
-            call_kwargs = mock_loop.call_args
-            active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get(
-                "active_tools"
-            )
+            kind, _start, _ctx = mock_loop.call_args.args
+            active_tools = kind.tools
             assert set(active_tools) == {"read_file", "shell"}
 
     def test_empty_intersection_rejected(self, caps, ctx):
@@ -101,10 +99,8 @@ class TestToolIntersection:
                     ctx=ctx,
                 ),
             ).run()
-            call_kwargs = mock_loop.call_args
-            active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get(
-                "active_tools"
-            )
+            kind, _start, _ctx = mock_loop.call_args.args
+            active_tools = kind.tools
             assert set(active_tools) == {"read_file", "write_file"}
 
     def test_no_skill_tools_uses_parent_tools(self, caps, ctx):
@@ -126,10 +122,8 @@ class TestToolIntersection:
                     tools=["read_file", "shell"],
                 ),
             ).run()
-            call_kwargs = mock_loop.call_args
-            active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get(
-                "active_tools"
-            )
+            kind, _start, _ctx = mock_loop.call_args.args
+            active_tools = kind.tools
             assert set(active_tools) == {"read_file", "shell"}
 
 
@@ -153,10 +147,8 @@ class TestParentRoleInheritance:
                     agent_role="You are an explorer agent.",
                 ),
             ).run()
-            call_kwargs = mock_loop.call_args
-            agent_role = call_kwargs.kwargs.get("agent_role") or call_kwargs[1].get(
-                "agent_role"
-            )
+            kind, _start, _ctx = mock_loop.call_args.args
+            agent_role = kind.agent_role
             assert agent_role == "You are an explorer agent."
 
     def test_no_parent_role_empty(self, caps, ctx):
@@ -177,10 +169,8 @@ class TestParentRoleInheritance:
                     ctx=ctx,
                 ),
             ).run()
-            call_kwargs = mock_loop.call_args
-            agent_role = call_kwargs.kwargs.get("agent_role") or call_kwargs[1].get(
-                "agent_role"
-            )
+            kind, _start, _ctx = mock_loop.call_args.args
+            agent_role = kind.agent_role
             assert agent_role == ""
 
     def test_compaction_disabled_propagates_to_run_loop(self, caps, ctx):
@@ -203,7 +193,7 @@ class TestParentRoleInheritance:
                     compaction_enabled=False,
                 ),
             ).run()
-            assert mock_loop.call_args.kwargs.get("compaction_enabled") is False
+            assert mock_loop.call_args.args[0].compaction_enabled is False
 
     def test_compaction_defaults_enabled(self, caps, ctx):
         """Backward-compat: omitting compaction_enabled keeps compaction on."""
@@ -223,7 +213,7 @@ class TestParentRoleInheritance:
                     ctx=ctx,
                 ),
             ).run()
-            assert mock_loop.call_args.kwargs.get("compaction_enabled") is True
+            assert mock_loop.call_args.args[0].compaction_enabled is True
 
 
 class TestSkillSubdir:
@@ -245,8 +235,7 @@ class TestSkillSubdir:
                     ctx=ctx,
                 ),
             ).run()
-            call_kwargs = mock_loop.call_args
-            skill_ctx = call_kwargs.kwargs.get("ctx") or call_kwargs[1].get("ctx")
+            _kind, _start, skill_ctx = mock_loop.call_args.args
             # Should be a different ContextManager than parent
             assert skill_ctx is not ctx
             assert "skill_summarize" in str(skill_ctx.session_dir)
@@ -281,7 +270,7 @@ class TestSkillRegistryInheritance:
             ).run()
             # The skill's run_loop must receive the SAME registry (else spawn
             # ops in the skill body hit no registry and no-op).
-            assert mock_loop.call_args.kwargs["ports"].agent_registry is reg
+            assert mock_loop.call_args.args[0].ports.agent_registry is reg
 
     def test_skill_subloop_exposes_spawn_but_subagent_does_not(self, caps):
         """Parity: the agent tool advertises spawn when a registry is present
@@ -400,7 +389,7 @@ class TestRegistryComesFromTheCaller:
                     **kw,
                 ),
             ).run()
-            return mock_loop.call_args.kwargs["ports"].agent_registry
+            return mock_loop.call_args.args[0].ports.agent_registry
 
     def test_explicit_registry_passes_through(self, caps, ctx):
         explicit = MagicMock(name="explicit")

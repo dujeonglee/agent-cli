@@ -207,8 +207,8 @@ class TestRunSingleWithAgent:
 
         captured_kwargs = {}
 
-        def mock_run_loop(**kwargs):
-            captured_kwargs.update(kwargs)
+        def mock_run_loop(kind, start, ctx):
+            captured_kwargs["kind"] = kind
             from agent_cli.tools.result import ToolResult
 
             return ToolResult(True, output="done")
@@ -236,15 +236,15 @@ class TestRunSingleWithAgent:
         ).run()
 
         assert result.success
-        assert captured_kwargs["agent_role"] == "You are a test engineer."
+        assert captured_kwargs["kind"].agent_role == "You are a test engineer."
 
     def test_compaction_disabled_propagates_to_run_loop(self, monkeypatch):
         """Parent's compaction_enabled=False threads into the delegate's
         run_loop (the internal flag flowing to subagents)."""
         captured_kwargs = {}
 
-        def mock_run_loop(**kwargs):
-            captured_kwargs.update(kwargs)
+        def mock_run_loop(kind, start, ctx):
+            captured_kwargs["kind"] = kind
             from agent_cli.tools.result import ToolResult
 
             return ToolResult(True, output="done")
@@ -271,14 +271,14 @@ class TestRunSingleWithAgent:
                 compaction_enabled=False,
             ),
         ).run()
-        assert captured_kwargs["compaction_enabled"] is False
+        assert captured_kwargs["kind"].compaction_enabled is False
 
     def test_compaction_defaults_enabled(self, monkeypatch):
         """Backward-compat: omitting compaction_enabled keeps compaction on."""
         captured_kwargs = {}
 
-        def mock_run_loop(**kwargs):
-            captured_kwargs.update(kwargs)
+        def mock_run_loop(kind, start, ctx):
+            captured_kwargs["kind"] = kind
             from agent_cli.tools.result import ToolResult
 
             return ToolResult(True, output="done")
@@ -304,7 +304,7 @@ class TestRunSingleWithAgent:
                 )
             ),
         ).run()
-        assert captured_kwargs["compaction_enabled"] is True
+        assert captured_kwargs["kind"].compaction_enabled is True
 
     def test_agent_not_found_returns_error(self, tmp_path, monkeypatch):
         """AG-16: Non-existent agent returns error ToolResult."""
@@ -348,8 +348,8 @@ class TestRunSingleWithAgent:
 
         captured_kwargs = {}
 
-        def mock_run_loop(**kwargs):
-            captured_kwargs.update(kwargs)
+        def mock_run_loop(kind, start, ctx):
+            captured_kwargs["kind"] = kind
             from agent_cli.tools.result import ToolResult
 
             return ToolResult(True, output="done")
@@ -377,7 +377,7 @@ class TestRunSingleWithAgent:
         ).run()
 
         assert result.success
-        assert captured_kwargs["active_tools"] == ["read_file"]
+        assert captured_kwargs["kind"].tools == ["read_file"]
 
     def test_task_tools_outside_the_profile_are_rejected(self, tmp_path, monkeypatch):
         """AG-18 (v10.14.0): the profile's allowed-tools is an upper bound —
@@ -393,8 +393,8 @@ class TestRunSingleWithAgent:
 
         captured_kwargs = {}
 
-        def mock_run_loop(**kwargs):
-            captured_kwargs.update(kwargs)
+        def mock_run_loop(kind, start, ctx):
+            captured_kwargs["kind"] = kind
             from agent_cli.tools.result import ToolResult
 
             return ToolResult(True, output="done")
@@ -438,8 +438,8 @@ class TestRunSingleWithAgent:
 
         captured_kwargs = {}
 
-        def mock_run_loop(**kwargs):
-            captured_kwargs.update(kwargs)
+        def mock_run_loop(kind, start, ctx):
+            captured_kwargs["kind"] = kind
             from agent_cli.tools.result import ToolResult
 
             return ToolResult(True, output="done")
@@ -467,14 +467,14 @@ class TestRunSingleWithAgent:
         ).run()
 
         assert result.success
-        assert captured_kwargs["binding"].model == "special-model"
+        assert captured_kwargs["kind"].binding.model == "special-model"
 
     def test_without_agent_unchanged(self, tmp_path, monkeypatch):
         """AG-20: Empty agent_name preserves existing behavior."""
         captured_kwargs = {}
 
-        def mock_run_loop(**kwargs):
-            captured_kwargs.update(kwargs)
+        def mock_run_loop(kind, start, ctx):
+            captured_kwargs["kind"] = kind
             from agent_cli.tools.result import ToolResult
 
             return ToolResult(True, output="done")
@@ -502,7 +502,7 @@ class TestRunSingleWithAgent:
         ).run()
 
         assert result.success
-        assert captured_kwargs["agent_role"] == ""
+        assert captured_kwargs["kind"].agent_role == ""
 
 
 class TestToolDelegatePassesAgent:

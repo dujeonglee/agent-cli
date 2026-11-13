@@ -486,10 +486,10 @@ class TestEndToEnd:
 
         seen = []
 
-        def runner(query, ctx, **kw):
+        def runner(kind, start, ctx):
             from tests.test_agents_live import _FakeLoopResult
 
-            seen.append(query)
+            seen.append(start.query)
             return _FakeLoopResult(output="ok"), 0.01
 
         agents = make_registry(tmp_path, runner=runner)

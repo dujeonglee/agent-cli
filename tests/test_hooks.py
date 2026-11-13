@@ -364,8 +364,8 @@ class TestSkillHooksWiring:
 
         captured: dict = {}
 
-        def fake_run_loop(**kwargs):
-            captured.update(kwargs)
+        def fake_run_loop(kind, start, ctx):
+            captured["kind"] = kind
             return ToolResult(True, output="done")
 
         with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
@@ -380,7 +380,7 @@ class TestSkillHooksWiring:
                 ),
             ).run()
 
-        forwarded = captured.get("hooks_config")
+        forwarded = captured["kind"].hooks_config
         assert forwarded is not None, "hooks_config must be forwarded"
         assert "PreToolUse" in forwarded
         cmds = [m.hooks[0].command for m in forwarded["PreToolUse"]]
@@ -410,8 +410,8 @@ class TestSkillHooksWiring:
 
         captured: dict = {}
 
-        def fake_run_loop(**kwargs):
-            captured.update(kwargs)
+        def fake_run_loop(kind, start, ctx):
+            captured["kind"] = kind
             return ToolResult(True, output="done")
 
         with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
@@ -425,7 +425,7 @@ class TestSkillHooksWiring:
                 ),
             ).run()
 
-        assert captured.get("hooks_config") is None
+        assert captured["kind"].hooks_config is None
 
 
 class TestSkillHooksEndToEnd:
@@ -615,8 +615,8 @@ class TestDelegateHooksWiring:
 
         captured: dict = {}
 
-        def fake_run_loop(**kwargs):
-            captured.update(kwargs)
+        def fake_run_loop(kind, start, ctx):
+            captured["kind"] = kind
             return ToolResult(True, output="done")
 
         # delegate.py imports run_loop lazily inside _run_single (to
@@ -633,7 +633,7 @@ class TestDelegateHooksWiring:
                 ),
             )
 
-        assert captured.get("hooks_config") is parent_hooks, (
+        assert captured["kind"].hooks_config is parent_hooks, (
             "delegate dropped the caller's hooks_config — "
             "tool calls inside the subagent loop would fire without the "
             "parent's matchers attached."
@@ -656,8 +656,8 @@ class TestDelegateHooksWiring:
         )
         captured: dict = {}
 
-        def fake_run_loop(**kwargs):
-            captured.update(kwargs)
+        def fake_run_loop(kind, start, ctx):
+            captured["kind"] = kind
             return ToolResult(True, output="done")
 
         # delegate.py imports run_loop lazily inside _run_single (to
@@ -673,7 +673,7 @@ class TestDelegateHooksWiring:
                 ),
             )
 
-        assert captured.get("hooks_config") is None
+        assert captured["kind"].hooks_config is None
 
 
 class TestAgentFrontmatterHooks:
@@ -722,8 +722,8 @@ class TestAgentFrontmatterHooks:
 
         captured: dict = {}
 
-        def fake_run_loop(**kwargs):
-            captured.update(kwargs)
+        def fake_run_loop(kind, start, ctx):
+            captured["kind"] = kind
             return ToolResult(True, output="done")
 
         with (
@@ -743,7 +743,7 @@ class TestAgentFrontmatterHooks:
                 ),
             )
 
-        forwarded = captured.get("hooks_config")
+        forwarded = captured["kind"].hooks_config
         assert forwarded is not None, "agent hooks must reach run_loop"
         matchers = forwarded["PreToolUse"]
         cmds = [m.hooks[0].command for m in matchers]
@@ -769,8 +769,8 @@ class TestAgentFrontmatterHooks:
 
         captured: dict = {}
 
-        def fake_run_loop(**kwargs):
-            captured.update(kwargs)
+        def fake_run_loop(kind, start, ctx):
+            captured["kind"] = kind
             return ToolResult(True, output="done")
 
         with (
@@ -789,7 +789,7 @@ class TestAgentFrontmatterHooks:
                 ),
             )
 
-        forwarded = captured.get("hooks_config")
+        forwarded = captured["kind"].hooks_config
         assert forwarded is not None
         assert forwarded["PreToolUse"][0].hooks[0].command == "echo agent-only"
 
@@ -805,8 +805,8 @@ class TestAgentFrontmatterHooks:
 
         captured: dict = {}
 
-        def fake_run_loop(**kwargs):
-            captured.update(kwargs)
+        def fake_run_loop(kind, start, ctx):
+            captured["kind"] = kind
             return ToolResult(True, output="done")
 
         with (
@@ -826,7 +826,7 @@ class TestAgentFrontmatterHooks:
                 ),
             )
 
-        assert captured.get("hooks_config") is parent_hooks
+        assert captured["kind"].hooks_config is parent_hooks
 
     def test_agent_frontmatter_hook_fires_subprocess_e2e(self, tmp_path):
         """Full E2E: write a real agent file with a PreToolUse hook,

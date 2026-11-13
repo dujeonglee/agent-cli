@@ -382,8 +382,8 @@ class TestOneShotHasItsOwnAddress:
 
         seen = {}
 
-        def fake_run_loop(**kwargs):
-            ports = kwargs["ports"]
+        def fake_run_loop(kind, start, ctx):
+            ports = kind.ports
             seen["owner"] = ports.owner
             seen["absorb"] = ports.absorb_inbox
             jobs.start("sleep 30", owner=ports.owner)  # 서브에이전트가 잡을 남기고 끝남

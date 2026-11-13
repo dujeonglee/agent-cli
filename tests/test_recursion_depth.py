@@ -445,8 +445,8 @@ class TestSkillBumpsDepth:
 
         captured = {}
 
-        def fake_run_loop(**kwargs):
-            captured.update(kwargs)
+        def fake_run_loop(kind, start, ctx):
+            captured["kind"] = kind
             return ToolResult(True, output="ok")
 
         monkeypatch.setattr("agent_cli.loop.run_loop", fake_run_loop)
@@ -475,8 +475,8 @@ class TestSkillBumpsDepth:
             ),
         ).run()
         # depth=3+1=4 (one hop above the parent), max_depth passed through.
-        assert captured["depth"] == 4
-        assert captured["max_depth"] == 5
+        assert captured["kind"].depth == 4
+        assert captured["kind"].max_depth == 5
 
     def test_skill_with_default_parent_depth_starts_at_one(self, monkeypatch):
         # Default ``parent_depth=0`` is the "called directly, no
@@ -490,8 +490,8 @@ class TestSkillBumpsDepth:
 
         captured = {}
 
-        def fake_run_loop(**kwargs):
-            captured.update(kwargs)
+        def fake_run_loop(kind, start, ctx):
+            captured["kind"] = kind
             return ToolResult(True, output="ok")
 
         monkeypatch.setattr("agent_cli.loop.run_loop", fake_run_loop)
@@ -515,7 +515,7 @@ class TestSkillBumpsDepth:
                 binding=make_binding(provider=object(), capabilities=_caps(), model="m")
             ),
         ).run()
-        assert captured["depth"] == 1
+        assert captured["kind"].depth == 1
 
 
 # ─── End-to-end regression: existing recursion paths still work ───

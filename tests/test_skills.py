@@ -580,8 +580,8 @@ class TestSkillExecution:
                     session=fake_session,
                 ),
             ).run()
-            _, kwargs = mock_run_loop.call_args
-            assert kwargs["session"] is fake_session
+            (kind, _start, _ctx), _ = mock_run_loop.call_args
+            assert kind.session is fake_session
 
     def test_execute_session_none_by_default(self, caps):
         """execute_skill without session → run_loop gets session=None."""
@@ -601,8 +601,8 @@ class TestSkillExecution:
                     )
                 ),
             ).run()
-            _, kwargs = mock_run_loop.call_args
-            assert kwargs["session"] is None
+            (kind, _start, _ctx), _ = mock_run_loop.call_args
+            assert kind.session is None
 
     def test_execute_propagates_skill_stack(self, caps):
         """execute_skill passes skill_stack to run_loop."""
@@ -623,9 +623,9 @@ class TestSkillExecution:
                     skill_stack=["summarize"],
                 ),
             ).run()
-            _, kwargs = mock_run_loop.call_args
-            assert kwargs["skill_stack"] == ["summarize"]
-            assert kwargs["skill_name"] == "optimize"
+            (kind, _start, _ctx), _ = mock_run_loop.call_args
+            assert kind.skill_stack == ["summarize"]
+            assert kind.skill_name == "optimize"
 
     def test_execute_no_model_override(self, caps):
         """skill.model=None → run_loop called with the original model."""
@@ -650,8 +650,8 @@ class TestSkillExecution:
                     )
                 ),
             ).run()
-            _, kwargs = mock_run_loop.call_args
-            assert kwargs["binding"].model == "original-model"
+            (kind, _start, _ctx), _ = mock_run_loop.call_args
+            assert kind.binding.model == "original-model"
 
     def test_execute_with_model_override(self, caps):
         """skill.model set → run_loop called with the overridden model."""
@@ -679,8 +679,8 @@ class TestSkillExecution:
                     )
                 ),
             ).run()
-            _, kwargs = mock_run_loop.call_args
-            assert kwargs["binding"].model == "gpt-4o"
+            (kind, _start, _ctx), _ = mock_run_loop.call_args
+            assert kind.binding.model == "gpt-4o"
 
 
 class TestYamlOptional:

@@ -60,8 +60,8 @@ class _Trace(LoopKind):
         return ("crashed", str(exc))
 
 
-def _engine(query, ctx, **kw):
-    return ToolResult(True, output=f"{query}@{ctx}"), 0.01
+def _engine(kind, start, ctx):
+    return ToolResult(True, output=f"{start.query}@{ctx}"), 0.01
 
 
 class TestTemplateOrder:
@@ -78,7 +78,7 @@ class TestTemplateOrder:
         assert k.log == ["open", "ctx", "rejected:no ctx", f"close:H:{out!r}"]
 
     def test_engine_exception_still_releases_then_goes_to_crashed(self):
-        def bad(query, ctx, **kw):
+        def bad(kind, start, ctx):
             raise ValueError("engine died")
 
         k = _Trace(engine=bad)
@@ -112,11 +112,12 @@ class TestTemplateOrder:
 
 class TestEngineContract:
     def test_default_engine_is_run_loop_read_at_call_time(self, monkeypatch):
-        """`patch("agent_cli.loop.run_loop")` 하나가 다섯 종류 전부에 닿는다."""
+        """`patch("agent_cli.loop.run_loop")` 하나가 다섯 종류 전부에 닿는다. 엔진은
+        종류 자신·시작·ctx 를 받는다 (v10.132.0) — 종전엔 종류가 자기를 키워드로 폈다."""
         seen = {}
 
-        def fake(**kw):
-            seen.update(kw)
+        def fake(kind, start, ctx):
+            seen.update(kind=kind, start=start, ctx=ctx)
             return ToolResult(True, output="ok")
 
         monkeypatch.setattr("agent_cli.loop.run_loop", fake)
@@ -125,37 +126,54 @@ class TestEngineContract:
         stop = object()
         k.stop_event = stop
         k.run()
-        assert seen["query"] == "q" and seen["ctx"] == "CTX"
-        assert seen["depth"] == 1 and seen["max_depth"] == 3
-        assert seen["active_tools"] == ["shell"] and seen["agent_name"] == "explorer"
-        assert seen["stop_event"] is stop and seen["verbose"] is False
-        assert seen["ports"] is k.ports
+        assert seen["kind"] is k
+        assert seen["start"].query == "q" and seen["ctx"] == "CTX"
+        kind = seen["kind"]
+        assert kind.depth == 1 and kind.max_depth == 3
+        assert kind.tools == ["shell"] and kind.agent_name == "explorer"
+        assert kind.stop_event is stop and kind.verbose is False
+        assert kind.ports is k.ports
 
     def test_start_stop_event_wins_over_the_kinds(self):
-        k = _Trace()
-        k.stop_event = "kind"
-        assert k.loop_kwargs(Start(query="q", stop_event="run"))["stop_event"] == "run"
-        assert k.loop_kwargs(Start(query="q"))["stop_event"] == "kind"
+        """중단 핸들: 런의 것(main — 펌프가 런마다 새로) > 종류의 것 > 새 Event."""
+        import threading
+        from unittest.mock import MagicMock
 
-    def test_loop_kwargs_cover_every_run_loop_parameter_but_query_and_ctx(self):
+        from agent_cli.loop.core import AgentLoop
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loopkit import static_binding
+
+        run_ev, kind_ev = threading.Event(), threading.Event()
+        k = make_kind(
+            binding=static_binding(
+                provider=MagicMock(),
+                capabilities=ModelCapabilities(8192, 1024, False),
+                model="m",
+            )
+        )
+        k.stop_event = kind_ev
+        loop = AgentLoop(k, Start(query="q", stop_event=run_ev), None)
+        assert loop.stop_event is run_ev
+        assert AgentLoop(k, Start(query="q"), None).stop_event is kind_ev
+        k.stop_event = None
+        fresh = AgentLoop(k, Start(query="q"), None).stop_event
+        assert isinstance(fresh, threading.Event) and fresh not in (run_ev, kind_ev)
+
+    def test_engine_contract_is_kind_start_ctx(self):
+        """종류가 엔진에 넘기는 모양 = `run_loop` 의 서명 = `AgentLoop.__init__` 의 서명 —
+        셋 중 하나만 바뀌면 다섯 종류가 첫 런에서 `TypeError` 로 죽는다."""
         import inspect
 
-        from agent_cli.loop import run_loop
+        from agent_cli.loop import AgentLoop, run_loop
 
-        params = set(inspect.signature(run_loop).parameters)
-        given = set(_Trace().loop_kwargs(Start(query="q"))) | {"query", "ctx"}
-        # 바인딩 없이 부르는 쪽의 부품(provider/capabilities/model/…/dialect)만 남는다
-        leftovers = params - given
-        assert leftovers <= {
-            "peer_agents_section",  # 맨 종류만 — 종류는 `prompt_profile` 로 말한다
-            "provider",
-            "capabilities",
-            "model",
-            "provider_name",
-            "base_url",
-            "api_key",
-            "dialect",
-        }, leftovers
+        assert list(inspect.signature(run_loop).parameters) == ["kind", "start", "ctx"]
+        assert list(inspect.signature(AgentLoop.__init__).parameters) == [
+            "self",
+            "kind",
+            "start",
+            "ctx",
+        ]
+        inspect.signature(run_loop).bind(_Trace(), Start(query="q"), "CTX")
 
 
 class TestCaller:

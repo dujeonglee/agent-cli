@@ -69,8 +69,8 @@ class TestRun:
     def test_runs_the_profile_as_a_oneshot_and_delivers_the_result(self, tmp_path):
         seen: dict = {}
 
-        def runner(query, ctx, **kw):
-            seen.update(kw, query=query, ctx=ctx)
+        def runner(kind, start, ctx):
+            seen.update(kind=kind, start=start, ctx=ctx)
             return ToolResult(True, "AUDIT pass"), 0.0
 
         jobs, delivered = _jobs(tmp_path, runner)
@@ -83,22 +83,24 @@ class TestRun:
             == jobs.ctx.session_dir / "harness" / "auditor" / "1-9"
         )
         # 일회성 포트: 질문·레지스트리·메시지 없음 → ask/message/reply 가 없다
-        ports = seen["ports"]
+        kind = seen["kind"]
+        ports = kind.ports
         assert isinstance(ports, LoopPorts)
         assert ports.owner == "harness:auditor:1-9"  # v10.87.0 D2: 라벨까지
         assert ports.questions is None and ports.agent_registry is None
         assert ports.message_handler is None
         assert ports.absorb_inbox is not None  # v10.84.0: 자기 메일함을 읽는 포트
         # 프로파일이 도구 상한·역할이고, 세션 셸 훅은 싣지 않는다
-        assert seen["active_tools"] == ["history", "read_file", "code_index"]
-        assert seen["agent_name"] == "auditor" and "Auditor" in seen["agent_role"]
-        assert seen["hooks_config"] is None
-        assert seen["max_turns"] == 9 and seen["binding"].provider == "p"
-        assert seen["stop_event"] is jobs._stop
+        assert kind.tools == ["history", "read_file", "code_index"]
+        assert kind.agent_name == "auditor" and "Auditor" in kind.agent_role
+        assert kind.hooks_config is None
+        assert kind.max_turns == 9 and kind.binding.provider == "p"
+        assert seen["start"].stop_event is None and kind.stop_event is jobs._stop
 
     def test_failure_delivers_the_reason(self, tmp_path):
         jobs, delivered = _jobs(
-            tmp_path, lambda q, c, **kw: (ToolResult(False, error="Max turns (3)"), 0)
+            tmp_path,
+            lambda kind, start, c: (ToolResult(False, error="Max turns (3)"), 0),
         )
         jobs.run("auditor", "1-2", "t")
         assert wait_until(lambda: delivered)
@@ -239,7 +241,7 @@ class TestScopeCard:
         self._patch(monkeypatch, r)
         seen: list[str] = []
 
-        def runner(q, c, **kw):
+        def runner(kind, start, c):
             seen.append(threading.current_thread().name)
             return ToolResult(True, output="AUDIT ok"), 0
 
@@ -278,7 +280,7 @@ class TestScopeCard:
 
         self._patch(monkeypatch, _Broken())
         jobs, delivered = _jobs(
-            tmp_path, lambda q, c, **kw: (ToolResult(True, output="ok"), 0)
+            tmp_path, lambda kind, start, c: (ToolResult(True, output="ok"), 0)
         )
         jobs.run("auditor", "1-2", "t")
         assert wait_until(lambda: delivered) and delivered[0][1] is True
@@ -298,7 +300,7 @@ class TestScopeCard:
         monkeypatch.setattr(render, "_renderer", r)
         monkeypatch.setattr(render, "get_renderer", lambda: r)
 
-        def runner(q, c, **kw):
+        def runner(kind, start, c):
             render.render_step("action", "{}", 1, tool_name="history")
             return ToolResult(True, output="AUDIT ok"), 0
 
