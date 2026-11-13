@@ -14,11 +14,11 @@ from agent_cli.context.token_estimator import estimate_tokens
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import LoopConfig, LoopState
+from agent_cli.paths import display_path
 from agent_cli.providers.capabilities import MIN_CONTEXT_WINDOW
 from agent_cli.tools import TOOLS, RunContext, _execute_tool, human_note
 from agent_cli.tools.base import (
     GENERIC_RETRY_HINT,
-    display_path,
     oversized_nudge,
     persist_oversized,
 )

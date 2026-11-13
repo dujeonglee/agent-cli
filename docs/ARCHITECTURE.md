@@ -65,7 +65,7 @@ agent_cli/
 ├── model_check.py           부팅 때 모델 이름 검증 — "없는 모델"(`ModelNotFound`)과 "확인할 수 없음"을 가른다
 ├── knobs.py                 세션 노브 선언 `KNOBS` 하나에서 env·CLI 플래그·web 칩 표면을 파생 (docs/knobs/DESIGN.md)
 ├── constants.py             공용 상수와 작은 판정 함수(`parse_duration`·`format_duration`·`open_debts`·env 노브 읽기)
-├── paths.py                 `.agent-cli` 경로의 단일 소스 — 프로젝트·유저·세션·그림 보관소·스크래치 디렉터리
+├── paths.py                 `.agent-cli` 경로의 단일 소스 — 프로젝트·유저·세션·그림 보관소·스크래치 디렉터리, 모델에게 보이는 경로 표기(`display_path`)
 ├── fsio.py                  파일 저장 패턴 셋의 소유자 — 원자 교체(`atomic_write_*`)·가드 append(`append_line`)
 ├── resource_loader.py       여러 경로에서 frontmatter 있는 .md 를 우선순위로 찾는 `ResourceLoader` (스킬·에이전트·지시사항)
 ├── extras.py                선택 의존성(extra) 설치 안내 — 빠진 패키지 이름을 설치 메타데이터에서 읽어 직접 댄다
@@ -362,7 +362,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
     `release_owner`, `AgentRuntime`)·`subagent.agents_live`(`main_registry`·`tool_agent`·메일 레코드)·`subagent.oneshot`(`tool_delegate`),
     `loop.skill_invoke` → `skills`(`load_skills`·`SkillLoop`).
   - **아래층이 도구 목록을 읽는다** — `context._file_extract`·`context.render`·`dialects.base` → `tools`(`TOOLS`).
-  - **낱개** — `images` → `tools`(`display_path`), `prompts.system_prompt` → `skills`(`load_skills`),
+  - **낱개** — `prompts.system_prompt` → `skills`(`load_skills`),
     `render.minimal` → `context`(`estimate_tokens`),
     `render.web` → `web`(`write_status_file`), `tools.tool_help` → `tools.registry`(`effective_tool_names`).
 - 그 밖의 지연 import 는 순환과 무관하고 가드하지 않는다. 출발 모듈로는 `main`·`runtime`·`prompts.inventory` 에 가장 많다.
@@ -598,7 +598,7 @@ provider.call() → 예외
 
 - **과대 도구 출력**: 관찰이 `max(context_window, MIN_CONTEXT_WINDOW) // 10`(`ToolBridge._oversized_cap`)을 넘으면 본문 대신 over-cap 관찰을 넣는다.
   정책은 `Tool.render_oversized` 하나다 — 전문은 파일로(도구가 이미 쓴 파일이 아니면 `persist_oversized` 가 `<session_dir>/oversized/` 에),
-  head/tail 발췌(`oversized_excerpt`)와 좁혀 읽는 길을 함께. 경로는 `tools/base.display_path()` 로 cwd 상대.
+  head/tail 발췌(`oversized_excerpt`)와 좁혀 읽는 길을 함께. 경로는 `paths.display_path()` 로 cwd 상대.
 - **세션 상태 블록(꼬리)**: 매 턴 바뀌는 상태를 마지막 메시지 뒤에 붙인다 (`prompts/session_state.py`, docs/tail/DESIGN.md). 첫 줄은 `TAIL_BOUNDARY`.
   Task Guidelines, `## Open Items`(장부), `## Session Memory`, `## Background jobs`, `## Web Sources`, 상주 에이전트 목록, 턴 예산, 압축 안내
   (`COMPACTION_NOTICE_STEPS`)가 여기 있다. 컨텍스트 사용량 숫자는 싣지 않는다.
