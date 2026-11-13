@@ -5,6 +5,10 @@
 2. `agent_cli/` 아래 `.py` 와 `web/static/` 의 `app.js`·`js/*.js` 가 전부 트리에 있다.
 3. §2 의 어느 줄도 200자를 넘지 않고, `(123)`·`(~30)`·`(282, …` 꼴의 줄 수 표기가 없다.
 
+문서 전체:
+4. `v<숫자>.<숫자>` 꼴 버전 표기가 없다(`Python 3.10`·`>=0.25` 는 걸리지 않는다).
+5. 백틱 안의 경로 꼴 토큰과 `docs/….md` 언급이 저장소에 있다(범위는 `_path_candidates`).
+
 트리 파서는 이 파일 안에 있다: 들여쓰기 깊이(4칸 단위 + `├── `/`└── `) → 경로.
 """
 
@@ -156,3 +160,88 @@ def test_section2_lines_short_and_without_line_counts():
         "docs/ARCHITECTURE.md §2 에 줄 수 표기 `(123)` 가 있다 — 지도는 줄 수를 적지 않는다:\n"
         + "\n".join(bad_loc)
     )
+
+
+# ── 문서 전체 ────────────────────────────────────────────────
+
+_VERSION_MARK = re.compile(r"(?<![\w.])v\d+\.\d+")
+_FENCE = re.compile(r"^```.*?^```", re.MULTILINE | re.DOTALL)
+_INLINE_CODE = re.compile(r"`([^`\n]+)`")
+_DOC_MENTION = re.compile(r"(?<![\w/.-])(docs/[\w./-]+\.md)")
+_PATH_ROOTS = ("agent_cli/", "docs/", "tests/", "bench/", ".github/", "scripts/")
+_SOURCE_SUFFIXES = (".py", ".js")
+_PLACEHOLDER = set("<>{}*…$")
+
+
+def _path_candidates(text: str) -> set[str]:
+    """백틱 안의 경로 꼴 토큰(코드 블록 밖) + 문서 어디서든 ``docs/….md`` 언급.
+
+    경로 꼴: ``….py``·``….js`` 로 끝나거나, `_PATH_ROOTS` 로 시작하거나, ``/`` 가 든 채
+    ``/`` 로 끝나는 디렉터리(확장자만인 ``.py`` 는 아니다). ``::이름`` 꼬리는 뗀다. 자리표시(``<name>``·``{id}``·``*``·``…``)가
+    든 것, 실행 시 만들어지는 프로젝트·유저 경로(``.agent-cli/``·``~/``)는 대상이 아니다.
+    """
+    out: set[str] = set(_DOC_MENTION.findall(text))  # 설계 문서 언급은 트리 블록 안까지
+    body = _FENCE.sub("", text)
+    for span in _INLINE_CODE.findall(body):
+        for tok in span.split():
+            tok = tok.split("::")[0].strip("()[],;:'\"")
+            if not tok or tok in _SOURCE_SUFFIXES or _PLACEHOLDER & set(tok):
+                continue
+            if tok.startswith((".agent-cli", "~", "/", "http")):
+                continue
+            if (
+                tok.endswith(_SOURCE_SUFFIXES)
+                or tok.startswith(_PATH_ROOTS)
+                or ("/" in tok.rstrip("/") and tok.endswith("/"))
+            ):
+                out.add(tok)
+    return out
+
+
+def _path_exists(tok: str) -> bool:
+    if (REPO / tok).exists() or (PKG / tok).exists():
+        return True
+    if "/" not in tok:  # 파일 이름만 — 저장소 어딘가에 그 이름이 있으면
+        return any(
+            "__pycache__" not in p.parts for p in REPO.glob(f"agent_cli/**/{tok}")
+        ) or any(REPO.glob(f"tests/**/{tok}"))
+    return False
+
+
+def test_no_version_marks_anywhere():
+    bad = [
+        f"  줄 {no}: {line.strip()[:90]}"
+        for no, line in enumerate(_doc_text().split("\n"), 1)
+        if _VERSION_MARK.search(line)
+    ]
+    assert not bad, (
+        "docs/ARCHITECTURE.md 에 버전 표기(vX.Y)가 있다 — 지도는 지금의 구조만 적는다. "
+        "언제 바뀌었는지는 git log·릴리스 노트에 맡기고 표기를 지운다:\n"
+        + "\n".join(bad)
+    )
+
+
+def test_backticked_paths_exist():
+    missing = sorted(t for t in _path_candidates(_doc_text()) if not _path_exists(t))
+    assert not missing, (
+        "docs/ARCHITECTURE.md 가 없는 경로를 가리킨다(저장소 루트 또는 agent_cli/ 기준으로 찾았다) — "
+        "옮겨졌으면 고치고, 없어졌으면 그 문장을 지운다:\n"
+        + "\n".join(f"  {m}" for m in missing)
+    )
+
+
+def test_path_candidates_scope():
+    text = (
+        "`loop/core.py` `agent_cli/tools/registry.py::TOOLS` `python -m agent_cli.prompts.x` "
+        "`dialects/specs/<name>.py` `.agent-cli/hooks/` `run_*/` `history.jsonl` "
+        "`tests/browser/` `kdump.py` `.py` 그리고 docs/pump/DESIGN.md\n"
+        "```\nghost/inside_fence.py  docs/tree/DESIGN.md\n```\n"
+    )
+    assert _path_candidates(text) == {
+        "loop/core.py",
+        "agent_cli/tools/registry.py",
+        "tests/browser/",
+        "kdump.py",
+        "docs/pump/DESIGN.md",
+        "docs/tree/DESIGN.md",
+    }

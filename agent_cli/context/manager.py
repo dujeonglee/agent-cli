@@ -491,7 +491,7 @@ class ContextManager:
         the model's context window at that point, so the threshold
         reflects actual headroom ``(context − system − output) × 0.8``
         instead of a fixed 90%-of-budget estimate against a 4000-token
-        system reserve. See docs/ARCHITECTURE.md §compaction.
+        system reserve. See docs/ARCHITECTURE.md §5.4.
 
         Pure storage: oversized tool outputs are already nudge-capped at the
         loop's result→observation seam, so no message reaching here can blow
