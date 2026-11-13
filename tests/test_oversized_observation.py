@@ -23,12 +23,12 @@ from pathlib import Path
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.loop import AgentLoop, LoopState, ToolBridge
 from agent_cli.loop.tool_bridge import TURN_OBS_BUDGET_MULT
+from agent_cli.paths import display_path
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.base import (
     GENERIC_RETRY_HINT,
     OVERSIZED_DIRNAME,
     Tool,
-    display_path,
     oversized_excerpt,
     persist_oversized,
 )

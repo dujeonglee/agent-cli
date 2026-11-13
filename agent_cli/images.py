@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent_cli import paths
+from agent_cli.paths import display_path
 
 #: 토큰 추정 — 픽셀 수 / 이 값. Qwen3.6(omlx) 실측 ≈ 1K px/token
 #: (480×240 ≈ 130, 1280×720 ≈ 890, 1920×1080 ≈ 2,050). Anthropic 공식은
@@ -166,8 +167,6 @@ def make_ref(path: str | Path) -> ImageRef:
     크기는 헤더를 직접 읽는다(:func:`image_size`, Pillow 불필요 — v10.61.1).
     ``path`` 는 ``display_path`` 규칙으로 적는다 — 워크스페이스 안이면 상대.
     """
-    from agent_cli.tools.base import display_path
-
     p = Path(path)
     data = p.read_bytes()
     mime = sniff_image(data[:16])

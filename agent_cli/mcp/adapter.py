@@ -18,6 +18,7 @@ import re
 from typing import Any
 
 from agent_cli.mcp.client import McpClientManager
+from agent_cli.paths import display_path
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
@@ -175,8 +176,6 @@ def _save_mcp_image(item: Any, label: str, n: int) -> tuple[str, dict | None]:
     try:
         ref = _images.make_ref(dest)
     except ValueError:
-        from agent_cli.tools.base import display_path
-
         note = (
             f"(image #{n}: {mime or 'unknown type'}, {len(data):,} bytes — saved to "
             f"{display_path(dest)}; not a PNG/JPEG/GIF/WebP so it cannot be shown)"

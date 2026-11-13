@@ -15,6 +15,8 @@ v9.0.0 부터 각 설정은 **정확히 한 곳**에 산다 (docs/config-scopes/
 쌍을 원하는 소비자가 없어졌으므로 ``scoped_paths()`` 는 은퇴했다. 소비
 모듈은 ``project_dir() / "mcp.json"`` 처럼 조립하고, 종전대로 **모듈-레벨
 상수**로 import 시점에 고정한다(``Path.cwd()`` 고정 + 테스트 monkeypatch seam).
+
+설정 경로 말고 **모델에게 보이는 경로 표기**(``display_path`` — cwd 아래면 상대)도 여기 있다.
 """
 
 from __future__ import annotations
@@ -72,3 +74,22 @@ def scratch_dir() -> Path:
     (`savefig` 두 건 포함). cwd 상대 — 세션 경로와 같은 이유로 표시 형태를
     바꾸지 않는다."""
     return Path(_DIR_NAME) / "tmp"
+
+
+def display_path(path: str | Path) -> str:
+    """A path as the MODEL should see it: relative to the working directory when
+    it lives under it, absolute otherwise.
+
+    Every path the loop hands back becomes an argument the model echoes into its
+    next call, and an ``action_input`` is re-fed on every turn after it — so a
+    nudge that points at
+    ``/Users/…/data/ws/b5rztq/.agent-cli/sessions/…/oversized/shell-3f9ac2.txt``
+    teaches the model to spend that prefix repeatedly, while the identical
+    ``.agent-cli/sessions/…/oversized/shell-3f9ac2.txt`` resolves to the same
+    file (nothing in the process ever changes cwd). The headless temp-dir
+    fallback lives outside the working directory and correctly stays absolute.
+    """
+    try:
+        return str(Path(path).resolve().relative_to(Path.cwd().resolve()))
+    except (ValueError, OSError):
+        return str(path)

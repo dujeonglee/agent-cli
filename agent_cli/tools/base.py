@@ -34,6 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_cli.paths import display_path
 from agent_cli.tools.result import ToolResult
 
 
@@ -169,25 +170,6 @@ def persist_oversized(
     except OSError:
         return ""
     return str(out)
-
-
-def display_path(path: str | Path) -> str:
-    """A path as the MODEL should see it: relative to the working directory when
-    it lives under it, absolute otherwise.
-
-    Every path the loop hands back becomes an argument the model echoes into its
-    next call, and an ``action_input`` is re-fed on every turn after it — so a
-    nudge that points at
-    ``/Users/…/data/ws/b5rztq/.agent-cli/sessions/…/oversized/shell-3f9ac2.txt``
-    teaches the model to spend that prefix repeatedly, while the identical
-    ``.agent-cli/sessions/…/oversized/shell-3f9ac2.txt`` resolves to the same
-    file (nothing in the process ever changes cwd). The headless temp-dir
-    fallback lives outside the working directory and correctly stays absolute.
-    """
-    try:
-        return str(Path(path).resolve().relative_to(Path.cwd().resolve()))
-    except (ValueError, OSError):
-        return str(path)
 
 
 def _take_lines(lines: list[str], budget: int, *, from_end: bool) -> list[str]:
