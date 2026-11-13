@@ -933,7 +933,8 @@ def _dispatch_skill(
     오류문이다 — 답이 아니므로 ``success`` 로 가린다(v10.124.0, ``_dispatch_agent`` 와
     같은 모양; 종전엔 오류문만 돌려줘 결과 파일·종료 코드가 실패를 성공으로 봤다).
     """
-    from agent_cli.skills import SkillLoop, load_skills
+    from agent_cli.skills import load_skills
+    from agent_cli.skills.executor import SkillLoop
 
     skills = load_skills()
     parts = query.split(maxsplit=1)

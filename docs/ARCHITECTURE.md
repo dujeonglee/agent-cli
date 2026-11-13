@@ -215,7 +215,7 @@ agent_cli/
 │       ├── __init__.py      내장 훅 관례(docstring)
 │       └── 10_snapshot.py   워크스페이스 스냅샷 훅 — 세션 시작 안내, 변경 도구 직전 체크포인트
 ├── skills/                  프롬프트 스킬 (Claude Code 호환 포맷)
-│   ├── __init__.py          패키지 표식(docstring)
+│   ├── __init__.py          로더 쪽만 재수출(`Skill`·`load_skills`·`model_skills`) — 실행기는 `skills.executor` 에서
 │   ├── models.py            `Skill` 데이터 모델
 │   ├── loader.py            스킬 검색·파싱(`load_skills`·`model_skills`)
 │   ├── executor.py          인자 치환 `substitute_arguments` 와 루프 종류 `SkillLoop`
@@ -360,10 +360,9 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
   - **루프 엔진이 세션·구체 종류를 올려다본다** — `loop.core`·`loop.dispatch`·`loop.kind`·`loop.tool_bridge` → `runtime`
     (세션 자원 `browser_resource`·`skills_resource`·`snapshot_resource`, 깨우기 판정 `wake_sources`·`arrived_mail`·`harness_work_running`,
     `release_owner`, `AgentRuntime`)·`subagent.agents_live`(`main_registry`·`tool_agent`·메일 레코드)·`subagent.oneshot`(`tool_delegate`),
-    `loop.skill_invoke` → `skills`(`load_skills`·`SkillLoop`).
+    `loop.skill_invoke` → `skills.executor`(`SkillLoop`).
   - **아래층이 도구 목록을 읽는다** — `context._file_extract`·`context.render`·`dialects.base` → `tools`(`TOOLS`).
-  - **낱개** — `prompts.system_prompt` → `skills`(`load_skills`),
-    `tools.tool_help` → `tools.registry`(`effective_tool_names`).
+  - **낱개** — `tools.tool_help` → `tools.registry`(`effective_tool_names`).
 - 그 밖의 지연 import 는 순환과 무관하고 가드하지 않는다. 출발 모듈로는 `main`·`runtime`·`prompts.inventory` 에 가장 많다.
   이유는 자리마다 다르다 — 예컨대 `main` 의 `web` 명령은 `agent_cli.web.server`(fastapi 선택 의존성)를 명령 안에서 import 해,
   없으면 그 명령만 안내와 함께 실패한다.

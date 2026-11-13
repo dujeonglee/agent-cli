@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parent.parent
 CYCLE_AVOIDING_LAZY: set[tuple[str, str]] = {
     # ① 루프 엔진이 세션·구체 종류를 올려다본다 — 세션 자원(`browser_resource` 등)·깨우기 판정
     #    (`wake_sources`·`arrived_mail`·`harness_work_running`)·`release_owner`·`AgentRuntime`,
-    #    main 레지스트리(`main_registry`)·`tool_agent`·`tool_delegate`, 스킬(`load_skills`·`SkillLoop`).
+    #    main 레지스트리(`main_registry`)·`tool_agent`·`tool_delegate`, 스킬 실행기(`SkillLoop`).
     ("loop.core", "runtime"),
     ("loop.core", "subagent.agents_live"),
     ("loop.dispatch", "runtime"),
@@ -29,7 +29,6 @@ CYCLE_AVOIDING_LAZY: set[tuple[str, str]] = {
     ("loop.tool_bridge", "runtime"),
     ("loop.tool_bridge", "subagent.agents_live"),
     ("loop.tool_bridge", "subagent.oneshot"),
-    ("loop.skill_invoke", "skills"),
     ("loop.skill_invoke", "skills.executor"),
     # ② 아래층이 도구 목록 `TOOLS` 를 읽는다.
     ("context._file_extract", "tools"),
@@ -39,7 +38,6 @@ CYCLE_AVOIDING_LAZY: set[tuple[str, str]] = {
     ("dialects.base", "tools"),
     ("dialects.base", "tools.registry"),
     # ③ 낱개.
-    ("prompts.system_prompt", "skills"),  # load_skills
     ("tools.tool_help", "tools.registry"),  # effective_tool_names
 }
 
