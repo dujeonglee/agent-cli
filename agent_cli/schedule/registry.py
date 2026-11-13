@@ -102,6 +102,9 @@ class ScheduleRegistry:
         self._rearm = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        #: 세션이 끝났다 (`close()`) — 스레드는 다시 서지 않고 발화도 기록도 없다.
+        #: 되돌리는 길은 없다: 세션마다 레지스트리를 새로 짓는다.
+        self._closed = False
         #: 입력 큐 seam — 부트스트랩이 꽂는다. 없으면 발화는 실패(→ missed).
         self.enqueue: Enqueue | None = None
         #: 상태가 바뀔 때마다 불린다 (web 이 SSE 로 알린다).
@@ -285,6 +288,10 @@ class ScheduleRegistry:
         것은 질문으로 남긴다."""
         now = self._clock()
         with self._lock:
+            if self._closed:
+                # 미정산으로 남긴다 — 다음 세션이 판정한다. 락 안에서 보므로 루프가
+                # `while` 검사와 이 호출 사이에 있을 때 닫혀도 발화하지 않는다.
+                return
             for s in list(self._schedules.values()):
                 verdict = self._due(s, now)
                 if verdict is None:
@@ -296,6 +303,10 @@ class ScheduleRegistry:
                     self._mark_missed(s, due, "missed")
 
     def _fire(self, s: Schedule, due: datetime | None) -> bool:
+        if self._closed:
+            # 실패가 아니라 "이 세션은 끝났다" — missed 로 내리지 않고 아무것도
+            # 적지 않는다 (`run_now` 경로; `settle` 은 위에서 먼저 돌아온다).
+            return False
         now = self._clock()
         try:
             if self.enqueue is None:
@@ -348,6 +359,8 @@ class ScheduleRegistry:
 
     def start(self) -> None:
         with self._lock:
+            if self._closed:
+                return
             if self._thread is not None and self._thread.is_alive():
                 return
             self._stop.clear()
@@ -359,6 +372,16 @@ class ScheduleRegistry:
     def stop(self) -> None:
         self._stop.set()
         self._rearm.set()
+
+    def close(self) -> None:
+        """세션 정리 — 멈추고 다시 켜지지 않는다. `stop()` 만 하면 `add()`·
+        `set_enabled(…, True)` 의 `start()` 가 스레드를 되살려, 정리 도중 아무도
+        읽지 않을 큐로 발화하고 "발화함" 으로 적는다. `_lock` 을 쥐므로 진행 중인
+        `settle()` 이 끝난 뒤에 닫힌다. 저장(`add`·`delete`·…)은 그대로 디스크에
+        남아 다음 세션에서 산다."""
+        with self._lock:
+            self._closed = True
+            self.stop()
 
     def _loop(self) -> None:
         while not self._stop.is_set():
