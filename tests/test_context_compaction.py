@@ -1556,7 +1556,7 @@ class TestEstimateMessageTokensOps:
 
     def test_counts_ops_action_input_and_result(self):
         from agent_cli.context.render import _estimate_message_tokens
-        from agent_cli.context.token_estimator import estimate_tokens
+        from agent_cli.token_estimator import estimate_tokens
 
         big = "X" * 4000  # ≈ 1000 tokens each
         rec = {
@@ -1573,7 +1573,7 @@ class TestEstimateMessageTokensOps:
 
     def test_single_op_legacy_shape_still_counted(self):
         from agent_cli.context.render import _estimate_message_tokens
-        from agent_cli.context.token_estimator import estimate_tokens
+        from agent_cli.token_estimator import estimate_tokens
 
         big = "Y" * 4000
         rec = {

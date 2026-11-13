@@ -37,7 +37,7 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 from agent_cli.constants import browser_knobs
-from agent_cli.context.token_estimator import estimate_tokens
+from agent_cli.token_estimator import estimate_tokens
 
 #: 스냅샷에서 텍스트 노드·이름을 자르는 길이 — 긴 본문은 ``text`` 모드로.
 TEXT_CAP = 80

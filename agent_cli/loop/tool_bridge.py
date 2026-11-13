@@ -7,7 +7,6 @@ import json
 import time
 
 from agent_cli import images as _images
-from agent_cli.context.token_estimator import estimate_tokens
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
@@ -16,6 +15,7 @@ from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.loop.state import LoopConfig, LoopState
 from agent_cli.paths import display_path
 from agent_cli.providers.capabilities import MIN_CONTEXT_WINDOW
+from agent_cli.token_estimator import estimate_tokens
 from agent_cli.tools import TOOLS, RunContext, _execute_tool, human_note
 from agent_cli.tools.base import (
     GENERIC_RETRY_HINT,

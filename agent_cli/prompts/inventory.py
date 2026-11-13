@@ -34,8 +34,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent_cli import __version__, dialects
-from agent_cli.context.render import estimate_tokens
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.token_estimator import estimate_tokens
 from agent_cli.tools.registry import (
     _BUILTIN_ORDER,
     TOOLS,
@@ -871,7 +871,7 @@ def build_inventory() -> dict:
     out: dict = {
         "agent_cli_version": __version__,
         "cwd": os.getcwd(),
-        "token_estimate": "agent_cli.context.render.estimate_tokens",
+        "token_estimate": "agent_cli.token_estimator.estimate_tokens",
         "scenarios": {sc.key: sc.title for sc in SCENARIOS},
         "dialects": {},
     }
