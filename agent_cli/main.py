@@ -2612,14 +2612,12 @@ def web(
     ),
     title: str = _TITLE_OPTION,
 ) -> None:
-    """Start an LAN web UI for the agent loop.
+    """Start a browser room for one agent session.
 
-    Single AgentLoop, multiple equal SSE viewers (all may input/queue). Token
-    is generated on startup unless ``--token`` is provided; the URL with
-    the token is printed to stdout for the operator to share.
-
-    Phase A scope: server + WebRenderer only. The frontend HTML/JS UI
-    arrives in Phase B; for now use ``curl`` to drive the API.
+    Any number of browser viewers share the session, and every viewer can send
+    input. It binds to 127.0.0.1 unless --host says otherwise. A token is
+    generated at startup unless --token is given, and the URL carrying it is
+    printed (and opened in a local browser unless --no-browser).
     """
     # Lazy imports — optional ``web`` extra. Surface a friendlier error
     # when the dependency is missing rather than a raw ImportError out
