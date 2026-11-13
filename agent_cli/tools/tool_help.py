@@ -5,7 +5,8 @@
 펼칠 수 없다. 결과는 따로 쓴 글이 아니라 지금 루프의 ``## Available Tools`` 에 실렸을
 바로 그 블록(``registry.render_tool_block(full=True)``)이라 두 벌이 생기지 않는다.
 루프가 묶어 둔 ``RunContext.tool_guide`` 를 부른다 — 방언·설명/스키마 교체·인라인
-안내는 루프마다 다르다.
+안내는 루프마다 다르다. 모르는 이름일 때 나열하는 목록도 루프가 묶어 준
+``RunContext.tool_names`` 다.
 
 ``requires_handler="deferred"`` + ``force_mount`` — 지연 도구가 남은 루프에만, 그리고
 그런 루프라면 프로파일의 ``allowed-tools`` 와 무관하게 붙는다(D4: 모든 루프 같은 규칙).
@@ -46,14 +47,12 @@ class ToolHelpTool(Tool):
         return str(self.strip_prefix(action_input).get("name", ""))
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        from agent_cli.tools.registry import effective_tool_names
-
         name = str(args.get("name") or "").strip()
         guide_of = getattr(ctx, "tool_guide", None)
         if guide_of is None:
             return ToolResult(False, error=NO_GUIDE)
-        # 이 루프가 광고하는 이름 — 항상 있는 도구(`complete`)까지, 프롬프트 순서로
-        names = effective_tool_names(sorted(getattr(ctx, "tools_available", ())))
+        # 이 루프가 광고하는 이름 — 루프가 묶어 준 목록(`RunContext.tool_names`)
+        names = getattr(ctx, "tool_names", ())
         text = guide_of(name) if name in names else None
         if text is None:
             return ToolResult(

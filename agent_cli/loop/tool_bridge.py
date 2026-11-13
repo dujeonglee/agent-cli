@@ -22,6 +22,7 @@ from agent_cli.tools.base import (
     oversized_nudge,
     persist_oversized,
 )
+from agent_cli.tools.registry import effective_tool_names
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
@@ -447,14 +448,16 @@ class ToolBridge:
         cache."""
         cached = getattr(self, "_run_ctx_cache", None)
         if cached is None:
+            available = frozenset(self.cfg.tools_list)
             cached = RunContext(
                 session_dir=self.ctx.session_dir if self.ctx else None,
                 oversized_cap=self._oversized_cap,
-                tools_available=frozenset(self.cfg.tools_list),
+                tools_available=available,
                 owner=self.cfg.kind.ports.owner,
                 observed_at=lambda: self.last_observation_at,
                 turn_now=lambda: self.state.turn,
                 tool_guide=self._tool_guide,
+                tool_names=tuple(effective_tool_names(sorted(available))),
             )
             self._run_ctx_cache = cached
         return cached

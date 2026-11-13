@@ -724,6 +724,7 @@ def _tool_help_samples(dialect) -> list[tuple[str, str, str]]:
     ctx = RunContext(
         tools_available=frozenset(names),
         tool_guide=lambda n: tool_guide_text(n, names, dialect),
+        tool_names=tuple(effective_tool_names(sorted(frozenset(names)))),
     )
     help_tool = TOOLS["tool_help"]
     full = help_tool._run({"name": "monitor"}, ctx=ctx)

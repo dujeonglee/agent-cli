@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,7 +23,7 @@ from agent_cli.prompts.system_prompt import (
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools import registry as R
-from agent_cli.tools.base import RunContext
+from agent_cli.tools.base import RunContext, Tool
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 from agent_cli.tools.tool_help import HEADER, NO_GUIDE
 from tests.loop_ports import TEST_PORTS
@@ -220,9 +221,11 @@ class TestDeferredView:
 
 class TestToolHelp:
     def _ctx(self, dn="xml_fc", names=ALL):
+        # 루프(`ToolBridge._run_ctx`)가 묶는 것과 같은 식
         return RunContext(
             tools_available=frozenset(names),
             tool_guide=lambda n: tool_guide_text(n, list(names), D.get(dn)),
+            tool_names=tuple(R.effective_tool_names(sorted(frozenset(names)))),
         )
 
     def test_returns_the_prompt_block_of_a_deferred_tool(self, monkeypatch):
@@ -290,6 +293,52 @@ class TestAdvertised:
         loop = _loop()
         guide = loop._tools._run_ctx().tool_guide("shell")
         assert guide == tool_guide_text("shell", loop.tools_list, loop.dialect)
+
+
+def _fake_tool(name: str) -> Tool:
+    """레지스트리의 내장 순서(`_BUILTIN_ORDER`)에 없는 도구 — 부팅 때 붙는 MCP 도구 자리."""
+
+    class _Fake(Tool):
+        parameters: ClassVar[dict] = {"type": "object", "properties": {}}
+        description = "fake"
+
+        def _run(self, args, *, ctx=None):
+            raise AssertionError("not called")
+
+    t = _Fake()
+    t.name = name
+    return t
+
+
+class TestUnknownNameThroughTheLoop:
+    """모르는 이름의 거절 문구 — 실제 루프 경로(`ToolBridge._run_ctx`)가 묶은 이름 목록으로.
+    기대값은 v10.133.13(이름 목록을 `tool_help` 가 레지스트리에서 직접 계산하던 때)에서
+    뜬 리터럴이다: 이름 목록을 루프가 묶게 바꾼 뒤에도 모델이 받는 바이트가 같다."""
+
+    def test_builtin_only(self):
+        ctx = _loop()._tools._run_ctx()
+        out = TOOLS["tool_help"]._run({"name": "grep"}, ctx=ctx)
+        assert not out.success
+        assert out.error == (
+            'No tool named "grep" in this loop. Tools: `read_file`, `edit_file`, '
+            "`write_file`, `code_index`, `view_image`, `shell`, `fetch`, `browser`, "
+            "`monitor`, `schedule`, `history`, `memory`, `agent`, `run_skill`, "
+            "`tool_help`, `complete`"
+        )
+
+    def test_names_the_registry_does_not_know_come_after_in_name_order(
+        self, monkeypatch
+    ):
+        for name in ("mcp__zeta__run", "mcp__alpha__get"):  # 알파벳 역순으로 넣는다
+            monkeypatch.setitem(TOOLS, name, _fake_tool(name))
+        active = ["shell", "mcp__zeta__run", "read_file", "fetch", "mcp__alpha__get"]
+        ctx = _loop(active=active)._tools._run_ctx()
+        out = TOOLS["tool_help"]._run({"name": "grep"}, ctx=ctx)
+        assert not out.success
+        assert out.error == (
+            'No tool named "grep" in this loop. Tools: `read_file`, `shell`, '
+            "`fetch`, `tool_help`, `complete`, `mcp__alpha__get`, `mcp__zeta__run`"
+        )
 
 
 class TestA5FullGuideOnce:
