@@ -10,14 +10,22 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
+#: 이미지 딸린 메시지가 못 보는 모델에 갈 때의 알림 (v10.60.0) — run 은
+#: `_require_vision` 으로 즉시 끝내지만 웹은 런을 열어야 다음 메시지를 받는다.
+NO_VISION_NOTICE = (
+    "this model cannot view images — the attachment reaches it as a "
+    "placeholder line only"
+)
+
 
 class WebSurface:
     graceful_interrupt = True  # Stop 버튼 = 턴 경계의 우아한 중단
 
-    def __init__(self, *, renderer, server, ctx, dispatch: Callable):
+    def __init__(self, *, renderer, server, ctx, binding, dispatch: Callable):
         self._renderer = renderer
         self._server = server
         self._ctx = ctx
+        self._binding = binding  # 런 시작 알림의 능력 조회 (세션의 ModelBinding)
         self._dispatch = dispatch  # (text, stop_event) -> bool
         # 이 런의 중단 핸들 — 워커는 하나라 두 런이 겹치지 않는다. 종전엔
         # 반복마다 클로저가 잡았다(``noqa: B023``).
@@ -58,6 +66,17 @@ class WebSurface:
         if handle_slash_command(text, self._renderer, ctx=self._ctx):
             return True
         return self._dispatch(text, self._stop)
+
+    def run_starting(self, req) -> None:
+        # 못 보는 모델에 이미지가 왔다 (v10.60.0): 런은 연다(자리표시 줄로 가고
+        # 공급자가 사유를 적는다) — 다만 화면에 한 줄 알린다. 프로브 결과는
+        # 기억되므로 다음 `/api/images/support` 부터 📎 가 숨는다.
+        if not req.images:
+            return
+        from agent_cli.providers.capabilities import binding_sees_images
+
+        if not binding_sees_images(self._binding):
+            self._renderer.status("error", NO_VISION_NOTICE)
 
     def run_ended(self, result, req) -> None:
         pass  # 화면이 결과다

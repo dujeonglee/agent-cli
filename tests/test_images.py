@@ -578,8 +578,11 @@ class TestMinimalEchoImages:
 
 class TestWebNoVisionNotice:
     def test_vision_ok_uses_registered_value(self):
-        from agent_cli.main import _WEB_NO_VISION_NOTICE, _vision_ok
-        from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.providers.capabilities import (
+            ModelCapabilities,
+            binding_sees_images,
+        )
+        from agent_cli.web.surface import NO_VISION_NOTICE
 
         class _Provider:
             @staticmethod
@@ -593,8 +596,8 @@ class TestWebNoVisionNotice:
             model = "m"
             api_key = ""
 
-        assert _vision_ok(_Binding()) is False
-        assert "cannot view images" in _WEB_NO_VISION_NOTICE
+        assert binding_sees_images(_Binding()) is False
+        assert "cannot view images" in NO_VISION_NOTICE
 
 
 # ── Pillow 선택 의존성 (v10.61.1) — 크기·프로브는 표준 라이브러리, 축소만 Pillow ──

@@ -1334,7 +1334,11 @@ class TestStaticUI:
         renderer = MagicMock()
         ctx = MagicMock(next_ordinal=7)
         surface = WebSurface(
-            renderer=renderer, server=MagicMock(), ctx=ctx, dispatch=None
+            renderer=renderer,
+            server=MagicMock(),
+            ctx=ctx,
+            binding=MagicMock(),
+            dispatch=None,
         )
         surface.echo({"text": "New agent mail has arrived."}, wake=True)
         assert renderer.method_calls == []

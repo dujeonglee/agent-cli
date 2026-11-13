@@ -219,6 +219,18 @@ def _optional_float(value) -> float | None:
 _vision_probed: dict[tuple[str, str], bool] = {}
 
 
+def binding_sees_images(binding) -> bool:
+    """세션 바인딩(`ModelBinding`)의 모델이 이미지를 보는가 — :func:`vision_support`
+    를 바인딩의 값으로 (run 의 부트 검사와 web 표면의 런 시작 알림이 같이 쓴다)."""
+    return vision_support(
+        binding.capabilities,
+        binding.provider.capability_transport,
+        binding.base_url,
+        binding.model,
+        binding.api_key,
+    )
+
+
 def vision_support(
     caps: ModelCapabilities,
     transport_factory,

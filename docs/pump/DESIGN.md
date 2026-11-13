@@ -70,6 +70,7 @@ agent_result(result, ok=)`` 가 쓴다(run 전용 분기 삭제). run 의 ``/ski
                  │  stop = Event(); surface.bind_stop(stop)       │
                  │  try:                                          │
                  │    if surface.route(text): continue            │
+                 │    surface.run_starting(req)                   │
                  │    res = run_loop(query=text, author…, stop…)  │
                  │    main_run_ended(registry, res.output)        │
                  │    surface.run_ended(res)                      │
@@ -132,6 +133,8 @@ class PumpSurface(Protocol):
     def bind_stop(self, ev: Event | None)        # web: server.set_stop_handle; run: no-op
     def route(self, text: str) -> bool           # web: handle_slash_command → try_dispatch…(web_output)
                                                  # run: /sh 제외 가드 + try_dispatch…(console)
+    def run_starting(self, req: RunRequest)      # run_main 바로 앞, 같은 try (v10.130.6)
+                                                 # web: 못 보는 모델에 이미지 → status("error"); run: no-op
     def run_ended(self, res: ToolResult)         # run: --result-file (성공 시); web: no-op
     def run_failed(self, exc) -> bool            # web: renderer.error → True(계속); run: False(전파)
     def announce(self, *, revived, auto, stale, monitor_notice)   # 부트 알림
