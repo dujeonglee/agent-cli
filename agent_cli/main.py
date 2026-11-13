@@ -1756,6 +1756,7 @@ def run(
     ctx = _build_context(session, binding, resume=session_resumed is not None)
 
     from agent_cli.hooks import load_hooks as _load_hooks
+    from agent_cli.input_queue import InputQueue
     from agent_cli.runtime import (
         AgentRuntime,
         MainLoop,
@@ -1768,6 +1769,9 @@ def run(
         wire_agent_mail,
     )
 
+    # 입력 큐는 저장소보다 먼저 선다 — 예약의 발화 자리를 저장소를 만드는 자리에서
+    # 묶는다(web 은 서버가 이미 들고 있다, v10.130.5).
+    input_queue = InputQueue()
     # monitor·schedule 은 native — 시간을 재는 것도 발화도 이 프로세스 안에서
     # 일어난다. board 도 env 도 없이 항상 조립된다.
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
@@ -1777,6 +1781,11 @@ def run(
         session.session_id
     )  # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
     schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
+    # 예약 발화도 같은 큐로 들어온다 — 켜진 예약이 있는 동안 펌프는 끝나지
+    # 않는다 (docs/schedule/DESIGN.md §6.3). 스레드는 배선의 마지막에 켠다.
+    schedule_registry.enqueue = lambda prompt, nickname: input_queue.enqueue(
+        None, prompt, nickname=nickname
+    )
 
     _disk_hooks = _load_hooks() or None
     # teammate P1: main 루프에만 레지스트리 주입 (서브에이전트는 도구
@@ -1813,7 +1822,6 @@ def run(
         # 같은 공용 입구(try_dispatch_agent_or_skill)로 처리한다. 정지 =
         # 큐·에이전트·모니터·예약 전부 조용(QuietPolicy).
         from agent_cli.harness.auditor import build_auditor
-        from agent_cli.input_queue import InputQueue
         from agent_cli.pump import PumpDeps, QuietPolicy, RunRequest, SessionPump
 
         # 노브는 소유자 넷(ctx·registry·renderer·auditor)이 선 뒤, 복원·auto-spawn
@@ -1826,33 +1834,6 @@ def run(
             renderer=get_renderer(),
             auditor=auditor,
         )
-        input_queue = InputQueue()
-        waker, revived, auto = wire_agent_mail(
-            agent_registry,
-            # 합성 입력 — 화면 대기열에 뜨지 않는다 (web 과 같은 규약).
-            enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True),
-            on_mail_notice=_agent_mail_notice,
-            parent_ctx=ctx,
-        )
-        if revived:
-            console.print(f"[{C['muted']}]🤝 {revived} resident agent(s) revived[/]")
-        if _auditor_boot_line(auditor):
-            console.print(f"[{C['muted']}]{_auditor_boot_line(auditor)}[/]")
-        if agent_registry.stale_questions:
-            # 열린 질문은 되살린다(§3.9) — 여기 세는 것은 **되살리지 못한**
-            # 것, 즉 묻거나 답할 쪽이 돌아오지 않은 질문뿐이다.
-            console.print(
-                f"[{C['muted']}]❓ {agent_registry.stale_questions} unanswered question(s) "
-                f"not restored — the asking agent did not come back[/]"
-            )
-        if auto:
-            console.print(
-                f"[{C['muted']}]🤝 {auto} auto-spawn specialist(s) now resident[/]"
-            )
-        _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
-        if _mon_notice:
-            console.print(_mon_notice, style=C["muted"], markup=False, highlight=False)
-
         surface = _ConsoleSurface(
             result_file=result_file,
             jobs=job_registry,  # 질의가 작업을 남기고 끝나면 깨우기 답도 결과 파일에
@@ -1870,6 +1851,34 @@ def run(
                 stop_event=stop_event,
                 agent_registry=agent_registry,
             ),
+        )
+        policy = QuietPolicy(
+            queue=input_queue,
+            agent_registry=agent_registry,
+            monitors=monitor_registry,
+            schedules=schedule_registry,
+            harness=auditor,
+            jobs=job_registry,
+            on_wait=lambda kind: console.print(
+                f"[{C['muted']}]"
+                + (
+                    _jobs_wait_notice(job_registry)
+                    if kind == "jobs"
+                    else _monitor_wait_notice(monitor_registry)
+                    if kind == "monitors"
+                    else _HARNESS_WAIT_NOTICE
+                    if kind == "harness"
+                    else _schedule_wait_notice(schedule_registry)
+                )
+                + "[/]"
+            ),
+        )
+        waker, revived, auto = wire_agent_mail(
+            agent_registry,
+            # 합성 입력 — 화면 대기열에 뜨지 않는다 (web 과 같은 규약).
+            enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True),
+            on_mail_notice=_agent_mail_notice,
+            parent_ctx=ctx,
         )
 
         # main 루프의 종류 (v10.87.0) — 세션에 하나. 런 도중 주입도 web 과 같다: 예약
@@ -1906,36 +1915,31 @@ def run(
                 run_main=_run_main,
                 surface=surface,
                 auditor=auditor,
-                policy=QuietPolicy(
-                    queue=input_queue,
-                    agent_registry=agent_registry,
-                    monitors=monitor_registry,
-                    schedules=schedule_registry,
-                    harness=auditor,
-                    jobs=job_registry,
-                    on_wait=lambda kind: console.print(
-                        f"[{C['muted']}]"
-                        + (
-                            _jobs_wait_notice(job_registry)
-                            if kind == "jobs"
-                            else _monitor_wait_notice(monitor_registry)
-                            if kind == "monitors"
-                            else _HARNESS_WAIT_NOTICE
-                            if kind == "harness"
-                            else _schedule_wait_notice(schedule_registry)
-                        )
-                        + "[/]"
-                    ),
-                ),
+                policy=policy,
             )
         )
-
-        # 예약 발화도 같은 큐로 들어온다 — 켜진 예약이 있는 동안 펌프는 끝나지
-        # 않는다 (docs/schedule/DESIGN.md §6.3).
-        schedule_registry.enqueue = lambda prompt, nickname: input_queue.enqueue(
-            None, prompt, nickname=nickname
-        )
+        # 소비자를 다 세운 뒤에 생산자를 켠다 (v10.130.5) — 첫 정산이 꺼져 있던 동안
+        # 지난 발화를 질문으로 남긴다. 그 사이 발화한 예약은 큐에 들어갈 뿐이다.
         schedule_registry.start()
+
+        if revived:
+            console.print(f"[{C['muted']}]🤝 {revived} resident agent(s) revived[/]")
+        if _auditor_boot_line(auditor):
+            console.print(f"[{C['muted']}]{_auditor_boot_line(auditor)}[/]")
+        if agent_registry.stale_questions:
+            # 열린 질문은 되살린다(§3.9) — 여기 세는 것은 **되살리지 못한**
+            # 것, 즉 묻거나 답할 쪽이 돌아오지 않은 질문뿐이다.
+            console.print(
+                f"[{C['muted']}]❓ {agent_registry.stale_questions} unanswered question(s) "
+                f"not restored — the asking agent did not come back[/]"
+            )
+        if auto:
+            console.print(
+                f"[{C['muted']}]🤝 {auto} auto-spawn specialist(s) now resident[/]"
+            )
+        _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
+        if _mon_notice:
+            console.print(_mon_notice, style=C["muted"], markup=False, highlight=False)
         _sched_notice = _missed_schedules_notice(schedule_registry)
         if _sched_notice:
             console.print(
@@ -2903,12 +2907,12 @@ def web(
     build_snapshot_store(
         session.session_id
     )  # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
-    # 예약 발화는 사용자 요청처럼 큐로 들어온다. 첫 정산이 꺼져 있던 동안 지난
-    # 발화를 질문으로 남긴다 (docs/schedule/DESIGN.md §5).
+    # 예약 발화는 사용자 요청처럼 큐로 들어온다 (docs/schedule/DESIGN.md §5). 스레드는
+    # 워커가 배선을 끝낸 뒤에 켠다(v10.130.5) — 워커가 부트에서 죽으면 아무도 읽지
+    # 않는 큐로 발화하고 "발화함" 으로 적었다.
     schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
     schedule_registry.enqueue = server.enqueue_named
     schedule_registry.on_change = renderer.broadcast_schedules_changed
-    schedule_registry.start()
 
     def _worker_loop() -> None:
         """Assemble the session and drive the session pump in a background
@@ -2977,21 +2981,6 @@ def web(
         from agent_cli.knobs import web_states
 
         renderer.broadcast_knobs(web_states(server.knob_session()))
-        _waker, revived, auto = wire_agent_mail(
-            _registry,
-            enqueue_wake=server.enqueue_system,
-            parent_ctx=ctx,
-        )
-        # 미배달 메일은 입력창 위 대기열에 사용자 요청과 같은 줄로 선다(v10.51.0)
-        server.mail_source = _registry.pending_mail
-        _registry.on_pending_change = server.broadcast_queue
-        server.broadcast_queue()  # resume 이 되살린 미배달 메일도 줄을 선다
-        _announce_agent_boot(
-            renderer, revived, auto, agent_registry.stale_questions, auditor=auditor
-        )
-        _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
-        if _mon_notice:
-            renderer.status("running", _mon_notice)
         surface = WebSurface(
             renderer=renderer,
             server=server,
@@ -3009,6 +2998,11 @@ def web(
                 graceful_interrupt=True,
                 stop_event=stop_event,
             ),
+        )
+        _waker, revived, auto = wire_agent_mail(
+            _registry,
+            enqueue_wake=server.enqueue_system,
+            parent_ctx=ctx,
         )
 
         def _run_main(req: RunRequest):
@@ -3051,6 +3045,18 @@ def web(
                 policy=ForeverPolicy(),
             )
         )
+        # 소비자를 다 세운 뒤에 생산자를 켠다 (v10.130.5) — run 과 같은 자리.
+        schedule_registry.start()
+        # 미배달 메일은 입력창 위 대기열에 사용자 요청과 같은 줄로 선다(v10.51.0)
+        server.mail_source = _registry.pending_mail
+        _registry.on_pending_change = server.broadcast_queue
+        server.broadcast_queue()  # resume 이 되살린 미배달 메일도 줄을 선다
+        _announce_agent_boot(
+            renderer, revived, auto, agent_registry.stale_questions, auditor=auditor
+        )
+        _mon_notice = _previous_monitors_notice(ctx.session_dir if ctx else None)
+        if _mon_notice:
+            renderer.status("running", _mon_notice)
         pump.run()
 
     def _worker_loop_guarded() -> None:

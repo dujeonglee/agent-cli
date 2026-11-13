@@ -424,6 +424,26 @@ class TestExitPathConvergence:
         # registry runtime 도 같은 훅 (AgentRuntime 생성 인자)
         assert "hooks_config=_disk_hooks" in body
 
+    def test_schedule_thread_starts_last_in_both_hosts(self):
+        """v10.130.5: 예약 스레드는 소비자(펌프)를 다 세운 뒤에 켜고, 부트 알림은
+        그 뒤에 나간다 — 두 호스트가 같은 순서. 발화 자리(``enqueue``)는 저장소를
+        만드는 자리에서 묶는다(레지스트리보다 앞). 종전 web 은 워커가 조립을
+        시작하기도 전에 메인 스레드에서 켰다 — 워커가 부트에서 죽으면 아무도 읽지
+        않는 큐로 발화하고 "발화함" 으로 적었다."""
+        for name, notice in (
+            ("run", "if revived:"),
+            ("web", "_announce_agent_boot("),
+        ):
+            body = self._body(name)
+            assert body.count("schedule_registry.start()") == 1, name
+            bind = body.index("schedule_registry.enqueue =")
+            assert bind < body.index("build_agent_registry("), name
+            start = body.index("schedule_registry.start()")
+            assert body.index("SessionPump(") < start, f"{name}: 펌프보다 먼저 켠다"
+            assert start < body.index(notice), f"{name}: 부트 알림이 스레드보다 먼저"
+            assert start < body.index("_previous_monitors_notice("), name
+            assert start < body.index("pump.run()"), name
+
     def test_run_and_web_share_assembly_helpers(self):
         for name in ("run", "web"):
             body = self._body(name)
