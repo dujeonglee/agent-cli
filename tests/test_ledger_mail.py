@@ -17,12 +17,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.loop import AgentLoop
 from agent_cli.loop.core import mail_item
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.pump import RunRequest
 from agent_cli.subagent.agents_live import AgentRegistry, MailWaker
 from tests.loop_ports import make_ports
+from tests.loopkit import make_loop
 
 JOB = {
     "kind": "job",
@@ -44,7 +44,7 @@ def _loop(tmp_path, *, query="", items=(), mail=()):
         reg._push_reply(dict(m))
     q = [dict(it) for it in items]
     ctx = ContextManager(Path(tmp_path) / "s", max_context_tokens=30_000)
-    loop = AgentLoop(
+    loop = make_loop(
         query=query,
         query_request_id="u-1" if query else "",
         query_author="dj" if query else None,
@@ -264,7 +264,7 @@ class TestOpenDebtsArePinnedToo:
         for m in mail:
             reg._push_reply(dict(m))
         ctx = ContextManager(Path(tmp_path) / "s", max_context_tokens=30_000)
-        loop = AgentLoop(
+        loop = make_loop(
             query="",
             provider=MagicMock(),
             capabilities=ModelCapabilities(

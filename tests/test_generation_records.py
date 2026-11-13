@@ -17,7 +17,6 @@ import pytest
 from agent_cli import verbose
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get
-from agent_cli.loop import run_loop
 from agent_cli.loop.core import AgentLoop
 from agent_cli.providers.base import LLMResponse, ModelCapabilities, TokenUsage
 from agent_cli.recovery import failures
@@ -29,6 +28,7 @@ from agent_cli.recovery.failures import (
     record_failure,
 )
 from tests.loop_ports import TEST_PORTS
+from tests.loopkit import run_loop
 
 #: 두 로그가 한 헬퍼에서 받는 필드
 SHARED = (

@@ -20,7 +20,6 @@ import pytest
 from agent_cli import item_ids
 from agent_cli.context.manager import ContextManager
 from agent_cli.input_queue import InputQueue
-from agent_cli.loop import AgentLoop
 from agent_cli.loop.ledger import (
     NAG_BUDGET,
     RESULT_SHAPE_LINE,
@@ -30,6 +29,7 @@ from agent_cli.loop.ledger import (
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.loop_ports import make_ports
+from tests.loopkit import make_loop
 
 _REPLY = {"kind": "reply", "to": "agent:agt-a", "id": "r-4", "text": "검토해 줘"}
 _QUESTION = {"kind": "answer", "to": "agt-b", "id": "q-7a3f", "text": "할인 상한은?"}
@@ -59,7 +59,7 @@ def finals(monkeypatch):
 
 def _loop(tmp_path, *, requests=(), debts=(), ctx=False):
     q = [dict(it) for it in requests]
-    loop = AgentLoop(
+    loop = make_loop(
         query="",
         provider=MagicMock(),
         capabilities=ModelCapabilities(

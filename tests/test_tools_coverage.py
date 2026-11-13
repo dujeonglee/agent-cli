@@ -927,9 +927,9 @@ class TestSignalHandlerThreadSafety:
         handler_changed = {"changed": False}
 
         def check_in_thread():
-            from agent_cli.loop import AgentLoop
+            from tests.loopkit import make_loop
 
-            loop = AgentLoop(
+            loop = make_loop(
                 ports=TEST_PORTS,
                 query="test",
                 provider=provider,

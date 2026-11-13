@@ -21,10 +21,10 @@ from agent_cli.context.manager import (
     CompactResult,
     ContextManager,
 )
-from agent_cli.loop import run_loop
 from agent_cli.loop.llm import LLMCaller
 from agent_cli.providers.base import LLMResponse, ModelCapabilities, TokenUsage
 from agent_cli.recovery.failures import FILE_NAME, TEXT_CAP, VERSION, record_failure
+from tests.loopkit import run_loop
 from tests.test_loop import TEST_PORTS, _complete, _make_provider
 
 

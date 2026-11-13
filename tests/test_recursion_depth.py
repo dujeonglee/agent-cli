@@ -38,6 +38,7 @@ from agent_cli.recovery.recursion import (
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS
+from tests.loopkit import make_loop
 
 # ─── Error-message vocabulary (A) ─────────────────────────────
 
@@ -136,7 +137,7 @@ class TestToolsListDepthCeiling:
     def _make_loop(self, depth: int, max_depth: int) -> AgentLoop:
         # Provider is unused — AgentLoop.__init__ doesn't call it.
         # We only care about the constructor's tools_list derivation.
-        return AgentLoop(
+        return make_loop(
             ports=TEST_PORTS,
             query="x",
             provider=object(),

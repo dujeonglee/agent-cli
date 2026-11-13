@@ -33,7 +33,7 @@ def _lines(path):
 
 
 def _run(session_dir, responses, *, verbose_flag, **kw):
-    from agent_cli.loop import run_loop
+    from tests.loopkit import run_loop
 
     it = iter(responses)
     provider = MagicMock()

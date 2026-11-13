@@ -921,9 +921,9 @@ class TestDiskHooksThroughLoop:
         from unittest.mock import MagicMock
 
         import agent_cli.hooks.shell as hooks_shell
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loopkit import run_loop
 
         hooks_file = tmp_path / ".agent-cli" / "hooks.json"
         hooks_file.parent.mkdir(parents=True)

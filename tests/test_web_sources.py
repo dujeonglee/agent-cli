@@ -120,11 +120,11 @@ class TestTail:
         assert out.index("── session state") < out.index("## Web Sources")
 
     def _loop(self, tools):
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.capabilities import ModelCapabilities
         from tests.loop_ports import make_ports
+        from tests.loopkit import make_loop
 
-        return AgentLoop(
+        return make_loop(
             query="q",
             provider=MagicMock(),
             capabilities=ModelCapabilities(

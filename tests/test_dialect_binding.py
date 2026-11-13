@@ -194,12 +194,12 @@ class TestLoopCtxFallback:
     def test_none_dialect_falls_to_ctx(self, tmp_path, caps):
         # RED (G2): 현재는 ctx 가 아니라 전역 기본으로 폴백해 split-brain
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop.core import AgentLoop
+        from tests.loopkit import make_loop
 
         ctx = ContextManager(
             tmp_path / "s", max_context_tokens=1000, dialect=get_wf("json_fc")
         )
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="q",
             provider=MagicMock(),
@@ -211,12 +211,12 @@ class TestLoopCtxFallback:
 
     def test_explicit_dialect_still_wins_over_ctx(self, tmp_path, caps):
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop.core import AgentLoop
+        from tests.loopkit import make_loop
 
         ctx = ContextManager(
             tmp_path / "s", max_context_tokens=1000, dialect=get_wf("json_fc")
         )
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="q",
             provider=MagicMock(),
@@ -228,9 +228,9 @@ class TestLoopCtxFallback:
         assert loop.dialect.name == "xml_fc"
 
     def test_no_ctx_falls_to_default(self, caps):
-        from agent_cli.loop.core import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="q",
             provider=MagicMock(),

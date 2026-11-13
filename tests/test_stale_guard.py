@@ -27,7 +27,6 @@ from rich.console import Console
 from agent_cli import render
 from agent_cli.context.manager import ContextManager
 from agent_cli.input_queue import InputQueue
-from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.recovery.detectors import (
@@ -44,6 +43,7 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.web.instance_file import read_status_file
 from agent_cli.web.server import WebServer, create_app
 from tests.loop_ports import TEST_PORTS, make_ports
+from tests.loopkit import run_loop
 
 
 def _feed(guard: StaleGuard, turns, *, work=None) -> list[int]:

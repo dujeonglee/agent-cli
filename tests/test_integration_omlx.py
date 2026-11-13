@@ -12,12 +12,12 @@ from __future__ import annotations
 import pytest
 
 from agent_cli.dialects import get as _get_wf
-from agent_cli.loop import run_loop
 from agent_cli.providers.capabilities import get_capabilities
 from tests.binding_support import make_binding
 from tests.conftest import OMLX_BASE_URL
 from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS
+from tests.loopkit import run_loop
 
 # All tests in this file require a live omlx server.
 pytestmark = pytest.mark.omlx_integration

@@ -168,7 +168,7 @@ class TestBudgetInvariant:
 
     def _reconciled(self, tmp_path, usage: dict) -> tuple[int, dict]:
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         ctx = ContextManager(
             session_dir=tmp_path, max_context_tokens=1_000_000, compaction_enabled=False

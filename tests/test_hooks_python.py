@@ -436,8 +436,8 @@ class TestLoopHookIntegration:
         """Create an AgentLoop with minimal config for testing."""
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loopkit import make_loop
 
         provider = MagicMock()
         caps = ModelCapabilities(
@@ -445,7 +445,7 @@ class TestLoopHookIntegration:
             max_output_tokens=2048,
             supports_thinking=False,
         )
-        return AgentLoop(
+        return make_loop(
             query="test",
             provider=provider,
             capabilities=caps,

@@ -61,9 +61,9 @@ _ERR_STREAM = [
 
 
 def _loop(tmp_path: Path, dialect_name: str, *, context_window: int = 200_000):
-    from agent_cli.loop import AgentLoop
     from agent_cli.providers.capabilities import ModelCapabilities
     from agent_cli.providers.openai import OpenAIProvider
+    from tests.loopkit import make_loop
 
     dialect = dialects.get(dialect_name)
     ctx = ContextManager(
@@ -74,7 +74,7 @@ def _loop(tmp_path: Path, dialect_name: str, *, context_window: int = 200_000):
         max_output_tokens=65_536,
         supports_thinking=True,
     )
-    loop = AgentLoop(
+    loop = make_loop(
         ports=TEST_PORTS,
         query="x",
         provider=OpenAIProvider("http://gw/v1", "k"),

@@ -17,15 +17,15 @@ import re
 import types
 from unittest.mock import MagicMock
 
-from agent_cli.loop import AgentLoop
 from agent_cli.providers.capabilities import ModelCapabilities
 from tests.loop_ports import make_ports
+from tests.loopkit import make_loop
 
 HANGUL = re.compile(r"[가-힣]")
 
 
 def _loop(dequeue=None, route=None, **kw):
-    return AgentLoop(
+    return make_loop(
         query="Q",
         provider=MagicMock(),
         capabilities=ModelCapabilities(
@@ -420,7 +420,7 @@ class TestThroughRunLoop:
         from pathlib import Path
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         queue = list(pending)
         ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
@@ -485,7 +485,7 @@ class TestThroughRunLoop:
         from pathlib import Path
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         queue = [None, {"id": "u-2", "nickname": "Ann", "text": "REQ-B"}]
         ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
@@ -558,7 +558,7 @@ class TestThroughRunLoop:
             from pathlib import Path
 
             from agent_cli.context.manager import ContextManager
-            from agent_cli.loop import run_loop
+            from tests.loopkit import run_loop
 
             queue = list(kw.pop("pending"))
             ctx = ContextManager(
@@ -1001,8 +1001,8 @@ class TestAgentLoopsAreUntouched:
         from pathlib import Path
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import run_loop
 
         p = MagicMock()
         p.call.side_effect = [LLMResponse(content=c) for c in contents]
@@ -1069,9 +1069,9 @@ class TestAgentLoopsAreUntouched:
         assert res.output == "끝"
 
     def test_agent_prompt_carries_no_open_requests_tail(self):
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             query="[main]: 일감 A\n\n[main]: 일감 B",
             provider=MagicMock(),
             capabilities=ModelCapabilities(

@@ -1125,9 +1125,9 @@ class TestAgentLoopCompactorCallback:
     def _make_loop(self, **overrides):
         """Build a minimum-viable AgentLoop instance that exercises
         ``_llm_compact_summarize`` without dragging in the full run."""
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loopkit import make_loop
 
         received: dict = {}
 
@@ -1146,7 +1146,7 @@ class TestAgentLoopCompactorCallback:
             #                                  must flip it off
             supports_thinking=True,  # ditto
         )
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="x",
             provider=FakeProvider(),
@@ -1202,14 +1202,14 @@ class TestCompactorStreams:
     공급자를 가짜 HTTP 위에 올려 요청 본문과 스트림 조립을 본다."""
 
     def _loop(self, provider, *, dialect=None):
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loopkit import make_loop
 
         caps = ModelCapabilities(
             context_window=4096, max_output_tokens=512, supports_thinking=True
         )
         kw = {"dialect": dialect} if dialect is not None else {}
-        return AgentLoop(
+        return make_loop(
             ports=TEST_PORTS,
             query="x",
             provider=provider,
@@ -1257,13 +1257,13 @@ class TestCompactorStreams:
     def _summary_body(self, caps, tmp_path):
         from unittest.mock import patch
 
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.openai import OpenAIProvider
+        from tests.loopkit import make_loop
 
         sse = [b'data: {"choices":[{"delta":{"content":"TASK - x"}}]}', b"data: [DONE]"]
         with patch("agent_cli.providers.openai.requests.post") as post:
             post.return_value = self._sse(sse)
-            loop = AgentLoop(
+            loop = make_loop(
                 ports=TEST_PORTS,
                 query="x",
                 provider=OpenAIProvider("http://gw/v1", "k"),

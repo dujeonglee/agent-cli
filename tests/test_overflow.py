@@ -181,10 +181,10 @@ class TestUndecodableImageRetry:
         from unittest.mock import MagicMock
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.capabilities import ModelCapabilities
         from tests.loop_ports import TEST_PORTS
+        from tests.loopkit import run_loop
 
         def as_call(r):
             if isinstance(r, Exception):

@@ -125,7 +125,7 @@ class TestDispatchRescue:
         self, caps, tmp_path, production_default
     ):
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         f = tmp_path / "note.txt"
         f.write_text("payload-xyz")
@@ -161,7 +161,7 @@ class TestDispatchRescue:
         self, caps, tmp_path, production_default
     ):
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         f = tmp_path / "a.txt"
         f.write_text("x")
@@ -192,7 +192,7 @@ class TestDispatchRescue:
         self, caps, tmp_path, production_default
     ):
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         f = tmp_path / "a.txt"
         f.write_text("x")
@@ -227,7 +227,7 @@ class TestDispatchRescue:
         self, caps, tmp_path, production_default
     ):
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         leak = 'done.\n\n[{"action": "complete", "result": "final answer via leak"}]'
         ctx = ContextManager(
@@ -253,7 +253,7 @@ class TestDispatchRescue:
         # NO_ACTION 넛지로 폴백. (v8.4.0: 산문-only 포함 action-less 턴 전부가
         # 이 넛지 경로 — 구제 폴백이 여기 유지됨을 고정.)
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         ctx = ContextManager(
             session_dir=tmp_path / "s",

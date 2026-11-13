@@ -176,8 +176,8 @@ class TestLoopE2E:
     def test_read_then_complete(self, tmp_path):
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import run_loop
 
         f = tmp_path / "note.txt"
         f.write_text("hello json world")
