@@ -43,6 +43,7 @@ COLD_START_ENTRY_POINTS = [
     "agent_cli.render.minimal",
     "agent_cli.render.web",
     "agent_cli.web_sources",
+    "agent_cli.instance_file",
 ]
 
 

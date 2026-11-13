@@ -71,6 +71,7 @@ agent_cli/
 ├── extras.py                선택 의존성(extra) 설치 안내 — 빠진 패키지 이름을 설치 메타데이터에서 읽어 직접 댄다
 ├── net_errors.py            `requests` 예외 사슬 순회와 TLS 사유 한 줄 — 도구 층·공급자 층이 같이 쓴다(표준 라이브러리만 import)
 ├── token_estimator.py       토큰 추정(chars/4)과 `utf8_len` — import 없는 잎
+├── instance_file.py         세션별 `web.json`·`status.json` 쓰기·읽기·지우기 — 서버와 렌더러가 같이 쓴다(`fsio` 만 import)
 ├── input_queue.py           세션 입력 큐 `InputQueue` — run 과 web 이 공유하는 펌프의 큐(사용자 입력·깨우기 항목)
 ├── input_history.py         readline 입력 히스토리 — `ask` 답과 설정 마법사의 터미널 입력
 ├── item_ids.py              열린 항목 id `<접두>-<토큰>` 의 할당·해석 — 접두가 닫는 법을 말한다 (docs/ledger/DESIGN.md)
@@ -282,7 +283,6 @@ agent_cli/
     ├── slash.py             웹 슬래시 명령(`/help`·`/sh`·`/compact`)과 디스패치 출력 어댑터
     ├── directives.py        지시사항 편집기의 ✨ 생성 로직
     ├── inspector.py         모델 시점 틀 — 시작 시 시스템 프롬프트 캡처
-    ├── instance_file.py     세션별 `web.json`·`status.json` 쓰기·읽기·지우기
     ├── idle.py              `--idle-timeout` 자기 종료 판정 `IdleMonitor`
     └── static/              Vanilla JS 프런트엔드 — 빌드 없는 ES 모듈 (docs/web-modules/DESIGN.md)
         ├── index.html       페이지 뼈대와 첫 페인트 전 테마 적용
@@ -345,7 +345,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 | 4 | `main` · `recovery/` · `mcp/` |
 | 3 | `context/` · `prompts/` · `providers/` · `tools/` (한 묶음) · `web/` |
 | 2 | `render/` · `pump` · `setup` |
-| 1 | `config` · `dialects/` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` |
+| 1 | `config` · `dialects/` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` · `instance_file` |
 | 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `agents/` |
 
 `context/`·`prompts/`·`providers/`·`tools/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).
@@ -363,7 +363,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
     `loop.skill_invoke` → `skills`(`load_skills`·`SkillLoop`).
   - **아래층이 도구 목록을 읽는다** — `context._file_extract`·`context.render`·`dialects.base` → `tools`(`TOOLS`).
   - **낱개** — `prompts.system_prompt` → `skills`(`load_skills`),
-    `render.web` → `web`(`write_status_file`), `tools.tool_help` → `tools.registry`(`effective_tool_names`).
+    `tools.tool_help` → `tools.registry`(`effective_tool_names`).
 - 그 밖의 지연 import 는 순환과 무관하고 가드하지 않는다. 출발 모듈로는 `main`·`runtime`·`prompts.inventory` 에 가장 많다.
   이유는 자리마다 다르다 — 예컨대 `main` 의 `web` 명령은 `agent_cli.web.server`(fastapi 선택 의존성)를 명령 안에서 import 해,
   없으면 그 명령만 안내와 함께 실패한다.
@@ -994,7 +994,7 @@ hypothesis 는 예제 DB 를 끄고 홈을 수트 임시 디렉터리로 옮긴�
   렌더러의 `_emit` 이 이벤트 하나를 한 번 직렬화해 `hub.publish` 에 넘기면, 허브가 재생 버퍼와 열린 연결 전부의 큐에 넣는다.
 - 다중 뷰어 — 모두 동등하게 입력·대기열을 쓸 수 있다.
 - `--base-path <prefix>`: 프런트 URL 이 전부 상대 경로이고 `index` 가 `<base href="<prefix>/">` 를 넣어, 리버스 프록시의 경로 접두 밑에서 돈다.
-- 세션별 `web.json`(주소·토큰·pid)과 `status.json` 을 `web/instance_file.py` 가 쓴다 — 바깥 오케스트레이터(보드)가 읽는다. `--idle-timeout` 이면 `web/idle.py` 가 스스로 끝낸다.
+- 세션별 `web.json`(주소·토큰·pid)과 `status.json` 을 `instance_file.py` 가 쓴다 — 바깥 오케스트레이터(보드)가 읽는다. `--idle-timeout` 이면 `web/idle.py` 가 스스로 끝낸다.
 - 프런트(`web/static/`)는 빌드 없는 ES 모듈이다(docs/web-modules/DESIGN.md). 요소는 `dom.js` 의 `el(tag, classes, text)`(세 번째 인자는 textContent)로 만들고,
   HTML 은 이미 이스케이프·조립된 것만 `elHtml` 로 넣는다.
 - 웹 슬래시 명령(`/help`·`/sh`·`/compact`)은 `web/slash.py`, `@agent`·`/skill` 디스패치는 run 과 공용(`main.try_dispatch_agent_or_skill`).

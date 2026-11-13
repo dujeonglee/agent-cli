@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 
-from agent_cli.web.instance_file import (
+from agent_cli.instance_file import (
     instance_file_path,
     read_instance_file,
     read_status_file,

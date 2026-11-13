@@ -176,7 +176,7 @@ class TestLockedReasonsComeFromTheServer:
         assert st["locked"] is None and st["active"] is True
         assert _post(client3, "grammar", "off")["active"] is False
         # status.json 의 `grammar` 는 같은 sticky 에서 읽는다
-        from agent_cli.web.instance_file import read_status_file
+        from agent_cli.instance_file import read_status_file
 
         assert read_status_file(tmp_path / "c")["grammar"] is False
 
@@ -269,7 +269,7 @@ class TestStatusFileMirrorsTheKnobs:
     거울처럼 기록해 다음 spawn 에 같은 플래그로 돌려준다 (docs/knobs/DESIGN.md §5.3)."""
 
     def _status(self, tmp_path):
-        from agent_cli.web.instance_file import read_status_file
+        from agent_cli.instance_file import read_status_file
 
         return read_status_file(tmp_path)
 
