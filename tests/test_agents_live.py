@@ -1366,6 +1366,62 @@ class TestResumeRestore:
         assert _unlabel(again["output"]) == "done:again" and again["run"] != "r-1"
         reg2.shutdown_all()
 
+    def _leave_session(self, tmp_path):
+        """세션 1: 상주 에이전트 하나 + 미배달 회신 하나를 남기고 끝난다."""
+        reg1 = make_registry(tmp_path)
+        key, _ = reg1.spawn()
+        assert wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.request(key, "hello")
+        assert wait_until(reg1.has_pending_replies)
+        reg1.shutdown_all()
+        return key, (tmp_path / "agents.json").read_bytes()
+
+    def test_shutdown_before_restore_keeps_the_saved_roster(self, tmp_path, renderer):
+        # 조립 도중 죽은 resume 세션: 레지스트리는 섰고 복원은 아직 — 정리의
+        # `shutdown_all` 이 빈 명단으로 파일을 덮어쓰면 에이전트와 메일이 사라진다.
+        _key, saved = self._leave_session(tmp_path)
+        reg2 = make_registry(tmp_path)
+        reg2.shutdown_all()
+        assert (tmp_path / "agents.json").read_bytes() == saved
+        # 다음 세션이 그대로 되살린다
+        reg3 = make_registry(tmp_path)
+        assert reg3.restore() == 1
+        assert [_unlabel(r["output"]) for r in reg3.drain_replies()] == ["done:hello"]
+        reg3.shutdown_all()
+
+    def test_save_before_restore_is_skipped_but_not_lost(self, tmp_path, renderer):
+        # 복원보다 먼저 닿은 통지 — 파일은 그대로 두고, 복원 뒤 첫 저장이 둘 다 쓴다.
+        key, saved = self._leave_session(tmp_path)
+        reg2 = make_registry(tmp_path)
+        reg2._push_reply({"item_id": "n-early", "output": "early"})
+        assert (tmp_path / "agents.json").read_bytes() == saved
+        assert reg2.restore() == 1
+        reg2._save_state()
+        state = self._state(tmp_path)
+        assert [e["key"] for e in state["agents"]] == [key]
+        assert "n-early" in [p_["item_id"] for p_ in state["pending"]]
+        assert len(state["pending"]) == 2
+        reg2.shutdown_all()
+
+    def test_fresh_session_dir_is_written_without_restore(self, tmp_path, renderer):
+        # 파일이 없으면 지킬 것도 없다 — 첫 저장이 만들고, 그 뒤로는 자기 파일이다.
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        reg.kill(key)
+        entry = next(e for e in self._state(tmp_path)["agents"] if e["key"] == key)
+        assert entry["state"] == "dead"
+        reg.shutdown_all()
+
+    def test_unreadable_file_is_owned_after_a_restore_attempt(self, tmp_path, renderer):
+        # 파손·버전 불일치는 fresh 세션과 같다 — 읽으려 한 뒤에는 덮어쓴다.
+        (tmp_path / "agents.json").write_text("{broken", encoding="utf-8")
+        reg = make_registry(tmp_path)
+        assert reg.restore() == 0
+        key, _ = reg.spawn()
+        assert [e["key"] for e in self._state(tmp_path)["agents"]] == [key]
+        reg.shutdown_all()
+
     def test_killed_teammate_not_revived(self, tmp_path, renderer):
         reg1 = make_registry(tmp_path)
         k_alive, _ = reg1.spawn()
