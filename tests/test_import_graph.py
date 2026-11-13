@@ -41,7 +41,6 @@ CYCLE_AVOIDING_LAZY: set[tuple[str, str]] = {
     # ③ 낱개.
     ("images", "tools"),  # display_path
     ("prompts.system_prompt", "skills"),  # load_skills
-    ("providers.capabilities", "providers.anthropic"),  # _THINKING_ON
     ("render.minimal", "context"),  # estimate_tokens
     ("render.web", "web"),  # write_status_file
     ("tools.tool_help", "tools.registry"),  # effective_tool_names

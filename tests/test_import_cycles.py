@@ -35,6 +35,9 @@ COLD_START_ENTRY_POINTS = [
     "agent_cli.recovery",
     # Tools package surface — transitively imports context.
     "agent_cli.tools",
+    # 순환 회피용 지연 import 를 모듈 수준으로 올린 모듈 (v10.133.9~) —
+    # 먼저 불려도 끝까지 import 되어야 한다.
+    "agent_cli.providers.capabilities",
 ]
 
 

@@ -363,7 +363,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
     `loop.skill_invoke` → `skills`(`load_skills`·`SkillLoop`).
   - **아래층이 도구 목록을 읽는다** — `context._file_extract`·`context.render`·`dialects.base` → `tools`(`TOOLS`).
   - **낱개** — `images` → `tools`(`display_path`), `prompts.system_prompt` → `skills`(`load_skills`),
-    `providers.capabilities` → `providers.anthropic`, `render.minimal` → `context`(`estimate_tokens`),
+    `render.minimal` → `context`(`estimate_tokens`),
     `render.web` → `web`(`write_status_file`), `tools.tool_help` → `tools.registry`(`effective_tool_names`).
 - 그 밖의 지연 import 는 순환과 무관하고 가드하지 않는다. 출발 모듈로는 `main`·`runtime`·`prompts.inventory` 에 가장 많다.
   이유는 자리마다 다르다 — 예컨대 `main` 의 `web` 명령은 `agent_cli.web.server`(fastapi 선택 의존성)를 명령 안에서 import 해,
@@ -763,7 +763,7 @@ class LLMProvider(Protocol):
 
 | 프로바이더 | 엔드포인트 | 인증 | 문법 | 사고 스위치 |
 |-----------|-----------|------|------|-------------|
-| `AnthropicProvider` | `/messages` | `x-api-key` + `anthropic-version` | 없음 | 켬 = `thinking: {type: adaptive}`(`_THINKING_ON`), 끔 = 블록 없음 |
+| `AnthropicProvider` | `/messages` | `x-api-key` + `anthropic-version` | 없음 | 켬 = `thinking: {type: adaptive}`(`capabilities.ANTHROPIC_THINKING_ON` — 프로브와 같은 모양), 끔 = 블록 없음 |
 | `OpenAIProvider` | `/chat/completions` | Bearer | `guided_grammar` | `chat_template_kwargs.enable_thinking` — 끔도 명시 |
 
 OpenAIProvider 하나로 OpenAI·vLLM·LM Studio·omlx 를 `--base-url` 만 바꿔 덮는다. native_fc 면 요청에 `tools`·`tool_choice: "auto"` 를 싣는다.
