@@ -48,6 +48,7 @@ from queue import Empty, SimpleQueue
 from typing import Any, ClassVar
 
 from agent_cli.fsio import atomic_write_json
+from agent_cli.instance_file import write_status_file
 from agent_cli.render.base import ConfirmOption, Renderer
 from agent_cli.render.web_hub import EventHub, _JsonReady
 from agent_cli.token_estimator import estimate_tokens
@@ -1850,8 +1851,6 @@ class WebRenderer(Renderer):
         stuck = self._stuck_summary_from(sticky.get("stuck"))
         jobs = self._jobs_summary_from(sticky.get("jobs"))
         try:
-            from agent_cli.web.instance_file import write_status_file
-
             write_status_file(
                 self._status_dir,
                 busy=busy,

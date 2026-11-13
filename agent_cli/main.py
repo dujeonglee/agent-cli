@@ -2919,7 +2919,7 @@ def web(
     # self-reaped via --idle-timeout), so the board can spawn-or-attach by
     # reading one file. Lives next to history.jsonl in the session dir.
     from agent_cli.context.session import get_session_dir
-    from agent_cli.web.instance_file import (
+    from agent_cli.instance_file import (
         remove_instance_file,
         remove_status_file,
         write_instance_file,

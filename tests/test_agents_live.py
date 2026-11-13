@@ -804,8 +804,8 @@ class TestWaitAndScope:
         roster_snapshot() → WebRenderer.agent_roster → status.json 요약.
         요약 유닛은 손 dict 를 쓰므로 snapshot() 필드가 드리프트해도
         통과한다 — 이 테스트가 생산자·소비자 필드 계약을 실물로 고정."""
+        from agent_cli.instance_file import read_status_file
         from agent_cli.render.web import WebRenderer
-        from agent_cli.web.instance_file import read_status_file
 
         status_dir = tmp_path / "status"
         status_dir.mkdir()

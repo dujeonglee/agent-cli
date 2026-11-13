@@ -542,8 +542,8 @@ class TestWebKnob:
         )
 
     def test_in_flight_reaches_status_file_and_the_chip(self, tmp_path):
+        from agent_cli.instance_file import read_status_file
         from agent_cli.knobs import KNOB_BY_NAME, web_state
-        from agent_cli.web.instance_file import read_status_file
 
         ctx = _ctx(tmp_path)
         auditor = SessionAuditor(_FakeJobs(), ctx, enabled=True)
@@ -565,7 +565,7 @@ class TestWebKnob:
     def test_without_the_wiring_status_still_updates(self, tmp_path):
         renderer, _server, _client = self._app(tmp_path, None)
         renderer.note_harness(1)  # knob_state 없음 — status.json 만
-        from agent_cli.web.instance_file import read_status_file
+        from agent_cli.instance_file import read_status_file
 
         assert read_status_file(tmp_path)["auditing"] is True
         assert renderer.hub.sticky_payload("knob:auditor") is None

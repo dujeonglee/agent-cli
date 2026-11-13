@@ -21,12 +21,12 @@ from fastapi.testclient import TestClient
 from rich.console import Console
 
 from agent_cli.context.manager import ContextManager
+from agent_cli.instance_file import read_status_file
 from agent_cli.loop.ledger import NAG_BUDGET, Ledger
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.render.minimal import MinimalRenderer
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
-from agent_cli.web.instance_file import read_status_file
 from agent_cli.web.server import WebServer, create_app
 from tests.loop_ports import make_ports
 from tests.loopkit import make_loop

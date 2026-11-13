@@ -24,10 +24,10 @@ from typing import ClassVar
 import pytest
 
 from agent_cli.input_queue import InputQueue
+from agent_cli.instance_file import read_status_file
 from agent_cli.render.base import ConfirmOption
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
-from agent_cli.web.instance_file import read_status_file
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
 from tests.web_static import js_text

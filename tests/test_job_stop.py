@@ -268,8 +268,8 @@ class TestView:
 
 class TestStatusFile:
     def test_jobs_reach_status_json_and_health(self, reg, tmp_path):
+        from agent_cli.instance_file import read_status_file
         from agent_cli.render.web import WebRenderer
-        from agent_cli.web.instance_file import read_status_file
         from agent_cli.web.server import WebServer, create_app
 
         sess = tmp_path / "sess"
