@@ -299,6 +299,7 @@ def teardown_session(
     agent_registry=None,
     mcp_manager=None,
     monitors=None,
+    schedules=None,
     harness=None,
     jobs=None,
     warn_stuck: bool = False,
@@ -306,9 +307,9 @@ def teardown_session(
     """공용 종료 시퀀스 — 모든 run/web 종료 경로가 여기로 수렴한다.
 
     순서(종전 run 메인 경로와 동일): ①(옵션) 미답 질문 경고
-    ② 상주 에이전트 전원 종료 ③ 스피너 정지 ④ MCP 해제(stdio 자식
-    프로세스·errlog fd 정리) ⑤ 세션 저장. 저장-완료 메시지는 표면별로
-    다르므로 호출자가 출력한다."""
+    ② 생산자 정지(모니터·예약 스레드) ③ 상주 에이전트 전원 종료 ④ 스피너 정지
+    ⑤ MCP 해제(stdio 자식 프로세스·errlog fd 정리) ⑥ 세션 저장. 저장-완료
+    메시지는 표면별로 다르므로 호출자가 출력한다."""
     if warn_stuck and agent_registry is not None:
         stuck = agent_registry.open_human_question_keys()
         if stuck:
@@ -330,6 +331,10 @@ def teardown_session(
         # 다음 세션의 "이전 세션 모니터 N건" 통지가 사라진다.
         monitors.stop()
         monitors.closed = True
+    if schedules is not None:
+        # 예약 스레드도 같은 자리에서 (v10.130.4) — 종전엔 두 호스트가 정리 **뒤에**
+        # 따로 멈춰, 정리 도중 아무도 읽지 않을 큐로 발화하고 "발화함" 으로 적을 틈이 있었다.
+        schedules.stop()
     if harness is not None:
         harness.stop()  # 진행 중 감사를 세운다 (v10.42.0) — 팀원 종료와 같은 자리
     if jobs is not None:
