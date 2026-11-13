@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from agent_cli.subagent.oneshot import (
     DelegateResult,
     _format_delegate_output,
@@ -298,6 +300,14 @@ class TestShellDangerousCommandConfirmation:
     path), and a (allow this keyword for the rest of the process). The
     AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 escape hatch exists for batch
     runs where there is no human to answer."""
+
+    @pytest.fixture(autouse=True)
+    def _in_tmp(self, tmp_path, monkeypatch):
+        # 확인이 안 걸리면 명령이 실제로 돈다 — 삭제가 저장소 루트에 닿지 않게.
+        # 임시 디렉터리 안의 대상은 묻지 않는 것이 제품 동작이라(v10.104.0) 임시
+        # 루트를 비워 둔다 — 그러지 않으면 판정이 체크아웃·cwd 의 위치를 따른다.
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("agent_cli.tools._confine.temp_roots", frozenset)
 
     def setup_method(self):
         # The session-wide allowlist is module-level; clear between

@@ -1,5 +1,6 @@
 """Tests for input_history module (readline setup + persistent history)."""
 
+import atexit
 from unittest.mock import patch
 
 import pytest
@@ -15,6 +16,9 @@ def _reset_initialized():
     ih._initialized = False
     yield
     ih._initialized = False
+    # setup() 이 건 종료 시 저장을 푼다 — 그대로 두면 프로세스 끝에 monkeypatch 가
+    # 풀린 ``_HISTORY_FILE``(cwd 상대 ``.agent-cli/sessions/chat_history``)에 쓴다.
+    atexit.unregister(ih.save)
 
 
 class TestSetup:
@@ -63,8 +67,9 @@ class TestSave:
         ih.save()
         assert hist_file.is_file()
 
-    def test_handles_permission_error(self, monkeypatch):
+    def test_handles_permission_error(self, tmp_path, monkeypatch):
         """save() swallows OSError on write failure."""
+        monkeypatch.setattr(ih, "_HISTORY_FILE", tmp_path / "chat_history")
         with patch.object(
             readline, "write_history_file", side_effect=OSError("denied")
         ):

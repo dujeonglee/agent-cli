@@ -1353,6 +1353,8 @@ pytest tests/test_dialects_json_fc.py -v
 pytest tests/ -m omlx_integration -v
 ```
 
+**수트는 저장소 루트에 쓰지 않는다 (v10.130.3)**: `tests/conftest.py` 의 autouse 가드가 테스트 앞뒤로 저장소 루트와 `.agent-cli/` 아래 두 단계의 항목을 찍어(`tests/cwd_guard.py`, 루트는 conftest 위치에서 — cwd 아님) 새 항목이 생기면 그 테스트를 실패시킨다(빼는 것은 `__pycache__`·`.pytest_cache`·`.ruff_cache`·`.agent-cli/skills` 뿐). 저장소에 쓰는 테스트는 `monkeypatch.chdir(tmp_path)` 나 자기 격리 픽스처로 돈다 — 가드가 못 보는 삭제·이동(`rm`·`mv` 를 실제로 실행하는 위험 셸 확인 테스트)도 임시 디렉터리에서. hypothesis 는 예제 DB 를 끄고(`database=None` 프로필) 홈(수집 시점 캐시 `constants/`·`unicode_data/`)을 수트 임시 디렉터리로 옮긴다. 가드는 테스트 밖(종료 시 `atexit`)의 쓰기는 못 본다 — 그건 수트 뒤 `git status --short --ignored` 로 본다.
+
 ---
 
 ## 11. CLI 명령어 레퍼런스

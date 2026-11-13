@@ -21,6 +21,8 @@ import threading
 import time
 from typing import ClassVar
 
+import pytest
+
 from agent_cli.render.base import ConfirmOption
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
@@ -230,6 +232,14 @@ class TestDangerousShellWaitsForViewer:
     거부하는 대신 대기하고, 늦게 접속한 사용자의 답으로 해제된다.
     (거부 응답은 모델이 승인 없이 우회하게 만들었음 — 대기=미실행이라
     보수적으로도 안전.)"""
+
+    @pytest.fixture(autouse=True)
+    def _in_tmp(self, tmp_path, monkeypatch):
+        # 확인이 안 걸리면 명령이 실제로 돈다 — 삭제가 저장소 루트에 닿지 않게.
+        # 임시 디렉터리 안의 대상은 묻지 않는 것이 제품 동작이라(v10.104.0) 임시
+        # 루트를 비워 둔다 — 그러지 않으면 판정이 체크아웃·cwd 의 위치를 따른다.
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("agent_cli.tools._confine.temp_roots", frozenset)
 
     def test_shell_confirm_waits_and_accepts_late_answer(self, monkeypatch):
         import agent_cli.render as render_mod
