@@ -76,8 +76,11 @@ class AgentCli(BaseInstalledAgent):
         True  # populate_context_post_run 이 /logs/agent/trajectory.json 생성
     )
 
+    # ``max_turns`` 에 기본값을 두지 않는다(v10.130.1) — 안 주면 플래그가 나가지 않아
+    # agent-cli 의 기본(상한 없음)으로 돈다. 제품에 없는 상한을 벤치만 걸고 있었고,
+    # 끝은 과제의 시간 제한이 정한다. 종전 기록과 맞출 때는 ``--ak max_turns=60``.
     CLI_FLAGS: ClassVar[list[CliFlag]] = [
-        CliFlag("max_turns", cli="--max-turns", type="int", default=60),
+        CliFlag("max_turns", cli="--max-turns", type="int"),
         CliFlag("response_format", cli="--response-format", type="str"),
         CliFlag("max_depth", cli="--max-depth", type="int"),
         CliFlag("verbose", cli="--verbose", type="bool"),
