@@ -6,7 +6,7 @@
 서브에이전트의 shell 도 입력을 망치므로 main 만으론 부족해 **네 루프 전부**가 같은
 러너를 쓴다(v10.35.0).
 
-셸 훅(`hooks.json`)은 종전대로 `LoopConfig.hooks_config` 경로로 돌며 여기와 무관하다
+셸 훅(`hooks.json`)은 종전대로 종류의 `hooks_config` 경로로 돌며 여기와 무관하다
 — 러너에 `shell_hooks_config` 를 주지 않아 두 번 돌지 않는다.
 """
 

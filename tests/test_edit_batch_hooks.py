@@ -15,9 +15,10 @@
 
 from __future__ import annotations
 
-from agent_cli.loop.state import LoopConfig, LoopState
+from agent_cli.loop.state import LoopState
 from agent_cli.loop.tool_bridge import ToolBridge
 from agent_cli.tools.read_file import compute_line_hash
+from tests.loopkit import make_config
 
 
 def _ref(n: int, line: str) -> str:
@@ -72,7 +73,7 @@ class _FakeHookRunner:
 
 
 def _bridge(runner=None) -> ToolBridge:
-    cfg = LoopConfig(hook_runner=runner)
+    cfg = make_config(hook_runner=runner)
     return ToolBridge(cfg, LoopState(), ctx=None, provider=None)
 
 

@@ -286,17 +286,18 @@ class TestProbe:
 
 
 def _bridge(window):
-    from agent_cli.loop.state import LoopConfig, LoopState
+    from agent_cli.loop.state import LoopState
     from agent_cli.loop.tool_bridge import ToolBridge
     from agent_cli.tools import TOOLS
     from tests.binding_support import make_binding
+    from tests.loopkit import make_config
 
     class _Caps:
         context_window = window
         max_output_tokens = 1000
 
     return ToolBridge(
-        LoopConfig(
+        make_config(
             tools_list=list(TOOLS.keys()), binding=make_binding(capabilities=_Caps())
         ),
         LoopState(),
@@ -372,7 +373,7 @@ def _bare_loop():
 
     loop = AgentLoop.__new__(AgentLoop)
     loop._state = LoopState()
-    loop._config = SimpleNamespace(agent_registry=None, kind=make_kind())
+    loop._config = SimpleNamespace(kind=make_kind())
     loop.ctx = None
     loop.run_authors = []
     return loop
@@ -528,7 +529,6 @@ class TestInjectedMessageImages:
         items = [{"id": "u-1", "nickname": "dj", "text": "see", "images": [ref]}]
         # v10.88.0: 어디서 받을지는 종류 — 입력 큐 포트가 있는 맨 종류
         loop._config = SimpleNamespace(
-            agent_registry=None,
             kind=make_kind(
                 ports=make_ports(
                     dequeue_user_message=lambda: items.pop(0) if items else None

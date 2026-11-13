@@ -61,15 +61,15 @@ class AgentRuntime:
 
     @classmethod
     def from_loop_config(cls, cfg) -> AgentRuntime:
-        """LoopConfig → AgentRuntime (tool_bridge 의 상주 모드 인터셉트용)."""
+        """돌고 있는 루프의 종류(``cfg.kind``) → AgentRuntime (tool_bridge 의 상주 모드 인터셉트용)."""
         return cls(
-            binding=cfg.binding,
-            max_turns=cfg.max_turns,
-            depth=cfg.depth,
-            max_depth=cfg.max_depth,
-            session=cfg.session,
-            hooks_config=cfg.hooks_config,
-            compaction_enabled=cfg.compaction_enabled,
+            binding=cfg.kind.binding,
+            max_turns=cfg.kind.max_turns,
+            depth=cfg.kind.depth,
+            max_depth=cfg.kind.max_depth,
+            session=cfg.kind.session,
+            hooks_config=cfg.kind.hooks_config,
+            compaction_enabled=cfg.kind.compaction_enabled,
         )
 
 
@@ -136,7 +136,7 @@ def wire_monitor_delivery(registry, monitors) -> None:
 def build_hook_runner():
     """세션당 Python 훅 러너 하나 (v10.35.0) — run/web 부트스트랩이 부르고 네 포트
     종류의 `make_ports`(`MainLoop`·`ResidentLoop`·`SkillLoop`·`PrivateLoop`)가 `hooks.runtime.get_hook_runner`
-    로 같은 인스턴스를 받는다. 셸 훅(`hooks.json`)은 `LoopConfig.hooks_config`
+    로 같은 인스턴스를 받는다. 셸 훅(`hooks.json`)은 종류의 `hooks_config`
     경로가 따로 돌므로 러너엔 주지 않는다(두 번 실행 방지). `teardown_session` 이
     푼다."""
     from agent_cli.hooks.runner import HookRunner
@@ -654,7 +654,7 @@ def _hook_unwired() -> dict:
 
 _NO_REGISTRY_IN_SUBLOOP = (
     "서브루프에 레지스트리가 닿으면 안 된다 — 'teammate 안 teammate 금지'의 "
-    "단일 가드가 LoopConfig.agent_registry 다"
+    "단일 가드가 포트의 agent_registry 다"
 )
 _AS_BEFORE = "종전 배선 유지 — 이 호스트는 이 포트를 받은 적이 없다"
 _RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다 (v10.1.0)"

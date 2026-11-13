@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 
 from agent_cli.context.token_estimator import estimate_tokens
-from agent_cli.loop import AgentLoop, LoopConfig, LoopState, ToolBridge
+from agent_cli.loop import AgentLoop, LoopState, ToolBridge
 from agent_cli.loop.tool_bridge import TURN_OBS_BUDGET_MULT
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.base import (
@@ -34,6 +34,7 @@ from agent_cli.tools.base import (
 )
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
+from tests.loopkit import make_config
 
 
 def _loop(cap: int, tools: list[str] | None = None) -> AgentLoop:
@@ -43,7 +44,7 @@ def _loop(cap: int, tools: list[str] | None = None) -> AgentLoop:
     C1 PR-1: ``tools_list`` 는 LoopConfig 소유(재할당 불가 property)라 바로
     config/state 를 조립해 단다."""
     loop = AgentLoop.__new__(AgentLoop)
-    loop._config = LoopConfig(
+    loop._config = make_config(
         tools_list=list(TOOLS.keys()) if tools is None else list(tools)
     )
     loop._state = LoopState()
@@ -367,7 +368,7 @@ def _bridge(window):
         max_output_tokens = 1000
 
     return ToolBridge(
-        LoopConfig(
+        make_config(
             tools_list=list(TOOLS.keys()),
             binding=make_binding(capabilities=_Caps()) if window is not None else None,
         ),

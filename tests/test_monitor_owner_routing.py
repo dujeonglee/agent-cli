@@ -184,13 +184,13 @@ class TestOwnerIsDecidedByTheKind:
         )  # D2: 라벨까지 — 겹치는 감사 둘이 한 주소였다
 
     def test_the_chain_survives_a_real_loop(self):
-        """`ports.owner` → `LoopConfig.owner` → `RunContext.owner` 를
+        """`ports.owner` → `cfg.kind.ports.owner` → `RunContext.owner` 를
         **실제 루프로** 관통해 고정한다.
 
-        두 데이터클래스 hop 은 `owner` 에 `"main"` 기본값이 있다(직접
-        생성하는 테스트 13+N 곳 때문에). 프로덕션에서 값을 세우는 곳은
-        `core.py` 의 `owner=ports.owner` 와 `tool_bridge.py` 의
-        `owner=self.cfg.owner` **각 한 줄**뿐이다. 둘 중 하나를 지워도
+        끝의 데이터클래스 hop(`RunContext`)은 `owner` 에 `"main"` 기본값이 있다.
+        프로덕션에서 값을 잇는 곳은 `core.py` 가 종류를 `LoopConfig(kind=kind, …)` 에
+        싣는 줄과 `tool_bridge.py` 의 `owner=self.cfg.kind.ports.owner` **각 한 줄**뿐이다
+        (v10.133.0 — 종전엔 `LoopConfig.owner` 필드가 가운데 hop 이었다). 둘 중 하나를 지워도
         전체 스위트가 초록인 채로 **상주 에이전트의 보고가 전부 main 으로
         간다** — 이 저장소가 없애려는 바로 그 조용한 누락이라, 객체를 따로
         만들어 비교하는 동어반복이 아니라 루프를 지나게 해야 한다.
@@ -212,9 +212,9 @@ class TestOwnerIsDecidedByTheKind:
             model="m",
             ports=make_ports(owner="agent:k1"),
         )
-        assert loop._config.owner == "agent:k1", "ports.owner 가 안 흘렀다"
+        assert loop._config.kind.ports.owner == "agent:k1", "ports.owner 가 안 흘렀다"
         assert loop._tools._run_ctx().owner == "agent:k1", (
-            "cfg.owner 가 도구까지 안 닿았다"
+            "cfg.kind.ports.owner 가 도구까지 안 닿았다"
         )
 
     def test_ports_owner_has_no_default(self):

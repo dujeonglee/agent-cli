@@ -353,9 +353,10 @@ class TestSemanticValidationHook:
     def test_semantic_failure_records_schema_mismatch_via_a5(self):
         # 정밀화 계약 ③: 의미론 실패가 이제 관측 기록(SCHEMA_MISMATCH)에 잡힘
         from agent_cli.dialects.base import Op, ParsedTurn
-        from agent_cli.loop import LoopConfig, LoopState, ToolBridge, TurnDispatcher
+        from agent_cli.loop import LoopState, ToolBridge, TurnDispatcher
+        from tests.loopkit import make_config
 
-        cfg = LoopConfig(
+        cfg = make_config(
             tools_list=["code_index", "complete"],
             binding=make_binding(dialect="json_fc"),
         )

@@ -400,13 +400,14 @@ def _caps(window=32768):
 
 def _caller(tmp_path, **cfg_kw):
     from agent_cli.loop.llm import LLMCaller
-    from agent_cli.loop.state import LoopConfig, LoopState
+    from agent_cli.loop.state import LoopState
+    from tests.loopkit import make_config
 
     ctx = _ctx(tmp_path)
-    config = LoopConfig(binding=make_binding(capabilities=_caps()), **cfg_kw)
+    config = make_config(binding=make_binding(capabilities=_caps()), **cfg_kw)
     state = LoopState()
     # AgentLoop 이 하는 배선 그대로 — 장부가 빚을 이 포트로 읽는다 (P1)
-    state.ledger.bind_questions(config.questions)
+    state.ledger.bind_questions(config.kind.ports.questions)
     return LLMCaller(config, state, ctx, provider=None, prompt=None), ctx
 
 

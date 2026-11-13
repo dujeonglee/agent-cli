@@ -540,7 +540,7 @@ class TurnDispatcher:
         fired = guard.observe(
             pairs,
             turn=self.state.turn,
-            work_running=harness_work_running(self.cfg.owner),
+            work_running=harness_work_running(self.cfg.kind.ports.owner),
         )
         if not fired:
             if self._stale_shown:
@@ -1214,7 +1214,7 @@ class TurnDispatcher:
                 turn=self.state.turn,
             )
             return _CONTINUE
-        arrived = arrived_mail(self.cfg.owner)
+        arrived = arrived_mail(self.cfg.kind.ports.owner)
         if arrived:
             n = f"{arrived} notice" + ("s" if arrived > 1 else "")
             _append_observation(
@@ -1230,12 +1230,16 @@ class TurnDispatcher:
                 turn=self.state.turn,
             )
             return _CONTINUE
-        sources = wake_sources(self.cfg.owner)
+        sources = wake_sources(self.cfg.kind.ports.owner)
         if not sources:
             from agent_cli.subagent.agents_live import main_registry
 
             reg = main_registry()
-            parked = reg.parked_debtors_for(self.cfg.owner) if reg is not None else []
+            parked = (
+                reg.parked_debtors_for(self.cfg.kind.ports.owner)
+                if reg is not None
+                else []
+            )
             why = (
                 f"{', '.join(parked)} owes you a reply but is itself waiting — on "
                 "you, so if you wait too, nobody wakes. Reply to what you owe, or "
@@ -1273,7 +1277,9 @@ class TurnDispatcher:
         # 레지스트리가 걸지만(`run_ended(waiting=True)`), 이번 간격은 여기서 같은
         # 계산(`next_checkin_s`)으로 미리 적는다 — 설명엔 숫자가 없다(간격이 바뀐다).
         # 예약만 기다려 타이머가 없으면 종전 문장 그대로.
-        checkin_s = reg.next_checkin_s(self.cfg.owner) if reg is not None else None
+        checkin_s = (
+            reg.next_checkin_s(self.cfg.kind.ports.owner) if reg is not None else None
+        )
         timer = (
             f", or in {format_duration(checkin_s)} if nothing has reported"
             if checkin_s
@@ -1305,7 +1311,7 @@ class TurnDispatcher:
         사라진 것과 같이 다룬다."""
         from agent_cli.runtime import wake_sources
 
-        owner = self.cfg.owner
+        owner = self.cfg.kind.ports.owner
         why = "nothing"
         if reg is not None:
             reg.arm_checkin(owner)
@@ -1369,7 +1375,7 @@ class TurnDispatcher:
         waiting_hint = (
             " If you are only waiting for something you started to report back, "
             "call `wait` instead — it keeps these items open and the report wakes you."
-            if wake_sources(self.cfg.owner)
+            if wake_sources(self.cfg.kind.ports.owner)
             else ""
         )
         return self._intervene(
@@ -1430,7 +1436,7 @@ class TurnDispatcher:
                 if isinstance(op.action_input, dict)
                 else str(op.action_input),
             )
-            port = self.cfg.questions
+            port = self.cfg.kind.ports.questions
             if port is not None and not self.cfg.kind.prompt_profile().ask_blocking:
                 return self._op_ask_async(turn.record, questions, port, accumulate)
             # 비동기 포트가 없으면(main/delegate) 사람에게 직접 묻는다.
@@ -1461,7 +1467,7 @@ class TurnDispatcher:
         (main/일회성 루프) ``_NOT_HANDLED`` 로 폴스루 — 일반 도구 경로가
         "message intercepted by loop" 플레이스홀더를 실행해 무해하게 끝난다.
         """
-        handler = self.cfg.message_handler
+        handler = self.cfg.kind.ports.message_handler
         if handler is None:
             return _NOT_HANDLED
         args = op.action_input if isinstance(op.action_input, dict) else {}
@@ -1512,7 +1518,7 @@ class TurnDispatcher:
 
         ``_op_message`` 와 동형. 포트가 없으면 ``_NOT_HANDLED``.
         """
-        port = self.cfg.questions
+        port = self.cfg.kind.ports.questions
         if port is None:
             return _NOT_HANDLED
         args = op.action_input if isinstance(op.action_input, dict) else {}
@@ -1659,7 +1665,7 @@ class TurnDispatcher:
                 _debug_log(
                     f"Loop hard-fail: {tool_name} input={args_repr[:100]} "
                     f"level={loop_level} paired={paired} "
-                    f"skill_name={self.cfg.skill_name}"
+                    f"skill_name={self.cfg.kind.skill_name}"
                 )
                 tried = (
                     "tried probe_progress and restate_task without recovery"

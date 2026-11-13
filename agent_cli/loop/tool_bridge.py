@@ -292,13 +292,13 @@ class ToolBridge:
               ``modify_input``/``updated_input``; ``input_dict`` mirrors
               that change when the new input is itself a dict.
         """
-        if self.cfg.hook_runner:
-            pre_ctx = self.cfg.hook_runner.fire(
+        if self.cfg.kind.ports.hook_runner:
+            pre_ctx = self.cfg.kind.ports.hook_runner.fire(
                 "PreToolUse",
                 tool_name=tool_name,
                 tool_input=input_dict,
                 turn=self.state.turn,
-                mcp_manager=self.cfg.mcp_manager,
+                mcp_manager=self.cfg.kind.ports.mcp_manager,
             )
             if pre_ctx.is_blocked:
                 return (
@@ -313,11 +313,14 @@ class ToolBridge:
                 tool_input = pre_ctx.modified_input
                 input_dict = tool_input
 
-        if self.cfg.hooks_config:
+        if self.cfg.kind.hooks_config:
             from agent_cli.hooks import run_hooks
 
             pre_result = run_hooks(
-                "PreToolUse", tool_name, input_dict, hooks_config=self.cfg.hooks_config
+                "PreToolUse",
+                tool_name,
+                input_dict,
+                hooks_config=self.cfg.kind.hooks_config,
             )
             if not pre_result.allowed:
                 return (
@@ -379,26 +382,26 @@ class ToolBridge:
                 if "tasks" in args
                 else {"tasks": [self._run_spec(args)]}
             )
-            if self.cfg.hook_runner:
-                self.cfg.hook_runner.fire(
+            if self.cfg.kind.ports.hook_runner:
+                self.cfg.kind.ports.hook_runner.fire(
                     "OnAgentStart",
                     tool_name="agent",
                     tool_input=input_dict,
                     turn=self.state.turn,
-                    mcp_manager=self.cfg.mcp_manager,
+                    mcp_manager=self.cfg.kind.ports.mcp_manager,
                 )
             # 돌고 있는 이 루프가 호출자다 (v10.87.0 `Caller`) — 깊이·스택·훅·중단·ctx 전부
             result = tool_delegate(
                 raw, Caller.from_loop(self.cfg, self.state, self.ctx)
             )
-            if self.cfg.hook_runner:
-                self.cfg.hook_runner.fire(
+            if self.cfg.kind.ports.hook_runner:
+                self.cfg.kind.ports.hook_runner.fire(
                     "OnAgentEnd",
                     tool_name="agent",
                     tool_input=input_dict,
                     delegate_result=result,
                     turn=self.state.turn,
-                    mcp_manager=self.cfg.mcp_manager,
+                    mcp_manager=self.cfg.kind.ports.mcp_manager,
                 )
             return result
 
@@ -406,7 +409,7 @@ class ToolBridge:
 
         return tool_agent(
             args,
-            registry=self.cfg.agent_registry,
+            registry=self.cfg.kind.ports.agent_registry,
             parent_ctx=self.ctx,
             # 상주 루프 = message 핸들러가 꽂힌 루프 (v10.1.0 거절 문구용)
             resident=self.cfg.kind.prompt_profile().peer_channel,
@@ -448,7 +451,7 @@ class ToolBridge:
                 session_dir=self.ctx.session_dir if self.ctx else None,
                 oversized_cap=self._oversized_cap,
                 tools_available=frozenset(self.cfg.tools_list),
-                owner=self.cfg.owner,
+                owner=self.cfg.kind.ports.owner,
                 observed_at=lambda: self.last_observation_at,
                 turn_now=lambda: self.state.turn,
                 tool_guide=self._tool_guide,
@@ -477,16 +480,16 @@ class ToolBridge:
         Failure runs route to ``PostToolUseFailure`` for the shell-config
         path so policy hooks can react differently to errors.
         """
-        if self.cfg.hook_runner:
-            self.cfg.hook_runner.fire(
+        if self.cfg.kind.ports.hook_runner:
+            self.cfg.kind.ports.hook_runner.fire(
                 "PostToolUse",
                 tool_name=tool_name,
                 tool_input=input_dict,
                 tool_result=result,
                 turn=self.state.turn,
-                mcp_manager=self.cfg.mcp_manager,
+                mcp_manager=self.cfg.kind.ports.mcp_manager,
             )
-        if self.cfg.hooks_config:
+        if self.cfg.kind.hooks_config:
             from agent_cli.hooks import run_hooks
 
             _obs = result.output if result.success else result.error
@@ -495,7 +498,7 @@ class ToolBridge:
                 _evt,
                 tool_name,
                 input_dict,
-                hooks_config=self.cfg.hooks_config,
+                hooks_config=self.cfg.kind.hooks_config,
                 tool_result=_obs,
             )
 

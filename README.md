@@ -2113,7 +2113,7 @@ agent_cli/
 pytest tests/ -v
 ```
 
-엔진(`agent_cli.loop.run_loop(kind, start, ctx)`)은 루프 종류를 받는다. 종류 없이 부품(provider·capabilities·model·ports·ctx)으로 엔진을 돌리거나 세우는 테스트는 `tests/loopkit.py` 의 `run_loop(...)`·`make_loop(...)` 를 쓴다 — 정적 바인딩과 맨 종류를 거기서 만든다.
+엔진(`agent_cli.loop.run_loop(kind, start, ctx)`)은 루프 종류를 받는다. 종류 없이 부품(provider·capabilities·model·ports·ctx)으로 엔진을 돌리거나 세우는 테스트는 `tests/loopkit.py` 의 `run_loop(...)`·`make_loop(...)` 를 쓴다 — 정적 바인딩과 맨 종류를 거기서 만든다. 협력자(`ToolBridge`·`TurnDispatcher`·`LLMCaller`)를 루프 없이 세우는 테스트의 설정은 `make_config(...)`.
 
 ### omlx 통합 테스트 (실 서버 필요)
 

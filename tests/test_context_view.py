@@ -423,8 +423,9 @@ class TestLiveDispatchOrdinals:
 
     def test_action_and_observation_point_at_their_records(self, tmp_path, monkeypatch):
         from agent_cli.dialects import get as get_dialect
-        from agent_cli.loop import LoopConfig, LoopState, ToolBridge, TurnDispatcher
+        from agent_cli.loop import LoopState, ToolBridge, TurnDispatcher
         from agent_cli.recovery.observability import TurnRecorder
+        from tests.loopkit import make_config
 
         prev = get_renderer()
         r = WebRenderer()
@@ -435,7 +436,7 @@ class TestLiveDispatchOrdinals:
             wf = get_dialect("json_fc")
             ctx = ContextManager(tmp_path / "s", max_context_tokens=100_000, dialect=wf)
             ctx.add({"role": "user", "content": "q"})
-            cfg = LoopConfig(
+            cfg = make_config(
                 tools_list=["read_file", "complete"], binding=make_binding(dialect=wf)
             )
             st = LoopState(query="q")

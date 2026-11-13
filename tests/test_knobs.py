@@ -316,16 +316,16 @@ class TestModelKnob:
         monkeypatch.setattr(_dialects, "_override", None)
 
     def test_switch_applies_to_the_next_call_without_copies(self, tmp_path, models):
-        from agent_cli.loop.state import LoopConfig
         from agent_cli.providers.capabilities import ModelCapabilities
         from tests.binding_support import make_binding
+        from tests.loopkit import make_config
 
         b = make_binding(
             model="a",
             capabilities=ModelCapabilities(80000, 1000, False),
             dialect="json_fc",
         )
-        cfg = LoopConfig(binding=b)
+        cfg = make_config(binding=b)
         ctx = ContextManager(tmp_path / "s", binding=b)
         s = KnobSession(binding=b)
         assert cfg.model == "a" and ctx.max_context_tokens == 80000 * 7 // 10

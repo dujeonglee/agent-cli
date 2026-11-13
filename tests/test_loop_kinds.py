@@ -178,9 +178,10 @@ class TestEngineContract:
 
 class TestCaller:
     def test_from_loop_reads_the_running_loops_config(self):
-        from agent_cli.loop import LoopConfig, LoopState
+        from agent_cli.loop import LoopState
+        from tests.loopkit import make_config
 
-        cfg = LoopConfig(owner="agent:k", depth=1, max_depth=4, tools_list=["shell"])
+        cfg = make_config(owner="agent:k", depth=1, max_depth=4, tools_list=["shell"])
         state = LoopState()
         c = Caller.from_loop(cfg, state, ctx="CTX")
         assert c.owner == "agent:k" and c.depth == 1 and c.max_depth == 4
@@ -339,6 +340,7 @@ class TestEngineAsksTheKind:
         banned = [
             "cfg.wakeable",
             "is_private_owner(self.cfg.owner)",
+            "is_private_owner(self.cfg.kind.ports.owner)",  # v10.133.0 의 같은 추측
             "dequeue_user_message is None",
             "dequeue_user_message is not None",
             "message_handler is not None",
@@ -347,6 +349,7 @@ class TestEngineAsksTheKind:
             "render=not self",
             "questions.nonblocking",
             "self.cfg.depth > 0",
+            "self.cfg.kind.depth > 0",  # v10.133.0 의 같은 추측
         ]
         hits = []
         for f in pathlib.Path("agent_cli/loop").glob("*.py"):
@@ -384,7 +387,7 @@ class TestEngineAsksTheKind:
 
         loop = AgentLoop.__new__(AgentLoop)
         loop._state = SimpleNamespace(ledger=Ledger(), turn=0)
-        loop._config = SimpleNamespace(kind=_Kind(), agent_registry=None)
+        loop._config = SimpleNamespace(kind=_Kind())
         loop.ctx = None
         loop.messages = []
         loop.task_log = []
@@ -400,10 +403,10 @@ class TestEngineAsksTheKind:
         assert sorted(loop._state.ledger.request_ids()) == ["u-1", "u-2"]
 
     def test_loop_config_without_a_kind_gets_a_bare_one(self):
-        from agent_cli.loop import LoopConfig
         from agent_cli.loop.kind import WAIT_REFUSE, LoopKind
+        from tests.loopkit import make_config
 
-        cfg = LoopConfig(owner="agent:q", depth=1, tools_list=["shell"])
+        cfg = make_config(owner="agent:q", depth=1, tools_list=["shell"])
         assert isinstance(cfg.kind, LoopKind) and cfg.kind.owner == "agent:q"
         assert (
             cfg.kind.ports.owner == "agent:q" and cfg.kind.wait_policy() == WAIT_REFUSE

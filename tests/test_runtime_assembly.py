@@ -125,27 +125,27 @@ class TestAgentRuntimeEquivalence:
         assert new_dict["compaction_enabled"] is True  # 기본값 == 소비측 기본
 
     def test_from_loop_config_maps_legacy_tool_bridge_fields(self):
-        """LoopConfig → AgentRuntime 매핑 — 바인딩은 **같은 객체**(복사 아님)."""
+        """돌고 있는 루프의 종류(``cfg.kind``) → AgentRuntime 매핑 — 바인딩은 **같은 객체**(복사 아님)."""
         cfg = MagicMock()
-        cfg.binding = make_binding(model="m", provider_name="anthropic")
-        cfg.max_turns = 7
-        cfg.depth = 1
-        cfg.max_depth = 3
-        cfg.session = object()
-        cfg.hooks_config = {"PostToolUse": []}
-        cfg.compaction_enabled = False
+        cfg.kind.binding = make_binding(model="m", provider_name="anthropic")
+        cfg.kind.max_turns = 7
+        cfg.kind.depth = 1
+        cfg.kind.max_depth = 3
+        cfg.kind.session = object()
+        cfg.kind.hooks_config = {"PostToolUse": []}
+        cfg.kind.compaction_enabled = False
 
         d = AgentRuntime.from_loop_config(cfg).as_dict()
         assert d == {
-            "binding": cfg.binding,
+            "binding": cfg.kind.binding,
             "max_turns": 7,
             "depth": 1,
             "max_depth": 3,
-            "session": cfg.session,
+            "session": cfg.kind.session,
             "hooks_config": {"PostToolUse": []},
             "compaction_enabled": False,
         }
-        assert d["binding"] is cfg.binding
+        assert d["binding"] is cfg.kind.binding
 
     def _mocks(self, *, stuck=()):
         registry = MagicMock()
