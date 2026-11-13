@@ -27,6 +27,47 @@ from agent_cli.runtime import (
 from tests.binding_support import make_binding
 
 _MAIN_SRC = Path("agent_cli/main.py").read_text(encoding="utf-8")
+_RUNTIME_SRC = Path("agent_cli/runtime.py").read_text(encoding="utf-8")
+
+
+def _calls(src: str, name: str) -> list:
+    """``src`` 안에서 이름 ``name`` 을 직접 부르는 호출 노드들."""
+    import ast
+
+    return [
+        n
+        for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == name
+    ]
+
+
+def _enclosing_def(src: str, node) -> str:
+    """``node`` 를 품은 가장 안쪽 최상위·메서드 ``def`` 의 이름."""
+    import ast
+
+    best = None
+    for fn in ast.walk(ast.parse(src)):
+        inside = isinstance(fn, ast.FunctionDef) and (
+            fn.lineno <= node.lineno <= (fn.end_lineno or fn.lineno)
+        )
+        if inside and (best is None or fn.lineno > best.lineno):
+            best = fn
+    return best.name if best else ""
+
+
+def _def_src(src: str, name: str) -> str:
+    """``def name(`` 하나의 소스."""
+    import ast
+
+    (fn,) = [
+        n
+        for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.FunctionDef) and n.name == name
+    ]
+    return ast.get_source_segment(src, fn)
+
 
 # run/web 의 registry runtime dict 키 (v10.43.0: 모델·능력·프로바이더 여섯 값은
 # `binding` 하나 — 세션의 ModelBinding 을 참조한다). compaction_enabled 는 소비측
@@ -330,56 +371,51 @@ class TestRegistryAssembly:
         assert reg.monitors is monitors
 
     def test_monitor_wiring_is_passed_at_every_call_site(self):
-        """배선은 `main.py` 두 부트스트랩(run/web) **모두**에서 넘어가야
-        한다 — 한쪽만 고치는 것이 이 파일이 존재하는 이유의 사고 유형이다."""
-        import ast
-        from pathlib import Path
-
-        src = Path(__import__("agent_cli.main", fromlist=["x"]).__file__).read_text()
-        calls = [
-            n
-            for n in ast.walk(ast.parse(src))
-            if isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Name)
-            and n.func.id == "build_agent_registry"
-        ]
-        assert len(calls) == 2, f"호출부가 {len(calls)}개 — 테스트가 낡았다"
-        for c in calls:
-            names = {kw.arg for kw in c.keywords if kw.arg}
-            assert "monitors" in names, (
-                "build_agent_registry 호출부 하나가 monitors 를 안 넘긴다 — "
-                "그 경로에서는 monitor add 가 통째로 거부된다"
-            )
+        """배선은 레지스트리를 만드는 **유일한** 자리에서 넘어가야 한다 — 종전엔
+        `main.py` 두 부트스트랩(run/web)이 각자 불렀고, 한쪽만 고치는 것이 이 파일이
+        존재하는 이유의 사고 유형이었다. v10.131.0 부터 그 자리는
+        `runtime.build_session_owners` 하나다."""
+        calls = _calls(_RUNTIME_SRC, "build_agent_registry")
+        assert len(calls) == 1, f"runtime 호출부가 {len(calls)}개 — 테스트가 낡았다"
+        assert _enclosing_def(_RUNTIME_SRC, calls[0]) == "build_session_owners"
+        names = {kw.arg for kw in calls[0].keywords if kw.arg}
+        assert {"monitors", "jobs"} <= names, (
+            "build_agent_registry 가 monitors·jobs 를 안 넘긴다 — "
+            "그 경로에서는 monitor add·작업 통지가 통째로 거부된다"
+        )
+        assert _calls(_MAIN_SRC, "build_agent_registry") == [], (
+            "호스트가 레지스트리를 직접 만든다 — 조립이 두 벌로 돌아갔다"
+        )
 
     def test_teardown_stops_the_poll_thread_at_every_call_site(self):
         """폴링 스레드를 세션 종료가 멈춰야 한다. 종전엔 `stop()` 에
         **호출자가 하나도 없었다** — 지금까지는 아무도 안 읽는 리스트에
-        쌓을 뿐이라 무해했지만, 이제는 종료 뒤 발화가 **배달**된다."""
+        쌓을 뿐이라 무해했지만, 이제는 종료 뒤 발화가 **배달**된다.
+        v10.131.0: 정리의 호출부는 `runtime.close_session` 하나이고 두 호스트는
+        그것만 부른다(run 은 `_finalize_run` 경유)."""
         import ast
-        from pathlib import Path
 
-        src = Path(__import__("agent_cli.main", fromlist=["x"]).__file__).read_text()
-        calls = [
-            n
-            for n in ast.walk(ast.parse(src))
-            if isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Name)
-            and n.func.id in ("teardown_session", "_finalize_run")
-        ]
-        assert len(calls) >= 2, f"호출부가 {len(calls)}개 — 테스트가 낡았다"
-        for c in calls:
-            names = {kw.arg for kw in c.keywords if kw.arg}
-            assert "monitors" in names, "종료 경로 하나가 감시를 안 멈춘다"
-            # v10.130.4: 예약 스레드도 정리가 멈춘다 — 호스트의 별도 `stop()` 은 없다
-            assert "schedules" in names, "종료 경로 하나가 예약 스레드를 안 멈춘다"
+        calls = _calls(_RUNTIME_SRC, "teardown_session")
+        assert len(calls) == 1, f"runtime 호출부가 {len(calls)}개 — 테스트가 낡았다"
+        assert _enclosing_def(_RUNTIME_SRC, calls[0]) == "close_session"
+        names = {kw.arg for kw in calls[0].keywords if kw.arg}
+        assert "monitors" in names, "종료 경로가 감시를 안 멈춘다"
+        # v10.130.4: 예약 스레드도 정리가 멈춘다 — 호스트의 별도 `stop()` 은 없다
+        assert "schedules" in names, "종료 경로가 예약 스레드를 안 멈춘다"
+        assert {"agent_registry", "mcp_manager", "harness", "jobs"} <= names
+        assert _calls(_MAIN_SRC, "teardown_session") == []
+        closes = _calls(_MAIN_SRC, "close_session")
+        assert {_enclosing_def(_MAIN_SRC, c) for c in closes} == {
+            "_finalize_run",
+            "web",
+        }
         stops = [
             n
-            for n in ast.walk(ast.parse(src))
+            for n in ast.walk(ast.parse(_MAIN_SRC))
             if isinstance(n, ast.Call)
             and isinstance(n.func, ast.Attribute)
             and n.func.attr == "stop"
-            and isinstance(n.func.value, ast.Name)
-            and n.func.value.id == "schedule_registry"
+            and "schedule" in ast.unparse(n.func.value)
         ]
         assert stops == [], (
             "호스트가 예약을 정리 밖에서 따로 멈춘다 — teardown 이 소유한다"
@@ -388,7 +424,8 @@ class TestRegistryAssembly:
 
 class TestExitPathConvergence:
     """run/web 종료 경로 수렴의 구조 핀 (소스 레벨 — 이 레포의 배선 핀
-    관례). 경로별 나열이 부활하면(=finally 밖 teardown 호출) 실패한다."""
+    관례). 경로별 나열이 부활하면(=finally 밖 teardown 호출) 실패한다.
+    v10.131.0: 조립·정리는 `runtime` 의 함수 넷 — 호스트는 그것을 부르는 스크립트."""
 
     def _body(self, name: str) -> str:
         start = _MAIN_SRC.index(f"\ndef {name}(")
@@ -402,53 +439,84 @@ class TestExitPathConvergence:
         # 경로별 직접 정리 나열 부활 금지 (teardown_session 소유)
         assert "shutdown_all()" not in body
         assert "disconnect_all()" not in body
-        # finally 가 registry 와 mcp 를 모두 넘긴다 (종전 2경로 MCP 누락 수리)
-        assert "agent_registry=agent_registry" in body
-        assert "mcp_manager," in body or "mcp_manager)" in body
+        # finally 가 spec(=mcp_manager·session)·저장소·소유자를 모두 넘긴다 — 조립
+        # 도중 죽어도(None) 정리가 돈다 (종전 2경로 MCP 누락 수리, v10.131.0 조립도 try 안)
+        assert "_finalize_run(spec, stores, owners, warn_stuck=warn_stuck)" in body
+        assert "stores = owners = None" in body
+        tried = body[body.index("    try:\n") :]
+        assert "build_session_stores(" in tried and "build_session_owners(" in tried
+        assert "mcp_manager=mcp_manager" in body  # spec 에 실린다
+        fin = _MAIN_SRC[_MAIN_SRC.index("\ndef _finalize_run(") :]
+        fin = fin[: fin.find("\ndef ", 1)]
+        assert "close_session(spec, stores, owners, warn_stuck=warn_stuck)" in fin
 
-    def test_web_converges_on_teardown_session(self):
+    def test_web_converges_on_close_session(self):
         body = self._body("web")
-        assert "teardown_session(" in body
+        assert body.count("close_session(") == 1
+        assert "close_session(spec, stores, owners" in body
+        assert "teardown_session(" not in body
         # registry 직접 나열 부활 금지 — 연결 허브의 종료(``renderer.hub.shutdown_all()``,
         # v10.115.0)는 별개라 그것만 허용한다.
         assert body.count("shutdown_all()") == body.count("renderer.hub.shutdown_all()")
         assert "disconnect_all()" not in body
 
     def test_web_hooks_wired_like_run(self):
-        """v8.39.0 수리 핀: web 도 디스크 훅을 로드해 run_loop 와 registry
-        runtime 에 배선한다 — 종전 hooks_config 미전달/None 고정 금지."""
-        body = self._body("web")
-        assert "load_hooks" in body
-        assert "hooks_config=_disk_hooks" in body  # run_loop 호출 배선
-        assert '"hooks_config": None' not in body  # 종전 None 고정 소멸
-        # registry runtime 도 같은 훅 (AgentRuntime 생성 인자)
-        assert "hooks_config=_disk_hooks" in body
+        """v8.39.0 수리 핀: web 도 디스크 훅을 로드해 main 루프와 registry runtime 에
+        배선한다 — 종전 hooks_config 미전달/None 고정 금지. v10.131.0: 두 호스트가
+        같은 `SessionSpec.for_session` 으로 훅을 읽고, 조립 함수가 그 한 값을
+        `AgentRuntime`·`MainLoop` 양쪽에 싣는다."""
+        for name in ("run", "web"):
+            body = self._body(name)
+            assert body.count("SessionSpec.for_session(") == 1, name
+            assert "load_hooks" not in body, f"{name}: 훅을 spec 밖에서 따로 읽는다"
+            assert '"hooks_config": None' not in body  # 종전 None 고정 소멸
+        spec_src = _def_src(_RUNTIME_SRC, "for_session")
+        assert (
+            "load_hooks" in spec_src and "hooks_config=load_hooks() or None" in spec_src
+        )
+        # registry runtime 과 main 루프가 같은 훅
+        assert "hooks_config=spec.hooks_config" in _def_src(
+            _RUNTIME_SRC, "build_session_owners"
+        )
+        assert "hooks_config=spec.hooks_config" in _def_src(
+            _RUNTIME_SRC, "wire_session"
+        )
 
     def test_schedule_thread_starts_last_in_both_hosts(self):
         """v10.130.5: 예약 스레드는 소비자(펌프)를 다 세운 뒤에 켜고, 부트 알림은
         그 뒤에 나간다 — 두 호스트가 같은 순서. 발화 자리(``enqueue``)는 저장소를
         만드는 자리에서 묶는다(레지스트리보다 앞). 종전 web 은 워커가 조립을
         시작하기도 전에 메인 스레드에서 켰다 — 워커가 부트에서 죽으면 아무도 읽지
-        않는 큐로 발화하고 "발화함" 으로 적었다."""
+        않는 큐로 발화하고 "발화함" 으로 적었다. v10.131.0: 그 순서는 조립 함수
+        안에 있다."""
+        wire = _def_src(_RUNTIME_SRC, "wire_session")
+        assert wire.count("stores.schedules.start()") == 1
+        start = wire.index("stores.schedules.start()")
+        assert wire.index("SessionPump(") < start, "펌프보다 먼저 켠다"
+        assert wire.index("wire_agent_mail(") < start
+        assert wire.index("MainLoop(") < start
+        assert "schedules.enqueue =" in _def_src(_RUNTIME_SRC, "build_session_stores")
         for name, notice in (
-            ("run", "if revived:"),
+            ("run", "if wired.revived:"),
             ("web", "_announce_agent_boot("),
         ):
             body = self._body(name)
-            assert body.count("schedule_registry.start()") == 1, name
-            bind = body.index("schedule_registry.enqueue =")
-            assert bind < body.index("build_agent_registry("), name
-            start = body.index("schedule_registry.start()")
-            assert body.index("SessionPump(") < start, f"{name}: 펌프보다 먼저 켠다"
-            assert start < body.index(notice), f"{name}: 부트 알림이 스레드보다 먼저"
-            assert start < body.index("_previous_monitors_notice("), name
-            assert start < body.index("pump.run()"), name
+            assert ".start()" not in body.replace("worker.start()", "").replace(
+                "idle_thread.start()", ""
+            ), f"{name}: 호스트가 스레드를 켠다"
+            assert body.index("build_session_stores(") < body.index(
+                "build_session_owners("
+            ), name
+            wired = body.index("wire_session(")
+            assert wired < body.index(notice), f"{name}: 부트 알림이 스레드보다 먼저"
+            assert wired < body.index("_previous_monitors_notice("), name
+            assert wired < body.index("wired.pump.run()"), name
 
     def test_web_server_handles_are_one_block_before_agents_revive(self):
         """v10.130.7: web 의 서버 손잡이(레지스트리·MCP·감사자·노브 상태)는 레지스트리
-        → 감사자 → 노브 적용이 끝난 뒤 한 블록으로, 그리고 에이전트가 살아나기
-        (`wire_agent_mail` 의 복원·auto-spawn) **전에** — 되살아난 에이전트의 창을
-        서버가 찾을 수 있어야 한다. 메일 대기열 훅은 `wire_agent_mail` 뒤."""
+        → 감사자 → 노브 적용(`build_session_owners`)이 끝난 뒤 한 블록으로, 그리고
+        에이전트가 살아나기(`wire_session` 의 복원·auto-spawn) **전에** — 되살아난
+        에이전트의 창을 서버가 찾을 수 있어야 한다. 메일 대기열 훅은 그 뒤."""
         body = self._body("web")
         handles = [
             "server.agent_registry =",
@@ -460,42 +528,101 @@ class TestExitPathConvergence:
         at = [body.index(h) for h in handles]
         assert all(body.count(h) == 1 for h in handles)
         assert at == sorted(at), "손잡이 블록의 순서가 바뀌었다"
-        assert body.index("_apply_knobs(") < at[0], "노브 적용보다 먼저 서버에 꽂는다"
+        assert body.index("build_session_owners(") < at[0], "노브 적용보다 먼저 꽂는다"
         block = body[at[0] : at[-1]]
-        for between in ("build_auditor(", "_apply_knobs(", "wire_agent_mail("):
+        for between in ("build_session_owners(", "wire_session("):
             assert between not in block, f"손잡이 사이에 {between} — 한 블록이 아니다"
-        revive = body.index("wire_agent_mail(")
+        revive = body.index("wire_session(")
         assert at[-1] < revive, "에이전트가 살아난 뒤에야 서버가 레지스트리를 안다"
         for hook in ("server.mail_source =", "on_pending_change ="):
             assert revive < body.index(hook), hook
 
     def test_both_hosts_wire_the_same_queue_the_same_way(self):
         """v10.130.8: web 서버가 큐를 내놓고(`server.queue`) 두 호스트가 같은
-        `InputQueue` 를 글자까지 같은 배선으로 쓴다 — 종전 web 은 서버의 대리
-        메서드(`enqueue_named`·`enqueue_system`·`dequeue_nowait`, 펌프 큐 = 서버)였다."""
+        `InputQueue` 를 같은 배선으로 쓴다 — 종전 web 은 서버의 대리 메서드
+        (`enqueue_named`·`enqueue_system`·`dequeue_nowait`, 펌프 큐 = 서버)였다.
+        v10.131.0: 그 배선은 조립 함수 안에 **한 번** 쓰이고, 호스트는 큐를 넘긴다."""
         import re
 
         wiring = (
-            "schedule_registry.enqueue = lambda prompt, nickname: input_queue.enqueue(",
-            "enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True)",
-            "dequeue_user_message=input_queue.dequeue_nowait",
-            "enqueue_user_message=lambda text, nickname: input_queue.enqueue(",
-            "PumpDeps( queue=input_queue,",
+            "schedules.enqueue = lambda prompt, nickname: queue.enqueue(",
+            "enqueue_wake=lambda cid, t: queue.enqueue(cid, t, system=True)",
+            "dequeue_user_message=queue.dequeue_nowait",
+            "enqueue_user_message=lambda text, nickname: queue.enqueue(",
+            "PumpDeps(queue=queue,",
         )
+        runtime = re.sub(r"\(\s+", "(", re.sub(r"\s+", " ", _RUNTIME_SRC))
+        for line in wiring:
+            assert runtime.count(line) == 1, line
         for name in ("run", "web"):
-            body = re.sub(r"\s+", " ", self._body(name))
-            for line in wiring:
-                assert body.count(line) == 1, f"{name}: {line}"
+            body = re.sub(r"\(\s+", "(", re.sub(r"\s+", " ", self._body(name)))
+            assert "build_session_stores(spec, queue=input_queue" in body, name
+            assert "queue=input_queue, surface=surface" in body, name
             assert "server.enqueue_" not in body and "server.dequeue_" not in body
             assert "queue=server," not in body
         assert "input_queue = server.queue" in self._body("web")
 
     def test_run_and_web_share_assembly_helpers(self):
+        """v10.131.0: 두 호스트가 같은 조립 함수 넷을 부르고, 조립 부품을 직접
+        부르지 않는다 — 부품을 직접 부르기 시작하면 다시 두 벌이다."""
         for name in ("run", "web"):
             body = self._body(name)
-            assert "build_agent_registry(" in body
-            assert "wire_agent_mail(" in body
-            assert "AgentRuntime(" in body
+            for call in (
+                "build_session_stores(",
+                "build_session_owners(",
+                "wire_session(",
+            ):
+                assert body.count(call) == 1, f"{name}: {call}"
+            assert ("_finalize_run(" if name == "run" else "close_session(") in body
+            for direct in (
+                "build_agent_registry(",
+                "wire_agent_mail(",
+                "MainLoop(",
+                "SessionPump(",
+                "teardown_session(",
+                "AgentRuntime(",
+                "build_auditor(",
+                "apply_knobs(",
+                "disconnect_all()",
+            ):
+                assert direct not in body, f"{name} 가 {direct} 를 직접 부른다"
+            assert body.count("shutdown_all()") == body.count(
+                "renderer.hub.shutdown_all()"
+            )
+
+    def test_assembly_does_not_know_its_host(self):
+        """조립 함수는 어느 호스트에서 불리는지 모른다 — `main` 을 import 하지 않고,
+        호스트 표면(서버·콘솔·웹)의 이름이 본문에 없다. 호스트마다 다른 것은 기본값
+        None 의 키워드 인자(`on_*`)와 호스트가 만든 값(표면·수명 정책·큐)뿐."""
+        import ast
+        import inspect
+        import re
+
+        from agent_cli import runtime
+
+        assert "agent_cli.main" not in _RUNTIME_SRC
+        assert "from agent_cli import main" not in _RUNTIME_SRC
+        for fn in (
+            runtime.build_session_stores,
+            runtime.build_session_owners,
+            runtime.wire_session,
+            runtime.close_session,
+        ):
+            tree = ast.parse(_def_src(_RUNTIME_SRC, fn.__name__))
+            idents = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)} | {
+                n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)
+            }
+            leaks = {
+                i for i in idents if re.search(r"web|server|console", i, re.IGNORECASE)
+            }
+            assert leaks == set(), f"{fn.__name__}: 호스트 이름 {leaks}"
+            optional = [
+                p
+                for p in inspect.signature(fn).parameters.values()
+                if p.default is not inspect.Parameter.empty
+            ]
+            assert all(p.default is None for p in optional), fn.__name__
+            assert all(p.name.startswith("on_") for p in optional), fn.__name__
 
 
 class _ItemsPump:
