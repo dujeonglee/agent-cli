@@ -155,6 +155,32 @@ class TestAgentRuntimeEquivalence:
             teardown_session(None, None)
             fin.assert_not_called()
 
+    def test_schedules_stop_with_the_other_producers(self):
+        """예약 스레드는 모니터를 멈추는 자리에서 같이 멈춘다 (v10.130.4) — 에이전트
+        종료·세션 저장보다 먼저. 종전엔 호스트가 정리 **뒤에** 따로 멈춰, 정리 도중
+        죽은 큐로 발화할 틈이 있었다."""
+        registry, _mcp, session = self._mocks()
+        order: list[str] = []
+        monitors = MagicMock()
+        schedules = MagicMock()
+        monitors.stop.side_effect = lambda: order.append("monitors")
+        schedules.stop.side_effect = lambda: order.append("schedules")
+        registry.shutdown_all.side_effect = lambda: order.append("shutdown")
+        with (
+            patch("agent_cli.render.render_spinner_stop"),
+            patch("agent_cli.context.session.finalize_session") as fin,
+        ):
+            fin.side_effect = lambda s, c: order.append("finalize")
+            teardown_session(
+                session,
+                None,
+                agent_registry=registry,
+                monitors=monitors,
+                schedules=schedules,
+            )
+        assert order == ["monitors", "schedules", "shutdown", "finalize"]
+        schedules.stop.assert_called_once_with()
+
     def test_registry_shutdown_precedes_mcp(self):
         """상주 에이전트가 MCP 도구를 쓰는 중일 수 있으므로 registry 종료가
         MCP 해제보다 반드시 먼저 (순서 계약)."""
@@ -344,6 +370,20 @@ class TestRegistryAssembly:
         for c in calls:
             names = {kw.arg for kw in c.keywords if kw.arg}
             assert "monitors" in names, "종료 경로 하나가 감시를 안 멈춘다"
+            # v10.130.4: 예약 스레드도 정리가 멈춘다 — 호스트의 별도 `stop()` 은 없다
+            assert "schedules" in names, "종료 경로 하나가 예약 스레드를 안 멈춘다"
+        stops = [
+            n
+            for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "stop"
+            and isinstance(n.func.value, ast.Name)
+            and n.func.value.id == "schedule_registry"
+        ]
+        assert stops == [], (
+            "호스트가 예약을 정리 밖에서 따로 멈춘다 — teardown 이 소유한다"
+        )
 
 
 class TestExitPathConvergence:
@@ -519,6 +559,9 @@ class TestRunCommandTeardownIntegration:
         assert kw["agent_registry"] is c["registry"]
         assert kw["mcp_manager"] == "MCP"  # 종전에도 메인 경로는 MCP 정리
         assert kw["warn_stuck"] is True  # 메인 펌프 경로 전용 경고 표면 유지
+        from agent_cli.schedule.registry import ScheduleRegistry
+
+        assert isinstance(kw["schedules"], ScheduleRegistry)  # v10.130.4
 
     def test_skill_dispatch_tears_down_completely(self):
         """수리 계약: skill 디스패치도 registry+MCP 를 정리한다 (종전:

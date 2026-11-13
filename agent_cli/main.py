@@ -1965,11 +1965,11 @@ def run(
             mcp_manager,
             agent_registry=agent_registry,
             monitors=monitor_registry,
+            schedules=schedule_registry,
             harness=auditor,
             jobs=job_registry,
             warn_stuck=warn_stuck,
         )
-        schedule_registry.stop()
     # 정리가 끝난 **뒤에** 판정으로 끝낸다 (v10.124.0) — 0 답 · 1 실패/무답 · 130 중단.
     # 잡히지 않은 예외는 여기 오지 않고 전파된다(typer 가 1).
     raise typer.Exit(exit_code)
@@ -2174,6 +2174,7 @@ def _finalize_run(
     *,
     agent_registry=None,
     monitors=None,
+    schedules=None,
     harness=None,
     jobs=None,
     warn_stuck=False,
@@ -2189,6 +2190,7 @@ def _finalize_run(
         agent_registry=agent_registry,
         mcp_manager=mcp_manager,
         monitors=monitors,
+        schedules=schedules,
         harness=harness,
         jobs=jobs,
         warn_stuck=warn_stuck,
@@ -3215,10 +3217,10 @@ def web(
                 agent_registry=agent_registry,
                 mcp_manager=mcp_manager,
                 monitors=monitor_registry,
+                schedules=schedule_registry,
                 harness=auditor,
                 jobs=job_registry,
             )
-            schedule_registry.stop()
             console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
         except Exception as exc:
             console.print(
