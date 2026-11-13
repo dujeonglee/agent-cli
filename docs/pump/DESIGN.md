@@ -12,6 +12,8 @@ agent_result(result, ok=)`` 가 쓴다(run 전용 분기 삭제). run 의 ``/ski
 로 두 호스트 공통으로 — web 재생이 ``author_is_user=False`` 로 깨우기를
 가려내는데(v10.51.0 부터는 그리지 않는다), 작성자가 없으면 플래그가 기록되지 않아 사용자 말풍선이 됐을 것이다.
 ``WebServer.dequeue_blocking`` 이 ``timeout`` 을 받는다(펌프의 큐가 서버).
+v10.130.8 부터는 서버가 큐를 내놓고(``WebServer.queue``) 펌프의 큐는 그 ``InputQueue`` 다 —
+서버의 대리 메서드(``dequeue_blocking``·``enqueue_named``·``enqueue_system``)는 없다.
 
 ## 1. 왜
 

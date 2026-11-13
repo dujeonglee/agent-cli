@@ -190,13 +190,6 @@ class WebServer:
     request handlers stay thin and unit-testable.
     """
 
-    # Identity sentinel returned by :meth:`dequeue_blocking` once
-    # :meth:`shutdown` flips the queue's shutdown flag, so the worker
-    # thread's blocking call wakes up and breaks its loop cleanly. Workers
-    # compare with ``is`` (identity); queued items are dicts, so a user
-    # message can never collide with this object.
-    SHUTDOWN = InputQueue.SHUTDOWN
-
     def __init__(
         self,
         renderer: WebRenderer,
@@ -305,6 +298,14 @@ class WebServer:
             return True
         return False
 
+    @property
+    def queue(self) -> InputQueue:
+        """세션 입력 큐 그 자체 (v10.130.8) — 워커 조립이 run 과 **같은 배선**으로 쓴다
+        (펌프의 ``dequeue_blocking``, 턴 경계의 ``dequeue_nowait``, 깨우기·예약·사람
+        요청의 ``enqueue``). 서버가 얹는 것은 아래 메서드들: 닉네임 해석
+        (:meth:`enqueue`), 소유자 취소, 화면 대기열, 라이브 브로드캐스트(``on_change``)."""
+        return self._queue
+
     def enqueue(
         self, conn_id: str | None, text: str, *, images: list[dict] | None = None
     ) -> dict:
@@ -336,36 +337,6 @@ class WebServer:
                 raise HTTPException(status_code=400, detail=str(e)) from None
         return refs
 
-    def enqueue_named(self, text: str, nickname: str) -> dict:
-        """연결 없이 이름을 단 사용자 요청 — 예약 발화(표시 이름은 예약의 것,
-        docs/schedule/DESIGN.md §5)와 제자리 고리 확인의 Hint(대답한 뷰어의 닉네임,
-        v10.120.0). 입력창의 메시지와 같은 큐·같은 흡수 길이다."""
-        return self._queue.enqueue(None, text, nickname=nickname)
-
-    def enqueue_system(self, conn_id: str | None, text: str) -> dict:
-        """사람이 보내지 않은 합성 입력(에이전트 메일 깨우기)을 큐에 넣는다.
-
-        `enqueue` 와 같은 큐를 쓴다 — 워커의 `dequeue_blocking` 을 푸는 길이
-        그것뿐이다. 다만 화면의 대기열에는 뜨지 않는다(`snapshot` 이 제외).
-        ``conn_id`` 는 MailWaker 의 호출 규약(`enqueue(None, text)`)을 맞추기
-        위한 자리이고 항상 None 이다."""
-        return self._queue.enqueue(conn_id, text, nickname="", system=True)
-
-    def dequeue_blocking(self, timeout: float | None = None):
-        """Worker-idle: block until a message is queued (or shutdown).
-
-        Returns ``WebServer.SHUTDOWN`` if :meth:`shutdown` was called, else
-        the queued item dict (``None`` on ``timeout``). Workers compare with
-        ``is WebServer.SHUTDOWN``. ``timeout`` is the pump's poll (web's
-        ``ForeverPolicy`` passes None — the server is the pump's queue).
-        """
-        return self._queue.dequeue_blocking(timeout)
-
-    def dequeue_nowait(self) -> dict | None:
-        """Turn-boundary (running loop): pop one queued message if available,
-        else ``None`` (don't block — the loop keeps going)."""
-        return self._queue.dequeue_nowait()
-
     def cancel_pending(self, conn_id: str | None, msg_id: str) -> bool:
         """Remove a still-pending message — only its OWNER (matching
         ``conn_id``) may cancel. Returns True if removed."""
@@ -393,7 +364,7 @@ class WebServer:
         self.renderer.queue_state(self.queue_snapshot())
 
     def shutdown(self) -> None:
-        """Wake any worker blocked in :meth:`dequeue_blocking`.
+        """Wake any worker blocked in ``queue.dequeue_blocking``.
 
         Sets the shutdown flag and notifies so the worker's wait returns
         ``SHUTDOWN``. Idempotent.

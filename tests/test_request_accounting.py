@@ -122,7 +122,7 @@ class TestRequestsReachTheRun:
         assert _ids(loop) == []
 
     def test_system_wake_item_is_not_a_request(self):
-        """`enqueue_system` 의 합성 깨우기는 사람 발화가 아니다."""
+        """`enqueue(..., system=True)` 의 합성 깨우기는 사람 발화가 아니다."""
         loop = _drain([{"id": "w1", "nickname": "", "text": "wake", "system": True}])
         assert _ids(loop) == []
 

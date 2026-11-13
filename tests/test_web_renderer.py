@@ -23,6 +23,7 @@ from typing import ClassVar
 
 import pytest
 
+from agent_cli.input_queue import InputQueue
 from agent_cli.render.base import ConfirmOption
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
@@ -1945,8 +1946,8 @@ class TestWorkerLoopIntegration:
         we're testing is the renderer+server contract; the loop
         body itself is uninteresting for this test."""
         renderer.worker_idle()
-        item = server.dequeue_blocking()
-        if item is server.SHUTDOWN:
+        item = server.queue.dequeue_blocking()
+        if item is InputQueue.SHUTDOWN:
             return False
         assert item["text"] == message
         renderer.worker_busy()
@@ -1991,8 +1992,8 @@ class TestWorkerLoopIntegration:
         # nonsensical and the connections are tearing down anyway.
         r.worker_idle()
         s.shutdown()
-        item = s.dequeue_blocking()
-        assert item is s.SHUTDOWN
+        item = s.queue.dequeue_blocking()
+        assert item is InputQueue.SHUTDOWN
         # Latest state should still be idle.
         assert r.hub.sticky_payload("worker_state") == {"busy": False}
 

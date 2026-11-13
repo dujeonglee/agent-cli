@@ -469,6 +469,27 @@ class TestExitPathConvergence:
         for hook in ("server.mail_source =", "on_pending_change ="):
             assert revive < body.index(hook), hook
 
+    def test_both_hosts_wire_the_same_queue_the_same_way(self):
+        """v10.130.8: web 서버가 큐를 내놓고(`server.queue`) 두 호스트가 같은
+        `InputQueue` 를 글자까지 같은 배선으로 쓴다 — 종전 web 은 서버의 대리
+        메서드(`enqueue_named`·`enqueue_system`·`dequeue_nowait`, 펌프 큐 = 서버)였다."""
+        import re
+
+        wiring = (
+            "schedule_registry.enqueue = lambda prompt, nickname: input_queue.enqueue(",
+            "enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True)",
+            "dequeue_user_message=input_queue.dequeue_nowait",
+            "enqueue_user_message=lambda text, nickname: input_queue.enqueue(",
+            "PumpDeps( queue=input_queue,",
+        )
+        for name in ("run", "web"):
+            body = re.sub(r"\s+", " ", self._body(name))
+            for line in wiring:
+                assert body.count(line) == 1, f"{name}: {line}"
+            assert "server.enqueue_" not in body and "server.dequeue_" not in body
+            assert "queue=server," not in body
+        assert "input_queue = server.queue" in self._body("web")
+
     def test_run_and_web_share_assembly_helpers(self):
         for name in ("run", "web"):
             body = self._body(name)

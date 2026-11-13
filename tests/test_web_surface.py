@@ -137,14 +137,15 @@ class TestRunStarting:
 
 class TestWebServerQueueContract:
     def test_dequeue_blocking_accepts_the_pumps_timeout(self):
-        """펌프는 ``dequeue_blocking(timeout=…)`` 으로 부른다 — 서버가 펌프의
-        큐이므로 그 시그니처를 받아야 한다(ForeverPolicy 는 None)."""
+        """펌프는 ``dequeue_blocking(timeout=…)`` 으로 부른다 — 서버의 큐가 펌프의
+        큐이므로 그 시그니처를 받아야 한다(ForeverPolicy 는 None). 서버의
+        ``enqueue``(닉네임 해석)로 넣은 것이 같은 큐에서 나온다."""
         from agent_cli.web.server import WebServer
 
         s = WebServer(MagicMock(), token="t")
-        assert s.dequeue_blocking(timeout=0.01) is None
+        assert s.queue.dequeue_blocking(timeout=0.01) is None
         s.enqueue("c", "hi")
-        assert s.dequeue_blocking(timeout=None)["text"] == "hi"
+        assert s.queue.dequeue_blocking(timeout=None)["text"] == "hi"
 
 
 class TestEchoImages:
