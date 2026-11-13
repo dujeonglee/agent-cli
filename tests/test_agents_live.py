@@ -1337,6 +1337,98 @@ class TestResumeRestore:
         assert self._state(tmp_path)["pending"] == []
         reg.shutdown_all()
 
+    def test_a_slow_save_does_not_overwrite_a_newer_one(
+        self, tmp_path, renderer, monkeypatch
+    ):
+        """저장 둘이 겹쳐도 디스크에는 나중 상태가 남는다 (v10.133.2).
+
+        워커의 저장이 명단을 뜬 뒤 쓰기 전에 멈춰 있는 동안 main 이 회신을 꺼내고
+        저장하면, 종전에는 워커의 옛 사본이 나중에 써져 꺼낸 회신이 디스크에 되살아났다
+        (그 상태로 죽으면 resume 이 같은 회신을 한 번 더 배달한다)."""
+        import threading
+
+        from agent_cli import fsio
+
+        reg = make_registry(tmp_path)
+        reg._push_reply({"kind": "reply", "key": "agt-x", "output": "done"})
+        assert len(self._state(tmp_path)["pending"]) == 1
+
+        real_write = fsio.atomic_write_json
+        first_in = threading.Event()
+        let_go = threading.Event()
+        calls = []
+
+        def slow_first(path, data, *a, **kw):
+            calls.append(1)
+            if len(calls) == 1:
+                first_in.set()
+                assert let_go.wait(5)
+            return real_write(path, data, *a, **kw)
+
+        monkeypatch.setattr(fsio, "atomic_write_json", slow_first)
+        slow = threading.Thread(target=reg._save_state)  # 회신이 든 사본을 뜨고 멈춘다
+        slow.start()
+        assert first_in.wait(5)
+        drain = threading.Thread(target=reg.drain_replies)  # 꺼내고 저장
+        drain.start()
+        drain.join(0.3)  # 순서가 없던 때에는 이 사이에 빈 목록이 먼저 써진다
+        let_go.set()
+        slow.join(5)
+        drain.join(5)
+        assert not slow.is_alive() and not drain.is_alive()
+        assert self._state(tmp_path)["pending"] == []
+
+    def test_no_save_is_reachable_while_holding_the_condition(self):
+        """락 순서 가드 — 저장은 ``_save_lock`` → ``_cv`` 로 쥔다. ``_cv`` 를 쥔 채 저장에
+        닿는 호출이 생기면 두 스레드가 서로를 기다린다."""
+        import ast
+        import inspect
+
+        import agent_cli.subagent.agents_live as mod
+
+        tree = ast.parse(inspect.getsource(mod))
+        cls = next(
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.ClassDef) and n.name == "AgentRegistry"
+        )
+        methods = {n.name: n for n in cls.body if isinstance(n, ast.FunctionDef)}
+
+        def self_calls(node):
+            return {
+                n.func.attr
+                for n in ast.walk(node)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and isinstance(n.func.value, ast.Name)
+                and n.func.value.id == "self"
+            } & set(methods)
+
+        reach = {"_save_state"}
+        grew = True
+        while grew:
+            grew = False
+            for name, node in methods.items():
+                if name not in reach and self_calls(node) & reach:
+                    reach.add(name)
+                    grew = True
+        assert "drain_replies" in reach and "_push_reply" in reach  # 스캔이 본다
+
+        def holds_cv(w):
+            return any(
+                isinstance(i.context_expr, ast.Attribute)
+                and i.context_expr.attr == "_cv"
+                for i in w.items
+            )
+
+        under = []
+        for name, node in methods.items():
+            for w in ast.walk(node):
+                if isinstance(w, ast.With) and holds_cv(w):
+                    hit = set().union(*(self_calls(b) for b in w.body)) & reach
+                    under += [f"{name}:{w.lineno} -> {h}" for h in sorted(hit)]
+        assert under == []
+
     def test_full_resume_roundtrip(self, tmp_path, renderer):
         # 세션 1: spawn → 문답 1회 → ctx 에 landmark → 미배달 회신 남기고 종료
         reg1 = make_registry(tmp_path)

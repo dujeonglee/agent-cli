@@ -760,6 +760,9 @@ class AgentRegistry:
         #: ``agents.json`` 이 이 레지스트리의 것인가 — 읽었거나(`restore`) 처음 만들었을
         #: 때 참. 그 전에는 있는 파일을 덮어쓰지 않는다(`_save_state`).
         self._state_owned = False
+        #: 저장 하나가 뜨기부터 쓰기까지를 쥔다 — 겹친 저장이 옛 사본을 나중에 쓰지 않게.
+        #: ``_cv`` 를 쥔 채로는 저장을 부르지 않는다(순서: ``_save_lock`` → ``_cv``).
+        self._save_lock = threading.Lock()
         # 동시 생존 상한 (세션 한정, web UI 조절). 0 = 무제한. None = 기본값 —
         # env·CLI 는 부트가 `knobs.apply_all` 로 적용한다 (v10.43.0).
         self.max_agents = clamp_max_agents(
@@ -2600,8 +2603,15 @@ class AgentRegistry:
         # 그때 쓰면 resume 세션의 상주 에이전트와 미배달 메일이 지워진다 — 조립 도중
         # 죽어 `shutdown_all` 만 불린 길. 건너뛴 저장은
         # 잃지 않는다: `restore` 는 메모리의 pending 에 덧붙이고, 그 뒤 첫 저장이 다 쓴다.
-        if not self._state_owned and path.is_file():
-            return
+        # 뜨기와 쓰기를 한 락 아래에서 (v10.133.2) — 따로 두면 워커가 뜬 옛 사본이
+        # main 의 새 저장 **뒤에** 써져, 이미 꺼낸 회신이 디스크에 되살아난다.
+        with self._save_lock:
+            if not self._state_owned and path.is_file():
+                return
+            self._write_state(path)
+
+    def _write_state(self, path: Path) -> None:
+        """명단·미배달분·열린 질문을 떠서 쓴다 — ``_save_lock`` 을 쥔 채로만 부른다."""
         entries = []
         # Snapshot under the GIL — ``_save_state`` runs on worker threads while
         # the main thread mutates ``_agents``; iterating the live view raced a
