@@ -444,7 +444,7 @@ class TestParityWithSystemUnifdef:
         ids=["if-0", "if-1-else"],
     )
     def test_known_divergence_constant_only_conditions(self, src, ours_expected):
-        """Documented (README): a condition made of constants only. The
+        """Documented (docs/REFERENCE.md): a condition made of constants only. The
         system tool leaves such lines alone by default (it evaluates them only
         with `-k`); ours evaluates and blanks the dead arm. Line numbers are
         kept by both. Pinned so a change on either side is noticed — measured

@@ -40,7 +40,7 @@ AGENT_CLI_BROWSER_TESTS=1 AGENT_CLI_PERF_KPI=1 pytest tests/browser/test_render_
 
 성능 KPI 의 정의·베이스라인·회귀 판정 기준은 [docs/PERF-KPI.md](docs/PERF-KPI.md).
 
-README.md / docs/ARCHITECTURE.md가 최신인지 확인.
+README.md / docs/REFERENCE.md / docs/ARCHITECTURE.md가 최신인지 확인.
 
 ### 1-1. CI 가 그린인지 확인 — **로컬 통과로는 부족하다**
 
@@ -76,7 +76,7 @@ agent-cli --version   # → agent-cli X.Y.Z
 
 ```bash
 git checkout -b release/vX.Y.Z
-git add agent_cli/__init__.py   # + 동반 문서(README·ARCHITECTURE·PERF-KPI)
+git add agent_cli/__init__.py   # + 동반 문서(README·REFERENCE·ARCHITECTURE·PERF-KPI)
 git commit -m "chore(release): vX.Y.Z"
 git checkout main && git merge --ff-only release/vX.Y.Z
 git push origin main

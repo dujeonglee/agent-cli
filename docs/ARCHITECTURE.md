@@ -975,7 +975,7 @@ hypothesis 는 예제 DB 를 끄고 홈을 수트 임시 디렉터리로 옮긴�
 
 ## 11. CLI 명령어 레퍼런스
 
-명령과 옵션의 사용법은 README 가 주인이다. 여기는 구조만 적는다. 명령은 `main.py` 의 typer 앱 하나다:
+명령과 옵션의 사용법은 docs/REFERENCE.md 가 주인이다. 여기는 구조만 적는다. 명령은 `main.py` 의 typer 앱 하나다:
 `run` · `web` · `setup` · `mcp`(`add`·`test`·`remove`) · `knobs` · `sessions` · `stats` · `update`.
 세션 노브(`knobs.py::KNOBS`)는 `@knob_options` 가 `run`·`web` 의 플래그로 합성한다 — 표 하나에서 env·플래그·web 칩이 나온다.
 사용자 명령 표(`/help` 등)는 `command_table.py` 하나다.
@@ -1041,7 +1041,7 @@ hypothesis 는 예제 DB 를 끄고 홈을 수트 임시 디렉터리로 옮긴�
 
 ### 13.1 개요
 
-프롬프트 스킬은 재사용 가능한 프롬프트 템플릿이다. 파일 포맷은 Claude Code 스킬과 호환된다. 사용법은 README.
+프롬프트 스킬은 재사용 가능한 프롬프트 템플릿이다. 파일 포맷은 Claude Code 스킬과 호환된다. 사용법은 docs/REFERENCE.md.
 
 ### 13.2 스킬 파일 포맷
 
