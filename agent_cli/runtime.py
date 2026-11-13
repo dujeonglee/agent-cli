@@ -339,7 +339,9 @@ def teardown_session(
     if schedules is not None:
         # 예약 스레드도 같은 자리에서 (v10.130.4) — 종전엔 두 호스트가 정리 **뒤에**
         # 따로 멈춰, 정리 도중 아무도 읽지 않을 큐로 발화하고 "발화함" 으로 적을 틈이 있었다.
-        schedules.stop()
+        # `stop` 이 아니라 `close` (v10.133.3) — 아래 에이전트 종료를 기다리는 동안 누가
+        # 예약을 추가·켜도 `start()` 가 스레드를 되살리지 않는다.
+        schedules.close()
     if harness is not None:
         harness.stop()  # 진행 중 감사를 세운다 (v10.42.0) — 팀원 종료와 같은 자리
     if jobs is not None:

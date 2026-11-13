@@ -12,6 +12,7 @@ import pytest
 
 from agent_cli.schedule.registry import (
     AGENT_CAP,
+    MISS_THRESHOLD_S,
     SCHEDULER_PREFIX,
     ScheduleError,
     ScheduleRegistry,
@@ -281,5 +282,118 @@ class TestThread:
             r._rearm.set()
             assert fired.wait(5), "loop did not wake on rearm"
             assert sent == ["x"]
+        finally:
+            r.stop()
+
+
+def _wait_until(pred, timeout: float = 5.0) -> bool:
+    """마감까지 폴링한다 — 고정 sleep 뒤 한 번 보지 않는다 (느린 러너)."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return pred()
+
+
+def _thread_down(r: ScheduleRegistry) -> bool:
+    return r._thread is None or not r._thread.is_alive()
+
+
+class TestClose:
+    """닫힌 레지스트리는 다시 켜지지 않는다 (v10.133.3). 정리(`teardown_session`)가
+    예약을 멈춘 뒤 상주 에이전트 종료를 기다리는 동안 `add()`·`set_enabled()` 가
+    스레드를 되살려, 아무도 읽지 않을 큐로 발화하고 "발화함" 으로 적던 것."""
+
+    def test_add_after_close_saves_but_starts_no_thread(self, tmp_path, clock):
+        r = ScheduleRegistry(tmp_path, clock=clock)
+        r.close()
+        s = r.add("0 9 * * *", "x")
+        assert r._thread is None
+        (loaded,) = ScheduleRegistry(tmp_path, clock=clock).list_all()
+        assert loaded == s  # 다음 세션에서 산다
+
+    def test_enable_after_close_starts_no_thread(self, tmp_path, clock):
+        r = ScheduleRegistry(tmp_path, clock=clock)
+        r.start = lambda: None  # 만들 때는 스레드 없이
+        s = r.add("0 9 * * *", "x")
+        r.set_enabled(s.id, False)
+        del r.start  # 진짜 start 로
+        r.close()
+        assert r.set_enabled(s.id, True) is not None
+        assert r._thread is None
+        assert r.get(s.id).enabled is True
+
+    @pytest.mark.parametrize(
+        ("late_s", "verdict"), [(5, "fired"), (MISS_THRESHOLD_S + 1, "missed")]
+    )
+    def test_settle_after_close_leaves_the_debt_for_the_next_session(
+        self, reg, clock, sent, tmp_path, late_s, verdict
+    ):
+        s = reg.add("0 9 * * *", "x")
+        before = reg.get(s.id)
+        stamps = (before.settled_at, before.last_fired_at, before.missed_at)
+        reg.close()
+        clock.advance(hours=1, seconds=late_s)
+        reg.settle()
+        after = reg.get(s.id)
+        assert sent == []
+        assert (after.settled_at, after.last_fired_at, after.missed_at) == stamps
+        assert _log(tmp_path) == []
+        # 미정산으로 남았다 — 다음 세션이 같은 발화를 판정한다.
+        nxt = ScheduleRegistry(tmp_path, clock=clock)
+        nxt.enqueue = lambda prompt, nickname: sent.append((prompt, nickname))
+        nxt.settle()
+        assert [r["event"] for r in _log(tmp_path)] == [verdict]
+        assert len(sent) == (1 if verdict == "fired" else 0)
+
+    def test_run_now_after_close_does_nothing(self, reg, clock, sent, tmp_path):
+        s = reg.add("0 9 * * *", "x")
+        clock.advance(hours=3)
+        reg.settle()
+        missed = reg.get(s.id)
+        stamps = (missed.settled_at, missed.last_fired_at, missed.missed_at)
+        reg.close()
+        assert reg.run_now(s.id) is False
+        after = reg.get(s.id)
+        assert sent == []
+        assert (after.settled_at, after.last_fired_at, after.missed_at) == stamps
+        assert [r["event"] for r in _log(tmp_path)] == ["missed"]
+
+    def test_stop_alone_still_restarts_on_add(self, tmp_path, clock):
+        """종전 동작 고정 — `stop()` 만 한 레지스트리는 `add()` 로 다시 켜진다."""
+        r = ScheduleRegistry(tmp_path, clock=clock)
+        try:
+            r.add("0 9 * * *", "x")
+            first = r._thread
+            assert first is not None
+            r.stop()
+            assert _wait_until(lambda: not first.is_alive())
+            r.add("0 12 * * *", "y")
+            assert r._thread is not first and r._thread.is_alive()
+        finally:
+            r.close()
+
+    def test_add_during_teardown_does_not_fire_into_a_dead_queue(self, tmp_path):
+        """재현: 닫은 뒤의 `add()` 가 스레드를 되살리면, 되살아난 스레드는 **모든**
+        예약을 정산해 그 사이 시각이 된 다른 예약을 발화하고 "발화함" 으로 적는다."""
+        clock = Clock(datetime(2026, 10, 5, 8, 59, 0))
+        sent: list[str] = []
+        r = ScheduleRegistry(tmp_path, clock=clock)
+        r.enqueue = lambda prompt, nickname: sent.append(prompt)
+        try:
+            due = r.add("0 9 * * *", "due")  # 스레드 시작, 08:59 라 발화 없음
+            first = r._thread
+            assert first is not None
+            r.close()
+            assert _wait_until(lambda: not first.is_alive())
+            clock.advance(minutes=1, seconds=5)  # 09:00:05 — 'due' 는 제때
+            r.add("0 12 * * *", "added during teardown")
+            assert _thread_down(r)
+            assert sent == []
+            assert r.get(due.id).last_fired_at is None
+            assert _log(tmp_path) == []
         finally:
             r.stop()

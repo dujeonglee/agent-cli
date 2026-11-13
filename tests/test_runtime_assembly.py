@@ -199,13 +199,14 @@ class TestAgentRuntimeEquivalence:
     def test_schedules_stop_with_the_other_producers(self):
         """예약 스레드는 모니터를 멈추는 자리에서 같이 멈춘다 (v10.130.4) — 에이전트
         종료·세션 저장보다 먼저. 종전엔 호스트가 정리 **뒤에** 따로 멈춰, 정리 도중
-        죽은 큐로 발화할 틈이 있었다."""
+        죽은 큐로 발화할 틈이 있었다. 멈춤은 `close()` 다 (v10.133.3) — `stop()` 은
+        뒤이은 `add()` 가 스레드를 되살린다."""
         registry, _mcp, session = self._mocks()
         order: list[str] = []
         monitors = MagicMock()
         schedules = MagicMock()
         monitors.stop.side_effect = lambda: order.append("monitors")
-        schedules.stop.side_effect = lambda: order.append("schedules")
+        schedules.close.side_effect = lambda: order.append("schedules")
         registry.shutdown_all.side_effect = lambda: order.append("shutdown")
         with (
             patch("agent_cli.render.render_spinner_stop"),
@@ -220,7 +221,8 @@ class TestAgentRuntimeEquivalence:
                 schedules=schedules,
             )
         assert order == ["monitors", "schedules", "shutdown", "finalize"]
-        schedules.stop.assert_called_once_with()
+        schedules.close.assert_called_once_with()
+        schedules.stop.assert_not_called()  # 되살아나는 stop 이 아니라 닫힘 (v10.133.3)
 
     def test_registry_shutdown_precedes_mcp(self):
         """상주 에이전트가 MCP 도구를 쓰는 중일 수 있으므로 registry 종료가
