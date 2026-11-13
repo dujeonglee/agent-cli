@@ -64,12 +64,18 @@ class TestInputQueue:
         q.dequeue_nowait()
         assert events == [1, 0]
 
-    def test_web_server_shares_sentinel(self):
-        # WebServer.SHUTDOWN is InputQueue.SHUTDOWN — worker 의 identity
-        # 비교 계약이 공용화 후에도 유지된다.
+    def test_web_server_hands_out_the_queue_itself(self):
+        # v10.130.8: 서버는 큐를 대리하지 않고 내놓는다(`WebServer.queue`) — 워커의
+        # identity 비교 계약(`InputQueue.SHUTDOWN`)이 같은 객체에서 그대로 선다.
+        from unittest.mock import MagicMock
+
         from agent_cli.web.server import WebServer
 
-        assert WebServer.SHUTDOWN is InputQueue.SHUTDOWN
+        srv = WebServer(MagicMock(), token="t")
+        assert isinstance(srv.queue, InputQueue)
+        assert srv.queue is srv.queue
+        srv.shutdown()
+        assert srv.queue.dequeue_blocking(timeout=1) is InputQueue.SHUTDOWN
 
 
 class TestSyntheticInput:
@@ -99,15 +105,18 @@ class TestSyntheticInput:
         q.enqueue("c1", "보통 메시지")
         assert q.snapshot()[0]["system"] is False
 
-    def test_web_server_system_entry_point_marks_it(self):
-        """`server.enqueue_system` 이 MailWaker 의 호출 규약(conn_id, text)을
-        받으면서 플래그를 붙인다 — 배선이 되돌아가면 여기서 잡힌다."""
+    def test_wake_entry_point_marks_it_in_both_hosts(self):
+        """깨우기 진입점이 MailWaker 의 호출 규약(conn_id, text)을 받으면서 플래그를
+        붙인다 — 배선이 되돌아가면 여기서 잡힌다. v10.130.8 부터 run·web 이 같은
+        큐에 같은 람다를 쓴다(종전 web 은 `server.enqueue_system` 대리 메서드)."""
         import inspect
 
         import agent_cli.main as main_mod
-        from agent_cli.web.server import WebServer
 
-        src = inspect.getsource(WebServer.enqueue_system)
-        assert "system=True" in src
-        # main 의 web 배선이 이 진입점을 쓰는지
-        assert "enqueue_wake=server.enqueue_system" in inspect.getsource(main_mod)
+        wake = "enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True)"
+        assert inspect.getsource(main_mod).count(wake) == 2, "run·web 두 호스트 모두"
+        # 그 람다 모양 그대로 넣으면 화면엔 안 뜨고 워커엔 간다
+        q = InputQueue()
+        enqueue_wake = eval(wake.split("=", 1)[1], {"input_queue": q})
+        enqueue_wake(None, "wake")
+        assert q.snapshot() == [] and q.dequeue_nowait()["system"] is True

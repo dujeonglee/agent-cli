@@ -10,7 +10,7 @@ Coverage axes:
    a second connection does not end the first's stream.
 4. **POST /api/input** — chat / prompt / confirm routes wire through
    to the renderer (chat enqueues onto the pending message queue:
-   ``enqueue`` / ``dequeue_blocking`` / ``dequeue_nowait`` / cancel).
+   ``enqueue`` / ``queue.dequeue_blocking`` / ``queue.dequeue_nowait`` / cancel).
 5. **POST /api/abort** — releases a blocked ``prompt_user`` /
    ``confirm`` call.
 
@@ -33,6 +33,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import agent_cli
+from agent_cli.input_queue import InputQueue
 from agent_cli.render.web import WebRenderer
 from agent_cli.web.server import (
     WebServer,
@@ -1657,7 +1658,7 @@ class TestInputEndpoint:
         assert len(pending) == 1
         assert pending[0]["text"] == "hello" and pending[0]["conn_id"] == cid
         # dequeue_blocking returns the item (text + nickname).
-        item = server.dequeue_blocking()
+        item = server.queue.dequeue_blocking()
         assert item["text"] == "hello"
 
     def test_prompt_response_goes_to_renderer_input_queue(self, server_and_client):
@@ -1981,7 +1982,7 @@ class TestWebResumeCli:
 
 
 class TestMessageQueue:
-    """``enqueue`` / ``dequeue_blocking`` / ``dequeue_nowait`` / cancel +
+    """``enqueue`` / ``queue.dequeue_blocking`` / ``queue.dequeue_nowait`` / cancel +
     the ``shutdown`` sentinel that wakes a blocked worker."""
 
     def test_shutdown_wakes_blocked_worker(self):
@@ -1991,8 +1992,8 @@ class TestMessageQueue:
 
         def worker():
             while True:
-                m = srv.dequeue_blocking()
-                if m is srv.SHUTDOWN:
+                m = srv.queue.dequeue_blocking()
+                if m is InputQueue.SHUTDOWN:
                     msgs.append("done")
                     break
                 msgs.append(m["text"])
@@ -2019,9 +2020,9 @@ class TestMessageQueue:
         srv = WebServer(WebRenderer())
         srv.enqueue("a", "first")
         srv.enqueue("b", "second")
-        assert srv.dequeue_nowait()["text"] == "first"
-        assert srv.dequeue_nowait()["text"] == "second"
-        assert srv.dequeue_nowait() is None  # empty → non-blocking None
+        assert srv.queue.dequeue_nowait()["text"] == "first"
+        assert srv.queue.dequeue_nowait()["text"] == "second"
+        assert srv.queue.dequeue_nowait() is None  # empty → non-blocking None
 
     def test_cancel_only_by_owner_and_pending(self):
         srv = WebServer(WebRenderer())
@@ -3692,7 +3693,7 @@ class TestChatWithImages:
             json={"kind": "chat", "content": "what is this?", "images": [full]},
         )
         assert r.status_code == 200, r.text
-        item = server.dequeue_nowait()
+        item = server.queue.dequeue_nowait()
         assert item["text"] == "what is this?"
         assert len(item["images"]) == 1
         ref = item["images"][0]
@@ -3708,7 +3709,7 @@ class TestChatWithImages:
             json={"kind": "chat", "content": "", "images": [str(tmp_path / "a.png")]},
         )
         assert r.status_code == 200
-        assert server.dequeue_nowait()["images"][0]["mime"] == "image/png"
+        assert server.queue.dequeue_nowait()["images"][0]["mime"] == "image/png"
 
     def test_bad_images_are_400_and_nothing_is_queued(
         self, server_and_client, tmp_path
@@ -3729,7 +3730,7 @@ class TestChatWithImages:
                 json={"kind": "chat", "content": "hi", "images": images},
             )
             assert r.status_code == 400, images
-        assert server.dequeue_nowait() is None
+        assert server.queue.dequeue_nowait() is None
 
     def test_no_images_key_is_the_old_shape(self, server_and_client):
         server, _, client = server_and_client
@@ -3737,7 +3738,7 @@ class TestChatWithImages:
             "/api/input?token=testtoken", json={"kind": "chat", "content": "hi"}
         )
         assert r.status_code == 200
-        assert server.dequeue_nowait()["images"] == []
+        assert server.queue.dequeue_nowait()["images"] == []
 
 
 class TestImageSupportEndpoint:

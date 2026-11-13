@@ -41,7 +41,9 @@ def clock():
 def reg(stack, tmp_path, clock):
     r = ScheduleRegistry(tmp_path, clock=clock)
     r.start = lambda: None
-    r.enqueue = stack.server.enqueue_named
+    r.enqueue = lambda prompt, nickname: stack.server.queue.enqueue(
+        None, prompt, nickname=nickname
+    )
     r.on_change = stack.renderer.broadcast_schedules_changed
     set_schedule_registry(r)
     yield r

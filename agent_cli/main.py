@@ -2882,6 +2882,8 @@ def web(
         build_snapshot_store,
     )
 
+    # 입력 큐는 서버가 들고 있다 — 배선은 run 과 글자까지 같다 (v10.130.8)
+    input_queue = server.queue
     monitor_registry = build_monitor_registry(ctx.session_dir if ctx else None)
     job_registry = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
     # 🧵 칩·status.json ``jobs`` (v10.121.0) — 띄움·멈춤·끝남이 스티키 하나로. 배달
@@ -2896,7 +2898,9 @@ def web(
     # 워커가 배선을 끝낸 뒤에 켠다(v10.130.5) — 워커가 부트에서 죽으면 아무도 읽지
     # 않는 큐로 발화하고 "발화함" 으로 적었다.
     schedule_registry = build_schedule_registry(ctx.session_dir if ctx else None)
-    schedule_registry.enqueue = server.enqueue_named
+    schedule_registry.enqueue = lambda prompt, nickname: input_queue.enqueue(
+        None, prompt, nickname=nickname
+    )
     schedule_registry.on_change = renderer.broadcast_schedules_changed
 
     def _worker_loop() -> None:
@@ -2991,7 +2995,8 @@ def web(
         )
         _waker, revived, auto = wire_agent_mail(
             _registry,
-            enqueue_wake=server.enqueue_system,
+            # 합성 입력 — 화면 대기열에 뜨지 않는다 (run 과 같은 규약).
+            enqueue_wake=lambda cid, t: input_queue.enqueue(cid, t, system=True),
             parent_ctx=ctx,
         )
 
@@ -3006,8 +3011,10 @@ def web(
             session=session,
             agent_registry=agent_registry,
             mcp_manager=mcp_manager,
-            dequeue_user_message=server.dequeue_nowait,
-            enqueue_user_message=server.enqueue_named,
+            dequeue_user_message=input_queue.dequeue_nowait,
+            enqueue_user_message=lambda text, nickname: input_queue.enqueue(
+                None, text, nickname=nickname
+            ),
             route_message=lambda text: pump.route(text),
             max_turns=max_turns,
             max_depth=max_depth,
@@ -3021,7 +3028,7 @@ def web(
         # 수명은 ForeverPolicy(서버 종료의 SHUTDOWN 까지), 표면은 WebSurface.
         pump = SessionPump(
             PumpDeps(
-                queue=server,
+                queue=input_queue,
                 waker=_waker,
                 agent_registry=_registry,
                 run_main=_run_main,

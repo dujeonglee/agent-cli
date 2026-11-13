@@ -162,7 +162,11 @@ class TestWebServerInjection:
 
         server = WebServer.__new__(WebServer)
         server._queue = InputQueue()
-        item = server.enqueue_named("weekly report", "⏰ Scheduler")
+        # web 호스트의 예약 배선과 같은 모양 (v10.130.8, run 과 글자까지 같다)
+        enqueue = lambda prompt, nickname: server.queue.enqueue(
+            None, prompt, nickname=nickname
+        )
+        item = enqueue("weekly report", "⏰ Scheduler")
         assert item["text"] == "weekly report"
         assert item["nickname"] == "⏰ Scheduler"
         assert item["system"] is False  # 화면의 대기열에도 보인다
