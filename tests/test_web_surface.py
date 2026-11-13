@@ -19,7 +19,13 @@ from agent_cli.web.surface import WebSurface
 def parts():
     renderer, server, ctx = MagicMock(), MagicMock(), MagicMock(next_ordinal=3)
     dispatch = MagicMock(return_value=False)
-    surface = WebSurface(renderer=renderer, server=server, ctx=ctx, dispatch=dispatch)
+    surface = WebSurface(
+        renderer=renderer,
+        server=server,
+        ctx=ctx,
+        binding=MagicMock(name="binding"),
+        dispatch=dispatch,
+    )
     return surface, renderer, server, ctx, dispatch
 
 
@@ -92,6 +98,41 @@ class TestRunOutcome:
         surface, renderer, *_ = parts
         surface.run_ended(MagicMock(success=True, output="x"), MagicMock())
         renderer.error.assert_not_called()
+
+
+class TestRunStarting:
+    """런 시작 알림 (v10.130.6) — 종전 web `_run_main` 의 비전 알림이 표면으로 왔다.
+    문구·조건·이벤트 종류(``status("error", …)``)는 그대로."""
+
+    def _req(self, images):
+        return MagicMock(images=images)
+
+    def test_images_to_a_blind_model_are_announced(self, parts):
+        from agent_cli.web.surface import NO_VISION_NOTICE
+
+        surface, renderer, *_ = parts
+        with patch(
+            "agent_cli.providers.capabilities.binding_sees_images", return_value=False
+        ) as sees:
+            surface.run_starting(self._req([{"path": "a.png"}]))
+        sees.assert_called_once_with(surface._binding)
+        renderer.status.assert_called_once_with("error", NO_VISION_NOTICE)
+
+    def test_a_seeing_model_gets_no_notice(self, parts):
+        surface, renderer, *_ = parts
+        with patch(
+            "agent_cli.providers.capabilities.binding_sees_images", return_value=True
+        ):
+            surface.run_starting(self._req([{"path": "a.png"}]))
+        renderer.status.assert_not_called()
+
+    def test_no_images_no_probe(self, parts):
+        """이미지가 없으면 능력을 묻지도 않는다 — 프로브는 이미지 런에서만."""
+        surface, renderer, *_ = parts
+        with patch("agent_cli.providers.capabilities.binding_sees_images") as sees:
+            surface.run_starting(self._req([]))
+        sees.assert_not_called()
+        renderer.status.assert_not_called()
 
 
 class TestWebServerQueueContract:

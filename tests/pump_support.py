@@ -14,8 +14,9 @@ class FakeSurface:
 
     graceful_interrupt = False
 
-    def __init__(self, *, routed=(), swallow_errors=False):
+    def __init__(self, *, routed=(), swallow_errors=False, fail_on_start=False):
         self.calls: list[tuple] = []
+        self.fail_on_start = fail_on_start
         self.routed = set(routed)
         self.swallow_errors = swallow_errors
         self.stop_events: list = []
@@ -36,6 +37,11 @@ class FakeSurface:
     def route(self, text):
         self.calls.append(("route", text))
         return text in self.routed
+
+    def run_starting(self, req):
+        self.calls.append(("run_starting", req.text))
+        if self.fail_on_start:
+            raise RuntimeError("run_starting failed")
 
     def run_ended(self, result, req):
         self.calls.append(("run_ended", result))

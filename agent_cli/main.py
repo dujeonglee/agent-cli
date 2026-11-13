@@ -452,6 +452,9 @@ class _ConsoleSurface:
             return False
         return bool(self._jobs.running() or self._jobs.started_since(self._run_started))
 
+    def run_starting(self, req) -> None:
+        pass  # 못 보는 모델의 이미지는 부트가 막았다 (`_require_vision`)
+
     def run_failed(self, exc: Exception) -> bool:
         return False
 
@@ -988,31 +991,13 @@ def _stage_query_images(paths: list[str] | None) -> list[dict]:
     return refs
 
 
-def _vision_ok(binding) -> bool:
-    """모델이 이미지를 보는가 — 등록값, 없으면 프로브 한 번(프로세스당)."""
-    from agent_cli.providers.capabilities import vision_support
-
-    return vision_support(
-        binding.capabilities,
-        binding.provider.capability_transport,
-        binding.base_url,
-        binding.model,
-        binding.api_key,
-    )
-
-
-#: 웹에서 이미지 딸린 메시지를 못 보는 모델에 보낼 때의 알림 (v10.60.0) — run 은
-#: `_require_vision` 으로 즉시 끝내지만 웹은 런을 열어야 다음 메시지를 받는다.
-_WEB_NO_VISION_NOTICE = (
-    "this model cannot view images — the attachment reaches it as a "
-    "placeholder line only"
-)
-
-
 def _require_vision(binding) -> None:
     """모델이 이미지를 보는지(등록값 또는 프로브) — 못 보면 즉시 종료.
-    없는 능력을 약속하지 않는다 (docs/vision/DESIGN.md §2.5)."""
-    if not _vision_ok(binding):
+    없는 능력을 약속하지 않는다 (docs/vision/DESIGN.md §2.5). web 은 런을 열어야
+    다음 메시지를 받으므로 막지 않고 알린다(`WebSurface.run_starting`)."""
+    from agent_cli.providers.capabilities import binding_sees_images
+
+    if not binding_sees_images(binding):
         console.print(
             f"--image: model '{binding.model}' cannot view images "
             f"(supports_vision is false, or the vision probe failed).",
@@ -2985,6 +2970,7 @@ def web(
             renderer=renderer,
             server=server,
             ctx=ctx,
+            binding=binding,
             dispatch=lambda text, stop_event: try_dispatch_agent_or_skill(
                 text,
                 web_output,
@@ -3006,11 +2992,6 @@ def web(
         )
 
         def _run_main(req: RunRequest):
-            # 못 보는 모델에 이미지가 왔다 (v10.60.0): 런은 연다(자리표시 줄로
-            # 가고 공급자가 사유를 적는다) — 다만 화면에 한 줄 알린다. 프로브
-            # 결과는 기억되므로 다음 `/api/images/support` 부터 📎 가 숨는다.
-            if req.images and not _vision_ok(binding):
-                renderer.status("error", _WEB_NO_VISION_NOTICE)
             return main_kind.run(main_kind.start(req))
 
         # run 과 동형 (v8.39.0 수리: 종전 web 은 hooks_config 미전달로 채팅 턴에서 디스크

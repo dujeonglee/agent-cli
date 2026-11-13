@@ -7,7 +7,7 @@
   전부 조용하면 끝나고(:class:`QuietPolicy`), web 은 SHUTDOWN 까지 산다
   (:class:`ForeverPolicy`).
 - :class:`PumpSurface` — 표면이 다른 것 전부(유휴/바쁨 신호, 에코, 중단 핸들,
-  명령 라우팅, 런 결과·실패 처리).
+  명령 라우팅, 런 시작 알림, 런 결과·실패 처리).
 
 종전엔 ``main._run_message_pump``(run, ~65줄) 와 ``web._worker_loop``(~200줄)
 두 벌이었고, 수명 정책이 run 에만 있어 ``--result-file`` 이 펌프 뒤에 써지는
@@ -166,6 +166,11 @@ class PumpSurface(Protocol):
     def route(self, text: str) -> bool:
         """``/``·``@`` 명령이면 처리하고 True — 런을 열지 않는다."""
 
+    def run_starting(self, req: RunRequest) -> None:
+        """런을 열기 직전 — ``run_main`` 바로 앞, 같은 try 안이라 예외는 ``run_failed``
+        로 간다. web 은 못 보는 모델에 이미지가 온 것을 알리고, run 은 할 일이 없다
+        (부트에서 막았다, ``_require_vision``)."""
+
     def run_ended(self, result: Any, req: RunRequest) -> None:
         """런이 끝났다(ToolResult) — run 은 ``--result-file``. ``req`` 로 그 런이
         무엇이었는지(argv 질의 / 깨우기 / 예약) 안다."""
@@ -254,6 +259,7 @@ class SessionPump:
                         wake=wake,
                         images=list(item.get("images") or []),
                     )
+                    d.surface.run_starting(req)
                     result = d.run_main(req)
                     from agent_cli.runtime import main_run_ended
 
