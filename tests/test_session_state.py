@@ -502,8 +502,8 @@ class TestKvWinEndToEnd:
         import json
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import run_loop
 
         calls = iter(ops)
         provider = MagicMock()
@@ -585,8 +585,8 @@ class TestFinalTurnInTheLoop:
         import json
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import run_loop
 
         # memory add 는 테스트 포트에서 확실히 돌고 턴을 넘긴다 (요약을 바꿔
         # 반복 감지를 피한다).

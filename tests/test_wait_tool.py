@@ -17,12 +17,12 @@ from agent_cli.context.manager import _OBS_COMPLETE_NUDGE, ContextManager
 from agent_cli.dialects import get as get_dialect
 from agent_cli.dialects.grammar import terminal_tools
 from agent_cli.jobs import JobRegistry, set_job_registry
-from agent_cli.loop import AgentLoop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 from agent_cli.tools.virtual import WaitTool
 from tests.loop_ports import TEST_PORTS, make_ports
+from tests.loopkit import make_loop
 
 #: main 모양의 포트 — 입력 큐가 있어 깨울 수 있다(빈 큐).
 WAKEABLE = make_ports(dequeue_user_message=lambda: None)
@@ -39,7 +39,7 @@ def jobs(tmp_path):
 
 
 def _loop(provider, *, ctx=None, query="Q", rid="u-1"):
-    return AgentLoop(
+    return make_loop(
         ports=WAKEABLE,
         query=query,
         query_request_id=rid,
@@ -99,7 +99,7 @@ class TestAdvertisedOnlyWhereAWakeExists:
 
     def _tools(self, ports):
         loop = _loop(MagicMock())
-        loop = AgentLoop(
+        loop = make_loop(
             ports=ports,
             query="Q",
             provider=MagicMock(),
@@ -248,7 +248,7 @@ class TestAlreadyArrived:
         return p
 
     def _loop(self, reg, provider):
-        loop = provider.holder["loop"] = AgentLoop(
+        loop = provider.holder["loop"] = make_loop(
             ports=make_ports(dequeue_user_message=lambda: None, agent_registry=reg),
             query="Q",
             query_request_id="u-1",
@@ -415,7 +415,7 @@ class TestWording:
         assert "wait" not in led.block()
         # 실제 조립: wakeable 포트의 루프 꼬리에는 있고, 미연결 포트의 루프엔 없다
         for ports, expect in ((WAKEABLE, True), (TEST_PORTS, False)):
-            loop = AgentLoop(
+            loop = make_loop(
                 ports=ports,
                 query="Q",
                 query_request_id="u-1",

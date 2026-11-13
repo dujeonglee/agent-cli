@@ -36,9 +36,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_cli.loop import AgentLoop
 from agent_cli.providers.capabilities import ModelCapabilities
 from tests.loop_ports import make_ports
+from tests.loopkit import make_loop
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "ledger_golden.json"
 
@@ -61,7 +61,7 @@ _REPLY_B = {"kind": "reply", "to": "agt-b", "id": "r-2", "text": "할인 상한�
 
 def _loop(items=(), *, debts=(), resident=False, user_run=None):
     q = [dict(it) for it in items]
-    loop = AgentLoop(
+    loop = make_loop(
         query="Q",
         provider=MagicMock(),
         capabilities=ModelCapabilities(

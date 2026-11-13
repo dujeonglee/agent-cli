@@ -197,11 +197,11 @@ class TestOwnerIsDecidedByTheKind:
         """
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.capabilities import ModelCapabilities
         from tests.loop_ports import make_ports
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             query="Q",
             provider=MagicMock(),
             capabilities=ModelCapabilities(
@@ -612,12 +612,12 @@ class TestProfileReach:
         """
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.capabilities import ModelCapabilities
         from tests.loop_ports import make_ports
+        from tests.loopkit import make_loop
 
         def tools(active):
-            return AgentLoop(
+            return make_loop(
                 query="Q",
                 provider=MagicMock(),
                 capabilities=ModelCapabilities(

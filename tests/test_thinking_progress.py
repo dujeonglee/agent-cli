@@ -59,9 +59,9 @@ class TestLoopWiring:
         import json
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loopkit import run_loop
 
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
@@ -190,9 +190,9 @@ class TestToolCallChannel:
         import json
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loopkit import run_loop
 
         provider = MagicMock()
         provider.call.return_value = LLMResponse(

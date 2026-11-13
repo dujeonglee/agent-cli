@@ -32,11 +32,11 @@ import pytest
 from agent_cli.dialects import get
 from agent_cli.dialects.engine import Dialect
 from agent_cli.dialects.specs.json_fc import JSON_FC
-from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import infer_action
 from tests.loop_ports import TEST_PORTS
+from tests.loopkit import run_loop
 
 # ── Fixtures / helpers ───────────────────────────────
 

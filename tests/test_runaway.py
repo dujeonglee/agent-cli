@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse, ModelCapabilities, TokenUsage
 from agent_cli.providers.runaway import (
     NO_WORDS_WINDOW,
@@ -29,6 +28,7 @@ from agent_cli.recovery.observability import (
     TurnRecord,
     classify_output_cap,
 )
+from tests.loopkit import run_loop
 from tests.test_loop import TEST_PORTS, _complete
 
 

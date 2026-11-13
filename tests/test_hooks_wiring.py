@@ -202,14 +202,14 @@ class TestSessionStartSectionsReachThePrompt:
     def _loop(self):
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.capabilities import ModelCapabilities
         from tests.loop_ports import split_ports
+        from tests.loopkit import make_loop
 
         caps = ModelCapabilities(
             context_window=4096, max_output_tokens=2048, supports_thinking=False
         )
-        return AgentLoop(
+        return make_loop(
             query="q",
             provider=MagicMock(),
             capabilities=caps,

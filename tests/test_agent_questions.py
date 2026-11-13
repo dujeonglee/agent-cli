@@ -889,8 +889,8 @@ def _run_scripted(ctx, emissions, **kw):
     """스크립트된 LLM 응답으로 실제 ``run_loop`` 를 한 번 돌린다."""
     from unittest.mock import MagicMock
 
-    from agent_cli.loop import run_loop
     from agent_cli.providers.base import LLMResponse
+    from tests.loopkit import run_loop
 
     provider = MagicMock()
     seq = list(emissions)
@@ -916,8 +916,8 @@ class TestFlipToolMount:
         """v10.77.0 (B): 에이전트는 질문을 받지 않으므로 `answer` 도 없다 —
         실제 기록에서 11번 불려 11번 다 실패했다(사용자 요청에 쓰거나 id 를
         지어냄). 갚는 도구는 `reply` 하나다."""
-        from agent_cli.loop import AgentLoop
         from agent_cli.tools.registry import _BUILTIN_ORDER
+        from tests.loopkit import make_loop
 
         reg = mkreg()
         a = spawn_idle(reg)
@@ -925,7 +925,7 @@ class TestFlipToolMount:
         def tools_for(questions):
             from unittest.mock import MagicMock
 
-            loop = AgentLoop(
+            loop = make_loop(
                 query="Q",
                 provider=MagicMock(),
                 capabilities=_caps(),
@@ -1030,13 +1030,13 @@ class TestFlipPrompt:
         from unittest.mock import MagicMock
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         reg = mkreg()
         a = spawn_idle(reg)
 
         def system_for(questions, tag):
-            loop = AgentLoop(
+            loop = make_loop(
                 query="Q",
                 provider=MagicMock(),
                 capabilities=_caps(),
@@ -1127,14 +1127,14 @@ class TestAskToUser:
         """스키마 배선 — `ask` 에 `to` 가 없다(v10.77.0). 상주 설명은 트레이를
         말하고 `message` 로 안내한다."""
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import AgentLoop
         from tests.loop_ports import make_ports
+        from tests.loopkit import make_loop
 
         class _Port:
             nonblocking = True
 
         def system_for(questions, tag):
-            loop = AgentLoop(
+            loop = make_loop(
                 query="Q",
                 provider=MagicMock(),
                 capabilities=_caps(),
@@ -1166,8 +1166,8 @@ class TestAskToUser:
         정한다(사람). 구제가 아니라 무시다: 스키마에 없는 키다."""
         import types
 
-        from agent_cli.loop import AgentLoop
         from tests.loop_ports import make_ports
+        from tests.loopkit import make_loop
 
         seen = []
 
@@ -1178,7 +1178,7 @@ class TestAskToUser:
                 seen.append(text)
                 return "q-1", ""
 
-        loop = AgentLoop(
+        loop = make_loop(
             query="Q",
             provider=MagicMock(),
             capabilities=_caps(),
@@ -1299,8 +1299,8 @@ class TestReplyNagCap:
         from pathlib import Path
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import run_loop
 
         p = MagicMock()
         p.call.side_effect = [LLMResponse(content=c) for c in contents]
@@ -1694,8 +1694,8 @@ class TestUnifiedDebtRules:
         from pathlib import Path
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import run_loop
 
         p = MagicMock()
         p.call.side_effect = [LLMResponse(content=c) for c in contents]
@@ -2281,9 +2281,9 @@ class TestMidRunAbsorption:
         from pathlib import Path
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
         from agent_cli.subagent.resident_loop import ResidentLoop
+        from tests.loopkit import run_loop
 
         tm = reg.get(b)
         assert tm.state == "busy" and tm.current_item == "r-1"  # `_busy` 가 세운 런

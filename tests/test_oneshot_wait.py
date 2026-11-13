@@ -20,7 +20,6 @@ from agent_cli.constants import RUN_OWNER_PREFIX, is_private_owner
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get as get_dialect
 from agent_cli.jobs import JobRegistry, set_job_registry
-from agent_cli.loop import AgentLoop
 from agent_cli.loop.kind import PrivateLoop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
@@ -34,6 +33,7 @@ from agent_cli.subagent.agents_live import set_main_registry
 from agent_cli.tools.result import ToolResult
 from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS
+from tests.loopkit import make_loop
 from tests.test_agents_live import make_registry
 
 
@@ -56,7 +56,7 @@ def jobs(tmp_path, reg):
 
 
 def _loop(provider, ports, *, ctx=None):
-    return AgentLoop(
+    return make_loop(
         ports=ports,
         query="Q",
         query_request_id="",

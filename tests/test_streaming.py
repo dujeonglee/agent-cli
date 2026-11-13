@@ -217,12 +217,12 @@ class TestAnthropicStreaming:
 class TestLoopStreamingWiring:
     def test_on_chunk_always_passed(self):
         """on_chunk is always passed (streaming is default behavior now)."""
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         provider = MagicMock()
         provider.call.return_value = LLMResponse(content='{"thought":"hi"}')
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="test",
             provider=provider,

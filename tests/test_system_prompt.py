@@ -1280,9 +1280,9 @@ class TestSystemSectionsSingleSource:
     def _loop(self):
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
@@ -1336,8 +1336,8 @@ class TestSystemSectionsSingleSource:
     def test_snapshot_sent_to_renderer_each_call(self):
         from unittest.mock import MagicMock, patch
 
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import make_loop
 
         provider = MagicMock()
         provider.call.side_effect = [
@@ -1345,7 +1345,7 @@ class TestSystemSectionsSingleSource:
                 content='{"thought":"t","action":"complete","action_input":{"result":"ok"}}'
             )
         ]
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,

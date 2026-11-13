@@ -48,11 +48,11 @@ def test_small_overwrite_note_states_a_fact(tmp_path):
 
 def test_write_only_loop_also_gets_edit_file():
     from agent_cli.dialects import get as get_dialect
-    from agent_cli.loop import AgentLoop
     from agent_cli.providers.capabilities import ModelCapabilities
     from tests.loop_ports import TEST_PORTS
+    from tests.loopkit import make_loop
 
-    loop = AgentLoop(
+    loop = make_loop(
         ports=TEST_PORTS,
         query="Q",
         provider=MagicMock(),
@@ -64,7 +64,7 @@ def test_write_only_loop_also_gets_edit_file():
         active_tools=["read_file", "write_file", "shell", "complete"],
     )
     assert "edit_file" in loop._llm.cfg.tools_list
-    loop = AgentLoop(
+    loop = make_loop(
         ports=TEST_PORTS,
         query="Q",
         provider=MagicMock(),

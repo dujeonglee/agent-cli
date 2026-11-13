@@ -131,10 +131,10 @@ class TestAdvertised:
     def _tools(self, vision):
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
         from tests.loop_ports import TEST_PORTS
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
@@ -315,12 +315,12 @@ class TestCompaction:
     def test_loop_tells_the_context_its_viewer(self, tmp_path):
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
         from tests.loop_ports import TEST_PORTS
+        from tests.loopkit import make_loop
 
         for vision, expect in ((True, "view_image"), (False, None)):
             ctx = ContextManager(tmp_path / f"s{vision}", max_context_tokens=100_000)
-            AgentLoop(
+            make_loop(
                 ports=TEST_PORTS,
                 query="Q",
                 provider=MagicMock(),
@@ -369,13 +369,13 @@ class TestCompaction:
     def test_summary_prompt_asks_for_images_only_when_there_were_some(self):
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
         from agent_cli.loop.llm import _SUMMARY_IMAGES_LINE
         from tests.loop_ports import TEST_PORTS
+        from tests.loopkit import make_loop
 
         provider = MagicMock()
         provider.call.return_value = MagicMock(content="S")
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,

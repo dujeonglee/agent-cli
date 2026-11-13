@@ -5,13 +5,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS, make_ports, split_ports
+from tests.loopkit import run_loop
 
 
 class TestInspectorNoSynthesis:
@@ -1967,9 +1967,9 @@ class TestToolPolicyDeclarations:
         return tools_list
 
     def _built_tools_list(self, active_tools, depth, max_depth, ctx, message_handler):
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             query="Q",
             provider=MagicMock(),
             capabilities=ModelCapabilities(
@@ -2084,10 +2084,9 @@ class TestRunLoopForwarding:
         그 집합 안에 있는지까지 본다(오타·개명 회귀)."""
         import inspect
 
-        from agent_cli.loop import run_loop
-
         # v10.87.0: main 은 run_loop 을 직접 부르지 않는다 — 종류(`LoopKind.loop_kwargs`)가
         # 한 벌을 적고 엔진에 넘긴다. 그 한 벌이 서명 안에 있는지 본다.
+        from agent_cli.loop import run_loop
         from agent_cli.loop.kind import LoopKind, Start
         from tests.loop_ports import make_ports
 
@@ -2253,11 +2252,11 @@ class TestAskToolAvailability:
 
     def test_ask_available_with_ctx(self, caps, tmp_path):
         """ctx present → ask included."""
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         ctx = MagicMock()
         ctx.session_dir = tmp_path
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
@@ -2269,9 +2268,9 @@ class TestAskToolAvailability:
 
     def test_ask_hidden_without_ctx(self, caps):
         """ctx=None → ask removed (non-interactive mode)."""
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
@@ -2287,12 +2286,12 @@ class TestGracefulInterrupt:
 
     def test_interrupt_returns_none(self, caps):
         """Setting _interrupted flag causes run() to return None."""
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         provider = _make_provider(
             _complete("should not reach"),
         )
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2307,7 +2306,7 @@ class TestGracefulInterrupt:
 
     def test_interrupt_after_first_iteration(self, caps, tmp_path):
         """Interrupt flag set during iteration → exits at next checkpoint."""
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         # Two responses: first is a tool call, second is complete
         test_file = tmp_path / "test.txt"
@@ -2319,7 +2318,7 @@ class TestGracefulInterrupt:
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=r) for r in responses]
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2348,14 +2347,14 @@ class TestGracefulInterrupt:
         user message — so the transcript doesn't show two consecutive
         user turns and recent_exchanges skips it via the ``tool`` field."""
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=_complete("done"))]
 
         ctx = ContextManager(session_dir=tmp_path)
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2395,12 +2394,12 @@ class TestGracefulInterrupt:
         """The loop hands the provider a zero-arg ``interrupt_check`` so the
         streaming path can break mid-generation; it reflects ``stop_event``."""
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=_complete("done"))]
         ctx = ContextManager(session_dir=tmp_path)
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2425,16 +2424,16 @@ class TestGracefulInterrupt:
         reason the close happens on the owning thread, not the signal
         handler). Here the child shares the parent's event, so setting it
         flips both _interrupt_check predicates."""
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        parent = AgentLoop(
+        parent = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
             capabilities=caps,
             model="m",
         )
-        child = AgentLoop(
+        child = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
@@ -2456,7 +2455,7 @@ class TestGracefulInterrupt:
         assistant turn is recorded — only the interrupt notice. (Without the
         discard branch this would parse+dispatch as a successful complete.)"""
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         partial = _complete("SHOULD_NOT_COMPLETE")
         provider = MagicMock()
@@ -2464,7 +2463,7 @@ class TestGracefulInterrupt:
             LLMResponse(content=partial, stop_reason="interrupted")
         ]
         ctx = ContextManager(session_dir=tmp_path)
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2492,12 +2491,12 @@ class TestGracefulInterrupt:
         from unittest.mock import patch
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=_complete("done"))]
         ctx = ContextManager(session_dir=tmp_path)
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2531,7 +2530,7 @@ class TestGracefulInterrupt:
         import threading
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         # First turn: tool call. After this returns `_CONTINUE`, the test
         # sets stop_event to simulate Ctrl+C arriving between turns.
@@ -2548,7 +2547,7 @@ class TestGracefulInterrupt:
 
         stop_event = threading.Event()
         ctx = ContextManager(session_dir=tmp_path / "session")
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2583,12 +2582,12 @@ class TestGracefulInterrupt:
         """Signal handler is installed during run() and restored after."""
         import signal
 
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         provider = _make_provider(_complete("ok"))
         original_handler = signal.getsignal(signal.SIGINT)
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2605,12 +2604,12 @@ class TestGracefulInterrupt:
         """Without graceful_interrupt, signal handler is NOT installed."""
         import signal
 
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         provider = _make_provider(_complete("ok"))
         original_handler = signal.getsignal(signal.SIGINT)
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2625,10 +2624,10 @@ class TestGracefulInterrupt:
 
     def test_signal_handler_sets_flag(self, caps):
         """Simulated SIGINT sets _interrupted flag."""
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         provider = _make_provider(_complete("ok"))
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2649,10 +2648,10 @@ class TestGracefulInterrupt:
 
     def test_second_sigint_raises(self, caps):
         """Second Ctrl+C raises KeyboardInterrupt."""
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         provider = _make_provider(_complete("ok"))
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2672,10 +2671,10 @@ class TestGracefulInterrupt:
 
     def test_interrupt_without_ctx(self, caps):
         """Interrupt without ctx (no crash)."""
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         provider = _make_provider(_complete("should not reach"))
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2689,12 +2688,12 @@ class TestGracefulInterrupt:
 
     def test_run_mode_keyboardinterrupt_propagates(self, caps):
         """Without graceful_interrupt, KeyboardInterrupt propagates up."""
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         provider = MagicMock()
         provider.call.side_effect = KeyboardInterrupt()
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2708,7 +2707,7 @@ class TestGracefulInterrupt:
     def test_chat_mode_sigint_graceful(self, caps, tmp_path):
         """With graceful_interrupt, SIGINT sets flag instead of raising."""
 
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         test_file = tmp_path / "f.txt"
         test_file.write_text("data")
@@ -2719,7 +2718,7 @@ class TestGracefulInterrupt:
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=r) for r in test_responses]
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -2750,7 +2749,7 @@ class TestGracefulInterrupt:
         """After graceful interrupt in chat mode, ctx has all prior work."""
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         test_file = tmp_path / "data.txt"
         test_file.write_text("important data")
@@ -2764,7 +2763,7 @@ class TestGracefulInterrupt:
 
         ctx = ContextManager(session_dir=tmp_path)
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Analyze data.txt",
             provider=provider,
@@ -3179,9 +3178,9 @@ class TestAgentLoopClass:
     """Test AgentLoop class directly."""
 
     def test_init_stores_params(self, caps):
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="test",
             provider=MagicMock(),
@@ -3197,9 +3196,9 @@ class TestAgentLoopClass:
         assert "summarize" in loop.skill_stack
 
     def test_derived_state(self, caps):
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="q",
             provider=MagicMock(),
@@ -3212,9 +3211,9 @@ class TestAgentLoopClass:
         assert "complete" in loop.tools_list
 
     def test_should_continue(self, caps):
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="q",
             provider=MagicMock(),
@@ -3228,9 +3227,9 @@ class TestAgentLoopClass:
         assert loop._should_continue() is False
 
     def test_should_continue_unlimited(self, caps):
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="q",
             provider=MagicMock(),
@@ -3243,13 +3242,13 @@ class TestAgentLoopClass:
 
     def test_run_returns_answer(self, caps):
         """AgentLoop.run() returns the complete answer."""
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import make_loop
 
         provider = MagicMock()
         provider.call.return_value = LLMResponse(content=_complete("42"))
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="what",
             provider=provider,
@@ -4668,9 +4667,9 @@ class TestLoopConfigStateOwnership:
         assert loop.turn == 9
 
     def test_real_init_assembles_config_and_state(self, tmp_path):
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="do it",
             provider=None,
@@ -4789,9 +4788,10 @@ class TestPR3Collaborators:
         assert llm.overflow_retries == 0
 
     def test_sentinels_are_module_constants_shared_via_loop(self):
-        from agent_cli.loop import _CONTINUE, _RETRY, AgentLoop
+        from agent_cli.loop import _CONTINUE, _RETRY
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS, query="q", provider=None, capabilities=None, model="m"
         )
         assert loop._CONTINUE is _CONTINUE and loop._RETRY is _RETRY
@@ -4808,9 +4808,9 @@ class TestRunAuthors:
     ``answers`` field is stamped at the origin of the fact."""
 
     def _loop(self, caps, **kw):
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        return AgentLoop(
+        return make_loop(
             query="Q",
             provider=MagicMock(),
             capabilities=caps,
@@ -4983,9 +4983,9 @@ class TestMailAnswersInheritance:
         }
 
     def _loop(self, caps, registry, **kw):
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        return AgentLoop(
+        return make_loop(
             query="Q",
             provider=MagicMock(),
             capabilities=caps,
@@ -5083,14 +5083,14 @@ class TestRendererAbcPromotion:
         from rich.console import Console
 
         from agent_cli import render
-        from agent_cli.loop import AgentLoop
         from agent_cli.render.minimal import MinimalRenderer
+        from tests.loopkit import make_loop
 
         prev = render.get_renderer()
         render.set_renderer(MinimalRenderer(Console(file=None)))
         try:
             items = [{"text": "steer", "nickname": "Bob"}]
-            loop = AgentLoop(
+            loop = make_loop(
                 query="Q",
                 provider=MagicMock(),
                 capabilities=caps,

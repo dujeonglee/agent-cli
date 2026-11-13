@@ -585,7 +585,7 @@ class TestEndToEnd:
 
     def test_two_ops_then_complete_finish(self, tmp_path):
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         f1 = tmp_path / "a.txt"
         f1.write_text("alpha")
@@ -608,7 +608,7 @@ class TestEndToEnd:
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=r) for r in responses]
         ctx = ContextManager(session_dir=tmp_path)
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,
@@ -639,7 +639,7 @@ class TestEndToEnd:
         # 다음 턴에 명시적 complete 로 끝낸다. (v8.4.0: 산문-only 도 전부 같은
         # 넛지 경로 — prose_completion 제거로 action-less 턴은 예외 없이 넛지.)
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         responses = [
             '[{"action": "read',  # 깨진 op-array → NO_ACTION nudge
@@ -648,7 +648,7 @@ class TestEndToEnd:
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=r) for r in responses]
         ctx = ContextManager(session_dir=tmp_path)
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=provider,

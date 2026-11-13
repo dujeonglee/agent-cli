@@ -256,9 +256,9 @@ class TestToolHelp:
 
 
 def _loop(active=None, **kw):
-    from agent_cli.loop import AgentLoop
+    from tests.loopkit import make_loop
 
-    return AgentLoop(
+    return make_loop(
         query="Q",
         provider=MagicMock(),
         capabilities=ModelCapabilities(
@@ -298,7 +298,7 @@ class TestA5FullGuideOnce:
     ):
         """뼈대만 보고 틀리게 부른 첫 거절에 전문이 붙고, 두 번째에는 붙지 않는다."""
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         _defer(monkeypatch, "monitor")
         bad = json.dumps({"action": "monitor", "every": "5s"})  # `mode` 누락
@@ -334,7 +334,7 @@ class TestA5FullGuideOnce:
 
     def test_a_tool_that_is_not_deferred_never_gets_it(self, monkeypatch, tmp_path):
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         bad = json.dumps({"action": "write_file", "path": "x.txt"})  # `content` 누락
         done = json.dumps({"action": "complete", "result": "ok"})

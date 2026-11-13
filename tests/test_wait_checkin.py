@@ -21,7 +21,6 @@ import pytest
 from agent_cli.constants import CHECKIN_STEPS_S, format_duration
 from agent_cli.dialects import get as get_dialect
 from agent_cli.jobs import JobRegistry, set_job_registry
-from agent_cli.loop import AgentLoop
 from agent_cli.loop.core import mail_item
 from agent_cli.monitor import MonitorRegistry, build
 from agent_cli.monitor.runtime import set_monitor_registry
@@ -36,6 +35,7 @@ from agent_cli.subagent.agents_live import (
     set_main_registry,
 )
 from tests.loop_ports import make_ports
+from tests.loopkit import make_loop
 from tests.monitor_delivery import RecordingDelivery
 from tests.test_agents_live import make_registry, make_runner, wait_until
 
@@ -482,7 +482,7 @@ WAKEABLE = make_ports(dequeue_user_message=lambda: None)
 
 
 def _loop(provider, *, query="Q", rid="u-1"):
-    return AgentLoop(
+    return make_loop(
         ports=WAKEABLE,
         query=query,
         query_request_id=rid,
@@ -553,7 +553,7 @@ class TestLoopWiring:
         jobs.start("sleep 30", owner="main")
         reg.arm_checkin("main")
         reg.fire_checkin("main")
-        loop = AgentLoop(
+        loop = make_loop(
             ports=make_ports(dequeue_user_message=lambda: None, agent_registry=reg),
             query="",
             provider=_provider({"action": "wait"}),

@@ -574,7 +574,7 @@ class TestLoopE2E:
         )
 
     def test_read_then_complete(self, tmp_path):
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         f = tmp_path / "note.txt"
         f.write_text("hello xml world")
@@ -603,7 +603,7 @@ class TestLoopE2E:
         assert "<tool_call>" in sys_prompt
 
     def test_multi_op_batch_dispatches_both(self, tmp_path):
-        from agent_cli.loop import run_loop
+        from tests.loopkit import run_loop
 
         a = tmp_path / "a.txt"
         b = tmp_path / "b.txt"

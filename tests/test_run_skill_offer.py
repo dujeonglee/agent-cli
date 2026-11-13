@@ -47,10 +47,10 @@ def _caps():
 
 
 def _tools_list():
-    from agent_cli.loop import AgentLoop
     from tests.loop_ports import make_ports
+    from tests.loopkit import make_loop
 
-    loop = AgentLoop(
+    loop = make_loop(
         query="Q",
         provider=MagicMock(),
         capabilities=_caps(),

@@ -210,12 +210,12 @@ def _finish(thought="done"):
 
 def _run(responses, tmp_path, max_turns=5, dialect=None):
     from agent_cli.context.manager import ContextManager
-    from agent_cli.loop import AgentLoop
+    from tests.loopkit import make_loop
 
     provider = MagicMock()
     provider.call.side_effect = [LLMResponse(content=r) for r in responses]
     ctx = ContextManager(session_dir=tmp_path)
-    loop = AgentLoop(
+    loop = make_loop(
         ports=TEST_PORTS,
         query="Q",
         provider=provider,

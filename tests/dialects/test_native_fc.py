@@ -13,10 +13,10 @@ import pytest
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get
-from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
 from tests.loop_ports import TEST_PORTS
+from tests.loopkit import run_loop
 
 
 @pytest.fixture

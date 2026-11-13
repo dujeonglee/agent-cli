@@ -112,9 +112,9 @@ class TestLoopWiring:
     def test_snapshot_carries_open_ids_and_run_end_reports_what_is_left(self):
         """실제 런: 호출 직전 스냅샷에 열린 id, `complete` 로 답한 뒤 런 끝에 빈 목록."""
         from agent_cli.dialects import get as get_dialect
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loopkit import make_loop
 
         loop = None
 
@@ -128,7 +128,7 @@ class TestLoopWiring:
 
         provider = MagicMock()
         provider.call.side_effect = _answer
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             query_request_id="u-1",

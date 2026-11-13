@@ -973,9 +973,9 @@ class TestLoopWiring:
         # 상주 모드는 디스패치 거부 + 설명 축소가 담당.
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
@@ -988,9 +988,9 @@ class TestLoopWiring:
         # depth 상한 = run 도 불가 → 도구째 strip (delegate/run_skill 동형).
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
@@ -1004,10 +1004,10 @@ class TestLoopWiring:
     def test_tool_present_with_registry(self, tmp_path):
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         reg = AgentRegistry(tmp_path, runner=make_runner())
-        loop = AgentLoop(
+        loop = make_loop(
             query="Q",
             provider=MagicMock(),
             capabilities=None,
@@ -1088,8 +1088,8 @@ class TestFullLoopIntegration:
         from unittest.mock import MagicMock
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import run_loop
 
         def emit(action, action_input):
             return json.dumps({"action": action, **action_input})
@@ -2282,10 +2282,10 @@ class TestLiveTeammatesSection:
         from unittest.mock import MagicMock
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.prompts.session_state import SESSION_STATE_HEADER
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loopkit import run_loop
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -2470,9 +2470,9 @@ class TestPeerMessaging:
         from unittest.mock import MagicMock
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loopkit import run_loop
 
         caps = ModelCapabilities(
             context_window=32768, max_output_tokens=4096, supports_thinking=False
@@ -2675,10 +2675,10 @@ class TestPeerMessaging:
     def test_message_tool_gated_by_handler(self, tmp_path):
         from unittest.mock import MagicMock
 
-        from agent_cli.loop import AgentLoop
+        from tests.loopkit import make_loop
 
         # 핸들러 없음(main) → message 도구 부재
-        loop = AgentLoop(
+        loop = make_loop(
             ports=TEST_PORTS,
             query="Q",
             provider=MagicMock(),
@@ -2687,7 +2687,7 @@ class TestPeerMessaging:
         )
         assert "message" not in loop._config.tools_list
         # 핸들러 있음(상주 서브에이전트) → active_tools 에 없어도 강제 탑재
-        loop2 = AgentLoop(
+        loop2 = make_loop(
             query="Q",
             provider=MagicMock(),
             capabilities=None,
@@ -2705,9 +2705,9 @@ class TestPeerMessaging:
         from unittest.mock import MagicMock
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loopkit import run_loop
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -3793,8 +3793,8 @@ class TestRunMode:
         from unittest.mock import MagicMock
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import run_loop
 
         def emit(action, ai):
             return json.dumps({"action": action, **ai})
@@ -3829,8 +3829,8 @@ class TestRunMode:
         from unittest.mock import MagicMock
 
         from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import run_loop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import run_loop
 
         def emit(action, ai):
             return json.dumps({"action": action, **ai})
@@ -3868,8 +3868,8 @@ class TestRunMode:
 
         from agent_cli.context.manager import ContextManager
         from agent_cli.dialects import get as get_wf
-        from agent_cli.loop import AgentLoop
         from agent_cli.providers.base import LLMResponse
+        from tests.loopkit import make_loop
 
         wf = get_wf("json_fc")
 
@@ -3892,7 +3892,7 @@ class TestRunMode:
             turn([{"action": "complete", "result": "main-done"}]),
         ]
         provider.call.side_effect = [LLMResponse(content=r) for r in responses]
-        result = AgentLoop(
+        result = make_loop(
             ports=TEST_PORTS,
             query="fan out",
             provider=provider,

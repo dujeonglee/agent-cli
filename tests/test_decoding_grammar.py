@@ -35,7 +35,6 @@ from agent_cli.dialects.grammar import (
     terminal_tools,
     think_prefix,
 )
-from agent_cli.loop import run_loop
 from agent_cli.providers.base import CallSettings, LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import (
@@ -44,6 +43,7 @@ from agent_cli.tools.registry import (
     flat_param_schemas,
 )
 from tests.loop_ports import TEST_PORTS
+from tests.loopkit import run_loop
 
 
 def _tools(names, fmt="json_fc"):
