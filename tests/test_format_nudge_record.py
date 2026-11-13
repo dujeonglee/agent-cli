@@ -29,12 +29,13 @@ from tests.binding_support import make_binding
 
 def _dispatcher(tmp_path, dialect_name="json_fc", **cfg_overrides):
     """``cfg_overrides`` — 포트 등 LoopConfig 필드(예: ``questions=``)."""
-    from agent_cli.loop import LoopConfig, LoopState, ToolBridge, TurnDispatcher
+    from agent_cli.loop import LoopState, ToolBridge, TurnDispatcher
     from agent_cli.recovery.observability import TurnRecorder
+    from tests.loopkit import make_config
 
     wf = get_dialect(dialect_name)
     ctx = ContextManager(tmp_path / "s", max_context_tokens=100_000, dialect=wf)
-    cfg = LoopConfig(
+    cfg = make_config(
         tools_list=["shell", "complete"],
         binding=make_binding(dialect=wf),
         **cfg_overrides,

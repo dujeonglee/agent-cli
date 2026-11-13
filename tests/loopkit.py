@@ -6,6 +6,8 @@
 
 - `run_loop(...)` — 루프를 돌려 `ToolResult` 를 돌려준다.
 - `make_loop(...)` — `AgentLoop` 를 세우기만 한다(메서드를 직접 부르는 테스트).
+- `make_config(...)` — 협력자(`ToolBridge`·`TurnDispatcher`·`LLMCaller`·…)를 루프 없이 세우는
+  테스트의 `LoopConfig` (v10.133.0 — 설정은 맨 종류에, 설정 객체엔 계산한 것만).
 
 v10.132.0 부터 엔진은 ``(kind, start, ctx)`` 만 받는다. 여기서 **정적 바인딩**(부품 →
 `ModelBinding`)과 **맨 종류**(`LoopKind` 기본 구현 — 포트·깊이·이름에서 정책을 유도)를
@@ -18,7 +20,9 @@ from __future__ import annotations
 from agent_cli.loop.core import AgentLoop
 from agent_cli.loop.kind import LoopKind, Start
 from agent_cli.loop.run import run_loop as _run_loop
+from agent_cli.loop.state import LoopConfig
 from agent_cli.tools.result import ToolResult
+from tests.loop_ports import make_ports
 
 #: 맨 종류에 그대로 싣는 설정 — 이름이 곧 `LoopKind` 의 속성이다.
 _KIND_ATTRS = frozenset(
@@ -180,3 +184,78 @@ def make_loop(
         **attrs,
     )
     return AgentLoop(kind, start, ctx)
+
+
+#: `make_config` 의 설정 이름과 기본값 — 종전 `LoopConfig` 22필드의 것(포트·도구·스택 제외).
+_CONFIG_DEFAULTS = {
+    "binding": None,
+    "depth": 0,
+    "max_depth": 2,
+    "max_turns": 0,
+    "skill_name": "",
+    "skill_args": "",
+    "hooks_config": None,
+    "session": None,
+    "agent_role": "",
+    "graceful_interrupt": False,
+    "compaction_enabled": True,
+    "verbose": False,
+}
+_PORT_ARGS = (
+    "mcp_manager",
+    "hook_runner",
+    "agent_registry",
+    "message_handler",
+    "questions",
+)
+
+
+def make_config(
+    *,
+    kind: LoopKind | None = None,
+    owner: str = "main",
+    tools_list: list | None = None,
+    skill_stack: list | None = None,
+    agent_stack: list | None = None,
+    **attrs,
+) -> LoopConfig:
+    """협력자를 단독으로 세우는 테스트의 설정 — 이름과 기본값은 종전 `LoopConfig` 22필드의 것.
+
+    설정·포트는 종류에 싣고(엔진이 읽는 자리), 설정 객체엔 도구 목록·스택만 둔다 — 루프가
+    계산했을 값을 테스트가 그대로 준다(게이트·자기 이름 push 없음). 종전엔
+    `LoopConfig.__post_init__` 이 같은 일을 했다.
+
+    ``kind`` 를 주면 그 종류에 **명시한 설정만** 싣는다(포트는 그 종류의 것 — 포트 인자와 함께
+    주면 `TypeError`). 없으면 맨 종류를 만든다: 포트는 준 것만 연결, 설정은 기본값."""
+    unknown = set(attrs) - set(_CONFIG_DEFAULTS) - set(_PORT_ARGS)
+    if unknown:
+        raise TypeError(f"make_config: unknown argument(s) {sorted(unknown)}")
+    tools = list(tools_list or [])
+    if kind is None:
+        kind = LoopKind()
+        kind.owner = owner
+        kind.ports = make_ports(
+            owner=owner, **{n: attrs[n] for n in _PORT_ARGS if n in attrs}
+        )
+        kind.tools = tools or None
+        kind.skill_stack = list(skill_stack or [])
+        kind.agent_stack = list(agent_stack or [])
+        settings = {
+            **_CONFIG_DEFAULTS,
+            **{n: attrs[n] for n in _CONFIG_DEFAULTS if n in attrs},
+        }
+    else:
+        if owner != kind.owner:
+            raise TypeError(f"make_config: owner comes from the kind ({kind.owner!r})")
+        given = sorted(n for n in _PORT_ARGS if n in attrs)
+        if given:
+            raise TypeError(f"make_config: ports come from the kind, not {given}")
+        settings = {n: attrs[n] for n in _CONFIG_DEFAULTS if n in attrs}
+    for name, value in settings.items():
+        setattr(kind, name, value)
+    return LoopConfig(
+        kind=kind,
+        tools_list=tools,
+        skill_stack=list(skill_stack or []),
+        agent_stack=list(agent_stack or []),
+    )

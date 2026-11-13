@@ -4625,14 +4625,15 @@ class TestCombinedToolLabel:
 
 
 class TestLoopConfigStateOwnership:
-    """god-object 분해 1단계: 불변 배선은 LoopConfig(frozen), 공유 가변
+    """god-object 분해 1단계: 런 시작 때 계산한 것은 LoopConfig(frozen), 공유 가변
     상태는 LoopState 로 — 기존 ``self.X`` 표면은 property 브리지가 유지."""
 
     def _bare(self):
-        from agent_cli.loop import AgentLoop, LoopConfig, LoopState
+        from agent_cli.loop import AgentLoop, LoopState
+        from tests.loopkit import make_config
 
         loop = AgentLoop.__new__(AgentLoop)
-        loop._config = LoopConfig(
+        loop._config = make_config(
             binding=make_binding(model="m1"), tools_list=["shell"], depth=1
         )
         loop._state = LoopState(query="q")
@@ -4641,11 +4642,11 @@ class TestLoopConfigStateOwnership:
     def test_config_is_frozen(self):
         import dataclasses
 
-        from agent_cli.loop import LoopConfig
+        from tests.loopkit import make_config
 
-        cfg = LoopConfig(binding=make_binding(model="m"))
+        cfg = make_config(binding=make_binding(model="m"))
         try:
-            cfg.depth = 9  # type: ignore[misc]
+            cfg.tools_list = ["x"]  # type: ignore[misc]
         except dataclasses.FrozenInstanceError:
             pass
         else:  # pragma: no cover
@@ -4686,7 +4687,7 @@ class TestLoopConfigStateOwnership:
             depth=2,
             max_depth=2,  # depth ceiling → delegate/run_skill stripped
         )
-        assert loop._config.model == "m" and loop._config.max_turns == 3
+        assert loop._config.model == "m" and loop._config.kind.max_turns == 3
         assert "delegate" not in loop._config.tools_list
         assert "run_skill" not in loop._config.tools_list
         assert loop._state.query == "do it" and loop._state.turn == 0
@@ -4698,18 +4699,20 @@ class TestCollaboratorsStandalone:
     cfg/state 만으로 단독 생성·테스트 가능."""
 
     def test_prompt_svc_rebuild_without_loop(self):
-        from agent_cli.loop import LoopConfig, SystemPromptSvc
+        from agent_cli.loop import SystemPromptSvc
+        from tests.loopkit import make_config
 
-        svc = SystemPromptSvc(LoopConfig(tools_list=["shell"]), ctx=None)
+        svc = SystemPromptSvc(make_config(tools_list=["shell"]), ctx=None)
         svc.rebuild()
         assert svc.system  # 시스템 프롬프트 생성됨
         assert svc.sections and svc.system == "\n\n".join(t for _, t in svc.sections)
 
     def test_tool_bridge_invoke_without_loop(self):
-        from agent_cli.loop import LoopConfig, LoopState, ToolBridge
+        from agent_cli.loop import LoopState, ToolBridge
+        from tests.loopkit import make_config
 
         bridge = ToolBridge(
-            LoopConfig(tools_list=["shell"]), LoopState(), ctx=None, provider=None
+            make_config(tools_list=["shell"]), LoopState(), ctx=None, provider=None
         )
         r = bridge._dispatch_tool_with_hooks("shell", {"command": "echo standalone"})
         assert r.success and "standalone" in r.output
@@ -4724,13 +4727,13 @@ class TestPR3Collaborators:
 
     def _dispatcher(self, tools_list=("shell", "complete")):
         from agent_cli.loop import (
-            LoopConfig,
             LoopState,
             ToolBridge,
             TurnDispatcher,
         )
+        from tests.loopkit import make_config
 
-        cfg = LoopConfig(tools_list=list(tools_list))
+        cfg = make_config(tools_list=list(tools_list))
         st = LoopState(query="q")
         bridge = ToolBridge(cfg, st, ctx=None, provider=None)
         return TurnDispatcher(cfg, st, ctx=None, tools=bridge, recorder=None), st
@@ -4782,9 +4785,10 @@ class TestPR3Collaborators:
         assert d._op_ask("raw", turn, turn.ops[0], None) is _NOT_HANDLED
 
     def test_llm_caller_standalone_interrupt_check(self):
-        from agent_cli.loop import LLMCaller, LoopConfig, LoopState, SystemPromptSvc
+        from agent_cli.loop import LLMCaller, LoopState, SystemPromptSvc
+        from tests.loopkit import make_config
 
-        cfg = LoopConfig()
+        cfg = make_config()
         st = LoopState()
         llm = LLMCaller(
             cfg, st, ctx=None, provider=None, prompt=SystemPromptSvc(cfg, None)

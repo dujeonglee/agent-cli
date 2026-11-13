@@ -170,8 +170,9 @@ class TestBuiltinHooksDir:
         monkeypatch.setattr(
             "agent_cli.paths.project_dir", lambda: tmp_path / ".agent-cli"
         )
-        from agent_cli.loop import LoopConfig, LoopState, ToolBridge
+        from agent_cli.loop import LoopState, ToolBridge
         from agent_cli.runtime import MainLoop
+        from tests.loopkit import make_config
 
         build_hook_runner()
         ports = MainLoop.make_ports(
@@ -181,7 +182,7 @@ class TestBuiltinHooksDir:
             enqueue_user_message=None,
             route_message=None,
         )
-        cfg = LoopConfig(tools_list=["shell"], hook_runner=ports.hook_runner)
+        cfg = make_config(tools_list=["shell"], hook_runner=ports.hook_runner)
         bridge = ToolBridge(cfg, LoopState(), ctx=None, provider=None)
         r = bridge._dispatch_tool_with_hooks("shell", {"command": "echo hi"})
         assert r.success

@@ -260,7 +260,11 @@ class LLMCaller:
         from agent_cli.jobs import get_job_registry
 
         job_reg = get_job_registry()
-        jobs = job_reg.render_tail(self.cfg.owner) if job_reg is not None else ""
+        jobs = (
+            job_reg.render_tail(self.cfg.kind.ports.owner)
+            if job_reg is not None
+            else ""
+        )
         # 정보원 목록 (v10.57.0) — fetch 가 없는 루프(감사자 등)엔 쓸 수 없는 주소다.
         # 파일은 턴마다 읽는다: 🌐 드로어에서 바꾸면 다음 턴부터.
         web = ""
@@ -272,7 +276,7 @@ class LLMCaller:
             compaction_notice=notice,
             notice_memory="memory" in self.cfg.tools_list,
             turn=self.state.turn,
-            max_turns=self.cfg.max_turns,
+            max_turns=self.cfg.kind.max_turns,
             agents=agents,
             memory=memory,
             web_sources=web,
@@ -356,7 +360,7 @@ class LLMCaller:
                 messages=_verbose.context_entries(self.state.messages),
             )
         _debug_log(
-            f"LLM_CALL turn={self.state.turn} skill={self.cfg.skill_name or 'main'} msg_count={len(self.state.messages)}"
+            f"LLM_CALL turn={self.state.turn} skill={self.cfg.kind.skill_name or 'main'} msg_count={len(self.state.messages)}"
         )
 
         # Build streaming callback: stops spinner on first chunk, then streams
@@ -387,8 +391,8 @@ class LLMCaller:
                 spinner_active = False
             render_tool_call_chunk(text)
 
-        if self.cfg.skill_name:
-            render_spinner_start(f"skill:{self.cfg.skill_name}")
+        if self.cfg.kind.skill_name:
+            render_spinner_start(f"skill:{self.cfg.kind.skill_name}")
         else:
             render_spinner_start()
         thinking = bool(self.ctx.thinking) if self.ctx else False
@@ -551,7 +555,7 @@ class LLMCaller:
                     self.state.turn -= 1
                     return _RETRY
             _debug_log(
-                f"LLM call failed: model={self.cfg.model} iter={self.state.turn} skill={self.cfg.skill_name} error={e}"
+                f"LLM call failed: model={self.cfg.model} iter={self.state.turn} skill={self.cfg.kind.skill_name} error={e}"
             )
             # 사람에게 보이는 줄의 연결 오류는 한 줄 분류로 (v10.126.0) — urllib3 객체
             # repr(``<…HTTPConnection object at 0x…>``)를 화면에 내지 않는다. 원문은

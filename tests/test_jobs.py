@@ -201,12 +201,7 @@ class TestTail:
         )
         self_ = SimpleNamespace(
             cfg=SimpleNamespace(
-                agent_registry=None,
                 tools_list=[],
-                questions=None,
-                max_turns=0,
-                depth=1,
-                owner="agent:k",
                 kind=make_kind(ports=make_ports(owner="agent:k"), depth=1),
             ),
             ctx=None,

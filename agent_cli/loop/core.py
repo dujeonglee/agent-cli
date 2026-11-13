@@ -218,33 +218,15 @@ class AgentLoop:
         if kind.agent_name:
             agent_stack = [*agent_stack, kind.agent_name]
 
-        # C1 PR-1: 불변 배선은 LoopConfig 로, 공유 가변 상태는 LoopState 로.
+        # C1 PR-1: 런 시작 때 계산한 것은 LoopConfig 로, 공유 가변 상태는 LoopState 로.
         # 기존 ``self.X`` 표면은 아래 property 브리지가 유지한다 — 메서드
         # 본문/테스트 무변경. PR-2/3 에서 협력 객체가 이 두 객체를 직접
         # 주입받으면 해당 메서드의 브리지 의존이 자연 소멸한다.
         self._config = LoopConfig(
-            owner=ports.owner,
-            binding=binding,
-            depth=kind.depth,
-            max_depth=kind.max_depth,
-            max_turns=kind.max_turns,
+            kind=kind,
             tools_list=tools_list,
-            skill_name=kind.skill_name,
-            skill_args=kind.skill_args,
             skill_stack=skill_stack,
             agent_stack=agent_stack,
-            mcp_manager=ports.mcp_manager,
-            hook_runner=ports.hook_runner,
-            hooks_config=kind.hooks_config,
-            session=kind.session,
-            agent_role=kind.agent_role,
-            graceful_interrupt=kind.graceful_interrupt,
-            compaction_enabled=kind.compaction_enabled,
-            verbose=kind.verbose,
-            agent_registry=ports.agent_registry,
-            message_handler=ports.message_handler,
-            questions=ports.questions,
-            kind=kind,
         )
         # 중단 핸들: 런의 것(main — 펌프가 런마다 새로) > 종류의 것 > 새 Event.
         stop_event = (
@@ -328,15 +310,15 @@ class AgentLoop:
 
     @property
     def depth(self):
-        return self._config.depth
+        return self._config.kind.depth
 
     @property
     def max_depth(self):
-        return self._config.max_depth
+        return self._config.kind.max_depth
 
     @property
     def max_turns(self):
-        return self._config.max_turns
+        return self._config.kind.max_turns
 
     @property
     def tools_list(self):
@@ -344,11 +326,11 @@ class AgentLoop:
 
     @property
     def skill_name(self):
-        return self._config.skill_name
+        return self._config.kind.skill_name
 
     @property
     def skill_args(self):
-        return self._config.skill_args
+        return self._config.kind.skill_args
 
     @property
     def skill_stack(self):
@@ -368,31 +350,31 @@ class AgentLoop:
 
     @property
     def mcp_manager(self):
-        return self._config.mcp_manager
+        return self._config.kind.ports.mcp_manager
 
     @property
     def hook_runner(self):
-        return self._config.hook_runner
+        return self._config.kind.ports.hook_runner
 
     @property
     def hooks_config(self):
-        return self._config.hooks_config
+        return self._config.kind.hooks_config
 
     @property
     def session(self):
-        return self._config.session
+        return self._config.kind.session
 
     @property
     def graceful_interrupt(self):
-        return self._config.graceful_interrupt
+        return self._config.kind.graceful_interrupt
 
     @property
     def compaction_enabled(self):
-        return self._config.compaction_enabled
+        return self._config.kind.compaction_enabled
 
     @property
     def verbose(self):
-        return self._config.verbose
+        return self._config.kind.verbose
 
     @property
     def query(self):
@@ -797,7 +779,7 @@ class AgentLoop:
 
         # ABC 표면 (v8.6.0 승격) — CLI 는 no-op 기본, web 이 override.
         get_renderer().set_run_authors(self.run_authors)
-        registry = self._config.agent_registry
+        registry = self._config.kind.ports.agent_registry
         if registry is not None:
             registry.set_current_run_authors(self.run_authors)
 
@@ -873,14 +855,14 @@ class AgentLoop:
 
         registry = main_registry()
         if registry is not None:
-            registry.run_started(self._config.owner)
+            registry.run_started(self._config.kind.ports.owner)
 
     def _inject_mail(self, reply: dict) -> bool:
         """레지스트리 회신 한 통을 관찰 레코드로 (teammate P1, D2) — LLM 폴링 없이 하니스가
         배달. 레코드는 tool="agent" + source="agent_reply"(tool="" 는 형식-개입 마커라 금지).
         over-cap 회신은 `build_reply_record` 가 디스크 포인터로 치환. 돌려주는 값: 귀속
         승계로 ``run_authors`` 가 바뀌었는가."""
-        registry = self._config.agent_registry
+        registry = self._config.kind.ports.agent_registry
         from agent_cli.subagent.agents_live import build_reply_record, mail_queue_item
 
         # 회신을 기대하는 message (v9.22.0) — main 이 빚진다. 빚을 **먼저** 적는다:

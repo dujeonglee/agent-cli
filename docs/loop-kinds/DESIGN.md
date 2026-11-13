@@ -119,6 +119,7 @@ history·result.md, 관찰 `run_skill` ⑤ 감사 노브 on → 런 뒤 `harness
   `LoopKind` 기본 구현이 포트·깊이·이름에서 답을 유도한다(종전 추측 규칙이 한 곳에). 다섯
   종류는 자기 정책을 명시해 덮어쓴다. 종류 없이 만든 `LoopConfig` 도 `__post_init__` 이
   맨 종류를 세운다(`LoopKind.make_ports` — `LoopPorts` 를 만드는 자리는 여전히 `make_ports` 뿐).
+  (v10.133.0 에서 `__post_init__`·`LoopKind.make_ports` 삭제 — `tests/loopkit.make_config`, §3.4.)
 - 설계와 다른 점: 흡수를 "어디서"(종류)와 "어떻게"(엔진)로 갈랐다 — 큐 항목의 명령 라우팅·
   조종 주입, 회신의 빚·장부·레코드 변환, 받은편지함 항목의 사람 요청 회계는 엔진 상태를
   만지므로 엔진에 남긴다. 종류가 돌려주는 것은 원천의 항목이다.
@@ -169,6 +170,16 @@ history·result.md, 관찰 `run_skill` ⑤ 감사 노브 on → 런 뒤 `harness
   secs)`. `loop_kwargs`·`_bare_kind`·`binding is None` 분기(부품 → 정적 바인딩)는 제품에서
   빠졌다 — 쓰는 쪽은 테스트뿐이었고, 정적 바인딩·맨 종류·방언 폴백(명시 > ctx > 기본)은
   `tests/loopkit.py` 가 만든다. `LoopConfig` 는 이 판에서 22필드 그대로(만드는 자리만 한 곳).
+- **v10.133.0** `LoopConfig` 는 런 시작 때 계산한 것만 든다 — `kind`·`tools_list`(깊이·자원·짝
+  탑재·지연 게이트를 거친 목록)·`skill_stack`·`agent_stack`(들어온 스택 + 자기 이름), 그리고
+  바인딩을 읽는 속성 다섯(`model`·`capabilities`·`dialect`·`provider`·`provider_name` — 저장 안
+  함). 종류의 값을 그대로 옮겨 적던 12필드와 포트에서 꺼내 적던 6필드는 지웠다: 읽는 쪽 73곳이
+  `cfg.kind.depth`·`cfg.kind.ports.hook_runner` 처럼 **종전과 같은 출처**를 읽는다(`cfg.owner`
+  는 종전 `ports.owner` — 다섯 종류 모두 `kind.owner == kind.ports.owner`). 세 값이 남는 이유는
+  "얼려서 지킨다" 가 아니라 한 번 계산한 결과를 둘 자리다 — 종류는 세션 수명(main)이고, 다시
+  계산하면 한 턴 안에서 프롬프트·스키마와 "없는 도구" 판정이 다른 목록을 볼 수 있다.
+  `__post_init__` 의 맨 종류 합성과 그것만 쓰던 `LoopKind.make_ports` 는 `tests/loopkit.make_config`
+  로 갔다. 이제 설정 하나를 더할 때 고칠 곳은 **종류 속성 한 군데**다(종전 여섯 목록·네 파일).
 
 ## 4. 결정 (2026-10-31, 사용자 승인 "D1~D5 추천대로")
 

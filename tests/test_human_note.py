@@ -18,10 +18,11 @@ from pathlib import Path
 import pytest
 
 from agent_cli import render as render_mod
-from agent_cli.loop.state import LoopConfig, LoopState
+from agent_cli.loop.state import LoopState
 from agent_cli.loop.tool_bridge import ToolBridge
 from agent_cli.tools import TOOLS, _confine, human_note
 from agent_cli.tools import shell as shell_mod
+from tests.loopkit import make_config
 
 APPROVE = "[User note when approving: {}]"
 DENY = "[User note when denying: {}]"
@@ -92,7 +93,7 @@ def _answer(monkeypatch, *answers, auto=False) -> _Scripted:
 
 def _bridge() -> ToolBridge:
     return ToolBridge(
-        LoopConfig(tools_list=list(TOOLS.keys())), LoopState(), ctx=None, provider=None
+        make_config(tools_list=list(TOOLS.keys())), LoopState(), ctx=None, provider=None
     )
 
 

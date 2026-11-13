@@ -1033,7 +1033,9 @@ class TestLoopWiring:
         from agent_cli.loop.ledger import Ledger
 
         fake_self = SimpleNamespace(
-            _config=SimpleNamespace(agent_registry=reg),
+            _config=SimpleNamespace(
+                kind=SimpleNamespace(ports=SimpleNamespace(agent_registry=reg))
+            ),
             _state=SimpleNamespace(ledger=Ledger()),
             messages=[],
             ctx=fake_ctx,

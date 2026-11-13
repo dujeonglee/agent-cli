@@ -141,11 +141,12 @@ class TestManagerFold:
 class TestDispatcherIntegration:
     def test_parse_success_folds_prior_intervention(self, tmp_path):
         from agent_cli.dialects import get as get_wf
-        from agent_cli.loop import LoopConfig, LoopState, ToolBridge, TurnDispatcher
+        from agent_cli.loop import LoopState, ToolBridge, TurnDispatcher
+        from tests.loopkit import make_config
 
         wf = get_wf("json_fc")
         ctx = ContextManager(tmp_path / "s", max_context_tokens=100_000)
-        cfg = LoopConfig(
+        cfg = make_config(
             tools_list=["shell", "complete"], binding=make_binding(dialect=wf)
         )
         st = LoopState(query="q")

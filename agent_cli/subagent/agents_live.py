@@ -236,7 +236,7 @@ AGENTS_STATE_VERSION = 2
 # 늘 때마다 배선이 누락됐다(loop 내부 run_skill op 만 배선되고 사용자
 # 슬래시 경로 2곳이 빠져 spawn 이 "main-session only" 거부되던 사고).
 # 권한 경계는 "미지정 vs 명시 None" 구분이 지킨다 — 서브에이전트 루프의
-# dispatch 는 cfg.agent_registry(=None)를 **명시** 전달하므로 슬롯을
+# dispatch 는 포트의 agent_registry(=None)를 **명시** 전달하므로 슬롯을
 # 조회하지 않고 run-only 가 유지된다.
 _MAIN_REGISTRY: AgentRegistry | None = None
 
@@ -558,8 +558,8 @@ class QuestionPort:
     콜러블 셋을 ``LoopConfig``·``AgentLoop.__init__``·``run_loop``·
     ``ResidentLoop`` 에 꿰면 15군데가 된다 —
     객체 하나로 묶는다. **레지스트리 자체는 절대 넘기지 않는다**:
-    ``LoopConfig.agent_registry`` 가 "teammate 안 teammate 금지"의 단일
-    가드(``loop/state.py``)이므로 서브루프에 닿으면 안 된다.
+    포트의 ``agent_registry``(``kind.ports``)가 "teammate 안 teammate 금지"의 단일
+    가드이므로 서브루프에 닿으면 안 된다.
 
     표면은 ``ask``·``reply``·``debts`` 다. main 도 같은 포트를 받는다
     (``key=None``) — 빚을 갚는 `reply` 가 루프와 무관하게 하나이기 때문이다.

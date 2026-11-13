@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from agent_cli.loop.ledger import Ledger
+
+if TYPE_CHECKING:
+    from agent_cli.loop.kind import LoopKind
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
@@ -20,107 +24,56 @@ _RETRY = object()  # overflow retry
 
 @dataclass(frozen=True)
 class LoopConfig:
-    """AgentLoop 의 불변 배선 — ``__init__`` 에서 1회 조립되는 세션-수명 설정.
+    """AgentLoop 이 런 시작 때 **계산한 것**의 자리 (v10.133.0) — 종류(`LoopKind`)가 든 값은
+    여기 복사하지 않는다. 읽는 쪽은 종류에서 직접 읽는다: 설정은 ``cfg.kind.depth``, 포트는
+    ``cfg.kind.ports.hook_runner`` 처럼 **종전과 같은 출처**에서.
 
-    C1(Option 3, PR-1): god-object 의 ~40개 ``self.*`` 중 실측상 "생성 후
-    아무도 재할당하지 않는" 설정군을 한 객체로 격리. PR-2/PR-3 에서 승격되는
-    협력 객체(SystemPromptSvc/ToolBridge/LLMCaller/TurnDispatcher)들은 이
-    객체를 읽기 전용으로 주입받는다 — 각자가 ``self.model`` 류를 직접 헤집는
-    무경계 공유를 구조적으로 차단하는 것이 목적. frozen 이므로 협력자/스레드
-    간 공유 안전. (컨테이너 필드의 내용 불변은 관례로 지킨다 — ``tools_list``
-    등은 ``__init__`` 확정 후 아무도 mutate 하지 않음을 전제.)
+    남은 셋은 런 시작 때의 환경(깊이·스냅샷·브라우저·스킬·모델의 비전 능력)으로 한 번 계산한
+    결과다. 종류는 세션 수명(main)이라 거기 둘 수 없고, 읽을 때마다 다시 계산하면 한 턴 안에서
+    프롬프트·함수 스키마(`llm.py`)와 "없는 도구" 판정(`dispatch.py`)이 다른 목록을 볼 수 있다.
+    frozen 이므로 협력자/스레드 간 공유 안전(컨테이너의 내용 불변은 관례 — ``__init__`` 확정 후
+    아무도 mutate 하지 않는다).
+
+    C1(Option 3, PR-1)의 협력 객체(SystemPromptSvc/ToolBridge/LLMCaller/TurnDispatcher)가 이
+    객체를 읽기 전용으로 주입받는다.
     """
 
-    #: 이 루프의 주소 — ``"main"`` | ``"agent:<key>"`` (``LoopPorts.owner``).
-    #: 모니터 소유자 라우팅이 `RunContext` 를 거쳐 이걸 읽는다.
-    owner: str = "main"
-    #: 세션의 모델 바인딩 (v10.43.0, providers/binding) — model·capabilities·
-    #: dialect·provider 는 아래 속성이 **매번** 여기서 읽는다. 값을 복사해 두지
-    #: 않으므로 `binding.switch()` 가 바꾼 모델은 다음 LLM 호출부터 실린다.
-    binding: object = None
-    depth: int = 0
-    max_depth: int = 2
-    max_turns: int = 0
-    tools_list: list = field(default_factory=list)
-    skill_name: str = ""
-    skill_args: str = ""
-    skill_stack: list = field(default_factory=list)
-    agent_stack: list = field(default_factory=list)
-    mcp_manager: object = None
-    hook_runner: object = None
-    hooks_config: dict | None = None
-    session: object = None
-    agent_role: str = ""
-    graceful_interrupt: bool = False
-    compaction_enabled: bool = True
-    verbose: bool = False
-    # teammate P1: 상주 에이전트 레지스트리 — main 부트스트랩만 주입.
-    # None(서브에이전트/headless)이면 AgentLoop.__init__ 이 teammate 도구를
-    # tools_list 에서 제거한다 (teammate 안 teammate 금지의 단일 가드).
-    agent_registry: object = None
-    # v5.11: 에이전트↔에이전트 메시징 훅 — 상주 서브루프에서만 주입.
-    # 있으면 ``message`` 도구가 이 callable(to, text)->confirmation 으로
-    # 라우팅되고, __init__ 이 message 도구를 tools_list 에 강제 탑재한다.
-    message_handler: object = None
-    # 비동기 ask/answer 의 단일 seam (docs/agent-ask/DESIGN.md §4) —
-    # ``QuestionPort``. 레지스트리가 아니라 포트라 위의 "teammate 안
-    # teammate 금지" 가드는 그대로다. main 도 받는다(답할 수단이 필요).
-    questions: object = None
-    #: 이 루프의 종류 (`loop.kind.LoopKind`, v10.88.0) — 엔진이 묻는다: `wait` 정책,
-    #: 턴 경계 흡수, 프롬프트 윤곽, 꼬리 로스터, 렌더 여부. 엔진(`AgentLoop`)은 늘 종류를
-    #: 받아 여기 싣는다(v10.132.0); 비어 있는 것은 설정을 직접 만든 쪽(아래)뿐이다.
-    kind: object = None
-
-    def __post_init__(self) -> None:
-        # 종류 없이 직접 만든 설정(테스트·임베더의 협력자 단독 생성)에는 맨 종류를 세운다 —
-        # 포트는 이 설정이 든 것으로 합성한다. frozen 이라 object.__setattr__.
-        if self.kind is None:
-            from agent_cli.loop.kind import LoopKind
-
-            k = LoopKind()
-            k.owner = self.owner
-            k.ports = LoopKind.make_ports(
-                self.owner,
-                questions=self.questions,
-                message_handler=self.message_handler,
-                agent_registry=self.agent_registry,
-                mcp_manager=self.mcp_manager,
-                hook_runner=self.hook_runner,
-            )
-            k.depth, k.max_depth, k.max_turns = (
-                self.depth,
-                self.max_depth,
-                self.max_turns,
-            )
-            k.tools = list(self.tools_list) or None
-            k.skill_name, k.skill_args = self.skill_name, self.skill_args
-            k.skill_stack, k.agent_stack = (
-                list(self.skill_stack),
-                list(self.agent_stack),
-            )
-            k.agent_role, k.session = self.agent_role, self.session
-            object.__setattr__(self, "kind", k)
+    #: 이 루프의 종류 (`loop.kind.LoopKind`, v10.88.0) — 정체·설정·포트를 든다. 엔진이 묻는
+    #: 것(`wait` 정책, 턴 경계 흡수, 프롬프트 윤곽, 꼬리 로스터, 렌더 여부)도 여기에.
+    kind: LoopKind
+    #: 게이트(깊이·자원·짝 탑재·지연)를 거친 도구 목록 — 프롬프트·스키마·디스패치가 같은 것을 본다.
+    tools_list: list
+    #: 들어온 스택 + 자기 이름 (재귀 방지).
+    skill_stack: list
+    agent_stack: list
 
     # ── 바인딩을 읽는 속성 — 저장하지 않는다 ──
+    # 세션의 모델 바인딩(v10.43.0, providers/binding)은 종류의 것이다. 값을 복사해 두지 않으므로
+    # `binding.switch()` 가 바꾼 모델은 다음 LLM 호출부터 실린다.
     @property
     def model(self) -> str:
-        return self.binding.model if self.binding is not None else ""
+        b = self.kind.binding
+        return b.model if b is not None else ""
 
     @property
     def capabilities(self):
-        return self.binding.capabilities if self.binding is not None else None
+        b = self.kind.binding
+        return b.capabilities if b is not None else None
 
     @property
     def dialect(self):
-        return self.binding.dialect if self.binding is not None else None
+        b = self.kind.binding
+        return b.dialect if b is not None else None
 
     @property
     def provider(self):
-        return self.binding.provider if self.binding is not None else None
+        b = self.kind.binding
+        return b.provider if b is not None else None
 
     @property
     def provider_name(self) -> str:
-        return self.binding.provider_name if self.binding is not None else "openai"
+        b = self.kind.binding
+        return b.provider_name if b is not None else "openai"
 
 
 @dataclass

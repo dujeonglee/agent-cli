@@ -68,8 +68,8 @@ class PromptProfile:
 class Caller:
     """중첩 루프(one-shot·스킬)가 **호출자**에게서 읽는 것.
 
-    루프 안에서 부르면 ``from_loop(cfg, state, ctx)`` (돌고 있는 루프의 ``LoopConfig`` 가 곧
-    호출자의 정체), 루프 밖(``@agent``·``/skill`` 명령)에서 부르면 ``main_session(...)`` —
+    루프 안에서 부르면 ``from_loop(cfg, state, ctx)`` (돌고 있는 루프의 종류 ``cfg.kind`` 와 그
+    루프가 계산한 도구 목록·스택이 곧 호출자의 정체), 루프 밖(``@agent``·``/skill`` 명령)에서 부르면 ``main_session(...)`` —
     두 길이 같은 모양이라 중첩 종류는 호출자가 어디인지 모른다. 기본값이 없다: 하나라도
     빠지면 생성 시 ``TypeError`` — 주소 상속이 조용히 ``"main"`` 으로 새던 사고(docs/wiring)
     의 재발 방지.
@@ -98,23 +98,24 @@ class Caller:
 
     @classmethod
     def from_loop(cls, cfg, state, ctx) -> Caller:
-        """돌고 있는 루프가 호출자다 (`ToolBridge` 의 `agent`·`TurnDispatcher` 의 `run_skill`)."""
+        """돌고 있는 루프가 호출자다 (`ToolBridge` 의 `agent`·`TurnDispatcher` 의 `run_skill`).
+        정체·설정은 종류에서, 포트는 ``kind.ports`` 에서, 도구·스택은 루프가 계산한 것(cfg)."""
         return cls(
-            owner=cfg.owner,
-            depth=cfg.depth,
-            max_depth=cfg.max_depth,
-            max_turns=cfg.max_turns,
-            binding=cfg.binding,
+            owner=cfg.kind.ports.owner,
+            depth=cfg.kind.depth,
+            max_depth=cfg.kind.max_depth,
+            max_turns=cfg.kind.max_turns,
+            binding=cfg.kind.binding,
             tools=list(cfg.tools_list),
-            hooks_config=cfg.hooks_config,
-            hook_runner=cfg.hook_runner,
-            mcp_manager=cfg.mcp_manager,
-            agent_registry=cfg.agent_registry,
-            session=cfg.session,
-            compaction_enabled=cfg.compaction_enabled,
-            graceful_interrupt=cfg.graceful_interrupt,
-            verbose=cfg.verbose,
-            agent_role=cfg.agent_role,
+            hooks_config=cfg.kind.hooks_config,
+            hook_runner=cfg.kind.ports.hook_runner,
+            mcp_manager=cfg.kind.ports.mcp_manager,
+            agent_registry=cfg.kind.ports.agent_registry,
+            session=cfg.kind.session,
+            compaction_enabled=cfg.kind.compaction_enabled,
+            graceful_interrupt=cfg.kind.graceful_interrupt,
+            verbose=cfg.kind.verbose,
+            agent_role=cfg.kind.agent_role,
             skill_stack=list(cfg.skill_stack),
             agent_stack=list(cfg.agent_stack),
             ctx=ctx,
@@ -206,27 +207,6 @@ class LoopKind:
     #: ``(kind, start, ctx) -> (ToolResult, secs)`` — ``None`` 이면 `run_loop`.
     engine: Callable | None = None
     ctx: Any = None
-
-    @staticmethod
-    def make_ports(owner: str, **wired) -> LoopPorts:
-        """맨 종류의 포트 — 준 것만 연결, 나머지는 미연결 (`LoopConfig` 를 종류 없이 만든 쪽).
-        `LoopPorts` 를 만드는 자리는 종류의 `make_ports` 뿐이다(테스트가 AST 로 고정)."""
-        from agent_cli.loop.ports import LoopPorts
-
-        base = {
-            "questions": None,
-            "message_handler": None,
-            "agent_registry": None,
-            "mcp_manager": None,
-            "hook_runner": None,
-            "route_message": None,
-            "dequeue_user_message": None,
-            "enqueue_user_message": None,
-            "absorb_inbox": None,
-            "peer_roster": None,
-        }
-        base.update(wired)
-        return LoopPorts(owner=owner, **base)
 
     # ── 템플릿 ──
     def start(self, *args, **kwargs) -> Start:
