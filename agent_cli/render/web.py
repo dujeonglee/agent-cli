@@ -50,6 +50,7 @@ from typing import Any, ClassVar
 from agent_cli.fsio import atomic_write_json
 from agent_cli.render.base import ConfirmOption, Renderer
 from agent_cli.render.web_hub import EventHub, _JsonReady
+from agent_cli.token_estimator import estimate_tokens
 
 # 모델 시점(v10.6.0): history 레코드 하나를 그리는 이벤트 — ``note_record`` 의
 # ``hidx`` 가 이들에만 붙는다.
@@ -1898,8 +1899,6 @@ class WebRenderer(Renderer):
         ``open_items`` (v10.63.0): ids in this call's Open Items — kept so
         :meth:`note_items_closed_after` can mark what closed after the call.
         """
-        from agent_cli.context.token_estimator import estimate_tokens
-
         scope = self._current_prompt_scope(threading.get_ident())
         snapshot = {
             "turn": turn,
@@ -2157,7 +2156,7 @@ class WebRenderer(Renderer):
         if now - st.get(f"last_{kind}", 0.0) < self._TICK_THROTTLE_S:
             return
         st[f"last_{kind}"] = now
-        # chars/4 — estimate_tokens 와 동일 관례 (import cycle 회피)
+        # chars/4 — `estimate_tokens` 와 같은 단위(여기는 문자열이 아니라 글자 수를 들고 있다)
         self._emit(f"{kind}_tick", {"tokens": total // 4}, persistent=False)
 
     def stream_chunk(self, text: str) -> None:

@@ -39,6 +39,10 @@ COLD_START_ENTRY_POINTS = [
     # 먼저 불려도 끝까지 import 되어야 한다.
     "agent_cli.providers.capabilities",
     "agent_cli.images",
+    "agent_cli.token_estimator",
+    "agent_cli.render.minimal",
+    "agent_cli.render.web",
+    "agent_cli.web_sources",
 ]
 
 

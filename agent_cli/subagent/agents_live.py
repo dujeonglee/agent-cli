@@ -52,6 +52,7 @@ from agent_cli.constants import (
 )
 from agent_cli.context.session import AGENTS_DIR
 from agent_cli.loop.kind import LoopKindError
+from agent_cli.token_estimator import estimate_tokens
 from agent_cli.tools.result import ToolResult
 
 if TYPE_CHECKING:
@@ -337,8 +338,6 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
     자동 배달됨을 같이 안내(status 폴링 넛지와 정합 — 이 줄이 폴링을
     유발하면 안 됨). died/peer 레코드에는 붙이지 않는다.
     """
-    from agent_cli.context.token_estimator import estimate_tokens
-
     key = reply.get("key", "")
     label = format_agent_label(key, reply.get("profile", ""), reply.get("name", ""))
     mid = str(reply.get("item_id") or "")

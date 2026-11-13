@@ -40,7 +40,6 @@ CYCLE_AVOIDING_LAZY: set[tuple[str, str]] = {
     ("dialects.base", "tools.registry"),
     # ③ 낱개.
     ("prompts.system_prompt", "skills"),  # load_skills
-    ("render.minimal", "context"),  # estimate_tokens
     ("render.web", "web"),  # write_status_file
     ("tools.tool_help", "tools.registry"),  # effective_tool_names
 }

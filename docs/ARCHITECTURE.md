@@ -70,6 +70,7 @@ agent_cli/
 ├── resource_loader.py       여러 경로에서 frontmatter 있는 .md 를 우선순위로 찾는 `ResourceLoader` (스킬·에이전트·지시사항)
 ├── extras.py                선택 의존성(extra) 설치 안내 — 빠진 패키지 이름을 설치 메타데이터에서 읽어 직접 댄다
 ├── net_errors.py            `requests` 예외 사슬 순회와 TLS 사유 한 줄 — 도구 층·공급자 층이 같이 쓴다(표준 라이브러리만 import)
+├── token_estimator.py       토큰 추정(chars/4)과 `utf8_len` — import 없는 잎
 ├── input_queue.py           세션 입력 큐 `InputQueue` — run 과 web 이 공유하는 펌프의 큐(사용자 입력·깨우기 항목)
 ├── input_history.py         readline 입력 히스토리 — `ask` 답과 설정 마법사의 터미널 입력
 ├── item_ids.py              열린 항목 id `<접두>-<토큰>` 의 할당·해석 — 접두가 닫는 법을 말한다 (docs/ledger/DESIGN.md)
@@ -136,7 +137,7 @@ agent_cli/
 │   ├── openai.py            `OpenAIProvider` — `/v1/chat/completions` 호환 서버(vLLM·LM Studio·omlx)
 │   └── anthropic.py         `AnthropicProvider` — Anthropic Messages API
 ├── context/                 컨텍스트·세션 영속화 (docs/context-compaction/DESIGN.md)
-│   ├── __init__.py          `ContextManager`·`estimate_tokens`·`is_context_overflow` 재수출
+│   ├── __init__.py          `ContextManager`·`is_context_overflow` 재수출
 │   ├── manager.py           `ContextManager` — history.jsonl·인메모리 캐시·예산 압축·서버 실측 reconcile
 │   ├── render.py            record → LLM 메시지 렌더, 예산 추정, 압축 요약 입력 (무상태)
 │   ├── records.py           디스크 레코드 모양의 단일 리더·분류기(ops·개입 종류)
@@ -144,7 +145,6 @@ agent_cli/
 │   ├── session.py           세션 디렉터리 배치·메타 `session.jsonl`·목록·resume
 │   ├── session_lock.py      한 세션 한 프로세스 — `session.lock` flock
 │   ├── overflow.py          프로바이더별 컨텍스트 초과 감지·`ContextOverflowError`
-│   ├── token_estimator.py   토큰 추정(chars/4)과 `utf8_len`
 │   └── _file_extract.py     축출된 메시지에서 도구가 만진 파일 목록 추출(`Tool.touched_paths` 위임)
 ├── prompts/                 모델이 읽는 글 — 시스템 프롬프트·꼬리·압축 지침 (docs/prompt-notation/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
@@ -342,11 +342,11 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 |----|------|
 | 6 | `runtime` · `subagent/` · `skills/` · `harness/` |
 | 5 | `loop/` · `__main__` |
-| 4 | `main` · `recovery/` · `mcp/` · `browser` |
+| 4 | `main` · `recovery/` · `mcp/` |
 | 3 | `context/` · `prompts/` · `providers/` · `tools/` (한 묶음) · `web/` |
 | 2 | `render/` · `pump` · `setup` |
-| 1 | `config` · `dialects/` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` |
-| 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `web_sources` · `agent_icon` · `agents/` |
+| 1 | `config` · `dialects/` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` |
+| 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `agents/` |
 
 `context/`·`prompts/`·`providers/`·`tools/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).
 그래서 한 층의 한 묶음으로 적는다. `main` 은 명령 함수 안에서 지연 import 하는 것이 많아(`runtime`·`loop/` 등) 층이 낮게 나온다.
@@ -363,7 +363,6 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
     `loop.skill_invoke` → `skills`(`load_skills`·`SkillLoop`).
   - **아래층이 도구 목록을 읽는다** — `context._file_extract`·`context.render`·`dialects.base` → `tools`(`TOOLS`).
   - **낱개** — `prompts.system_prompt` → `skills`(`load_skills`),
-    `render.minimal` → `context`(`estimate_tokens`),
     `render.web` → `web`(`write_status_file`), `tools.tool_help` → `tools.registry`(`effective_tool_names`).
 - 그 밖의 지연 import 는 순환과 무관하고 가드하지 않는다. 출발 모듈로는 `main`·`runtime`·`prompts.inventory` 에 가장 많다.
   이유는 자리마다 다르다 — 예컨대 `main` 의 `web` 명령은 `agent_cli.web.server`(fastapi 선택 의존성)를 명령 안에서 import 해,

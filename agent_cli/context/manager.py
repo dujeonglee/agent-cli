@@ -52,7 +52,6 @@ from agent_cli.context.render import (
     _to_summary_text,
     render_history_message,
 )
-from agent_cli.context.token_estimator import estimate_tokens, utf8_len
 from agent_cli.dialects import get as _get_dialect
 from agent_cli.prompts.compaction import boundary_instruction, looks_like_summary
 from agent_cli.render import (
@@ -60,6 +59,7 @@ from agent_cli.render import (
     render_compaction_progress,
     render_context_view,
 )
+from agent_cli.token_estimator import estimate_tokens, utf8_len
 
 
 def _current_scope_id() -> str:

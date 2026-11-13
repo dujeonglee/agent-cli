@@ -15,6 +15,7 @@ from rich.text import Text
 
 from agent_cli.images import is_placeholder_line
 from agent_cli.render.base import ConfirmOption, Renderer
+from agent_cli.token_estimator import estimate_tokens
 
 _MUTED = "grey46"
 
@@ -738,11 +739,6 @@ class MinimalRenderer(Renderer):
             self._erase_reflowed_marquee()
             prefix = f"{self._prefix}  " if self._depth > 0 else "  "
             frame = _TALK_FRAMES[self._stream_chunks % len(_TALK_FRAMES)]
-            # estimate_tokens (chars/4) lazily — render→context→manager→render is
-            # a load-time import cycle, so this can't be a top-level import (same
-            # pattern as web.py). Single source of the chars/4 unit.
-            from agent_cli.context.token_estimator import estimate_tokens
-
             # v10.70.0: 앞 숫자는 세 채널(본문·사고·호출)의 합 = "생성 중" 의 크기,
             # 괄호는 0 이 아닌 사고·호출만. 전부 본문이면 괄호가 없다(종전 모양).
             think = estimate_tokens(self._think_buf) if self._think_buf else 0

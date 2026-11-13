@@ -14,7 +14,6 @@ from agent_cli.constants import (
 )
 from agent_cli.context.overflow import classify_overflow
 from agent_cli.context.render import request_bytes
-from agent_cli.context.token_estimator import utf8_len
 from agent_cli.loop.prompt import SystemPromptSvc
 
 # Max shrink-and-retry attempts per turn when the server rejects the
@@ -37,6 +36,7 @@ from agent_cli.render import (
     render_thinking_chunk,
     render_tool_call_chunk,
 )
+from agent_cli.token_estimator import utf8_len
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 

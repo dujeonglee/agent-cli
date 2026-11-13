@@ -1,6 +1,6 @@
-"""Tests for context/token_estimator."""
+"""Tests for token_estimator."""
 
-from agent_cli.context.token_estimator import estimate_tokens
+from agent_cli.token_estimator import estimate_tokens
 
 
 class TestEstimateTokens:

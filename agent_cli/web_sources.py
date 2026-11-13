@@ -24,6 +24,8 @@ import tempfile
 from functools import lru_cache
 from pathlib import Path
 
+from agent_cli.token_estimator import estimate_tokens
+
 FILE_NAME = "web-sources.json"
 BLOCK_HEADER = "## Web Sources"
 _INDENT = " " * 10  # "  " + 그룹 칸 7 + " "
@@ -75,8 +77,6 @@ def entries(path: Path | None = None) -> list[dict]:
     """기본 + 추가 항목, 그룹 순서대로 — ``{id, group, text, enabled, builtin, tokens}``.
 
     그룹 순서는 기본 목록의 순서, 새 그룹은 처음 나온 순서로 뒤에."""
-    from agent_cli.context.token_estimator import estimate_tokens
-
     ov = read_overrides(path)
     off = set(ov["disabled"])
     builtin = {s["id"] for s in _defaults()["sources"]}

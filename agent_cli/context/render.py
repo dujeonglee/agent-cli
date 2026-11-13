@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 
 from agent_cli import images as _images
-from agent_cli.context.token_estimator import estimate_tokens, utf8_len
+from agent_cli.token_estimator import estimate_tokens, utf8_len
 
 # ── Defaults / constants ─────────────────────────────────
 DEFAULT_TOKEN_BUDGET = 100_000
