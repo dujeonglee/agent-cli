@@ -122,3 +122,6 @@ def test_cli_help_has_no_korean(path, tmp_path, monkeypatch):
     assert "--help" in plain
     hits = [ln.strip() for ln in plain.splitlines() if HANGUL.search(ln)]
     assert not hits, f"agent-cli {' '.join(path)} --help: " + "; ".join(hits[:5])
+    # 프런트엔드가 없던 때의 문단("Phase A scope … Phase B")이 web --help 에 남아 있었다.
+    flat = " ".join(plain.split())
+    assert "Phase A" not in flat and "Phase B" not in flat, flat
