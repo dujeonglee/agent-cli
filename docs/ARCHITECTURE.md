@@ -306,7 +306,7 @@ agent_cli/
             ├── jobs.js          🧵 백그라운드 작업 칩과 ■ 멈춤
             ├── channels.js      채널·트레이 상태, 채널 필터·점프 — 순환 묶음의 진입점
             ├── timeline.js      카드 시각, 접히는 그룹, 타임라인 추가, `scope_*` 배선
-            ├── frames.js        모델 시점(`ctx_view`)과 틀(맨 위 카드·맨 아래 띠)
+            ├── frames.js        모델 시점(`ctx_view`)과 틀(맨 위 카드·맨 아래 띠 — 채널 것은 `#ctx-head`·`#ctx-tail` 고정 자리)
             ├── progress.js      스트림 무진전 표시와 생성 중 표시
             ├── thumbs.js        사용자 말풍선과 이미지 썸네일 줄
             ├── cards.js         한 줄 리듬 `makeRow`·도구 칩·스텝 카드

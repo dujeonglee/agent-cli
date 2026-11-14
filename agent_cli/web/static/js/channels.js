@@ -267,6 +267,14 @@ export function applyChannelFilter(one) {
   });
 }
 
+// 지금 채널에 맞춰 화면을 맞춘다 — 타임라인 필터와 대화 밖 고정 자리(맨 위 카드·
+// 꼬리 띠·예산 줄). 채널 전환(ovSetChannel)과 보던 채널이 사라져 main 으로 되돌릴 때
+// (runs.js ovSyncChannels) 둘 다 이것을 부른다.
+export function syncChannelView() {
+  applyChannelFilter();
+  frameShowChannel(ovActiveChannel);
+}
+
 // 채널 전환. 표시(필터) · 입력 라우팅 · 칩 활성이 한 지점에서 움직인다.
 //
 // **전환하면 그 대화의 맨 아래로 간다.** 필터가 노드를 감추고 드러내면
@@ -278,8 +286,7 @@ export function applyChannelFilter(one) {
 function ovSetChannel(key) {
   ovActiveChannel = key || "main";
   ovSyncChannels();
-  applyChannelFilter();
-  frameShowChannel(ovActiveChannel);
+  syncChannelView();
   ovApplyChannelInput();
   pin();
 }

@@ -102,7 +102,7 @@ def _open(page, stack):
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(stack.url)
-    page.wait_for_selector("#messages > .ctx-top .ctx-bar", timeout=8000)
+    page.wait_for_selector("#ctx-head > .ctx-top .ctx-bar", timeout=8000)
     page.wait_for_function(
         "() => /turn \\d+\\/30/.test(document.querySelector('#ctx-tail .ctx-bar')"
         "?.textContent || '')",
@@ -118,12 +118,16 @@ def test_frame_stands_where_the_drawer_was(stack, page):
         """() => ({
             drawer: !!document.querySelector('#inspector'),
             button: !!document.querySelector('#insp-main-btn, .task-inspect'),
-            first: document.querySelector('#messages').firstElementChild.className,
-            top: document.querySelector('#messages > .ctx-top .ctx-bar').textContent,
+            first: document.querySelector('#ctx-head').firstElementChild.className,
+            // 자리: Context 줄 → Head → 대화 (대화 밖 고정)
+            order: [...document.body.children].map(e => e.id).filter(
+                id => ['ctx-budget', 'ctx-head', 'messages'].includes(id)),
+            inMessages: document.querySelectorAll('#messages .ctx-top').length,
+            top: document.querySelector('#ctx-head > .ctx-top .ctx-bar').textContent,
             tail: document.querySelector('#ctx-tail .ctx-bar').textContent,
             titles: [...document.querySelectorAll(
-                '#messages > .ctx-top .ctx-title, #ctx-tail .ctx-title')].map(e => e.textContent),
-            tips: [document.querySelector('#messages > .ctx-top .ctx-bar').title,
+                '#ctx-head > .ctx-top .ctx-title, #ctx-tail .ctx-title')].map(e => e.textContent),
+            tips: [document.querySelector('#ctx-head > .ctx-top .ctx-bar').title,
                    document.querySelector('#ctx-tail .ctx-bar').title],
             budgetLabel: document.querySelector('#ctx-budget .bl span').textContent,
             budget: document.querySelector('#ctx-budget').hidden,
@@ -132,6 +136,8 @@ def test_frame_stands_where_the_drawer_was(stack, page):
     )
     assert facts["drawer"] is False and facts["button"] is False
     assert facts["first"].startswith("ctx-top")
+    assert facts["order"] == ["ctx-budget", "ctx-head", "messages"]
+    assert facts["inMessages"] == 0
     assert facts["titles"] == ["Head", "Tail"] and facts["budgetLabel"] == "Context"
     assert (
         "system prompt" in facts["tips"][0] and "every model call" in facts["tips"][1]
@@ -149,14 +155,14 @@ def test_frame_stands_where_the_drawer_was(stack, page):
 def test_expanding_shows_what_the_model_received(stack, page):
     _seed_main(stack)
     _open(page, stack)
-    page.click("#messages > .ctx-top .ctx-bar")
+    page.click("#ctx-head > .ctx-top .ctx-bar")
     page.click("#ctx-tail .ctx-bar")
     opened = page.evaluate(
         """() => ({
-            sys: [...document.querySelectorAll('#messages > .ctx-top .insp-system .insp-name')]
+            sys: [...document.querySelectorAll('#ctx-head > .ctx-top .insp-system .insp-name')]
                    .map(e => e.firstChild.textContent),
-            grammar: !!document.querySelector('#messages > .ctx-top .insp-grammar'),
-            summary: document.querySelector('#messages > .ctx-top .ctx-summary')?.textContent,
+            grammar: !!document.querySelector('#ctx-head > .ctx-top .insp-grammar'),
+            summary: document.querySelector('#ctx-head > .ctx-top .ctx-summary')?.textContent,
             tailSecs: document.querySelectorAll('#ctx-tail .insp-tail').length,
             diffIns: document.querySelectorAll('#ctx-tail .insp-diff .ins').length,
         })"""
@@ -166,7 +172,7 @@ def test_expanding_shows_what_the_model_received(stack, page):
     assert "gomoku.html 리뷰를 요청했다" in opened["summary"]
     assert opened["tailSecs"] == 2 and opened["diffIns"] == 2
     # 다음 턴이 와도 펼친 상태와 사용자가 연 섹션은 그대로다
-    page.click("#messages > .ctx-top .insp-system summary")
+    page.click("#ctx-head > .ctx-top .insp-system summary")
     stack.renderer.note_system_prompt(
         _SECTIONS, 6, grammar=(False, "root ::= x"), tail=_tail(6, "\n2. bar")
     )
@@ -177,8 +183,8 @@ def test_expanding_shows_what_the_model_received(stack, page):
     )
     kept = page.evaluate(
         """() => ({
-            topOpen: !!document.querySelector('#messages > .ctx-top .ctx-body'),
-            secOpen: document.querySelector('#messages > .ctx-top .insp-system').open,
+            topOpen: !!document.querySelector('#ctx-head > .ctx-top .ctx-body'),
+            secOpen: document.querySelector('#ctx-head > .ctx-top .insp-system').open,
         })"""
     )
     assert kept == {"topOpen": True, "secOpen": True}
@@ -220,7 +226,7 @@ def test_no_group_without_compaction(stack, page):
         )
         == 0
     )
-    assert "Compaction summary" not in page.inner_text("#messages > .ctx-top .ctx-bar")
+    assert "Compaction summary" not in page.inner_text("#ctx-head > .ctx-top .ctx-bar")
 
 
 def test_inline_card_has_the_same_three_parts(stack, page):
@@ -279,7 +285,7 @@ def test_ended_inline_scope_view_stays_in_its_card(stack, page):
         )
         == 3
     )
-    assert "Compaction summary" in page.inner_text("#messages > .ctx-top .ctx-bar")
+    assert "Compaction summary" in page.inner_text("#ctx-head > .ctx-top .ctx-bar")
 
 
 class _CtxAt(_Ctx):
@@ -384,6 +390,118 @@ def test_copy_all_keeps_the_summary_and_folded_cards(stack, page):
     md = page.evaluate("() => window.__timelineMarkdown()")
     assert md.startswith("> ⊙ **Compaction summary** · turns 1–2")
     assert "gomoku.html 을 리뷰해줘" in md  # 접힌 카드도 대화의 일부다
+
+
+def test_copy_all_matches_the_head_at_the_front_of_the_timeline(stack, page):
+    """Head 가 대화 밖(#ctx-head)으로 갔어도 대화 복사는 Head 가 대화 맨 앞에 있던
+    때와 바이트로 같다 — 옛 배치(채널 Head 들을 #messages 맨 앞에)를 페이지 안에서
+    되살려 같은 함수로 다시 뽑아 비교한다(v10.136.3)."""
+    _seed_main(stack)
+    _open(page, stack)
+    md = page.evaluate(
+        """() => {
+            const now = window.__timelineMarkdown();
+            const msgs = document.querySelector('#messages');
+            [...document.querySelectorAll('#ctx-head > .ctx-top')].reverse()
+                .forEach(t => msgs.insertBefore(t, msgs.firstChild));
+            return [now, window.__timelineMarkdown()];
+        }"""
+    )
+    assert md[0].startswith("> ⊙ **Compaction summary**")
+    assert md[0] == md[1]
+
+
+def _scroll_history(n: int) -> list[dict]:
+    out = []
+    for i in range(n):
+        out.append(
+            {"role": "user", "content": f"질문 {i}", "ts": "2026-01-15T10:00:00"}
+        )
+        out.append(
+            {
+                "role": "assistant",
+                "content": f"답 {i}\n\n" + "본문 줄\n" * 6,
+                "ts": "2026-01-15T10:00:01",
+            }
+        )
+    return out
+
+
+def test_head_stays_put_while_the_conversation_scrolls(stack, page):
+    """Head 는 Context 줄 바로 아래 고정 — 대화를 맨 위·맨 아래로 굴려도 같은 자리에
+    보이고, 펼친 본문은 높이 상한 안이라 대화 자리를 다 먹지 않는다."""
+    r = stack.renderer
+    stack.emit_ready()
+    r.replay_from_history(_Ctx(_scroll_history(30)))
+    r.note_system_prompt(_SECTIONS, 4, grammar=(False, "root ::= x"), tail=_tail(4))
+    errors = _open(page, stack)
+    where = """() => {
+        const m = document.querySelector('#messages');
+        const h = document.querySelector('#ctx-head > .ctx-top').getBoundingClientRect();
+        const b = document.querySelector('#ctx-budget').getBoundingClientRect();
+        return {top: Math.round(h.top), visible: h.bottom <= innerHeight && h.top >= 0,
+                belowBudget: h.top >= b.bottom - 1, scroll: m.scrollTop,
+                scrollable: m.scrollHeight > m.clientHeight + 100,
+                msgTop: Math.round(m.getBoundingClientRect().top), headBottom: h.bottom};
+    }"""
+    page.evaluate("() => { document.querySelector('#messages').scrollTop = 0; }")
+    at_top = page.evaluate(where)
+    page.evaluate(
+        "() => { const m = document.querySelector('#messages'); m.scrollTop = m.scrollHeight; }"
+    )
+    at_end = page.evaluate(where)
+    assert at_top["scrollable"] and at_end["scroll"] > 0
+    assert at_top["visible"] and at_end["visible"] and at_end["belowBudget"]
+    assert at_top["top"] == at_end["top"]
+    assert at_end["msgTop"] >= at_end["headBottom"] - 1  # 대화는 Head 아래에서 시작
+    page.click("#ctx-head > .ctx-top .ctx-bar")
+    body = page.evaluate(
+        """() => ({h: document.querySelector('#ctx-head .ctx-body').getBoundingClientRect().height,
+                   m: document.querySelector('#messages').clientHeight})"""
+    )
+    assert body["h"] <= 0.38 * 750 + 1 and body["m"] > 100
+    assert errors == []
+
+
+def test_head_follows_the_channel(stack, page):
+    """채널을 바꾸면 Head 도 그 채널의 것으로 바뀐다(Tail 과 같은 방식) — 숨어 있던
+    Head 는 보이는 순간 가져온다(IntersectionObserver)."""
+    key = "agt-res1"
+    _seed_main(stack)
+    r = stack.renderer
+    r.agent_roster([{"key": key, "name": "sprites", "profile": "p", "state": "idle"}])
+
+    def body():
+        r.begin_prompt_scope(key, label="agent:sprites")
+        r.note_system_prompt(
+            [("Role", "agent role"), ("Rules", "be brief")],
+            3,
+            tail=[("Session State (per-turn tail)", "turn 3/20")],
+        )
+
+    t = threading.Thread(target=body)
+    t.start()
+    t.join()
+    errors = _open(page, stack)
+    heads = """() => [...document.querySelectorAll('#ctx-head > .ctx-top')]
+        .filter(e => !e.hidden).map(e => e.dataset.ch + ':' +
+            e.querySelector('.ctx-bar').textContent)"""
+    shown = page.evaluate(heads)
+    assert len(shown) == 1 and shown[0].startswith("main:")
+    page.locator(f'.ov-ch[data-key="{key}"]').click()
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('#ctx-head > .ctx-top')].some(e => !e.hidden"
+        " && e.dataset.ch === 'agt-res1' && /2 system prompt sections/.test(e.textContent))",
+        timeout=8000,
+    )
+    shown = page.evaluate(heads)
+    assert len(shown) == 1 and shown[0].startswith(key + ":")
+    page.locator('.ov-ch[data-key="main"]').click()
+    shown = page.evaluate(heads)
+    assert len(shown) == 1 and "3 system prompt sections" in shown[0]
+    md = page.evaluate("() => window.__timelineMarkdown()")
+    assert md.startswith("> ⊙ **Compaction summary**")
+    assert errors == []
 
 
 def _main_calls_one_shot_agent(stack):

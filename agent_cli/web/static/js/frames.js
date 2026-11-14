@@ -29,6 +29,7 @@ const ctxFoldOpen = {}; // viewKey → "컨텍스트 밖 대화" 묶음을 펼�
 const ctxFoldRows = {}; // viewKey → 묶음 머리 줄
 const ctxApplyTimers = {};
 export const frames = {}; // viewKey → 틀 {key, scope, channel, top, tail, body, data, …}
+const $ctxHead = document.getElementById("ctx-head");
 const $ctxTail = document.getElementById("ctx-tail");
 const $ctxBudget = document.getElementById("ctx-budget");
 
@@ -202,15 +203,16 @@ function frameMake(key, scope, channel) {
   if (!frameSeen) frameLoad(f);
   return f;
 }
-/** 채널(main / 상주 에이전트)의 틀 — 맨 위 카드는 타임라인 맨 앞, 띠는 입력창 위. */
+/** 채널(main / 상주 에이전트)의 틀 — 맨 위 카드는 Context 줄 아래(#ctx-head), 띠는
+ * 입력창 위(#ctx-tail). 둘 다 대화 밖 고정 자리라 대화만 스크롤되고, 지금 채널의
+ * 것만 보인다(`frameShowChannel`). */
 function frameForChannel(key) {
   if (frames[key]) return frames[key];
   const f = frameMake(key, key === "main" ? "" : key, true);
   f.top.dataset.ch = key;
-  $messages.insertBefore(f.top, $messages.firstChild);
-  applyChannelFilter(f.top);
+  if ($ctxHead) $ctxHead.appendChild(f.top);
   if ($ctxTail) $ctxTail.appendChild(f.tail);
-  f.tail.hidden = key !== ovActiveChannel;
+  f.top.hidden = f.tail.hidden = key !== ovActiveChannel;
   return f;
 }
 /** 인라인 카드의 틀 — 맨 위 카드는 머리 바로 아래, 띠는 몸통 바로 아래. */
@@ -222,11 +224,11 @@ export function frameForCard(taskId, header, body) {
   body.insertAdjacentElement("afterend", f.tail);
   return f;
 }
-/** 채널 전환 — 띠와 예산 줄은 지금 채널의 것만 보인다. */
+/** 채널 전환 — 맨 위 카드·띠·예산 줄은 지금 채널의 것만 보인다. */
 export function frameShowChannel(key) {
   frameForChannel(key);
   Object.keys(frames).forEach(function (k) {
-    if (frames[k].channel) frames[k].tail.hidden = k !== key;
+    if (frames[k].channel) frames[k].top.hidden = frames[k].tail.hidden = k !== key;
   });
   frameRenderBudget(frames[key]);
 }
