@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import time
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from agent_cli.constants import format_duration, harness_mail_tool, is_private_owner
 from agent_cli.jobs import _short
@@ -20,6 +20,9 @@ from agent_cli.session_slots import (
     get_monitor_registry,
     get_schedule_registry,
 )
+
+if TYPE_CHECKING:
+    from agent_cli.subagent.agents_live import AgentRegistry
 
 #: 예약의 깨울 것 id — 중간 깨우기의 대상 집합에서는 뺀다 (`wake_source_ids`).
 _SCHEDULE_ID = "schedule"
@@ -247,6 +250,72 @@ def _private_inbox(owner: str):
         return [mail_record(m) for m in reg.take_mail(owner)]
 
     return absorb
+
+
+class Mailbox:
+    """주소 하나에 묶인 에이전트 레지스트리의 좁은 창 — 루프 포트 ``mailbox`` (v10.133.27).
+
+    엔진이 우편 일(깨울 것 판정·도착 메일·체크인 타이머·제자리 기다림·메일함 버리기·
+    받은편지함 흡수)을 할 때 쓰는 것은 이것뿐이다. 레지스트리 전체(`agent_registry` 포트)는
+    **권한**이다 — 팀원을 만들 수 있는 루프(main)에만 값이 있다. 우편은 모든 루프에 필요하다.
+
+    ``registry`` 는 None 일 수 있다(레지스트리 없는 세션) — 그때 각 메서드는 레지스트리가 없을
+    때 엔진이 하던 값을 돌려준다(0·[]·None·"nothing"·아무것도 안 함). 그래서 포트 값은 언제나
+    Mailbox 다: 미연결이 아니라 "연결됐고 저쪽에 아무도 없음". 종류가 포트를 만들 때 한 번
+    정해진다. ``take`` 는 턴 경계에 흡수할 받은편지함 — 있는 루프(상주·private)만 준다."""
+
+    def __init__(
+        self, registry: AgentRegistry | None, owner: str, *, take=None
+    ) -> None:
+        self._registry = registry
+        self.owner = owner
+        self._take = take
+
+    @property
+    def has_inbox(self) -> bool:
+        """턴 경계에 흡수할 받은편지함이 있는가."""
+        return self._take is not None
+
+    def take(self) -> list:
+        """받은편지함을 비워 흡수 항목으로 — ``has_inbox`` 일 때만 부른다."""
+        return self._take()
+
+    def arrived(self) -> int:
+        return arrived_mail(self.owner, agents=self._registry)
+
+    def wake_sources(self) -> list[str]:
+        return wake_sources(self.owner, agents=self._registry)
+
+    def run_started(self) -> None:
+        if self._registry is not None:
+            self._registry.run_started(self.owner)
+
+    def arm_checkin(self) -> None:
+        if self._registry is not None:
+            self._registry.arm_checkin(self.owner)
+
+    def wait(self, *, stop_event, still_waiting) -> str:
+        """메일함에 통지가 올 때까지 막는다 — 레지스트리가 없으면 기다릴 메일함이 없다."""
+        if self._registry is None:
+            return "nothing"
+        return self._registry.wait_mail(
+            self.owner, stop_event=stop_event, still_waiting=still_waiting
+        )
+
+    def next_checkin_s(self) -> int | None:
+        if self._registry is None:
+            return None
+        return self._registry.next_checkin_s(self.owner)
+
+    def parked_debtors(self) -> list[str]:
+        if self._registry is None:
+            return []
+        return self._registry.parked_debtors_for(self.owner)
+
+    def drop(self) -> None:
+        """메일함과 걸린 체크인을 버린다 — 런이 끝나 읽을 사람이 없다."""
+        if self._registry is not None:
+            self._registry.drop_mailbox(self.owner)
 
 
 class Released(NamedTuple):

@@ -16,6 +16,8 @@ from __future__ import annotations
 from typing import Any
 
 from agent_cli.loop.ports import LoopPorts
+from agent_cli.session_slots import get_agent_registry
+from agent_cli.wake import Mailbox
 
 
 def make_ports(**overrides: Any) -> LoopPorts:
@@ -34,6 +36,11 @@ def make_ports(**overrides: Any) -> LoopPorts:
         "peer_roster": None,
     }
     base.update(overrides)
+    if "mailbox" not in base:
+        # 프로덕션 빌더처럼: 포트를 만들 때의 슬롯 레지스트리, 받은편지함은 `absorb_inbox`.
+        base["mailbox"] = Mailbox(
+            get_agent_registry(), base["owner"], take=base["absorb_inbox"]
+        )
     return LoopPorts(**base)
 
 

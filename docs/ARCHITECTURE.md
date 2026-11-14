@@ -58,7 +58,7 @@ agent_cli/
 ├── __main__.py              `python -m agent_cli` 진입점
 ├── main.py                  typer CLI — `run`·`web`·`setup`·`mcp`·`knobs`·`sessions`·`stats`·`update` 명령과 `@agent`·`/skill` 디스패치
 ├── runtime.py               run/web 세션 조립(`SessionSpec`→stores→owners→`wire_session`)·정리, `MainLoop`
-├── wake.py                  한 주소를 무엇이 깨우나(`wake_sources`)·체크인 알림·메일 → 레코드·`release_owner` — 세션 슬롯만 본다
+├── wake.py                  한 주소를 무엇이 깨우나(`wake_sources`)·체크인 알림·메일 → 레코드·`release_owner`, 루프의 우편 창구 `Mailbox`(포트 `mailbox`)
 ├── pump.py                  세션 펌프 — 큐에서 꺼내 깨우기·라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
 ├── command_table.py         사용자 명령 표 하나 — 웹 `/help` 와 `run "/help"` 가 여기서 나온다
 ├── config.py                config.json·models.json 레지스트리 읽기·저장, 프로바이더 기본값, 방언 바인딩(`bind_user_dialect`)

@@ -41,7 +41,7 @@ from agent_cli.loop.ports import (
     _hook_unwired,
 )
 from agent_cli.session_slots import get_agent_registry
-from agent_cli.wake import _private_inbox, release_owner
+from agent_cli.wake import Mailbox, _private_inbox, release_owner
 
 
 class LoopKindError(Exception):
@@ -382,6 +382,7 @@ class PrivateLoop(LoopKind):
             enqueue_user_message=None,
             absorb_inbox=_private_inbox(owner),
             peer_roster=None,
+            mailbox=Mailbox(get_agent_registry(), owner, take=_private_inbox(owner)),
             unwired={
                 "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
                 "questions": _AS_BEFORE,

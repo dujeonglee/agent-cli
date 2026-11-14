@@ -16,8 +16,10 @@ from agent_cli.loop.kind import (
     PromptProfile,
     Start,
 )
+from agent_cli.session_slots import get_agent_registry
 from agent_cli.skills.models import Skill
 from agent_cli.tools.result import ToolResult
+from agent_cli.wake import Mailbox
 
 if TYPE_CHECKING:
     from agent_cli.loop.ports import LoopPorts
@@ -229,6 +231,7 @@ class SkillLoop(LoopKind):
             enqueue_user_message=None,
             absorb_inbox=None,
             peer_roster=None,
+            mailbox=Mailbox(get_agent_registry(), owner),
             unwired={
                 "questions": _AS_BEFORE,
                 "mcp_manager": _AS_BEFORE,
