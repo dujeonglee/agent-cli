@@ -75,7 +75,8 @@ class TestAppendLine:
 class TestC5Separation:
     def test_records_render_store_standalone(self):
         # 세 모듈이 manager 없이 단독 임포트 + manager 역참조 0 (단방향)
-        from agent_cli.context import records, render, store
+        from agent_cli.context import render, store
+        from agent_cli.session import records
 
         for mod in (records, render, store):
             with open(mod.__file__) as fh:

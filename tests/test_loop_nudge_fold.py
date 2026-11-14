@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.context.records import (
+from agent_cli.session.records import (
     fold_resolved_intervention_indices,
     is_folding_intervention,
     is_format_intervention,

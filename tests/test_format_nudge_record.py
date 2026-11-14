@@ -14,7 +14,6 @@ import json
 import pytest
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.context.records import _classify_record, is_format_intervention
 from agent_cli.context.render import _estimate_message_tokens, render_history_message
 from agent_cli.dialects import get as get_dialect
 from agent_cli.recovery.dialect_recovery import (
@@ -24,6 +23,7 @@ from agent_cli.recovery.dialect_recovery import (
     make_format_nudge,
 )
 from agent_cli.recovery.primitives import ECHO_MAX_CHARS, bounded_excerpt
+from agent_cli.session.records import _classify_record, is_format_intervention
 from tests.binding_support import make_binding
 
 

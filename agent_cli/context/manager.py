@@ -45,7 +45,6 @@ from agent_cli import images as _images
 from agent_cli import item_ids
 from agent_cli.context import store
 from agent_cli.context._file_extract import extract_file_paths
-from agent_cli.context.records import _classify_record
 from agent_cli.context.render import (
     _estimate_message_tokens,
     _message_bytes,
@@ -58,6 +57,12 @@ from agent_cli.render import (
     get_renderer,
     render_compaction_progress,
     render_context_view,
+)
+from agent_cli.session.records import (
+    _classify_record,
+    fold_resolved_intervention_indices,
+    is_folding_intervention,
+    is_format_intervention,
 )
 from agent_cli.token_estimator import estimate_tokens, utf8_len
 
@@ -1472,12 +1477,6 @@ class ContextManager:
           "뒤에 더 새로운 개입이 있음" 을 해소로 보아 같은 뷰로 수렴한다.
         반환: 접은 레코드 수.
         """
-        from agent_cli.context.records import (
-            fold_resolved_intervention_indices,
-            is_folding_intervention,
-            is_format_intervention,
-        )
-
         if assume_tail_resolved:
             # live 경로(파싱 성공 직후): 성공이 확인된 순간, 캐시의 **모든**
             # 형식 개입이 소비 완료다 — 연속 실패로 쌓인 [실패,개입]×k 전체를

@@ -141,7 +141,6 @@ agent_cli/
 │   ├── __init__.py          `ContextManager`·`is_context_overflow` 재수출
 │   ├── manager.py           `ContextManager` — history.jsonl·인메모리 캐시·예산 압축·서버 실측 reconcile
 │   ├── render.py            record → LLM 메시지 렌더, 예산 추정, 압축 요약 입력 (무상태)
-│   ├── records.py           디스크 레코드 모양의 단일 리더·분류기(ops·개입 종류)
 │   ├── store.py             세션 영속화 디스크 I/O primitive(history 추가·compaction.json·fork)
 │   ├── exchanges.py         history 의 사용자 요청↔답 쌍 — 세션 목록·resume 의 요약(방언 알림 접두를 거른다)
 │   ├── overflow.py          프로바이더별 컨텍스트 초과 감지·`ContextOverflowError`
@@ -149,6 +148,7 @@ agent_cli/
 ├── session/                 세션 디렉터리 저장소 — 맨 아래 층, 위로 아무것도 import 하지 않는다
 │   ├── __init__.py          패키지 표식(docstring) — 아무것도 내보내지 않는다
 │   ├── store.py             세션 디렉터리 배치·메타 `session.jsonl`·목록·resume
+│   ├── records.py           디스크 레코드 모양의 단일 리더·분류기(ops·개입 종류)
 │   └── lock.py              한 세션 한 프로세스 — `session.lock` flock
 ├── prompts/                 모델이 읽는 글 — 시스템 프롬프트·꼬리·압축 지침 (docs/prompt-notation/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
@@ -526,7 +526,7 @@ history.jsonl 은 구조화 레코드, LLM 에 가는 것은 방언이 렌더한
 | assistant 턴 | 멀티-op `{"role":"assistant", "thought":…, "ops":[{"action", "action_input"}, …]}` 또는 단수 `{"action", "action_input"}` |
 | 도구 결과 | `{"role":"user", "tool":…, "content":…}` |
 
-assistant 레코드를 읽는 곳은 `context/records.py::iter_record_ops` 하나다(두 모양 모두).
+assistant 레코드를 읽는 곳은 `session/records.py::iter_record_ops` 하나다(두 모양 모두).
 
 ### 5.2 프로바이더별 도구 호출 방식
 
