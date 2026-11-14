@@ -53,6 +53,7 @@ from agent_cli.constants import (
 from agent_cli.loop.kind import LoopKindError
 from agent_cli.session.store import AGENTS_DIR
 from agent_cli.session_slots import get_job_registry
+from agent_cli.terminate import wait_left
 from agent_cli.token_estimator import estimate_tokens
 from agent_cli.tools.result import ToolResult
 from agent_cli.wake import (
@@ -2466,8 +2467,9 @@ class AgentRegistry:
         self._notify_roster()
         return ""
 
-    def shutdown_all(self) -> None:
-        """세션 종료 — 전원 kill. main 부트스트랩의 finally 에서 호출."""
+    def shutdown_all(self, *, deadline: float | None = None) -> None:
+        """세션 종료 — 전원 kill. main 부트스트랩의 finally 에서 호출. ``deadline``
+        (SIGTERM 경로, v10.134.1)이 있으면 워커를 그 안에서만 기다린다."""
         self._cancel_checkins()  # main 포함 — 끝나는 세션에 알림이 쌓이지 않게
         for tm in list(self._agents.values()):
             self._drop_monitors(tm.key)
@@ -2475,7 +2477,7 @@ class AgentRegistry:
             tm.inbox.put(_SHUTDOWN)
         for tm in list(self._agents.values()):
             if tm.worker is not None:
-                tm.worker.join(timeout=5.0)
+                tm.worker.join(timeout=wait_left(deadline, 5.0))
         # 최종 스냅샷 — revivable 유지 상태로 기록돼 resume 이 되살린다 (D7).
         self._save_state()
 

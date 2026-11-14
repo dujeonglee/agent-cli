@@ -85,6 +85,7 @@ agent_cli/
 ├── thinking_tags.py         content 안 사고 태그를 걷어내는 `strip_think_blocks` 단일 소스
 ├── agent_icon.py            상주 에이전트 key → 아이콘·별명(표시 전용) — 프런트와 같은 풀·해시
 ├── session_slots.py         세션 슬롯 다섯 — 잡·모니터·예약 레지스트리, 훅 러너, 에이전트 레지스트리의 프로세스 전역 자리(세션 끝에 비운다)
+├── terminate.py             SIGTERM 을 받으면 정상 정리 경로로 — 표시·정리 기한(`TEARDOWN_BUDGET_S`)·정리 뒤 신호 15 로 죽기
 ├── verbose.py               `--verbose` 기록기 — 모든 루프의 LLM 호출을 `<session>/verbose.jsonl` 에
 ├── default_models.json      패키지 기본 모델 정의 (models.json 검색 경로의 마지막)
 ├── default_web_sources.json 기본 정보원 목록 (`web_sources.py` 가 읽는다)
@@ -349,7 +350,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 | 3 | `dialects/` · `mcp/` · `web/` |
 | 2 | `tools/` · `render/` · `pump` · `setup` |
 | 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` · `instance_file` · `wake` |
-| 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `session_slots` · `agents/` |
+| 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `session_slots` · `terminate` · `agents/` |
 
 `context/`·`prompts/`·`providers/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).
 그래서 한 층의 한 묶음으로 적는다. `main` 은 명령 함수 안에서 지연 import 하는 것이 많아(`runtime`·`loop/` 등) 층이 낮게 나온다.
@@ -991,6 +992,7 @@ hypothesis 는 예제 DB 를 끄고 홈을 수트 임시 디렉터리로 옮긴�
 세션은 `web --resume <id>` 로 이어 갈 수 있다.
 
 종료 코드: 0 성공 · 1 실패(LLM 오류·턴 상한·실패한 스킬·모르는 명령) · 2 설정·사용 오류 · 130 중단. `/sh <cmd>` 는 그 명령의 종료 코드(시간 초과 124).
+SIGTERM(보드가 방을 끌 때)은 `run`·`web` 모두 같은 정리(`close_session`)를 돈 뒤 신호 15 로 죽는다 — 대기는 `terminate.TEARDOWN_BUDGET_S` 안으로(`terminate.py`).
 
 ### 11.2 `web` — 대화형 브라우저 UI
 

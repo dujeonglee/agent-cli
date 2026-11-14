@@ -366,7 +366,9 @@ class JobRegistry:
 
     # ── 종료/정리 ─────────────────────────────
 
-    def kill(self, job: Job, *, by: str | None = None) -> bool:
+    def kill(
+        self, job: Job, *, by: str | None = None, deadline: float | None = None
+    ) -> bool:
         """부드럽게 멈추라 하고(`stop`), 잠시 뒤 남았으면 죽인다(`force`). 최대
         ``KILL_GRACE_S`` × 2 초를 막는다. 이 호출이 작업을 끝냈으면 True — 이미
         끝났거나 다른 `kill` 이 멈추는 중이면 False(no-op).
@@ -387,18 +389,21 @@ class JobRegistry:
             job.exited_before_stop = True
         else:
             job.handle.stop()
-            rc = self._await(job.handle)
+            rc = self._await(job.handle, deadline)
             if rc is None:
                 job.handle.force()
-                rc = self._await(job.handle)
+                rc = self._await(job.handle, deadline)
             # 신호로 죽으면 음수다 — 0 이상이면 스스로 종료 코드를 냈다
             job.exited_before_stop = rc is not None and rc >= 0
         self._finish(job, rc if rc is not None else -1, notify=by is not None)
         return True
 
     @staticmethod
-    def _await(handle: ProcHandle) -> int | None:
-        deadline = time.time() + KILL_GRACE_S
+    def _await(handle: ProcHandle, until: float | None = None) -> int | None:
+        grace = KILL_GRACE_S
+        if until is not None:  # SIGTERM 경로 — 남은 시간 안에서만(그래도 한 번은 본다)
+            grace = max(0.0, min(grace, until - time.monotonic()))
+        deadline = time.time() + grace
         while True:
             rc = handle.poll()
             if rc is not None or time.time() >= deadline:
@@ -412,13 +417,18 @@ class JobRegistry:
             self.kill(j)
         return len(victims)
 
-    def stop_all(self) -> list[Job]:
-        """세션 종료 — 남은 작업 전부 죽이고 목록을 돌려준다(콘솔에 적으라고)."""
+    def stop_all(self, *, deadline: float | None = None) -> list[Job]:
+        """세션 종료 — 남은 작업 전부 죽이고 목록을 돌려준다(콘솔에 적으라고).
+        ``deadline`` (SIGTERM 경로, v10.134.1, ``time.monotonic`` 기준)이 있으면 그룹마다
+        TERM 뒤·KILL 뒤의 유예를 남은 시간 안으로 줄인다 — KILL 은 그래도 보낸다."""
         self.closed = True
         self._stop.set()
         victims = self.running()
         for j in victims:
-            self.kill(j)
+            if deadline is None:
+                self.kill(j)
+            else:
+                self.kill(j, deadline=deadline)
         return victims
 
     # ── 폴링 ──────────────────────────────────

@@ -500,14 +500,22 @@ class TestExitPathConvergence:
         assert "disconnect_all()" not in body
         # finally 가 spec(=mcp_manager·session)·저장소·소유자를 모두 넘긴다 — 조립
         # 도중 죽어도(None) 정리가 돈다 (종전 2경로 MCP 누락 수리, v10.131.0 조립도 try 안)
-        assert "_finalize_run(spec, stores, owners, warn_stuck=warn_stuck)" in body
+        # (v10.134.1: SIGTERM 으로 들어온 정리만 기한을 함께 넘긴다 — 같은 한 곳)
+        assert (
+            "_finalize_run(\n"
+            "            spec, stores, owners, warn_stuck=warn_stuck, deadline=sigterm.deadline()\n"
+            "        )"
+        ) in body
         assert "stores = owners = None" in body
         tried = body[body.index("    try:\n") :]
         assert "build_session_stores(" in tried and "build_session_owners(" in tried
         assert "mcp_manager=mcp_manager" in body  # spec 에 실린다
         fin = _MAIN_SRC[_MAIN_SRC.index("\ndef _finalize_run(") :]
         fin = fin[: fin.find("\ndef ", 1)]
-        assert "close_session(spec, stores, owners, warn_stuck=warn_stuck)" in fin
+        assert (
+            "close_session(spec, stores, owners, warn_stuck=warn_stuck, deadline=deadline)"
+            in fin
+        )
 
     def test_web_converges_on_close_session(self):
         body = self._body("web")
@@ -681,7 +689,11 @@ class TestExitPathConvergence:
                 if p.default is not inspect.Parameter.empty
             ]
             assert all(p.default is None for p in optional), fn.__name__
-            assert all(p.name.startswith("on_") for p in optional), fn.__name__
+            # 호스트 훅(`on_*`)과, 호스트를 모르는 정리 기한 하나(v10.134.1 — SIGTERM 경로만,
+            # run·web 이 같은 값을 넘긴다)
+            assert all(
+                p.name.startswith("on_") or p.name == "deadline" for p in optional
+            ), fn.__name__
 
 
 class _ItemsPump:

@@ -32,6 +32,7 @@ from pathlib import Path
 from agent_cli.loop.kind import LoopKindError, PrivateLoop, Start
 from agent_cli.resource_loader import ResourceLoader
 from agent_cli.session.store import HARNESS_DIR, harness_run_dir
+from agent_cli.terminate import wait_left
 
 #: 하니스 프로파일의 자리 — `agents/builtin`(사용자 카탈로그)과 형제, 검색 경로는
 #: 이것 하나뿐이다.
@@ -156,13 +157,14 @@ class HarnessJobs:
         except Exception:
             pass  # 표면 알림은 best-effort
 
-    def stop(self, timeout: float = 5.0) -> None:
-        """진행 중인 런을 세우고 기다린다 — 세션 종료 시퀀스의 한 단계."""
+    def stop(self, timeout: float = 5.0, *, deadline: float | None = None) -> None:
+        """진행 중인 런을 세우고 기다린다 — 세션 종료 시퀀스의 한 단계. ``deadline``
+        (SIGTERM 경로, v10.134.1)이 있으면 그 안에서만 기다린다."""
         self._stop.set()
         with self._lock:
             threads = list(self._threads)
         for t in threads:
-            t.join(timeout)
+            t.join(wait_left(deadline, timeout))
 
 
 class HarnessLoop(PrivateLoop):

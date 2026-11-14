@@ -55,9 +55,12 @@ class SessionAuditor:
         error = self.jobs.run(AUDITOR_NAME, f"{a}-{b}", text)
         return "" if error else text
 
-    def stop(self) -> None:
+    def stop(self, *, deadline: float | None = None) -> None:
         if self.jobs is not None:
-            self.jobs.stop()
+            if deadline is None:
+                self.jobs.stop()
+            else:
+                self.jobs.stop(deadline=deadline)
 
 
 def build_auditor(registry, *, parent_ctx, on_change=None) -> SessionAuditor | None:
