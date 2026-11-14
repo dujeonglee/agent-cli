@@ -7,6 +7,7 @@ import re
 import shlex
 import signal
 import subprocess
+import time
 from typing import ClassVar
 
 from agent_cli import jobs
@@ -337,7 +338,36 @@ def tool_shell_background(args: dict, *, owner: str, note: str = "") -> ToolResu
     )
 
 
-def tool_shell(args: dict) -> ToolResult:
+#: 전경 명령이 끝난 뒤 그룹이 아직 있으면 한 번 더 보기 전의 유예(초) — 막 끝나는 자식
+#: (파이프 끝·`wait` 없는 정리)을 넘겨받지 않게 (v10.135.0).
+ADOPT_SETTLE_S = 0.1
+
+
+def _adopt_leftovers(cmd: str, pgid: int, owner: str) -> str:
+    """전경 명령이 남긴 프로세스 그룹을 작업 레지스트리가 넘겨받는다 (v10.135.0, 사용자 결정
+    2026-11-14 — 바로 죽이지 않는다). 남긴 것이 없으면 ""(결과는 종전과 바이트까지 같다).
+
+    잡히는 것: 출력을 파이프 밖으로 돌린 `&` 자식(`nohup … > /dev/null 2>&1 &` 등) — `sh` 가
+    끝난 뒤에도 같은 그룹에 남는다. 못 잡는 것: `setsid` 처럼 스스로 새 세션을 만든 프로세스
+    (그룹 밖). 출력을 돌리지 않은 `&` 자식은 파이프를 쥐어 시간 초과가 그룹째 끝낸다."""
+    if not jobs.group_alive(pgid):
+        return ""
+    time.sleep(ADOPT_SETTLE_S)
+    if not jobs.group_alive(pgid):
+        return ""
+    reg = get_job_registry()
+    if reg is None or not reg.available:
+        return ""  # 넘겨받을 곳이 없다(레지스트리 없는 런) — 종전과 같다
+    n = jobs.group_size(pgid)
+    job = reg.adopt(cmd, pgid, owner=owner)
+    return (
+        f"[{n} process{'es' if n != 1 else ''} kept running after this command; now "
+        f"tracked as job #{job.id} — stopped when the session ends, {job.stop_hint} "
+        "stops it now. Start long-running processes with `background` true.]"
+    )
+
+
+def tool_shell(args: dict, *, owner: str = "main") -> ToolResult:
     """Run a shell command and return stdout/stderr."""
 
     cmd = args.get("command", "")
@@ -382,6 +412,9 @@ def tool_shell(args: dict) -> ToolResult:
             parts.append(f"[stderr]\n{err}")
         if proc.returncode != 0:
             parts.append(f"[exit code: {proc.returncode}]")
+        adopted = _adopt_leftovers(cmd, proc.pid, owner)
+        if adopted:
+            parts.append(adopted)
         return ToolResult(True, output="\n".join(parts) if parts else "(no output)")
     except Exception as e:
         return ToolResult(False, error=f"shell failed: {e}")
@@ -525,4 +558,4 @@ class ShellTool(Tool):
         if background:
             owner = getattr(ctx, "owner", None) or "main"
             return tool_shell_background(args, owner=owner, note=note)
-        return tool_shell(args)
+        return tool_shell(args, owner=getattr(ctx, "owner", None) or "main")

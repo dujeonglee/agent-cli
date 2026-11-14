@@ -74,6 +74,7 @@ GLM 벤치 36 트라이얼(2026-10-31) 도구 사용 검토에서 나온 셋 —
 - **작업의 몸은 핸들** (`ProcHandle`: `pid`·`poll`·`stop`·`force`·`stop_hint`; v10.102.1 에 구현 하나뿐인 `JobHandle` 프로토콜 삭제). 셸 명령은 `ProcHandle`
   (TERM → KILL, `kill -- -P`). v10.91.0~v10.101.0 엔 한도를 넘긴 `python` 셀(`pyworker.PendingCell`)도
   `JobRegistry.adopt` 로 받았다 — v10.102.0 에 `python` 도구와 함께 `adopt` 를 지웠다(docs/python-tool/DESIGN.md §0).
+  v10.135.0 에 같은 이름이 다른 일로 돌아왔다 — 전경 명령이 남긴 프로세스 그룹(`GroupHandle`, §7).
 - **셸은 bash** (`jobs.SHELL` = `shutil.which("bash")`, 없으면 `/bin/sh`). 벤치에서 모델은 bash 문법을 썼고 컨테이너의
   sh 는 dash 였다: `diff <(…)` 두 턴 연속 실패, `[[ $f == *.pdf ]]` 가 분류 루프 결과를 전부 비웠다. 전경(`tool_shell`)과
   작업(`JobRegistry.start`)이 같은 실행기를 쓰고, Environment 절이 그 이름을 한 줄로 적는다("- Shell: bash (`shell` runs
@@ -85,3 +86,22 @@ GLM 벤치 36 트라이얼(2026-10-31) 도구 사용 검토에서 나온 셋 —
   안내와 함께 job 으로 떴고 `b.log` 에 출력, 20초 뒤 rc=0 통지. 고친 것 하나: 작업 로그를 덧붙이기로 열었다 — 번호는 프로세스마다
   1 부터라 지난 세션의 `2.log` 가 남아 있었고, 출력을 다른 파일로 보낸 이 명령의 통지 꼬리에 지난 세션의 `4242`·`5151` 이 실렸다.
   `start` 는 로그를 비우고 연다.
+
+## 7. 전경 명령이 남긴 그룹을 넘겨받는다 (v10.135.0)
+
+사용자 머신에서 21일째 떠 있던 `python3 -m http.server 8877` 은 모델이 **전경** `shell` 로
+`nohup python3 -m http.server 8877 > /dev/null 2>&1 & echo $!` 를 실행해 남긴 것이었다. 전경 명령은 자기 그룹으로 돌고
+`communicate()` 로 끝을 기다리는데, 출력을 파이프 밖으로 돌린 `&` 자식은 `sh` 가 끝나도 같은 그룹에 남고 하니스는 그것을
+몰랐다(`strip_detachers` 는 `background` true 에만). 사용자 결정(2026-11-14): 바로 죽이지 않고 **넘겨받는다** — 서버를 띄우고
+다음 명령에서 쓰는 흐름이 있다.
+
+- 판정: `communicate` 가 돌아온 뒤(시간 초과 경로가 아닐 때) 그룹에 신호 0 — 있으면 `ADOPT_SETTLE_S`(0.1 s) 뒤 한 번 더.
+  남긴 것이 없는 명령은 신호 0 한 번(ESRCH)이 전부라 결과·시간이 종전과 같다(100개 실측: 넘겨받음 0, 0.87~0.89 s 같음).
+- `JobRegistry.adopt(command, pgid, owner=)` — 소유자는 그 명령을 부른 루프(`ShellTool._run` 이 `ctx.owner` 를 넘긴다).
+  핸들 `GroupHandle`: 그룹이 사라지면 끝(종료 코드는 모른다 — 보고·로그의 자리가 "(exit code unknown)"), 멈춤은 그룹에
+  TERM → KILL, **한 번 사라졌다고 본 그룹에는 다시 신호를 보내지 않는다**(번호 재사용). 로그는 머리줄과 "output was
+  redirected by the command; not captured" 한 줄. 꼬리·통지·세션 정리·소유자 release·SIGTERM 정리는 다른 작업과 같다.
+- 결과에 한 줄(트리거 직후 교정): "[1 process kept running after this command; now tracked as job #K — stopped when the
+  session ends, `kill -- -P` stops it now. Start long-running processes with `background` true.]"
+- 못 잡는 것: `setsid`·`os.setsid()` 처럼 스스로 새 세션을 만든 프로세스(그룹 밖). 출력을 돌리지 않은 `&` 자식은 파이프를
+  쥐어 시간 초과가 그룹째 끝낸다(종전과 같다).
