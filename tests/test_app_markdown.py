@@ -47,6 +47,7 @@ HARNESS_IMPORTS = {
         "renderHeadings",
     ),
     "cards": ("obsSummary",),
+    "share": ("usageLine", "usageTooltip"),
     "channels": (
         "ovAgentIcon",
         "ovAgentNickname",
@@ -517,3 +518,79 @@ class TestImages:
     def test_inline_code_and_fences_are_left_alone(self):
         assert "<img" not in _format("`![x](p.png)`")
         assert "<img" not in _format("```\n![x](p.png)\n```")
+
+
+def _usage_js(fn: str, payload: dict) -> str:
+    """share.js 의 상단 사용량 칩 글/툴팁 — 메인 화면 그래프째(DOM 대역 위) import."""
+    return _run_node_harness(
+        _harness_import("share", fn)
+        + "const input = "
+        + json.dumps(payload)
+        + ";\n"
+        + _write_out(f"{fn}(input)"),
+        dom_stub=True,
+    )
+
+
+_USAGE_FULL = {
+    "in": 41_000,
+    "out": 812,
+    "context_window": 128_000,
+    "out_speed": 38.4,
+    "in_speed": 1520.2,
+    "ttft_ms": 830.6,
+    "total_in": 1_430_000,
+    "total_cached": 1_100_000,
+    "total_out": 9_100,
+    "calls": 23,
+}
+
+
+class TestUsageTopBar:
+    """웹 상단 사용량 칩 (v10.136.0) — 출력 속도·Σ↑(루프 입력 합) 추가, 0/없는 조각 생략."""
+
+    FULL = _USAGE_FULL
+
+    def test_line_with_speed(self):
+        out = _usage_js("usageLine", self.FULL)
+        assert out == "ctx 41.0K/128.0K (32%) · ↓812 · 38 tok/s · Σ↑1.4M · Σ↓9.1K"
+
+    def test_line_without_times_drops_speed(self):
+        d = {
+            k: v
+            for k, v in self.FULL.items()
+            if k not in ("out_speed", "in_speed", "ttft_ms")
+        }
+        out = _usage_js("usageLine", d)
+        assert out == "ctx 41.0K/128.0K (32%) · ↓812 · Σ↑1.4M · Σ↓9.1K"
+
+    def test_line_old_payload_has_no_sums(self):
+        # 이전 판이 남긴 스냅샷(resume) — 누적 키가 없으면 그 조각은 없다
+        out = _usage_js("usageLine", {"in": 5200, "out": 320, "context_window": 262144})
+        assert out == "ctx 5.2K/262.1K (2%) · ↓320"
+
+    def test_tooltip_full(self):
+        out = _usage_js("usageTooltip", self.FULL)
+        assert out.split("\n") == [
+            "context 41.0K / 128.0K",
+            "turn out 812 (38 tok/s)",
+            "ttft 831 ms",
+            "prefill 1520 tok/s",
+            "run in 1.4M (cached 1.1M) · out 9.1K · 23 calls",
+        ]
+
+    def test_tooltip_without_cache_or_times(self):
+        d = {
+            "in": 900,
+            "out": 5,
+            "context_window": 4096,
+            "total_in": 900,
+            "total_out": 5,
+            "calls": 1,
+        }
+        out = _usage_js("usageTooltip", d)
+        assert out.split("\n") == [
+            "context 900 / 4.1K",
+            "turn out 5",
+            "run in 900 · out 5 · 1 call",
+        ]

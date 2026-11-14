@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
 from agent_cli import images as _images
 from agent_cli import verbose as _verbose
@@ -769,7 +770,31 @@ def _discard_chunk(_text: str) -> None:
     """요약 호출의 스트림 콜백 — 요청을 스트리밍으로 만들 뿐 그리지 않는다."""
 
 
-def _build_token_stats(usage, context_window: int, total_out: int) -> dict:
+@dataclass
+class UsageTotals:
+    """루프(런) 하나의 호출 합 — 화면의 누적 표시(Σin·Σout·런 끝 합계)가 읽는다.
+
+    범위는 ``AgentLoop`` 인스턴스 하나다: main 은 런마다 새 루프라 런 단위, 서브에이전트·
+    스킬은 자기 루프의 것. 본 호출(``_execute_turn`` 이 ``usage`` 를 받은 것)만 센다 —
+    압축 요약 호출은 들지 않는다. ``input`` 은 ``total_input_tokens``(ctx 분자와 같은
+    정의), ``cached`` 는 그중 캐시 적중, ``llm_ns`` 는 ttft+디코드 시간의 합.
+    """
+
+    input: int = 0
+    cached: int = 0
+    output: int = 0
+    calls: int = 0
+    llm_ns: int = 0
+
+    def add(self, usage) -> None:
+        self.input += usage.total_input_tokens
+        self.cached += usage.cache_read_input_tokens
+        self.output += usage.output_tokens or 0
+        self.calls += 1
+        self.llm_ns += usage.prompt_eval_ns + usage.eval_ns
+
+
+def _build_token_stats(usage, context_window: int, totals: UsageTotals) -> dict:
     """Build the render-agnostic token-usage payload for one turn.
 
     Pure data — the renderer (CLI line / web top-bar) decides how to
@@ -784,7 +809,8 @@ def _build_token_stats(usage, context_window: int, total_out: int) -> dict:
     as a breakdown; ``reasoning`` is the share of ``out`` spent thinking.
     Speeds/ttft are included when the provider reported durations (omlx and
     other OpenAI-compatible servers do; the Anthropic streaming path leaves
-    them 0 → omitted by the renderer).
+    them 0 → omitted by the renderer). ``total_*``/``calls`` are the loop's
+    running sums (:class:`UsageTotals`, this call included).
     """
     return {
         "in": usage.total_input_tokens,
@@ -802,5 +828,8 @@ def _build_token_stats(usage, context_window: int, total_out: int) -> dict:
         "cache_write": usage.cache_creation_input_tokens,
         "reasoning": usage.reasoning_tokens,
         "context_window": context_window,
-        "total_out": total_out,
+        "total_out": totals.output,
+        "total_in": totals.input,
+        "total_cached": totals.cached,
+        "calls": totals.calls,
     }

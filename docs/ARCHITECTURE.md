@@ -507,11 +507,12 @@ AgentLoop.run()
     │    └─ _execute_turn()
     │         ├─ 지시사항·메모리 변경 반영, PreLLMCall 훅
     │         ├─ LLMCaller.call → LLMResponse (§5.4 flow 1·2)
+    │         ├─ usage 가 있으면 UsageTotals 에 더하고 render_token_usage (턴 줄·웹 상단 칩)
     │         ├─ tool_calls: 서버 파싱 방언이면 ops 로, 아니면 텍스트로 렌더해 이어 붙임
     │         ├─ PostLLMCall 훅
     │         └─ _finish_response → 잘림(length)·폭주·서버 오류는 각자의 처리로, 그 밖은 TurnDispatcher 로
     │              └─ 파싱 → op 순회(가드·같은 파일 edit 묶음·연속 `agent` run 병렬 묶음) → 관찰 기록 → OnTurnEnd
-    └─ finally: 장부 표시, StaleGuard 정리, OnSessionEnd 훅, 시그널 핸들러 복원
+    └─ finally: 장부 표시, StaleGuard 정리, 런 합계(render_usage_totals — main·호출 있음), OnSessionEnd 훅, 시그널 핸들러 복원
 ```
 
 **정지는 턴 경계에서.** 신호는 `stop_event`(threading.Event) 하나다. CLI 는 첫 Ctrl+C 가 `_interrupted` 와 `stop_event` 를 세우고 두 번째가 `KeyboardInterrupt` 다.

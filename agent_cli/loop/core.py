@@ -26,7 +26,7 @@ from agent_cli.context.manager import ContextManager
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.dispatch import TurnDispatcher, _append_observation, show_open_items
 from agent_cli.loop.kind import LoopKind, Start
-from agent_cli.loop.llm import LLMCaller, _build_token_stats
+from agent_cli.loop.llm import LLMCaller, UsageTotals, _build_token_stats
 from agent_cli.loop.prompt import SystemPromptSvc
 from agent_cli.loop.state import _CONTINUE, _RETRY, LoopConfig, LoopState
 from agent_cli.loop.tool_bridge import ToolBridge
@@ -51,6 +51,7 @@ from agent_cli.render import (
     render_system_prompt_snapshot,
     render_token_usage,
     render_turn_sep,
+    render_usage_totals,
 )
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.registry import strip_depth_gated
@@ -238,10 +239,9 @@ class AgentLoop:
             stop_event=stop_event if stop_event is not None else threading.Event(),
         )
         self._state.ledger.bind_questions(ports.questions)
-        # Cumulative output tokens across this loop's turns — fed to the
-        # renderer's per-turn token-usage line / web top-bar so the user
-        # sees a running session total alongside the per-turn numbers.
-        self._total_output_tokens = 0
+        # 이 루프의 호출 합(입력·캐시·출력·호출 수·시간) — 턴 사용량 줄·웹 상단 줄의
+        # 누적과 런 끝 합계 줄(main)이 읽는다. 루프 인스턴스 범위: main 은 런마다 새로.
+        self._usage_totals = UsageTotals()
         self._prev_sigint_handler = None
         # C1 PR-2: 시스템 프롬프트는 SystemPromptSvc 소유 — self.system /
         # self._system_sections 는 property 브리지.
@@ -538,6 +538,12 @@ class AgentLoop:
             show_open_items(self._config, self._state)
             # 런 끝 (StaleGuard, v10.120.0) — 🔁 띠는 그 런의 것이다
             self._dispatch.clear_stale()
+            # 런 끝 합계 (main 만) — 호출이 하나라도 있었을 때. 서브에이전트·스킬은
+            # 자기 루프의 합이 있지만 화면의 "런" 은 main 의 것이다(스킬은 main 의
+            # 주소를 물려받으므로 주소만으로는 못 가른다 — 그리지 않는 종류다).
+            kind = self._config.kind
+            if self._usage_totals.calls and kind.owner == "main" and kind.renders():
+                render_usage_totals(self._usage_totals)
             self._fire_hook("OnSessionEnd")
             if self.graceful_interrupt:
                 self._restore_signal_handler()
@@ -1052,11 +1058,11 @@ class AgentLoop:
 
         # Show token stats if available (providers report eval durations)
         if response.usage:
-            self._total_output_tokens += response.usage.output_tokens or 0
+            self._usage_totals.add(response.usage)
             stats = _build_token_stats(
                 response.usage,
                 self.capabilities.context_window,
-                self._total_output_tokens,
+                self._usage_totals,
             )
             # 📐 (v9.24.0): 문법이 실린 콜은 생성 속도가 다르다(실측 −37%) —
             # 그 이유가 통계 줄 그 자리에 있어야 한다.

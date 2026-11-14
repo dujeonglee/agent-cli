@@ -51,6 +51,33 @@ class TestHeaderChips:
         box = page.locator("#token-usage").bounding_box()
         assert box and box["height"] >= 10 and box["width"] > 40  # 클리핑 없음
 
+    def test_token_usage_speed_and_sums(self, stack, page):
+        # v10.136.0: 출력 속도·Σ↑(루프 입력 합)이 줄에, ttft·prefill·캐시·호출 수는 툴팁에.
+        page.goto(stack.url)
+        stack.renderer.token_usage(
+            {
+                "in": 41_000,
+                "out": 812,
+                "context_window": 128_000,
+                "out_speed": 38.4,
+                "in_speed": 1520.2,
+                "ttft_ms": 830.6,
+                "total_in": 1_430_000,
+                "total_cached": 1_100_000,
+                "total_out": 9_100,
+                "calls": 23,
+            },
+            turn=3,
+        )
+        page.wait_for_selector("#token-usage:not([hidden])", timeout=8000)
+        assert _wait(lambda: "Σ↑1.4M" in page.inner_text("#token-usage"))
+        txt = page.inner_text("#token-usage")
+        assert "38 tok/s" in txt and "Σ↓9.1K" in txt
+        title = page.get_attribute("#token-usage", "title")
+        assert "ttft 831 ms" in title and "cached 1.1M" in title and "23 calls" in title
+        box = page.locator("#token-usage").bounding_box()
+        assert box and box["height"] >= 10 and box["width"] > 40
+
     def test_knob_chip_popup_toggles(self, stack, page):
         # 노브 칩 클릭 → 전용 팝업 열림, Escape 로 닫힘 (한 번에 하나).
         # 넓은 뷰포트 — 노브가 보따리로 수납되지 않은 상태를 보장.

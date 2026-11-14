@@ -365,31 +365,35 @@ class TestTTFTMeasurement:
 
     def test_token_stats_shows_ttft_speed_and_context(self):
         """_format_token_stats renders ttft, speed, and context occupancy."""
-        from agent_cli.loop.llm import _build_token_stats
+        from agent_cli.loop.llm import UsageTotals, _build_token_stats
         from agent_cli.render.minimal import _format_token_stats
 
-        stats = _build_token_stats(self._usage(), context_window=4096, total_out=50)
+        stats = _build_token_stats(
+            self._usage(), context_window=4096, totals=UsageTotals(output=50)
+        )
         msg = _format_token_stats(stats)
         assert "ttft: 200ms" in msg
         assert "tok/s" in msg
         assert "ctx:" in msg  # context occupancy shown
 
     def test_token_stats_context_percent(self):
-        from agent_cli.loop.llm import _build_token_stats
+        from agent_cli.loop.llm import UsageTotals, _build_token_stats
         from agent_cli.render.minimal import _format_token_stats
 
         stats = _build_token_stats(
             self._usage(input_tokens=2048, output_tokens=10),
             context_window=4096,
-            total_out=10,
+            totals=UsageTotals(output=10),
         )
         assert "(50%)" in _format_token_stats(stats)
 
     def test_token_stats_cumulative_output(self):
-        from agent_cli.loop.llm import _build_token_stats
+        from agent_cli.loop.llm import UsageTotals, _build_token_stats
         from agent_cli.render.minimal import _format_token_stats
 
-        stats = _build_token_stats(self._usage(), context_window=4096, total_out=1800)
+        stats = _build_token_stats(
+            self._usage(), context_window=4096, totals=UsageTotals(output=1800)
+        )
         assert "Σout: 1.8K" in _format_token_stats(stats)
 
     def _minimal_render_to_string(self, verbose):
@@ -397,12 +401,14 @@ class TestTTFTMeasurement:
 
         from rich.console import Console
 
-        from agent_cli.loop.llm import _build_token_stats
+        from agent_cli.loop.llm import UsageTotals, _build_token_stats
         from agent_cli.render.minimal import MinimalRenderer
 
         buf = StringIO()
         r = MinimalRenderer(Console(file=buf, force_terminal=False))
-        stats = _build_token_stats(self._usage(), context_window=4096, total_out=50)
+        stats = _build_token_stats(
+            self._usage(), context_window=4096, totals=UsageTotals(output=50)
+        )
         r.token_usage(stats, turn=1, verbose=verbose)
         return buf.getvalue()
 
