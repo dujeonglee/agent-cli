@@ -20,7 +20,7 @@
 
 `wait` — "더 할 게 없다, 깨워 달라". 아무것도 닫지 않고 런을 끝낸다.
 
-- **깨울 것이 있을 때만** 받는다(`runtime.wake_sources(owner)`): 이 소유자의
+- **깨울 것이 있을 때만** 받는다(`wake.wake_sources(owner)`): 이 소유자의
   돌고 있는 백그라운드 작업·살아 있는 모니터, 세션의 일하는 중인 상주 에이전트·
   예약. 없으면 거부 관찰("nothing would wake you — keep working or call
   `complete`") 을 남기고 런을 잇는다. 막혔을 때 wait 로 도피하는 길은 없다.
@@ -55,7 +55,7 @@
   `owed`·`end_run` 을 건너뛴다. 종전 흐름이면 요청자가 "(no explicit reply — run
   summary) ⏸ waiting on job #1" 을 답으로 받고 빚이 갚힌 것으로 처리돼, 깨어난
   뒤의 진짜 `reply` 가 "no unpaid reply" 로 거부됐을 것이다.
-- **이미 도착한 통지가 있으면 거부한다** (v10.66.2) — `runtime.arrived_mail(owner)`:
+- **이미 도착한 통지가 있으면 거부한다** (v10.66.2) — `wake.arrived_mail(owner)`:
   main 의 메일함(`AgentRegistry._pending` — 작업·모니터 통지, 에이전트 회신·질문),
   상주의 받은편지함 미러(`inbox_items`). 기다리던 것이 wait 보다 **먼저 끝난**
   경우다(9과제 벤치의 once 모니터). 그 통지는 어차피 다음 턴 경계
@@ -201,7 +201,7 @@ harbor 벤치 전부(trial 483)에서 받아들여진 `wait` 50번 중 **13번(2
 | 이번 간격 | 5분 | 10분 | 20분 | 40분 | 60분 |
 | 처음 wait 부터 누적 | 5분 | 15분 | 35분 | 75분 | +60분씩 |
 
-"같은 대상" 은 깨울 것의 **id 집합**(`runtime.wake_source_ids`: `job:1`·`mon-…`·`agent:k`)이다 —
+"같은 대상" 은 깨울 것의 **id 집합**(`wake.wake_source_ids`: `job:1`·`mon-…`·`agent:k`)이다 —
 사람이 읽는 줄(`wake_sources`)로 비교하면 같은 에이전트라도 "queued↔working" 처럼 글이 바뀌어
 헛되이 5분으로 돌아간다. 집합이 **직전에 발화한** 깨우기 때와 같으면 다음 단계, 다르면 5분
 (`AgentRegistry._checkin_step`). 진짜 보고로 깨면 집합이 거의 항상 바뀌므로(작업 소멸·빚 정산)
@@ -311,7 +311,7 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
   그 알림은 다음 턴 경계에 배달되거나 `wait` 를 "already arrived" 로 거부시킨다 — 사실 진술이라
   어느 쪽도 거짓이 아니다. `run_ended` 의 `**meta` 에 있는 `run` 키는 그 런을 연 배달 id 이고 이
   "런 시작" 과 무관하다.
-- **발화**: `fire_checkin(owner)` 가 `runtime.wait_checkin` 으로 본문을 만들어 main 이면 메일함
+- **발화**: `fire_checkin(owner)` 가 `wake.wait_checkin` 으로 본문을 만들어 main 이면 메일함
   (`_push_reply`, `MailWaker` 가 깨운다), 상주면 받은편지함(`request(..., kind="checkin",
   ledger="none")`)으로. 걸린 것이 없거나(런이 먼저 시작해 풀렸다) 아무것도 안 돌고 있으면 보내지
   않는다. 상주 런을 여는 항목은 도구 레코드가 아니라 시작 user 레코드이므로 "도구 이름 `wait`"
@@ -362,7 +362,7 @@ waiting on job #1` 로 받았다(v10.73 벤치 4건). 원인은 one-shot 에 자
 - **메일함** (`AgentRegistry._mailboxes`, `deliver` 의 셋째 가지): `arrived_for`·`take_mail`·`wait_mail(stop_event, still_waiting)`·
   `drop_mailbox`. 같은 `_cv` 로 깨운다. UI(`_pending`)·디스크 밖. 체크인(`fire_checkin`)도 여기로.
 - **포트**: `ports_for_oneshot` 이 `absorb_inbox = take_mail(owner)` 를 꽂는다 → `wakeable()` 참 → `wait` 가 광고되고 문법에도
-  든다(종전의 "숨김인데 디스패치는 받음" 불일치 해소). 흡수 레코드는 `runtime.mail_record` — **main 이 받는 모양과 같다**(사용자 결정 C, `constants.HARNESS_MAIL_TOOL`
+  든다(종전의 "숨김인데 디스패치는 받음" 불일치 해소). 흡수 레코드는 `wake.mail_record` — **main 이 받는 모양과 같다**(사용자 결정 C, `constants.HARNESS_MAIL_TOOL`
   한 표): 봉투 없이 보고 그대로, ``tool`` 은 `job`·`monitor`·체크인→`wait`. "도구가 만든 보고는 봉투 밖"
   (`build_reply_record`) — 보낸이가 하니스 하나라 `from` 이 정보가 아니고, 봉투는 에이전트끼리의 요청·회신·죽음
   통지의 것. 상주도 같다: `deliver` 의 `agent:` 가지가 종류를 `request(kind=)` 로 넘기고 `_model_text` 는 하니스

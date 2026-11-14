@@ -57,7 +57,8 @@ agent_cli/
 ├── __init__.py              패키지 버전(`__version__`) 한 줄
 ├── __main__.py              `python -m agent_cli` 진입점
 ├── main.py                  typer CLI — `run`·`web`·`setup`·`mcp`·`knobs`·`sessions`·`stats`·`update` 명령과 `@agent`·`/skill` 디스패치
-├── runtime.py               run/web 세션 조립(`SessionSpec`→stores→owners→`wire_session`)·정리, `MainLoop`, 깨우기 판정(`wake_sources`)
+├── runtime.py               run/web 세션 조립(`SessionSpec`→stores→owners→`wire_session`)·정리, `MainLoop`
+├── wake.py                  한 주소를 무엇이 깨우나(`wake_sources`)·체크인 알림·메일 → 레코드·`release_owner` — 세션 슬롯만 본다
 ├── pump.py                  세션 펌프 — 큐에서 꺼내 깨우기·라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
 ├── command_table.py         사용자 명령 표 하나 — 웹 `/help` 와 `run "/help"` 가 여기서 나온다
 ├── config.py                config.json·models.json 레지스트리 읽기·저장, 프로바이더 기본값, 방언 바인딩(`bind_user_dialect`)
@@ -346,7 +347,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 | 4 | `context/` · `prompts/` · `providers/` (한 묶음) |
 | 3 | `dialects/` · `mcp/` · `web/` |
 | 2 | `tools/` · `render/` · `pump` · `setup` |
-| 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` · `instance_file` |
+| 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` · `instance_file` · `wake` |
 | 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `session_slots` · `agents/` |
 
 `context/`·`prompts/`·`providers/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).
@@ -358,7 +359,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 - **순환을 피하려고 지연인 import** — 대상 모듈이 모듈 수준 import 만으로 출발 모듈에 닿는 간선 — 는 테스트 안의 이름 붙은 목록
   `CYCLE_AVOIDING_LAZY` 와 정확히 같아야 한다(`test_cycle_avoiding_lazy_imports_are_the_named_list`). 간선 목록 자체는 테스트가 주인이다.
   남은 것은 `loop.kind` 에서 나가는 둘이다 — private 종류가 세션을 올려다보는 `loop.kind` → `runtime`
-  (포트 배선과 해제의 `release_owner`), 그리고 재귀인 `loop.kind` → `loop.run`(종류가 엔진을 돌리고 엔진은
+  (포트 배선의 비움 사유·훅 포트), 그리고 재귀인 `loop.kind` → `loop.run`(종류가 엔진을 돌리고 엔진은
   `agent`·`run_skill` 도구로 다시 종류를 만든다 — 기본 엔진은 호출 시점에 읽는다).
   `loop/__init__.py` 는 아무것도 재수출하지 않는다 — 재수출하면 `loop.kind` 만 쓰는 세션 쪽이 패키지 머리를 거쳐 엔진 전체를 끌고 와
   `loop.core`·`loop.dispatch`·`loop.tool_bridge`·`loop.skill_invoke` 의 세션 쪽 지연 import 까지 순환 회피가 된다.

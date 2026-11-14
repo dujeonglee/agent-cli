@@ -141,11 +141,11 @@ history·result.md, 관찰 `run_skill` ⑤ 감사 노브 on → 런 뒤 `harness
   (사람 묶음) 두 벌 삭제, 워커는 `kind.run(kind.start(batch))` 한 줄. 묶음은 전부 사람이고
   `reply_debts` 가 사람 주소를 빼므로 단건과 같은 판정(`owed=False`, `human=True`)으로 떨어진다.
   `crashed()` 도 같은 `finish` 를 거친다(종전 except 가 하던 "agent internal error" 회신).
-- **메일→레코드 하나**: `runtime.harness_record(mail)` — 하니스 통지(잡·모니터·체크인)의 봉투
+- **메일→레코드 하나**: `wake.harness_record(mail)` — 하니스 통지(잡·모니터·체크인)의 봉투
   없는 레코드(`HARNESS_MAIL_TOOL`, `source` "harness_mail"). main 의 `build_reply_record`·상주의
   `absorb_pending`·private 의 `mail_record` 가 모두 이것을 부른다. main 의 하니스 레코드에
   `source` 가 새로 붙는다(종전엔 없었다 — 세 곳 중 유일하게).
-- **소유자 정리 하나**: `runtime.release_owner(owner, *, jobs=, monitors=, registry=) → Released
+- **소유자 정리 하나**: `wake.release_owner(owner, *, jobs=, monitors=, registry=) → Released
   (count, note)` — 잡(돌던 것은 결과에 알림) · 모니터 · **python 워커** · (registry 가 있으면)
   메일함과 체크인. `PrivateLoop.release` 와 상주 워커의 죽음 정본 자리가 같은 함수; 상주의
   `_drop_monitors`(kill·종료의 조기 드롭)는 자원 몫만. `release_private_owner` 삭제.
