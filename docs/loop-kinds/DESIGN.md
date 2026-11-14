@@ -107,7 +107,7 @@ history·result.md, 관찰 `run_skill` ⑤ 감사 노브 on → 런 뒤 `harness
 | 물음 | 엔진의 자리 | 종전 추측 |
 |---|---|---|
 | `wait_policy()` → `end_run`·`block`·`refuse` | `dispatch._op_wait` | `cfg.wakeable` + `is_private_owner(owner)` |
-| `intake()` → `{"message"}`·`{"mail"}`·`{"record"}`·`{"user_request"}` | `core._intake` (넣는 법은 엔진: `_inject_message`·`_inject_mail`·`_inject_item`) | `dequeue_user_message`·`agent_registry`·`absorb_inbox` 포트 유무로 세 메서드 |
+| `intake()` → `{"message"}`·`{"mail"}`·`{"record"}`·`{"user_request"}` | `core._intake` (넣는 법은 엔진: `_inject_message`·`_inject_mail`·`_inject_item`) | `dequeue_user_message`·`agent_registry` 포트 유무와 `mailbox.has_inbox` 로 세 메서드 |
 | `prompt_profile()` → role·peer_section·agent_registry·ask_blocking·reports_to_caller·peer_channel | `prompt.SystemPromptSvc.rebuild`, `llm`(함수 스키마·종결 어투), `dispatch`(ask 비차단), `tool_bridge`(거절 문구) | `agent_registry is None`·`depth > 0`·`questions.nonblocking`·`message_handler is not None` |
 | `tail_roster(tools)` | `llm._build_session_state` | 레지스트리+`agent` 도구 / `peer_roster` 포트 |
 | `renders()` | `core` 렌더 게이트 넷 | `not self.skill_name` |

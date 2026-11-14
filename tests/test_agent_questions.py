@@ -1730,7 +1730,7 @@ class TestUnifiedDebtRules:
             key=b,
             message_handler=lambda to, text, **kw: "",
             questions=reg.question_port(b),
-            absorb_inbox=lambda: reg.absorb_pending(reg.get(b)),
+            inbox=lambda: reg.absorb_pending(reg.get(b)),
             peer_roster=None,
         )
         tm = reg.get(b)
@@ -1796,7 +1796,7 @@ class TestUnifiedDebtRules:
             key=b,
             message_handler=lambda to, text, **kw: "",
             questions=reg.question_port(b),
-            absorb_inbox=lambda: reg.absorb_pending(reg.get(b)),
+            inbox=lambda: reg.absorb_pending(reg.get(b)),
             peer_roster=None,
         )
         tm = reg.get(b)
@@ -2309,7 +2309,7 @@ class TestMidRunAbsorption:
                 key=b,
                 message_handler=reg._make_message_handler(tm),
                 questions=reg.question_port(b),
-                absorb_inbox=lambda: reg.absorb_pending(tm),
+                inbox=lambda: reg.absorb_pending(tm),
                 peer_roster=None,
             ),
         )

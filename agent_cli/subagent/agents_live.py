@@ -1939,7 +1939,7 @@ class AgentRegistry:
     def absorb_pending(self, tm: AgentInstance) -> list[dict]:
         """턴 경계 흡수 (v9.25.0) — 받은편지함의 대기분을 **지금 도는 런**으로.
 
-        루프의 ``absorb_inbox`` 포트가 이걸 부른다. 여기서 하는 일은 런 시작
+        루프의 메일함 포트(``mailbox.take``)가 이걸 부른다. 여기서 하는 일은 런 시작
         (`ResidentLoop.start`)이 항목 하나에 하는 것과 같다 — 처리 중 목록으로
         옮기고(재시작 복원 대상), 요청이면 빚을 적고, 질문이면 배달로 찍는다.
         돌려주는 것은 루프가 그대로 넣을 수 있는 모양이다:
@@ -2362,7 +2362,7 @@ class AgentRegistry:
             self._cv.notify_all()
 
     def take_mail(self, addr: str) -> list[dict]:
-        """private 메일함을 비우며 전부 돌려준다 — 루프의 ``absorb_inbox`` 포트가 턴
+        """private 메일함을 비우며 전부 돌려준다 — 루프의 메일함 포트(``mailbox.take``)가 턴
         경계마다 부른다. 도착 순서."""
         with self._cv:
             return list(self._mailboxes.pop(addr, []))

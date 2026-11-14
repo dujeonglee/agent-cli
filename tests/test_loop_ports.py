@@ -41,7 +41,7 @@ BUILDERS = {
     "skill": lambda: SkillLoop.make_ports(agent_registry=_Reg(), owner="agent:parent"),
     "oneshot": lambda: PrivateLoop.make_ports("run:task_1"),
     "resident": lambda: ResidentLoop.make_ports(
-        key="k1", message_handler=_S, questions=_S, absorb_inbox=_S, peer_roster=_S
+        key="k1", message_handler=_S, questions=_S, inbox=_S, peer_roster=_S
     ),
 }
 

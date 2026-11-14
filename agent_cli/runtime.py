@@ -30,7 +30,6 @@ from typing import Any
 
 from agent_cli.loop.kind import WAIT_END_RUN, LoopKind, PromptProfile, Start
 from agent_cli.loop.ports import (
-    _NO_INBOX,
     _RESIDENT_ROSTER,
     LoopPorts,
     _hook_runner_port,
@@ -707,13 +706,11 @@ class MainLoop(LoopKind):
             route_message=route_message,
             message_handler=None,
             hook_runner=_hook_runner_port(),
-            absorb_inbox=None,
             peer_roster=None,
             mailbox=Mailbox(agent_registry, "main"),
             unwired={
                 "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
                 **_hook_unwired(),
-                "absorb_inbox": _NO_INBOX,
                 "peer_roster": _RESIDENT_ROSTER,
             },
         )

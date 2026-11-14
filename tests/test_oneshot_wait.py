@@ -388,7 +388,7 @@ class TestOneShotHasItsOwnAddress:
         def fake_run_loop(kind, start, ctx):
             ports = kind.ports
             seen["owner"] = ports.owner
-            seen["absorb"] = ports.absorb_inbox
+            seen["inbox"] = ports.mailbox.has_inbox
             jobs.start("sleep 30", owner=ports.owner)  # 서브에이전트가 잡을 남기고 끝남
             return ToolResult(True, output="done")
 
@@ -403,7 +403,7 @@ class TestOneShotHasItsOwnAddress:
             ),
         ).run()
         assert result.success
-        assert seen["owner"].startswith(RUN_OWNER_PREFIX) and seen["absorb"] is not None
+        assert seen["owner"].startswith(RUN_OWNER_PREFIX) and seen["inbox"] is True
         assert jobs.running(seen["owner"]) == []
         assert "1 background job still running was stopped" in result.output
 

@@ -80,7 +80,7 @@ class TestEveryKindHasOne:
             key="k1",
             message_handler=_S,
             questions=_S,
-            absorb_inbox=list,
+            inbox=list,
             peer_roster=_S,
         ).mailbox
         private = PrivateLoop.make_ports("run:t1").mailbox
@@ -134,3 +134,40 @@ class TestEngineDoesNotReadTheSlot:
                 if "get_agent_registry" in names:
                     offenders.append(f"{path.name}:{node.lineno}")
         assert offenders == [], f"엔진이 전역 레지스트리를 읽는다: {offenders}"
+
+
+class TestWakeableTruthTable:
+    """`ports.wakeable()` 는 메일함 포트로 옮긴 뒤에도 같은 뜻이다(v10.133.29) — 입력 큐가
+    있거나 받은편지함이 있는 루프만. "메일함이 있다" 로 판정하면 다섯 모두 참이 되어 스킬에
+    `wait` 가 광고된다. 표는 v10.133.25(3f107c0f)의 등가성 드라이버에서 잰 값이다:
+    main T · 상주 T · one-shot T · 하니스 T · 스킬 F."""
+
+    def test_five_kinds(self):
+        set_agent_registry(MagicMock())
+        main = MainLoop.make_ports(
+            agent_registry=MagicMock(),
+            mcp_manager=None,
+            dequeue_user_message=lambda: None,
+            enqueue_user_message=lambda *a: None,
+            route_message=lambda *a: None,
+        )
+        resident = ResidentLoop.make_ports(
+            key="k1", message_handler=_S, questions=_S, inbox=list, peer_roster=_S
+        )
+        oneshot = PrivateLoop.make_ports("run:task_1")
+        harness = PrivateLoop.make_ports("harness:auditor:1-1")
+        skill = SkillLoop.make_ports(agent_registry=None, owner="main")
+        got = {
+            "main": main.wakeable(),
+            "resident": resident.wakeable(),
+            "oneshot": oneshot.wakeable(),
+            "harness": harness.wakeable(),
+            "skill": skill.wakeable(),
+        }
+        assert got == {
+            "main": True,
+            "resident": True,
+            "oneshot": True,
+            "harness": True,
+            "skill": False,
+        }

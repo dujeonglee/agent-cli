@@ -89,7 +89,9 @@ class TestRun:
         assert ports.owner == "harness:auditor:1-9"  # v10.87.0 D2: 라벨까지
         assert ports.questions is None and ports.agent_registry is None
         assert ports.message_handler is None
-        assert ports.absorb_inbox is not None  # v10.84.0: 자기 메일함을 읽는 포트
+        assert (
+            ports.mailbox.has_inbox
+        )  # v10.84.0: 자기 메일함을 읽는다(v10.133.29 메일함 포트)
         # 프로파일이 도구 상한·역할이고, 세션 셸 훅은 싣지 않는다
         assert kind.tools == ["history", "read_file", "code_index"]
         assert kind.agent_name == "auditor" and "Auditor" in kind.agent_role

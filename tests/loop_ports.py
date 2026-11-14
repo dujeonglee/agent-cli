@@ -32,15 +32,14 @@ def make_ports(**overrides: Any) -> LoopPorts:
         "route_message": None,
         "dequeue_user_message": None,
         "enqueue_user_message": None,
-        "absorb_inbox": None,
         "peer_roster": None,
     }
+    inbox = overrides.pop("inbox", None)
     base.update(overrides)
     if "mailbox" not in base:
-        # 프로덕션 빌더처럼: 포트를 만들 때의 슬롯 레지스트리, 받은편지함은 `absorb_inbox`.
-        base["mailbox"] = Mailbox(
-            get_agent_registry(), base["owner"], take=base["absorb_inbox"]
-        )
+        # 프로덕션 빌더처럼: 포트를 만들 때의 슬롯 레지스트리. ``inbox`` 는 받은편지함(`take`)
+        # — 주면 상주·private 처럼 깨울 수 있는 루프가 된다.
+        base["mailbox"] = Mailbox(get_agent_registry(), base["owner"], take=inbox)
     return LoopPorts(**base)
 
 
