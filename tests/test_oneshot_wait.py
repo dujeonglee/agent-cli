@@ -25,6 +25,7 @@ from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.render.minimal import MinimalRenderer
 from agent_cli.session_slots import (
+    get_agent_registry,
     set_agent_registry,
     set_job_registry,
     set_schedule_registry,
@@ -290,9 +291,9 @@ class TestWakeItemsForPrivateOwners:
                 return True
 
         set_schedule_registry(Sched())
-        assert "a schedule" in wake_sources("main")
+        assert "a schedule" in wake_sources("main", agents=get_agent_registry())
         assert (
-            wake_sources("run:x") == []
+            wake_sources("run:x", agents=get_agent_registry()) == []
         )  # 빼지 않으면 잡 없이도 wait 가 영원히 막힌다
 
 

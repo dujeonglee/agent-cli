@@ -1213,7 +1213,7 @@ class TurnDispatcher:
                 turn=self.state.turn,
             )
             return _CONTINUE
-        arrived = arrived_mail(self.cfg.kind.ports.owner)
+        arrived = arrived_mail(self.cfg.kind.ports.owner, agents=get_agent_registry())
         if arrived:
             n = f"{arrived} notice" + ("s" if arrived > 1 else "")
             _append_observation(
@@ -1229,7 +1229,7 @@ class TurnDispatcher:
                 turn=self.state.turn,
             )
             return _CONTINUE
-        sources = wake_sources(self.cfg.kind.ports.owner)
+        sources = wake_sources(self.cfg.kind.ports.owner, agents=get_agent_registry())
         if not sources:
             reg = get_agent_registry()
             parked = (
@@ -1312,7 +1312,9 @@ class TurnDispatcher:
             why = reg.wait_mail(
                 owner,
                 stop_event=self.state.stop_event,
-                still_waiting=lambda: bool(wake_sources(owner)),
+                still_waiting=lambda: bool(
+                    wake_sources(owner, agents=get_agent_registry())
+                ),
             )
             reg.run_started(owner)  # 체크인 해제 — 다음 wait 가 다시 건다
         if why == "nothing":
@@ -1367,7 +1369,7 @@ class TurnDispatcher:
         waiting_hint = (
             " If you are only waiting for something you started to report back, "
             "call `wait` instead — it keeps these items open and the report wakes you."
-            if wake_sources(self.cfg.kind.ports.owner)
+            if wake_sources(self.cfg.kind.ports.owner, agents=get_agent_registry())
             else ""
         )
         return self._intervene(

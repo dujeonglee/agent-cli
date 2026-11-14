@@ -19,7 +19,7 @@ from agent_cli.dialects.grammar import terminal_tools
 from agent_cli.jobs import JobRegistry
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.session_slots import set_job_registry
+from agent_cli.session_slots import get_agent_registry, set_job_registry
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 from agent_cli.tools.virtual import WaitTool
 from tests.loop_ports import TEST_PORTS, make_ports
@@ -195,8 +195,10 @@ class TestWaitEndsTheRun:
         jobs.start("sleep 30", owner="agent:x")
         from agent_cli.wake import wake_sources
 
-        assert wake_sources("main") == []
-        assert wake_sources("agent:x") == ["job #1 (`sleep 30`)"]
+        assert wake_sources("main", agents=get_agent_registry()) == []
+        assert wake_sources("agent:x", agents=get_agent_registry()) == [
+            "job #1 (`sleep 30`)"
+        ]
 
 
 class TestAlreadyArrived:
@@ -266,11 +268,14 @@ class TestAlreadyArrived:
         from agent_cli.wake import arrived_mail, wake_sources
 
         reg = self._registry(tmp_path)
-        assert arrived_mail("main") == 0
+        assert arrived_mail("main", agents=get_agent_registry()) == 0
         self._monitor_mail(reg)
-        assert reg.arrived_for("main") == 1 and arrived_mail("main") == 1
+        assert (
+            reg.arrived_for("main") == 1
+            and arrived_mail("main", agents=get_agent_registry()) == 1
+        )
         # 종전의 "a reply to you not yet delivered" 는 없다 — 도착분은 깨울 것이 아니다
-        assert wake_sources("main") == []
+        assert wake_sources("main", agents=get_agent_registry()) == []
         assert reg.arrived_for("agent:nobody") == 0
 
     def test_resident_inbox_items_count_for_that_agent(self, tmp_path):
@@ -482,7 +487,7 @@ class TestCircularWait:
         self._owes(r, b, a, "r-2")  # b 는 a 의 요청으로 깨어 지금 wait 를 부른다
         tb = r.get(b)
         tb.state, tb.current_author = "busy", f"agent:{a}"
-        assert wake_sources(f"agent:{b}") == []
+        assert wake_sources(f"agent:{b}", agents=get_agent_registry()) == []
         assert r.parked_debtors_for(f"agent:{b}") == [f"agent:{a}"]
 
     def test_a_chain_to_a_working_agent_still_wakes(self, reg):
@@ -492,7 +497,7 @@ class TestCircularWait:
         self._owes(r, a, b, "r-1")  # a 는 b 에게 빚진 채 잠들었고
         tc = r.get(c)  # c 가 a 의 요청을 처리 중이다 → a 는 깨어날 것이다
         tc.state, tc.current_author = "busy", f"agent:{a}"
-        got = wake_sources(f"agent:{b}")
+        got = wake_sources(f"agent:{b}", agents=get_agent_registry())
         assert got == [f"agent:{a} owes you a reply (it is waiting on others)"]
 
 

@@ -26,6 +26,7 @@ from agent_cli.monitor import MonitorRegistry, build
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.session_slots import (
+    get_agent_registry,
     set_agent_registry,
     set_job_registry,
     set_monitor_registry,
@@ -179,8 +180,8 @@ class TestArmAndFire:
         from agent_cli.session_slots import set_schedule_registry
 
         set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
-        assert wake_sources("main") == ["a schedule"]
-        assert wake_source_ids("main") == frozenset()
+        assert wake_sources("main", agents=get_agent_registry()) == ["a schedule"]
+        assert wake_source_ids("main", agents=get_agent_registry()) == frozenset()
         assert reg.next_checkin_s("main") is None
         assert reg.arm_checkin("main") is None and _armed(reg) is None
 
@@ -191,7 +192,7 @@ class TestArmAndFire:
 
         set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
         jobs.start("sleep 30", owner="main")
-        assert wake_source_ids("main") == {"job:1"}
+        assert wake_source_ids("main", agents=get_agent_registry()) == {"job:1"}
         reg.run_ended("main", "", waiting=True)
         text = reg.fire_checkin("main")
         assert "job #1" in text and "schedule" not in text
@@ -251,7 +252,7 @@ class TestNoticeLines:
         mon = mons.add(
             build({"file": str(log), "pattern": "done"}), owner="main", deadline_s=6540
         )
-        assert wake_source_ids("main") == {f"mon:{mon.id}"}
+        assert wake_source_ids("main", agents=get_agent_registry()) == {f"mon:{mon.id}"}
         reg.arm_checkin("main")
         text = reg.fire_checkin("main")
         assert f"monitor {mon.id} · `file` + `pattern` on {log} · 1h49m left" in text
@@ -317,7 +318,7 @@ class TestAgentLines:
 
     def test_working_agent_counts_steps_since_the_wait(self, reg):
         tm = _fake_agent(reg, "k", state="busy", ordinal=3, last_at=time.time() - 40)
-        assert wake_source_ids("main") == {"agent:k"}
+        assert wake_source_ids("main", agents=get_agent_registry()) == {"agent:k"}
         reg.arm_checkin("main")
         assert _armed(reg).step_marks == {"agent:k": 3}
         tm.ctx.last_ordinal = 15
@@ -362,7 +363,7 @@ class TestAgentLines:
         _fake_agent(reg, "m", profile="coder")  # idle, 받은편지함 빔 — 스스로 잠듦
         reg._reply_debts["agent:m"] = [ReplyDebt(to="main", text="t", id="r-1")]
         jobs.start("pytest -x tests/", owner="agent:m")
-        assert wake_source_ids("main") == {"agent:m"}
+        assert wake_source_ids("main", agents=get_agent_registry()) == {"agent:m"}
         reg.arm_checkin("main")
         text = reg.fire_checkin("main")
         assert (
