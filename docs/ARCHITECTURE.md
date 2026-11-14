@@ -304,7 +304,7 @@ agent_cli/
             ├── ledger.js        📋 열린 항목 띠
             ├── stuck.js         🔁 제자리 고리 띠
             ├── jobs.js          🧵 백그라운드 작업 칩과 ■ 멈춤
-            ├── changes.js       Δ 칩과 Changes 패널 — 스냅샷 기준점 ↔ 지금 디스크의 바뀐 파일
+            ├── changes.js       Changes 패널과 입구(📁 배지·main 의 마지막 complete 카드 줄, DOM 으로만) — 스냅샷 기준점 ↔ 지금 디스크의 바뀐 파일
             ├── channels.js      채널·트레이 상태, 채널 필터·점프 — 순환 묶음의 진입점
             ├── timeline.js      카드 시각, 접히는 그룹, 타임라인 추가, `scope_*` 배선
             ├── frames.js        모델 시점(`ctx_view`)과 틀(맨 위 카드·맨 아래 띠 — 채널 것은 `#ctx-head`·`#ctx-tail` 고정 자리)

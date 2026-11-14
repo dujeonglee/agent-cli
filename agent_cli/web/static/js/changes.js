@@ -1,9 +1,18 @@
-// changes.js — 상단 Δ 칩과 Changes 패널: 기준점 이후 디스크에서 바뀐 파일 목록.
+// changes.js — Changes 패널: 기준점 이후 디스크에서 바뀐 파일 목록과 그 입구 둘.
 // 순환 밖 잎이다 — dom·sse·markdown 만 import 한다.
 // (v10.137.0, docs/snapshot/DESIGN.md §7 · docs/web-modules/DESIGN.md §8)
 //
+// 입구(v10.137.1): ① 📁(`#files-btn`) 안의 숫자 배지 — 배지를 누르면 이 패널, 아이콘을
+// 누르면 workspace.js 의 Workspace files 드로어 그대로(배지 클릭은 버블링을 막는다).
+// ② main 채널의 가장 최근 `complete` 카드 안의 한 줄 `Δ N files changed · View changes`.
+// 둘 다 다른 모듈의 화면이라 import 없이 **DOM 으로만** 붙는다(선택자). 줄은 하나뿐이다 —
+// 누적 목록이라 옛 카드의 숫자는 의미가 없어, 새 카드가 생기면 그리로 옮긴다. 카드가
+// 셈보다 늦게 그려질 수 있어(재생·라이브 둘 다) `#messages` 의 직계 자식 추가만 보는
+// MutationObserver 하나가 새 main 최종답 카드를 보면 다시 붙인다. 줄은 화면 전용이다 —
+// 대화 복사는 카드의 `_md`(원문)에서 만들어 이 줄이 들어가지 않는다.
+//
 // 목록은 "스냅샷 저장소의 기준점 커밋 ↔ 지금 디스크" 다(api/changes). 누가 바꿨든 —
-// 모델·상주 에이전트·사람의 IDE — 디스크가 바뀌면 오른다. 그래서 칩은 "모델이 바꾼
+// 모델·상주 에이전트·사람의 IDE — 디스크가 바뀌면 오른다. 그래서 입구는 "모델이 바꾼
 // 것" 이라고 말하지 않는다. Clear 는 지금 디스크를 새 기준점으로 삼을 뿐 파일을 건드리지
 // 않고, 몇 초간 Undo 로 이전 기준점을 되살린다(한 단계).
 //
@@ -12,11 +21,11 @@
 // 않는다), 에이전트·스킬·상주 런은 `scope_end`. 도구 호출마다 세지 않는다. 재생이
 // `scope_end` 를 몰아 보내도 한 번으로 합친다(RECOUNT_MS).
 
-import { el, elHtml } from "./dom.js";
+import { $messages, el, elHtml } from "./dom.js";
 import { es } from "./sse.js";
 import { colorizeDiffBody, escapeHtml } from "./markdown.js";
 
-const $chip = document.getElementById("changes-chip");
+const $badge = document.getElementById("changes-badge");
 const $drawer = document.getElementById("changes-drawer");
 const $backdrop = document.getElementById("changes-backdrop");
 const $since = document.getElementById("changes-since");
@@ -29,12 +38,15 @@ const RECOUNT_MS = 400;
 // Clear 뒤 Undo 토스트가 서 있는 시간
 const UNDO_MS = 6000;
 
-if ($chip && $drawer) {
+if ($badge && $drawer) {
   let data = null; // 마지막 api/changes 응답
   let selected = null; // 고른 파일 경로
   let recountTimer = null;
   let toastTimer = null;
   let wasBusy = false;
+  // 런 끝 줄 — 하나를 만들어 두고 마지막 main 최종답 카드로 옮긴다
+  const $line = el("button", ["final-changes"]);
+  $line.type = "button";
 
   function hhmm(epoch) {
     const d = new Date(epoch * 1000);
@@ -49,14 +61,40 @@ if ($chip && $drawer) {
     return "since " + hhmm(b.when);
   }
 
-  function renderChip() {
-    const on = !!(data && data.enabled);
-    $chip.hidden = !on;
-    if (!on) return;
-    const n = data.files.length;
-    $chip.textContent = n ? "Δ " + n + (n === 1 ? " file" : " files") : "Δ 0";
-    $chip.classList.toggle("chg-zero", !n);
-    $chip.title = "Files changed on disk " + sinceText(data.baseline) + " — open the list";
+  function count() {
+    return data && data.enabled ? data.files.length : 0;
+  }
+  function tip(n) {
+    return n + (n === 1 ? " file" : " files") + " changed on disk " +
+      sinceText(data.baseline) + " — open Changes";
+  }
+  function renderBadge() {
+    const n = count();
+    $badge.hidden = !n;
+    $badge.textContent = n ? String(n) : "";
+    $badge.title = n ? tip(n) : "";
+  }
+  // main 채널의 가장 최근 최종답 카드(cards.js 가 그린 것, 루트 직계 — 에이전트 채널의
+  // 런 블록이나 서브에이전트 묶음 안의 것은 아니다)
+  function lastMainFinal() {
+    const fins = $messages.querySelectorAll(':scope > .card-assistant[data-ch="main"] > .final');
+    return fins.length ? fins[fins.length - 1].parentNode : null;
+  }
+  function placeLine() {
+    const n = count();
+    const card = n ? lastMainFinal() : null;
+    if (!card) { $line.remove(); return; }
+    $line.textContent = "Δ " + n + (n === 1 ? " file" : " files") + " changed · View changes";
+    $line.title = tip(n);
+    // `.final` 다음, 답한 요청 줄이 있으면 그 뒤
+    const anchor = card.querySelector(":scope > .final-answers") || card.querySelector(":scope > .final");
+    if ($line.parentNode !== card || $line.previousSibling !== anchor) {
+      card.insertBefore($line, anchor.nextSibling);
+    }
+  }
+  function renderEntries() {
+    renderBadge();
+    placeLine();
   }
 
   function countsHtml(f) {
@@ -132,7 +170,7 @@ if ($chip && $drawer) {
 
   function apply(d) {
     data = d;
-    renderChip();
+    renderEntries();
     if ($drawer.classList.contains("open")) renderPanel();
   }
   function recount() {
@@ -181,7 +219,6 @@ if ($chip && $drawer) {
       $drawer.classList.add("open");
     });
     $drawer.setAttribute("aria-hidden", "false");
-    $chip.setAttribute("aria-expanded", "true");
     renderPanel();
     recount();
   }
@@ -189,13 +226,25 @@ if ($chip && $drawer) {
     $backdrop.classList.remove("open");
     $drawer.classList.remove("open");
     $drawer.setAttribute("aria-hidden", "true");
-    $chip.setAttribute("aria-expanded", "false");
     setTimeout(function () { $backdrop.hidden = true; }, 260);
   }
-  $chip.addEventListener("click", function () {
-    if ($drawer.classList.contains("open")) close();
-    else open();
+  // 배지는 📁 버튼 안에 있다 — 버블링을 막아야 Workspace files 드로어가 같이 열리지 않는다
+  $badge.addEventListener("click", function (e) {
+    e.stopPropagation();
+    open();
   });
+  $line.addEventListener("click", open);
+  // 새 main 최종답 카드가 그려지면 줄을 그리로 — 직계 자식 추가만 본다(subtree 아님)
+  new MutationObserver(function (records) {
+    if (!count()) return;
+    const hit = records.some(function (r) {
+      return Array.prototype.some.call(r.addedNodes, function (n) {
+        return n.nodeType === 1 && n.dataset.ch === "main" &&
+          n.classList.contains("card-assistant") && !!n.querySelector(":scope > .final");
+      });
+    });
+    if (hit) placeLine();
+  }).observe($messages, { childList: true });
   document.getElementById("changes-close").addEventListener("click", close);
   $backdrop.addEventListener("click", close);
   document.addEventListener("keydown", function (e) {
