@@ -12,6 +12,9 @@ Endpoints:
   - ``POST /api/abort``  — interrupt the current ``prompt_user`` / ``confirm``
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn
   - ``POST /api/jobs/stop`` — a viewer stops one background job (v10.121.0)
+  - ``GET  /api/changes`` · ``GET /api/changes/diff?path=`` · ``POST /api/changes/clear``
+    · ``POST /api/changes/undo`` — the Changes panel: files changed on disk since the
+    snapshot baseline (v10.137.0, ``snapshot.GitSnapshot.baseline``)
 
 Auth: the ``_AuthMiddleware`` is the SOLE enforcer, default-deny. Every
 ``/api/*`` path except ``/api/health`` requires authentication; ``/``, ``/static``
@@ -56,6 +59,7 @@ from agent_cli.input_queue import InputQueue
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
 from agent_cli.session_slots import get_job_registry, get_schedule_registry
+from agent_cli.snapshot import get_snapshot
 
 # C3: 도메인 로직은 분리 모듈 소유 — server 는 전송(라우팅·SSE·미들웨어) 전용.
 from agent_cli.web.directives import generate_directive_section
@@ -1295,6 +1299,66 @@ def create_app(server: WebServer) -> FastAPI:
         if mime is None:
             raise HTTPException(status_code=400, detail="not an image")
         return FileResponse(p, media_type=mime, headers=_NO_CACHE_HEADERS)
+
+    # ── Changes 패널 (v10.137.0, docs/snapshot/DESIGN.md §7) ──
+    # 얇다: 세션의 스냅샷 저장소(runtime 이 만든 것 — 여기서는 만들지 않는다)의 메서드를
+    # 부르고 JSON 으로. git 은 실행기에서 — 큰 워크스페이스의 `add` 가 이벤트 루프(모든
+    # 뷰어의 SSE)를 막지 않게. 런 도중에도 부를 수 있다(임시 색인 — snapshot.py 참고).
+    def _changes_store():
+        store = get_snapshot(server.workspace)
+        return store if store is not None and store.enabled else None
+
+    def _changes_payload(store) -> dict:
+        if store is None:
+            return {"enabled": False}
+        base = store.baseline()
+        files = store.changes() if base else None
+        if base is None or files is None:
+            return {"enabled": False}
+        return {
+            "enabled": True,
+            "baseline": {"kind": base[1], "when": base[2], "commit": base[0][:8]},
+            "files": files,
+        }
+
+    async def _in_executor(fn, *args):
+        return await asyncio.get_event_loop().run_in_executor(None, fn, *args)
+
+    @app.get("/api/changes")
+    async def changes_list():
+        """바뀐 파일 목록과 기준점 — ``{enabled, baseline:{kind, when, commit}, files}``.
+        스냅샷이 꺼진 방은 ``{enabled: false}``."""
+        return await _in_executor(_changes_payload, _changes_store())
+
+    @app.get("/api/changes/diff")
+    async def changes_diff(path: str = Query(..., min_length=1)):
+        """기준점 대비 그 파일의 unified diff — ``{path, diff}``. 밖이면 400."""
+        store = _changes_store()
+        if store is None:
+            raise HTTPException(status_code=409, detail="snapshots are off")
+        diff, err = await _in_executor(store.change_diff, path)
+        if diff is None:
+            raise HTTPException(status_code=400, detail=err)
+        return {"path": path, "diff": diff}
+
+    @app.post("/api/changes/clear")
+    async def changes_clear():
+        """지금 디스크를 새 기준점으로 — 목록만 비운다(파일은 그대로). 새 목록을 준다."""
+        store = _changes_store()
+        if store is None:
+            raise HTTPException(status_code=409, detail="snapshots are off")
+        if await _in_executor(store.clear) is None:
+            raise HTTPException(status_code=500, detail="clear failed")
+        return await _in_executor(_changes_payload, store)
+
+    @app.post("/api/changes/undo")
+    async def changes_undo():
+        """마지막 Clear 를 되돌린다(한 단계) — ``{undone, …목록}``."""
+        store = _changes_store()
+        if store is None:
+            raise HTTPException(status_code=409, detail="snapshots are off")
+        undone = await _in_executor(store.undo_clear)
+        return {"undone": undone, **await _in_executor(_changes_payload, store)}
 
     @app.get("/api/stream")
     async def stream():
