@@ -36,10 +36,6 @@
     <!-- 방 제목 (v10.71.0): ``ready`` 의 title — 보드 글의 topic 이 --title 로 온다. 없으면 숨김. -->
     <span id="room-title" class="hd-title" hidden></span>
     <span id="token-usage" class="hd-chip" title="token usage" hidden><span id="tok-base"></span></span>
-    <!-- Δ 칩 (v10.137.0, js/changes.js): 기준점 이후 디스크에서 바뀐 파일 수 → Changes 패널.
-         스냅샷이 없는 방이면 숨김. -->
-    <button id="changes-chip" class="hd-chip hd-chip-btn" type="button" hidden
-            aria-haspopup="dialog" aria-expanded="false" aria-controls="changes-drawer">Δ 0</button>
     <button id="chip-ws" class="hd-chip hd-chip-btn" type="button" hidden
             title="">
       <span id="ws-copy-ic">📋</span><span id="ws-tail" class="hd-chip-text"></span>
@@ -63,7 +59,9 @@
     <button id="schedule-btn" class="btn-icon" type="button" title="Schedules — submit a request automatically at a set time">⏰<span id="schedule-badge" class="sched-badge" hidden></span></button>
     <button id="websrc-btn" class="btn-icon" type="button" title="Web sources — the list carried in every turn's tail (loops with fetch only)">🌐</button>
     <button id="copy-all-btn" class="btn-icon" type="button" title="Copy conversation — the visible conversation as Markdown to the clipboard">⧉</button>
-    <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁</button>
+    <!-- 📁 안의 숫자 배지 (v10.137.1, js/changes.js): 기준점 이후 디스크에서 바뀐 파일 수 —
+         배지를 누르면 Changes 패널, 아이콘은 그대로 Workspace files. 0·스냅샷 없는 방이면 숨김. -->
+    <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁<span id="changes-badge" class="chg-badge" hidden></span></button>
     <!-- 헤더 자리 노브(ui.placement="header", ⚡ 자동 승인) — 렌더러가 토글 버튼을 넣는다 -->
     <span id="knobs-header"></span>
     <button id="share-btn" class="btn-icon" type="button" title="Copy access link (includes the token — anyone with this link can connect)">🔗</button>
