@@ -287,6 +287,7 @@ def teardown_session(
     harness=None,
     jobs=None,
     warn_stuck: bool = False,
+    deadline: float | None = None,
 ) -> None:
     """공용 종료 시퀀스 — 모든 run/web 종료 경로가 여기로 수렴한다.
 
@@ -294,7 +295,11 @@ def teardown_session(
     ② 생산자 정지(모니터·예약 스레드) ③ 상주 에이전트 전원 종료 ④ 스피너 정지
     ⑤ MCP 해제(stdio 자식 프로세스·errlog fd 정리) ⑥ 세션 저장 ⑦ 세션 슬롯 비우기
     (앞 단계가 실패해도). 저장-완료
-    메시지는 표면별로 다르므로 호출자가 출력한다."""
+    메시지는 표면별로 다르므로 호출자가 출력한다.
+
+    ``deadline`` (v10.134.1, ``time.monotonic`` 기준): SIGTERM 으로 들어온 정리만 준다 —
+    감사 작업·잡·상주 워커를 기다리는 시간을 그 안으로 줄인다(보드는 8초 뒤 SIGKILL,
+    `terminate.TEARDOWN_BUDGET_S`). None 이면 종전 대기 그대로."""
     if warn_stuck and agent_registry is not None:
         stuck = agent_registry.open_human_question_keys()
         if stuck:
@@ -323,10 +328,16 @@ def teardown_session(
         # 예약을 추가·켜도 `start()` 가 스레드를 되살리지 않는다.
         schedules.close()
     if harness is not None:
-        harness.stop()  # 진행 중 감사를 세운다 (v10.42.0) — 팀원 종료와 같은 자리
+        # 진행 중 감사를 세운다 (v10.42.0) — 팀원 종료와 같은 자리
+        if deadline is None:
+            harness.stop()
+        else:
+            harness.stop(deadline=deadline)
     if jobs is not None:
         # 우리가 띄운 자식이다 — 고아로 남기지 않는다 (v10.47.0). 죽인 것은 적는다.
-        killed = jobs.stop_all()
+        killed = (
+            jobs.stop_all() if deadline is None else jobs.stop_all(deadline=deadline)
+        )
         if killed:
             from agent_cli.render import C, console
 
@@ -336,7 +347,10 @@ def teardown_session(
                 f"background job(s) ({names})[/]"
             )
     if agent_registry is not None:
-        agent_registry.shutdown_all()
+        if deadline is None:
+            agent_registry.shutdown_all()
+        else:
+            agent_registry.shutdown_all(deadline=deadline)
     try:
         from agent_cli.render import render_spinner_stop
 
@@ -583,6 +597,7 @@ def close_session(
     owners: SessionOwners | None,
     *,
     warn_stuck: bool,
+    deadline: float | None = None,
 ) -> None:
     """세션 정리 — `teardown_session` 으로. 조립 도중 죽었으면 ``stores``·``owners`` 가
     None 이다: 있는 것만 정리하고, MCP 해제·세션 마감은 늘 돈다.
@@ -601,6 +616,7 @@ def close_session(
         harness=owners.auditor if owners is not None else None,
         jobs=stores.jobs if stores is not None else None,
         warn_stuck=warn_stuck,
+        deadline=deadline,
     )
 
 

@@ -34,6 +34,7 @@ from agent_cli.providers import (
     get_capabilities,
 )
 from agent_cli.render import C, console, get_renderer
+from agent_cli.terminate import SigTerm, Terminated, wait_left
 
 app = typer.Typer(
     name="agent-cli",
@@ -1811,6 +1812,9 @@ def run(
     stores = owners = None
     warn_stuck = False
     exit_code = 1  # 펌프가 판정을 못 내고 끝나는 길은 없다 — 그래도 "답 없음"
+    # SIGTERM (v10.134.1, `terminate`) — 세션 조립 뒤부터 받는다. 받으면 메인 스레드가 풀려
+    # 아래 finally 의 같은 정리로 가고, 정리가 끝나면 신호 15 로 죽는다.
+    sigterm = SigTerm()
     try:
         # 세션 펌프 (v10.33.0, docs/pump/DESIGN.md): web 과 같은 루프 —
         # 초기 질의를 InputQueue 에 넣고, teammate 회신의 wake 아이템
@@ -1901,14 +1905,26 @@ def run(
             )
         input_queue.enqueue(None, query, images=query_images)
         warn_stuck = True
+        prev_term = sigterm.install_unwind()
         try:
             wired.pump.run()
             exit_code = surface.exit_code
         except KeyboardInterrupt:
             console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
             exit_code = 130
+        except Terminated:
+            console.print(f"\n[{C['accent']}]⚡ Terminated — cleaning up.[/]")
+        finally:
+            if not sigterm.received:
+                SigTerm.restore(
+                    prev_term
+                )  # 정상·Ctrl-C 경로의 정리는 종전 처리기 그대로
     finally:
-        _finalize_run(spec, stores, owners, warn_stuck=warn_stuck)
+        _finalize_run(
+            spec, stores, owners, warn_stuck=warn_stuck, deadline=sigterm.deadline()
+        )
+    if sigterm.received:
+        SigTerm.die()  # 정리가 끝났다 — 부모는 신호 15 로 본다(종전과 같은 종료 상태)
     # 정리가 끝난 **뒤에** 판정으로 끝낸다 (v10.124.0) — 0 답 · 1 실패/무답 · 130 중단.
     # 잡히지 않은 예외는 여기 오지 않고 전파된다(typer 가 1).
     raise typer.Exit(exit_code)
@@ -2106,13 +2122,13 @@ def _write_result_file(path: str, answer) -> None:
         )
 
 
-def _finalize_run(spec, stores, owners, *, warn_stuck: bool) -> None:
+def _finalize_run(spec, stores, owners, *, warn_stuck: bool, deadline=None) -> None:
     """Finalize session after run command — 공용 정리(`runtime.close_session` →
     `teardown_session`: 생산자 정지→registry 종료→스피너→MCP 해제→세션 저장 순서를
     한 곳이 소유) + run 표면의 resume 힌트 출력."""
     from agent_cli.runtime import close_session
 
-    close_session(spec, stores, owners, warn_stuck=warn_stuck)
+    close_session(spec, stores, owners, warn_stuck=warn_stuck, deadline=deadline)
     session = spec.session
     if session is None:
         return
@@ -3037,6 +3053,10 @@ def web(
         idle_thread = threading.Thread(target=_idle_loop, daemon=True)
         idle_thread.start()
 
+    # SIGTERM (v10.134.1, `terminate`): uvicorn 이 서버를 내리고, 아래 finally 가 같은
+    # 정리를 한 뒤 신호 15 로 죽는다.
+    sigterm = SigTerm()
+    prev_term = sigterm.install_for_server(server_obj)
     try:
         try:
             server_obj.run()
@@ -3046,18 +3066,23 @@ def web(
             # finishes the teardown.
             pass
     finally:
+        if sigterm.received:
+            SigTerm.default()  # 정리 중 두 번째 SIGTERM 은 즉시 죽음
+        else:
+            SigTerm.restore(prev_term)
+        deadline = sigterm.deadline()
         remove_instance_file(_session_dir)  # board sees the instance is gone
         remove_status_file(_session_dir)  # drop the live status sidecar too
         renderer.hub.shutdown_all()
         server.shutdown()
-        worker.join(timeout=2.0)
+        worker.join(timeout=wait_left(deadline, 2.0))
         console.print(f"[{C['muted']}]Saving session...[/]")
         # 공용 정리 (v8.39.0 조립기 → v10.131.0 `close_session`): 생산자 정지 →
         # 상주 에이전트 전원 종료 → MCP 해제 → 세션 저장 — run 과 같은 시퀀스 소유자.
         try:
             from agent_cli.runtime import close_session
 
-            close_session(spec, stores, owners, warn_stuck=False)
+            close_session(spec, stores, owners, warn_stuck=False, deadline=deadline)
             console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
         except Exception as exc:
             console.print(
@@ -3066,3 +3091,5 @@ def web(
                 markup=False,
                 highlight=False,
             )
+    if sigterm.received:
+        SigTerm.die()  # 정리가 끝났다 — 부모는 신호 15 로 본다(종전과 같은 종료 상태)
