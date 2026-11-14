@@ -397,7 +397,9 @@ class PrivateLoop(LoopKind):
         )
 
     def release(self) -> str:
-        return release_owner(self.owner, registry=get_agent_registry()).note
+        note = release_owner(self.owner).note  # 잡·모니터 — 메일함은 아래 창구로
+        self.ports.mailbox.drop()  # 메일함·체크인 버림(읽을 사람이 없다)
+        return note
 
     # ── 엔진이 묻는 것 — private 종류의 명시 정책 ──
     def wait_policy(self) -> str:

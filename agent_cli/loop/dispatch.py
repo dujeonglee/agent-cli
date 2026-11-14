@@ -62,12 +62,11 @@ from agent_cli.render import (
     render_run_ended,
     render_step,
 )
-from agent_cli.session_slots import get_agent_registry
 from agent_cli.tools import TOOLS, infer_action
 from agent_cli.tools.registry import effective_tool_names
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
-from agent_cli.wake import arrived_mail, harness_work_running, wake_sources
+from agent_cli.wake import harness_work_running
 
 # parallel_safe 배치 디스패치 엔진이 실제로 배선된 도구들.
 # ``_dispatch_parallel_batch`` 는 도구별 병렬 엔진 호출을 알아야 하므로,
@@ -1179,11 +1178,11 @@ class TurnDispatcher:
     def _op_wait(self, llm_text: str, turn, op, outcome: dict):
         """terminal ``wait`` op (v10.65.0, docs/wait/DESIGN.md).
 
-        깨울 것(`wake.wake_sources`)이 있으면: 열린 요청을 ctx 에 넘기고
+        깨울 것(`ports.mailbox.wake_sources`)이 있으면: 열린 요청을 ctx 에 넘기고
         (`park_requests` — 다음 런의 장부로), 호출과 관찰을 기록하고(히스토리는
         보통의 op + 관찰 모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다),
         런을 ``waiting`` 결과로 끝낸다. 없으면: 거부 관찰을 남기고 런을 잇는다 —
-        막혔을 때 wait 로 도피하는 길은 없다. 이미 도착한 통지(`wake.arrived_mail`)
+        막혔을 때 wait 로 도피하는 길은 없다. 이미 도착한 통지(`ports.mailbox.arrived`)
         가 있어도 거부한다(v10.66.2): 다음 관찰에 그 통지가 온다고 말해 준다.
 
         v10.84.0 (docs/wait/DESIGN.md §7): 깨울 길이 없는 루프(스킬 — 호출자의 턴 안
@@ -1213,7 +1212,8 @@ class TurnDispatcher:
                 turn=self.state.turn,
             )
             return _CONTINUE
-        arrived = arrived_mail(self.cfg.kind.ports.owner, agents=get_agent_registry())
+        mailbox = self.cfg.kind.ports.mailbox
+        arrived = mailbox.arrived()
         if arrived:
             n = f"{arrived} notice" + ("s" if arrived > 1 else "")
             _append_observation(
@@ -1229,14 +1229,9 @@ class TurnDispatcher:
                 turn=self.state.turn,
             )
             return _CONTINUE
-        sources = wake_sources(self.cfg.kind.ports.owner, agents=get_agent_registry())
+        sources = mailbox.wake_sources()
         if not sources:
-            reg = get_agent_registry()
-            parked = (
-                reg.parked_debtors_for(self.cfg.kind.ports.owner)
-                if reg is not None
-                else []
-            )
+            parked = mailbox.parked_debtors()
             why = (
                 f"{', '.join(parked)} owes you a reply but is itself waiting — on "
                 "you, so if you wait too, nobody wakes. Reply to what you owe, or "
@@ -1259,7 +1254,6 @@ class TurnDispatcher:
             return _CONTINUE
         from agent_cli.constants import format_duration
 
-        reg = get_agent_registry()
         private = policy == WAIT_BLOCK
         kept = ""
         if not private:
@@ -1273,9 +1267,7 @@ class TurnDispatcher:
         # 레지스트리가 걸지만(`run_ended(waiting=True)`), 이번 간격은 여기서 같은
         # 계산(`next_checkin_s`)으로 미리 적는다 — 설명엔 숫자가 없다(간격이 바뀐다).
         # 예약만 기다려 타이머가 없으면 종전 문장 그대로.
-        checkin_s = (
-            reg.next_checkin_s(self.cfg.kind.ports.owner) if reg is not None else None
-        )
+        checkin_s = mailbox.next_checkin_s()
         timer = (
             f", or in {format_duration(checkin_s)} if nothing has reported"
             if checkin_s
@@ -1293,30 +1285,24 @@ class TurnDispatcher:
             turn=self.state.turn,
         )
         if private:
-            return self._wait_in_place(turn, reg)
+            return self._wait_in_place(turn, mailbox)
         summary = f"⏸ waiting on {'; '.join(sources)}" + (
             f" — {reason}" if reason else ""
         )
         return ToolResult(True, output=summary, waiting=True)
 
-    def _wait_in_place(self, turn, reg):
+    def _wait_in_place(self, turn, mailbox):
         """private 주소의 `wait` (v10.84.0): 런을 끝내지 않고 자기 메일함에 통지가
         올 때까지 막는다 — one-shot 의 부모는 이미 결과를 기다리며 블록돼 있으니
         여기서 기다려도 아무도 손해가 없다. 체크인 타이머는 상주·main 처럼 걸고(메일로
         온다), 깨면 푼다. 레지스트리가 없으면 기다릴 메일함이 없다 — 깨울 것이
         사라진 것과 같이 다룬다."""
-        owner = self.cfg.kind.ports.owner
-        why = "nothing"
-        if reg is not None:
-            reg.arm_checkin(owner)
-            why = reg.wait_mail(
-                owner,
-                stop_event=self.state.stop_event,
-                still_waiting=lambda: bool(
-                    wake_sources(owner, agents=get_agent_registry())
-                ),
-            )
-            reg.run_started(owner)  # 체크인 해제 — 다음 wait 가 다시 건다
+        mailbox.arm_checkin()
+        why = mailbox.wait(
+            stop_event=self.state.stop_event,
+            still_waiting=lambda: bool(mailbox.wake_sources()),
+        )
+        mailbox.run_started()  # 체크인 해제 — 다음 wait 가 다시 건다
         if why == "nothing":
             _append_observation(
                 self.state.messages,
@@ -1369,7 +1355,7 @@ class TurnDispatcher:
         waiting_hint = (
             " If you are only waiting for something you started to report back, "
             "call `wait` instead — it keeps these items open and the report wakes you."
-            if wake_sources(self.cfg.kind.ports.owner, agents=get_agent_registry())
+            if self.cfg.kind.ports.mailbox.wake_sources()
             else ""
         )
         return self._intervene(
