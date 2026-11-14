@@ -3,7 +3,8 @@
 입구 둘: 📁(`#files-btn`) 안의 숫자 배지(누르면 패널, 아이콘은 Workspace files 그대로)와
 main 채널의 가장 최근 `complete` 카드 안의 한 줄. 패널 → 파일 diff → Clear(빈 상태·Undo
 토스트, 파일 그대로) → Undo → 복귀, 런 끝(main 은 `worker_state` 바쁨→한가, 그 밖은
-`scope_end`) 뒤 갱신, 긴 diff 가 목록을 누르지 않음. 저장소는 실제 git 스냅샷(runtime 이
+`scope_end`) 뒤 갱신, 긴 diff 가 목록을 누르지 않음. v10.138.0: 고른 행을 다시 누르면 접힘(▸/▾),
+📁 Workspace files 트리의 변경 표시(파일 M·A, 폴더 ●) — 글자를 누르면 그 파일 diff. 저장소는 실제 git 스냅샷(runtime 이
 세우는 것과 같은 `get_snapshot(create=True)`)이다.
 """
 
@@ -348,4 +349,210 @@ def test_snapshots_off_hides_the_badge(stack, page):
     )
     assert page.evaluate("() => document.querySelector('#changes-clear').disabled")
     assert _drawers(page)["files"] is False
+    assert errors == []
+
+
+def _rows_state(page):
+    return page.evaluate(
+        """() => ({
+            rows: [...document.querySelectorAll('#changes-list .chg-row')].map(r => [
+                r.dataset.path, r.querySelector('.chg-caret').textContent,
+                r.classList.contains('sel'), r.getAttribute('aria-expanded')]),
+            diffHidden: document.querySelector('#changes-diff').hidden,
+            diff: document.querySelector('#changes-diff').textContent,
+        })"""
+    )
+
+
+def test_selected_row_collapses_on_second_click(stack, page, ws):
+    _edit(ws)
+    errors = _open(page, stack)
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '3'", timeout=8000)
+    page.click("#changes-badge")
+    page.wait_for_selector("#changes-drawer.open .chg-row", timeout=8000)
+    st = _rows_state(page)
+    assert [r[1:] for r in st["rows"]] == [["▸", False, "false"]] * 3
+    assert st["diffHidden"] is True
+
+    page.click('.chg-row[data-path="inventory.py"]')
+    page.wait_for_selector("#changes-diff:not([hidden]) .rich-green", timeout=8000)
+    st = _rows_state(page)
+    assert st["rows"][0] == ["inventory.py", "▾", True, "true"]
+    assert all(r[1:] == ["▸", False, "false"] for r in st["rows"][1:])
+
+    # 같은 행을 다시 누르면 접힌다 — diff 닫힘·선택 없음
+    page.click('.chg-row[data-path="inventory.py"]')
+    st = _rows_state(page)
+    assert st["diffHidden"] is True and st["diff"] == ""
+    assert [r[1:] for r in st["rows"]] == [["▸", False, "false"]] * 3
+    # 닫힌 뒤에도 늦게 온 diff 응답이 다시 열지 않는다
+    page.wait_for_timeout(400)
+    assert _rows_state(page)["diffHidden"] is True
+
+    # 다른 행 → 그 diff
+    page.click('.chg-row[data-path="tests/test_stock.py"]')
+    page.wait_for_function(
+        "() => /\\+\\+\\+ b\\/tests\\/test_stock\\.py/.test("
+        "document.querySelector('#changes-diff').textContent)",
+        timeout=8000,
+    )
+    st = _rows_state(page)
+    assert [r[1] for r in st["rows"]] == ["▸", "▸", "▾"]
+    assert errors == []
+
+
+@pytest.fixture
+def tree_ws(tmp_path, stack):
+    """트리 표시용 — src/a.py 수정, src/sub/new.txt 추가, old.csv 삭제(기준점 뒤)."""
+    w = tmp_path / "tws"
+    (w / "src").mkdir(parents=True)
+    (w / "docs").mkdir()
+    (w / "src" / "a.py").write_text("a = 1\n")
+    (w / "src" / "keep.py").write_text("k = 1\n")
+    (w / "docs" / "readme.md").write_text("r\n")
+    (w / "old.csv").write_text("x,y\n")
+    (w / "top.txt").write_text("t\n")
+    reset_snapshot()
+    store = get_snapshot(w, create=True, session_id="sess-tree")
+    assert store.enabled, store.reason
+    stack.server.workspace = w.resolve()
+    (w / "src" / "a.py").write_text("a = 2\n")
+    (w / "src" / "sub").mkdir()
+    (w / "src" / "sub" / "new.txt").write_text("n\n")
+    (w / "old.csv").unlink()
+    yield w
+    reset_snapshot()
+
+
+# 트리 행마다 [rel, 표시 글자, 툴팁] — 표시가 없으면 글자 ""
+_TREE = """() => [...document.querySelectorAll('#dl-tree .dl-row')].map(r => {
+    const m = r.querySelector(':scope > .chg-mark');
+    return [r.dataset.rel, m ? m.textContent : '', m ? m.title : ''];
+})"""
+
+
+def _tree(page):
+    return {rel: (mark, tip) for rel, mark, tip in page.evaluate(_TREE)}
+
+
+def _expand(page, rel):
+    page.click(f'#dl-tree .dl-row[data-rel="{rel}"] > .dl-toggle')
+
+
+def test_workspace_tree_marks(stack, page, tree_ws):
+    errors = _open(page, stack)
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '3'", timeout=8000)
+    page.click("#files-btn", position={"x": 6, "y": 14})
+    page.wait_for_selector('#dl-tree .dl-row[data-rel="src"]', timeout=8000)
+    t = _tree(page)
+    dot = ("●", "Contains changed files")
+    assert t[""] == dot and t["src"] == dot  # 루트·접힌 src
+    assert t["docs"] == ("", "") and t["top.txt"] == ("", "")
+    assert "old.csv" not in t  # 삭제된 파일은 트리에 없다 — 루트 점으로만
+
+    _expand(page, "src")
+    page.wait_for_selector('#dl-tree .dl-row[data-rel="src/a.py"] > .chg-mark')
+    t = _tree(page)
+    assert t["src/a.py"][0] == "M"
+    assert t["src/a.py"][1].startswith("Modified since session start · ")
+    assert t["src/sub"] == dot and t["src/keep.py"] == ("", "")
+    _expand(page, "src/sub")
+    page.wait_for_selector('#dl-tree .dl-row[data-rel="src/sub/new.txt"] > .chg-mark')
+    t = _tree(page)
+    assert t["src/sub/new.txt"][0] == "A"
+    assert t["src/sub/new.txt"][1].startswith("Added since session start · ")
+    marked = sorted(rel for rel, (m, _) in t.items() if m)
+    assert marked == ["", "src", "src/a.py", "src/sub", "src/sub/new.txt"]
+    # 글자는 패널과 같은 색 클래스
+    cls = page.get_attribute('.dl-row[data-rel="src/sub/new.txt"] > .chg-mark', "class")
+    assert "chg-st-A" in cls.split()
+
+    # 파일 글자 → 그 파일 diff 를 연 Changes 패널, 행 동작(체크·펼침·업로드 대상)은 그대로
+    page.check('.dl-row[data-rel="src/a.py"] > input[type=checkbox]')
+    before = page.evaluate(
+        """() => ({
+            target: document.querySelector('#ul-target').textContent,
+            targetRow: document.querySelector('#dl-tree .dl-row.target').dataset.rel,
+            count: document.querySelector('#dl-count').textContent,
+            checks: [...document.querySelectorAll('#dl-tree .dl-row > input')].map(c => c.checked),
+            toggles: [...document.querySelectorAll('#dl-tree .dl-toggle')].map(x => x.textContent),
+        })"""
+    )
+    page.click('.dl-row[data-rel="src/a.py"] > .chg-mark')
+    page.wait_for_selector("#changes-drawer.open", timeout=8000)
+    page.wait_for_function(
+        "() => /\\+\\+\\+ b\\/src\\/a\\.py/.test("
+        "document.querySelector('#changes-diff').textContent)",
+        timeout=8000,
+    )
+    st = _rows_state(page)
+    assert [r[0] for r in st["rows"] if r[2]] == ["src/a.py"]
+    after = page.evaluate(
+        """() => ({
+            target: document.querySelector('#ul-target').textContent,
+            targetRow: document.querySelector('#dl-tree .dl-row.target').dataset.rel,
+            count: document.querySelector('#dl-count').textContent,
+            checks: [...document.querySelectorAll('#dl-tree .dl-row > input')].map(c => c.checked),
+            toggles: [...document.querySelectorAll('#dl-tree .dl-toggle')].map(x => x.textContent),
+        })"""
+    )
+    assert after == before and before["targetRow"] == ""
+    # Workspace 드로어는 그대로 — 패널을 닫으면 보던 트리로 돌아온다
+    assert _drawers(page) == {"changes": True, "files": True}
+
+    # Clear → 트리 표시 모두 사라짐, Undo → 돌아옴
+    page.click("#changes-clear")
+    page.wait_for_selector("#changes-toast:not([hidden])", timeout=8000)
+    assert page.locator("#dl-tree .chg-mark").count() == 0
+    page.click("#changes-toast .chg-undo")
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '3'", timeout=8000)
+    assert sorted(r for r, (m, _) in _tree(page).items() if m) == marked
+
+    # 폴더 점 → 패널만 (선택 없음)
+    page.click("#changes-close")
+    page.wait_for_function(
+        "() => !document.querySelector('#changes-drawer').classList.contains('open')"
+    )
+    page.wait_for_timeout(300)
+    page.click('.dl-row[data-rel="src/sub"] > .chg-mark')
+    page.wait_for_selector("#changes-drawer.open .chg-row", timeout=8000)
+    page.wait_for_timeout(300)
+    st = _rows_state(page)
+    assert st["diffHidden"] is True and not any(r[2] for r in st["rows"])
+    assert (
+        page.evaluate("() => document.querySelector('#ul-target').textContent")
+        == (before["target"])
+    )
+    assert errors == []
+
+
+def test_workspace_tree_marks_follow_recount(stack, page, tree_ws):
+    """목록이 바뀌면(런 끝 갱신) 이미 그려진 트리를 지우고 다시 꾸민다."""
+    errors = _open(page, stack)
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '3'", timeout=8000)
+    page.click("#files-btn", position={"x": 6, "y": 14})
+    page.wait_for_selector('#dl-tree .dl-row[data-rel="docs"]', timeout=8000)
+    assert _tree(page)["docs"] == ("", "")
+    r = stack.renderer
+    r.worker_busy()
+    (tree_ws / "docs" / "readme.md").write_text("changed\n")
+    r.worker_idle()
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '4'", timeout=8000)
+    assert _tree(page)["docs"] == ("●", "Contains changed files")
+    # 마크는 한 행에 하나 — 다시 꾸밀 때 붙였던 것을 지운다
+    assert page.locator('.dl-row[data-rel=""] > .chg-mark').count() == 1
+    assert errors == []
+
+
+def test_snapshots_off_no_tree_marks(stack, page, tmp_path):
+    reset_snapshot()
+    w = tmp_path / "off"
+    (w / "src").mkdir(parents=True)
+    (w / "src" / "a.py").write_text("a\n")
+    stack.server.workspace = w.resolve()
+    errors = _open(page, stack)
+    page.click("#files-btn", position={"x": 6, "y": 14})
+    page.wait_for_selector('#dl-tree .dl-row[data-rel="src"]', timeout=8000)
+    page.wait_for_timeout(400)
+    assert page.locator("#dl-tree .chg-mark").count() == 0
     assert errors == []

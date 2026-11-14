@@ -1949,15 +1949,24 @@ body.loading #messages { visibility: hidden; }
 .final-changes:hover { color: var(--accent-hover); text-decoration: underline; }
 @media (max-width: 560px) { .final-changes { margin-left: 0; margin-right: 0; } }
 .chg-row {
-  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center;
+  display: grid; grid-template-columns: 10px 16px minmax(0, 1fr) auto; gap: 6px; align-items: center;
   width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent;
   color: var(--text); font: 12px/1.4 "Jetendard", ui-monospace, SFMono-Regular, monospace; text-align: left; cursor: pointer;
 }
 .chg-row:hover { background: var(--surface-2); }
 .chg-row.sel { background: var(--surface-3); }
+/* ▸ 닫힘 / ▾ 열림 — 고른 행을 다시 누르면 접힌다 (v10.138.0) */
+.chg-caret { color: var(--text-2); font-size: 10px; text-align: center; }
 .chg-st { font-weight: 700; text-align: center; color: var(--accent); }
 .chg-st-A { color: var(--ok); }
 .chg-st-D { color: var(--fail); }
+/* 📁 트리의 변경 표시 (v10.138.0) — 파일은 상태 글자(.chg-st 색 그대로), 폴더는 점 */
+.chg-mark {
+  flex: none; margin-left: 4px; padding: 0 4px; border: 0; border-radius: 4px; background: none;
+  font: 700 11.5px/1.3 "Jetendard", ui-monospace, SFMono-Regular, monospace; cursor: pointer;
+}
+.chg-mark:hover, .chg-mark:focus-visible { background: var(--surface-3); }
+.chg-dot { color: var(--accent); font-size: 8px; font-weight: 400; }
 .chg-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chg-n { color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .chg-add { color: var(--ok); }
