@@ -112,7 +112,7 @@ class TestTemplateOrder:
 
 class TestEngineContract:
     def test_default_engine_is_run_loop_read_at_call_time(self, monkeypatch):
-        """`patch("agent_cli.loop.run_loop")` 하나가 다섯 종류 전부에 닿는다. 엔진은
+        """`patch("agent_cli.loop.run.run_loop")` 하나가 다섯 종류 전부에 닿는다. 엔진은
         종류 자신·시작·ctx 를 받는다 (v10.132.0) — 종전엔 종류가 자기를 키워드로 폈다."""
         seen = {}
 
@@ -120,7 +120,7 @@ class TestEngineContract:
             seen.update(kind=kind, start=start, ctx=ctx)
             return ToolResult(True, output="ok")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", fake)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", fake)
         k = _Trace()
         k.depth, k.max_depth, k.tools, k.agent_name = 1, 3, ["shell"], "explorer"
         stop = object()
@@ -164,7 +164,8 @@ class TestEngineContract:
         셋 중 하나만 바뀌면 다섯 종류가 첫 런에서 `TypeError` 로 죽는다."""
         import inspect
 
-        from agent_cli.loop import AgentLoop, run_loop
+        from agent_cli.loop.core import AgentLoop
+        from agent_cli.loop.run import run_loop
 
         assert list(inspect.signature(run_loop).parameters) == ["kind", "start", "ctx"]
         assert list(inspect.signature(AgentLoop.__init__).parameters) == [
@@ -178,7 +179,7 @@ class TestEngineContract:
 
 class TestCaller:
     def test_from_loop_reads_the_running_loops_config(self):
-        from agent_cli.loop import LoopState
+        from agent_cli.loop.state import LoopState
         from tests.loopkit import make_config
 
         cfg = make_config(owner="agent:k", depth=1, max_depth=4, tools_list=["shell"])

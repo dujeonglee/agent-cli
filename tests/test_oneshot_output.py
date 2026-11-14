@@ -520,7 +520,7 @@ class TestIterationsAreTurnsRun:
                 ctx.add(_make_obs_msg("ok"))
             return ToolResult(False, error="Max turns (60) reached")
 
-        with patch("agent_cli.loop.run_loop", side_effect=fake_run):
+        with patch("agent_cli.loop.run.run_loop", side_effect=fake_run):
             from unittest.mock import MagicMock
 
             from agent_cli.providers.capabilities import ModelCapabilities

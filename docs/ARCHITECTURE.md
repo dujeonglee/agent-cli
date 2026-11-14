@@ -87,7 +87,7 @@ agent_cli/
 ├── default_models.json      패키지 기본 모델 정의 (models.json 검색 경로의 마지막)
 ├── default_web_sources.json 기본 정보원 목록 (`web_sources.py` 가 읽는다)
 ├── loop/                    루프 엔진 — `AgentLoop` 와 협력자들, 루프 종류 (docs/loop-kinds/DESIGN.md)
-│   ├── __init__.py          패키지 공개 표면 재수출(`AgentLoop`·`run_loop`·`LoopConfig` …)
+│   ├── __init__.py          패키지 표식(docstring) — 재수출하지 않는다, 서브모듈을 직접 import
 │   ├── kind.py              `LoopKind` 기본 틀 — 종류가 정체·포트·ctx·스코프·결과 포장을 결정, `PrivateLoop`·`Caller`·`Start`
 │   ├── run.py               `run_loop(kind, start, ctx)` — `AgentLoop(...).run()` 의 함수 꼴, 종류가 부르는 엔진 이음매
 │   ├── core.py              `AgentLoop` 오케스트레이터 — 런·턴 루프, 입력·메일 흡수, 응답 마감(절단·폭주·서버 오류)
@@ -359,10 +359,11 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 - **모듈 수준 import 순환은 0 이다.** `tests/test_import_graph.py::test_no_module_level_import_cycle` 이 지킨다.
 - **순환을 피하려고 지연인 import** — 대상 모듈이 모듈 수준 import 만으로 출발 모듈에 닿는 간선 — 는 테스트 안의 이름 붙은 목록
   `CYCLE_AVOIDING_LAZY` 와 정확히 같아야 한다(`test_cycle_avoiding_lazy_imports_are_the_named_list`). 간선 목록 자체는 테스트가 주인이다.
-  남은 것은 **루프 엔진이 세션·구체 종류를 올려다보는** 한 무리다 — `loop.core`·`loop.dispatch`·`loop.kind`·`loop.tool_bridge` → `runtime`
-  (세션 자원 `browser_resource`·`skills_resource`·`snapshot_resource`, 깨우기 판정 `wake_sources`·`arrived_mail`·`harness_work_running`,
-  `release_owner`, `AgentRuntime`)·`subagent.agents_live`(`main_registry`·`tool_agent`·메일 레코드)·`subagent.oneshot`(`tool_delegate`),
-  `loop.skill_invoke` → `skills.executor`(`SkillLoop`).
+  남은 것은 `loop.kind` 에서 나가는 셋이다 — private 종류가 세션을 올려다보는 `loop.kind` → `runtime`·`subagent.agents_live`
+  (포트 배선과 해제의 `release_owner`·`main_registry`), 그리고 재귀인 `loop.kind` → `loop.run`(종류가 엔진을 돌리고 엔진은
+  `agent`·`run_skill` 도구로 다시 종류를 만든다 — 기본 엔진은 호출 시점에 읽는다).
+  `loop/__init__.py` 는 아무것도 재수출하지 않는다 — 재수출하면 `loop.kind` 만 쓰는 세션 쪽이 패키지 머리를 거쳐 엔진 전체를 끌고 와
+  `loop.core`·`loop.dispatch`·`loop.tool_bridge`·`loop.skill_invoke` 의 세션 쪽 지연 import 까지 순환 회피가 된다.
 - 그 밖의 지연 import 는 순환과 무관하고 가드하지 않는다. 출발 모듈로는 `main`·`runtime`·`prompts.inventory` 에 가장 많다.
   이유는 자리마다 다르다 — 예컨대 `main` 의 `web` 명령은 `agent_cli.web.server`(fastapi 선택 의존성)를 명령 안에서 import 해,
   없으면 그 명령만 안내와 함께 실패한다.

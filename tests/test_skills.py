@@ -566,7 +566,7 @@ class TestSkillExecution:
         fake_session = MagicMock()
 
         skill = Skill(name="s", description="d", prompt_template="Do $ARGUMENTS")
-        with unittest.mock.patch("agent_cli.loop.run_loop") as mock_run_loop:
+        with unittest.mock.patch("agent_cli.loop.run.run_loop") as mock_run_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_run_loop.return_value = _TR(True, output="ok")
@@ -588,7 +588,7 @@ class TestSkillExecution:
         provider = MagicMock()
 
         skill = Skill(name="s", description="d", prompt_template="Do $ARGUMENTS")
-        with unittest.mock.patch("agent_cli.loop.run_loop") as mock_run_loop:
+        with unittest.mock.patch("agent_cli.loop.run.run_loop") as mock_run_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_run_loop.return_value = _TR(True, output="ok")
@@ -609,7 +609,7 @@ class TestSkillExecution:
         provider = MagicMock()
 
         skill = Skill(name="optimize", description="d", prompt_template="Do $ARGUMENTS")
-        with unittest.mock.patch("agent_cli.loop.run_loop") as mock_run_loop:
+        with unittest.mock.patch("agent_cli.loop.run.run_loop") as mock_run_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_run_loop.return_value = _TR(True, output="ok")
@@ -637,7 +637,7 @@ class TestSkillExecution:
         skill = Skill(
             name="s", description="d", prompt_template="Do $ARGUMENTS", model=None
         )
-        with unittest.mock.patch("agent_cli.loop.run_loop") as mock_run_loop:
+        with unittest.mock.patch("agent_cli.loop.run.run_loop") as mock_run_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_run_loop.return_value = _TR(True, output="ok")
@@ -666,7 +666,7 @@ class TestSkillExecution:
             prompt_template="Do $ARGUMENTS",
             model="gpt-4o",
         )
-        with unittest.mock.patch("agent_cli.loop.run_loop") as mock_run_loop:
+        with unittest.mock.patch("agent_cli.loop.run.run_loop") as mock_run_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_run_loop.return_value = _TR(True, output="ok")

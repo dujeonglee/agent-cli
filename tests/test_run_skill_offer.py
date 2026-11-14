@@ -101,7 +101,7 @@ class TestToolOffer:
 
 class TestNotFound:
     def _call(self, name):
-        from agent_cli.loop import _handle_run_skill
+        from agent_cli.loop.skill_invoke import _handle_run_skill
 
         return _handle_run_skill(
             {"name": name},

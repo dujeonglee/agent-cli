@@ -240,7 +240,8 @@ class TestObservedAtPlumbing:
     def test_bridge_stamps_the_last_tool_result_and_the_run_ctx_reads_it_live(self):
         """RunContext 는 캐시되지만 `observed_at` 은 콜러블이라 브리지의 현재 값을
         본다 — 도구 호출 전엔 None, 뒤엔 그 결과의 시각."""
-        from agent_cli.loop import LoopState, ToolBridge
+        from agent_cli.loop.state import LoopState
+        from agent_cli.loop.tool_bridge import ToolBridge
         from tests.loopkit import make_config
 
         bridge = ToolBridge(

@@ -348,7 +348,7 @@ class TestTTFTMeasurement:
 
     def test_token_stats_shows_ttft_speed_and_context(self):
         """_format_token_stats renders ttft, speed, and context occupancy."""
-        from agent_cli.loop import _build_token_stats
+        from agent_cli.loop.llm import _build_token_stats
         from agent_cli.render.minimal import _format_token_stats
 
         stats = _build_token_stats(self._usage(), context_window=4096, total_out=50)
@@ -358,7 +358,7 @@ class TestTTFTMeasurement:
         assert "ctx:" in msg  # context occupancy shown
 
     def test_token_stats_context_percent(self):
-        from agent_cli.loop import _build_token_stats
+        from agent_cli.loop.llm import _build_token_stats
         from agent_cli.render.minimal import _format_token_stats
 
         stats = _build_token_stats(
@@ -369,7 +369,7 @@ class TestTTFTMeasurement:
         assert "(50%)" in _format_token_stats(stats)
 
     def test_token_stats_cumulative_output(self):
-        from agent_cli.loop import _build_token_stats
+        from agent_cli.loop.llm import _build_token_stats
         from agent_cli.render.minimal import _format_token_stats
 
         stats = _build_token_stats(self._usage(), context_window=4096, total_out=1800)
@@ -380,7 +380,7 @@ class TestTTFTMeasurement:
 
         from rich.console import Console
 
-        from agent_cli.loop import _build_token_stats
+        from agent_cli.loop.llm import _build_token_stats
         from agent_cli.render.minimal import MinimalRenderer
 
         buf = StringIO()

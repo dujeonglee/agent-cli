@@ -27,7 +27,7 @@ def _engine_returns(result):
 
 
 def _invoke(engine_result, arguments="x"):
-    from agent_cli.loop import _handle_run_skill
+    from agent_cli.loop.skill_invoke import _handle_run_skill
 
     with patch(
         "agent_cli.skills.executor.SkillLoop._engine",

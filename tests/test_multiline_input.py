@@ -180,7 +180,7 @@ class TestReadRichInputDecodeError:
         """End-to-end: the ask handler in loop.py must not crash either —
         the previous bug surfaced specifically through `_handle_ask`."""
         from agent_cli import input_history as ih
-        from agent_cli.loop import _handle_ask
+        from agent_cli.loop.dispatch import _handle_ask
 
         ih._decode_warning_shown = False
         with patch("builtins.input", side_effect=self._decode_err()):
@@ -205,7 +205,7 @@ class TestAskHandlerMultiline:
     and ignored the shared reader."""
 
     def test_ask_accepts_triple_quote_multiline(self):
-        from agent_cli.loop import _handle_ask
+        from agent_cli.loop.dispatch import _handle_ask
 
         inputs = iter(['"""', "line one", "line two", '"""'])
         with patch("builtins.input", side_effect=inputs):
@@ -215,7 +215,7 @@ class TestAskHandlerMultiline:
         assert "Q: What should the skill do?" in result
 
     def test_ask_single_line_still_works(self):
-        from agent_cli.loop import _handle_ask
+        from agent_cli.loop.dispatch import _handle_ask
 
         with (
             patch("builtins.input", return_value="simple answer"),

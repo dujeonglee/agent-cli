@@ -20,8 +20,8 @@
 엔진 호출은 ``engine(kind, start, ctx) -> (ToolResult, secs)`` 한 모양 (v10.132.0) — 엔진이
 종류를 받아 거기서 읽는다(종전엔 종류가 자기를 30여 키워드로 펴서 넘겼다). 테스트가 가짜
 러너를 꽂는 자리(`AgentRegistry(runner=)`·`HarnessJobs(runner=)`)와 같다. 기본은
-``agent_cli.loop.run_loop`` 를 **호출 시점에** 읽으므로 ``patch("agent_cli.loop.run_loop")`` 가
-다섯 종류 전부에 닿는다.
+``agent_cli.loop.run`` 모듈의 ``run_loop`` 를 **호출 시점에** 읽으므로
+``patch("agent_cli.loop.run.run_loop")`` 가 다섯 종류 전부에 닿는다.
 """
 
 from __future__ import annotations
@@ -314,11 +314,11 @@ class LoopKind:
 
     @staticmethod
     def _run_loop(kind: LoopKind, start: Start, ctx):
-        """기본 엔진 — ``agent_cli.loop.run_loop`` 를 호출 시점에 읽는다(패치 가능)."""
-        from agent_cli import loop as loop_pkg
+        """기본 엔진 — ``agent_cli.loop.run.run_loop`` 를 호출 시점에 읽는다(패치 가능)."""
+        from agent_cli.loop import run as loop_run
 
         t0 = time.monotonic()
-        return loop_pkg.run_loop(kind, start, ctx), time.monotonic() - t0
+        return loop_run.run_loop(kind, start, ctx), time.monotonic() - t0
 
     # ── 가변부 — 서브클래스가 덮어쓴다 ──
     def make_ctx(self, start: Start):
