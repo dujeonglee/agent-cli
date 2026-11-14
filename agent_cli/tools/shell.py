@@ -12,6 +12,7 @@ from typing import ClassVar
 
 from agent_cli import jobs
 from agent_cli.session_slots import get_job_registry
+from agent_cli.tools._confine import _unquoted_mask
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
@@ -238,36 +239,6 @@ FOREGROUND_LIMIT = 120
 _DETACH_WORD = re.compile(r"(?:(?<=^)|(?<=[\s;|(&]))(nohup|setsid|disown)\b[ \t]*")
 _TRAILING_AMP = re.compile(r"[ \t]*(?<!&)&(?!&)(?=\s*(?:\)|;|$))")
 _AMP_THEN_TAIL = re.compile(r"(?<!&)&(?!&)(?=\s+(?:echo|sleep|true|wait)\b)")
-
-
-def _unquoted_mask(cmd: str) -> str:
-    """같은 길이의 문자열 — 홑·쌍따옴표 안(과 이스케이프된 문자)은 ``x`` 로 가려
-    정규식이 인용부 밖만 보게 한다. 끼워 넣은 글(heredoc 본문)은 가리지 못한다 —
-    종전 거부 판별도 같은 한계였고, 지운 것은 결과에 적으므로 모델이 본다."""
-    out: list[str] = []
-    quote = ""
-    i = 0
-    while i < len(cmd):
-        ch = cmd[i]
-        if quote:
-            if ch == quote:
-                quote = ""
-                out.append(ch)
-            elif ch == "\\" and quote == '"' and i + 1 < len(cmd):
-                out.append("xx")
-                i += 1
-            else:
-                out.append("x" if ch != "\n" else "\n")
-        elif ch in ("'", '"'):
-            quote = ch
-            out.append(ch)
-        elif ch == "\\" and i + 1 < len(cmd):
-            out.append("xx")
-            i += 1
-        else:
-            out.append(ch)
-        i += 1
-    return "".join(out)
 
 
 def strip_detachers(cmd: str) -> tuple[str, list[str]]:
