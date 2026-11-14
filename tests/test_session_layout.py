@@ -23,6 +23,7 @@ from agent_cli.session.store import (
     conversation_history_files,
     harness_run_dir,
 )
+from agent_cli.tools.registry import extract_file_paths
 
 
 def _history(path: Path, text: str) -> Path:
@@ -107,6 +108,7 @@ class TestHistoryToolReadsTheDeclaredConversation:
         res = tool_history(
             {"query": "SELECT loc, substr(text,1,12) AS t FROM history ORDER BY loc"},
             session_dir=ctx.session_dir,
+            extract_paths=extract_file_paths,
         )
         assert res.success, res.error
         assert "agents/agt-1/history.jsonl" in res.output  # 팀원의 일은 세션의 일

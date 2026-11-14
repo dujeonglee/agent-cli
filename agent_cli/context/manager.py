@@ -44,7 +44,6 @@ from pathlib import Path
 from agent_cli import images as _images
 from agent_cli import item_ids
 from agent_cli.context import store
-from agent_cli.context._file_extract import extract_file_paths
 from agent_cli.context.render import (
     _estimate_message_tokens,
     _message_bytes,
@@ -65,6 +64,7 @@ from agent_cli.session.records import (
     is_format_intervention,
 )
 from agent_cli.token_estimator import estimate_tokens, utf8_len
+from agent_cli.tools.registry import extract_file_paths
 
 
 def _current_scope_id() -> str:

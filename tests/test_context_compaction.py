@@ -7,7 +7,7 @@ Coverage axes (TEST_PLAN.md):
   - Constructor flag (NFR-CC-5)
   - TurnRecorder integration (NFR-CC-6)
   - render_compaction_progress single entry point (UI invariant)
-  - File path extraction (_file_extract)
+  - File path extraction (tools.registry.extract_file_paths)
 
 All tests use mock compactor callbacks — no real LLM calls in unit tests.
 """
@@ -17,11 +17,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_cli.context._file_extract import extract_file_paths
 from agent_cli.context.manager import (
     CompactionError,
     ContextManager,
 )
+from agent_cli.tools.registry import extract_file_paths
 from tests.loop_ports import TEST_PORTS
 
 # ── Fixtures ─────────────────────────────────────────
@@ -471,7 +471,7 @@ class TestFileList:
 
 
 class TestFileExtractHelper:
-    """Direct tests for ``_file_extract.extract_file_paths``.
+    """Direct tests for ``tools.registry.extract_file_paths``.
 
     These use the REAL assistant-record shape that ``ContextManager._cache``
     holds (and persists to history.jsonl): all builtin tools are flat-native

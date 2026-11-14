@@ -42,6 +42,62 @@ from agent_cli.tools.virtual import (
 )
 from agent_cli.tools.write_file import WriteFileTool
 
+# ── 기록에서 건드린 파일 뽑기 ─────────────────────────────────
+# 축출된 assistant 레코드에서 도구마다 만진 파일 목록을 뽑는다 — 압축의 파일 목록
+# (``ContextManager._compact``)과 `history` 도구의 ``files`` 열이 같은 함수를 쓴다.
+# 경로 키의 모양은 각 도구의 :meth:`Tool.touched_paths` 가 안다(자기 ``parameters``
+# 옆에서) — 도구가 입력 모양을 바꾸면 추출도 따라온다.
+#   - ``action_input`` 은 assistant 쪽에만 있다. 도구 결과 레코드
+#     (``{role, tool, success, content}``)는 경로가 없어 아무것도 보태지 않는다.
+#   - shell 은 ``ShellTool.touched_paths`` 가 [] 라 빠진다(``rm -rf``·``cat foo``
+#     정규식 추출은 오탐이 너무 많다).
+#   - ``agent`` 는 ``<agent:target>`` 표식을 보탠다(실제 파일 경로가 아니다).
+# 호출 시점에 ``TOOLS`` 를 읽으므로 ``_ALL_TOOLS`` 보다 위에 있어도 된다.
+
+
+def extract_file_paths(messages: list[dict[str, Any]]) -> list[str]:
+    """Return de-duplicated, insertion-ordered file-list entries from
+    ``messages`` (cache records as stored by ``ContextManager.add``).
+
+    Each assistant record's ``action`` selects the owning ``Tool``; its
+    ``action_input`` is passed to :meth:`Tool.touched_paths`, which knows
+    that tool's own key shape. All builtin tools are flat-native (Step 3):
+    ``{path}`` (read_file / write_file / edit_file / code_index), or the
+    ``{key/profile}`` ``<agent:target>`` marker for agent. Tools without paths
+    return [].
+    """
+    paths: list[str] = []
+    seen: set[str] = set()
+
+    for msg in messages:
+        # Normalize single-op ({action, action_input}) and multi-op
+        # ({ops:[...]}) records to one op list. Multi-op formats (json_fc,
+        # xml_fc) store `ops`, so reading only the top-level `action` extracted
+        # NO paths from them — the compaction file list came out empty.
+        ops = msg.get("ops")
+        op_list = ops if isinstance(ops, list) else [msg]
+        for op in op_list:
+            if not isinstance(op, dict):
+                continue
+            action = op.get("action")
+            if not isinstance(action, str):
+                continue
+            tool = TOOLS.get(action)
+            action_input = op.get("action_input")
+            if tool is None or not isinstance(action_input, dict):
+                continue
+            # Stored ops are FLAT (read_file `{path}`); touched_paths reads the
+            # CANONICAL shape (`read_file_reads[].path`). Normalize flat →
+            # canonical (idempotent on already-canonical input).
+            action_input = tool.wrap_single_op(action_input)
+            for entry in tool.touched_paths(action_input):
+                if entry and entry not in seen:
+                    seen.add(entry)
+                    paths.append(entry)
+
+    return paths
+
+
 # Instantiated once, in PROMPT ORDER: tools that are used together sit together
 # (v10.13.0). Until then the order was the order tools happened to be added —
 # new ones were appended "to keep the existing order" — with ``edit_file`` and
@@ -80,7 +136,7 @@ _ALL_TOOLS: list[Tool] = [
     # 📸 native: the store lives in this process (``agent_cli/snapshot.py``);
     # the built-in hook takes the snapshots, this tool restores from them.
     SnapshotTool(),
-    HistoryTool(),
+    HistoryTool(extract_paths=extract_file_paths),
     MemoryTool(),
     AskTool(),
     # 💬 비동기 질문의 짝(docs/agent-ask/DESIGN.md §3.1). ``requires_handler``
