@@ -29,12 +29,19 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from agent_cli.loop.ports import (
+    _AS_BEFORE,
+    _NO_REGISTRY_IN_SUBLOOP,
+    _RESIDENT_ROSTER,
+    _WEB_ONLY,
+    LoopPorts,
+    _hook_runner_port,
+    _hook_unwired,
+)
 from agent_cli.session_slots import get_agent_registry
-
-if TYPE_CHECKING:
-    from agent_cli.loop.ports import LoopPorts
+from agent_cli.wake import _private_inbox, release_owner
 
 
 class LoopKindError(Exception):
@@ -363,17 +370,6 @@ class PrivateLoop(LoopKind):
 
     @staticmethod
     def make_ports(owner: str) -> LoopPorts:
-        from agent_cli.loop.ports import LoopPorts
-        from agent_cli.runtime import (
-            _AS_BEFORE,
-            _NO_REGISTRY_IN_SUBLOOP,
-            _RESIDENT_ROSTER,
-            _WEB_ONLY,
-            _hook_runner_port,
-            _hook_unwired,
-        )
-        from agent_cli.wake import _private_inbox
-
         return LoopPorts(
             owner=owner,
             questions=None,
@@ -400,8 +396,6 @@ class PrivateLoop(LoopKind):
         )
 
     def release(self) -> str:
-        from agent_cli.wake import release_owner
-
         return release_owner(self.owner, registry=get_agent_registry()).note
 
     # ── 엔진이 묻는 것 — private 종류의 명시 정책 ──

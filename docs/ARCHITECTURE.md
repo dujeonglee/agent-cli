@@ -94,7 +94,7 @@ agent_cli/
 │   ├── run.py               `run_loop(kind, start, ctx)` — `AgentLoop(...).run()` 의 함수 꼴, 종류가 부르는 엔진 이음매
 │   ├── core.py              `AgentLoop` 오케스트레이터 — 런·턴 루프, 입력·메일 흡수, 응답 마감(절단·폭주·서버 오류)
 │   ├── state.py             `LoopConfig`(런 시작 때 계산한 것)와 `LoopState`(협력자들이 공유하는 per-run 가변 상태)
-│   ├── ports.py             루프에 주입되는 능력 포트 묶음 `LoopPorts` — 기본값 없음 (docs/wiring/DESIGN.md)
+│   ├── ports.py             루프에 주입되는 능력 포트 묶음 `LoopPorts` — 기본값 없음, 비움 사유·훅 포트·세션 자원 확인 (docs/wiring/DESIGN.md)
 │   ├── prompt.py            `SystemPromptSvc` — 이름 붙은 섹션 리스트가 진실, 시스템 프롬프트 문자열은 그 join
 │   ├── llm.py               `LLMCaller` — 스트리밍 호출·예방 압축·오버플로 재시도·압축 요약 호출
 │   ├── dispatch.py          `TurnDispatcher` — 파싱된 턴의 op 순회·가드·배치·관찰 조립·recovery, `ask`·`complete` 처리
@@ -358,9 +358,9 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 - **모듈 수준 import 순환은 0 이다.** `tests/test_import_graph.py::test_no_module_level_import_cycle` 이 지킨다.
 - **순환을 피하려고 지연인 import** — 대상 모듈이 모듈 수준 import 만으로 출발 모듈에 닿는 간선 — 는 테스트 안의 이름 붙은 목록
   `CYCLE_AVOIDING_LAZY` 와 정확히 같아야 한다(`test_cycle_avoiding_lazy_imports_are_the_named_list`). 간선 목록 자체는 테스트가 주인이다.
-  남은 것은 `loop.kind` 에서 나가는 둘이다 — private 종류가 세션을 올려다보는 `loop.kind` → `runtime`
-  (포트 배선의 비움 사유·훅 포트), 그리고 재귀인 `loop.kind` → `loop.run`(종류가 엔진을 돌리고 엔진은
-  `agent`·`run_skill` 도구로 다시 종류를 만든다 — 기본 엔진은 호출 시점에 읽는다).
+  남은 것은 하나, 재귀인 `loop.kind` → `loop.run` 이다(종류가 엔진을 돌리고 엔진은 `agent`·`run_skill` 도구로
+  다시 종류를 만든다 — 기본 엔진은 호출 시점에 읽는다). 종류·엔진이 읽는 세션 상태는 조립(`runtime`)이 아니라
+  아래층의 자리에서 온다 — 세션 슬롯 `session_slots`, 깨우기·메일·거두기 `wake`, 포트 비움 사유·세션 자원 `loop.ports`.
   `loop/__init__.py` 는 아무것도 재수출하지 않는다 — 재수출하면 `loop.kind` 만 쓰는 세션 쪽이 패키지 머리를 거쳐 엔진 전체를 끌고 와
   `loop.core`·`loop.dispatch`·`loop.tool_bridge`·`loop.skill_invoke` 의 세션 쪽 지연 import 까지 순환 회피가 된다.
 - 그 밖의 지연 import 는 순환과 무관하고 가드하지 않는다. 출발 모듈로는 `main`·`runtime`·`prompts.inventory` 에 가장 많다.
@@ -465,7 +465,7 @@ class ParsedAction:            # 단수 투영 — thought·action·action_input
 `TOOLS` 의 순서가 프롬프트의 도구 순서다(`effective_tool_names`, MCP 도구는 내장 뒤).
 
 - **광고 조건 `requires_handler`**: 루프에 그 자원이 없으면 도구가 프롬프트에서 빠진다(예: `ask`→`ctx`, `browser`→`browser`, `snapshot`→`snapshot`, `view_image`→`vision`, `run_skill`→`skills`, `wait`→`wake`, `reply`→`questions`).
-  세션 자원은 `runtime.browser_resource`·`snapshot_resource`·`skills_resource` 가 답한다.
+  세션 자원은 `loop.ports.browser_resource`·`snapshot_resource`·`skills_resource` 가 답한다.
 - **지연 설명 `deferred`**: 지연 도구는 프롬프트에 한 줄 요약과 인자 뼈대만 싣고, 전문은 `tool_help` 가 관찰로 준다 (docs/tool-help/DESIGN.md).
 - **`RunContext`** (frozen): 루프가 도구 호출마다 아는 값(`session_dir`·`oversized_cap` 등)을 한 객체로 넘긴다. `ToolBridge._run_ctx()` 가 단일 생성점이다.
 - **가상 도구** (`tools/virtual.py`): `complete`·`wait`·`ask`·`message`·`reply`·`run_skill` 은 스키마만 있고 루프가 이름으로 가로채 처리한다.

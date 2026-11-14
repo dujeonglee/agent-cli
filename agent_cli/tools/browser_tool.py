@@ -5,7 +5,7 @@ by a dedicated thread). This module is the tool surface only: schema, per-mode
 validation, dispatch, and the observation wording.
 
 Advertised only when ``playwright`` is importable and the knob is on
-(``requires_handler="browser"`` → ``runtime.browser_resource``), the same
+(``requires_handler="browser"`` → ``loop.ports.browser_resource``), the same
 seam as ``snapshot``: a tool that cannot work is not offered.
 """
 
@@ -45,7 +45,7 @@ class BrowserTool(Tool):
     #: 전문은 `tool_help`.
     deferred = True
     summary = "Use it for pages that need JavaScript, clicking or typing; for plain HTML use `fetch`."
-    #: `runtime.browser_resource` 가 None 이면(playwright 없음·`AGENT_CLI_BROWSER_TOOL=0`)
+    #: `loop.ports.browser_resource` 가 None 이면(playwright 없음·`AGENT_CLI_BROWSER_TOOL=0`)
     #: tools_list 에서 벗겨져 프롬프트에 나오지 않는다.
     requires_handler = "browser"
     description = (
