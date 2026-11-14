@@ -25,7 +25,9 @@ from agent_cli.session_slots import (
 _SCHEDULE_ID = "schedule"
 
 
-def _wake_items(owner: str, _seen: frozenset = frozenset()) -> list[tuple[str, str]]:
+def _wake_items(
+    owner: str, _seen: frozenset = frozenset(), *, agents
+) -> list[tuple[str, str]]:
     """`wake_sources` 의 재료 — ``(id, 사람이 읽을 줄)`` 쌍 (v10.79.0).
 
     id 는 ``"job:1"``·``"mon:mon-504d33"``·``"agent:k"``·``"schedule"`` — 중간
@@ -42,14 +44,13 @@ def _wake_items(owner: str, _seen: frozenset = frozenset()) -> list[tuple[str, s
         for m in mons.list_all():
             if m.owner == owner:
                 out.append((f"mon:{m.id}", f"monitor {m.id}"))
-    agents = get_agent_registry()
     if agents is not None:
         out.extend(agents.pending_agents_for(owner, exclude=_seen))
         seen = _seen | {owner}
         for debtor in agents.parked_debtors_for(owner):
             if debtor in seen:
                 continue  # 고리 — 나를 기다리는 쪽은 나를 깨우지 못한다
-            if _wake_items(debtor, seen):
+            if _wake_items(debtor, seen, agents=agents):
                 out.append(
                     (debtor, f"{debtor} owes you a reply (it is waiting on others)")
                 )
@@ -72,7 +73,7 @@ def harness_work_running(owner: str) -> bool:
     return mons is not None and any(m.owner == owner for m in mons.list_all())
 
 
-def wake_sources(owner: str, _seen: frozenset = frozenset()) -> list[str]:
+def wake_sources(owner: str, _seen: frozenset = frozenset(), *, agents) -> list[str]:
     """이 소유자를 **깨울 수 있는 것** — `wait` 도구의 판정 (v10.65.0, docs/wait/DESIGN.md).
 
     돌고 있는 백그라운드 작업·살아 있는 모니터는 소유자 것만, 에이전트 활동은
@@ -82,16 +83,21 @@ def wake_sources(owner: str, _seen: frozenset = frozenset()) -> list[str]:
     v10.77.0 — 순환 대기: 나에게 회신을 빚진 채 **스스로 잠든**(`wait`) 에이전트는
     그를 깨울 것이 있을 때만 센다. 거슬러 올라가며(``_seen`` 으로 순환을 자른다)
     A→B→A 처럼 서로를 기다리는 고리면 두 번째로 잠들려는 쪽의 `wait` 가 거부되고,
-    A→B→(일하는 C) 사슬이면 그대로 받아들여진다."""
-    return [text for _, text in _wake_items(owner, _seen)]
+    A→B→(일하는 C) 사슬이면 그대로 받아들여진다.
+
+    ``agents`` 는 에이전트 레지스트리(없으면 None) — 부르는 쪽이 넘긴다(v10.133.26). 슬롯을
+    읽지 않으므로 서브루프는 포트로 받은 것을, 레지스트리는 자기를 넘긴다."""
+    return [text for _, text in _wake_items(owner, _seen, agents=agents)]
 
 
-def wake_source_ids(owner: str) -> frozenset[str]:
+def wake_source_ids(owner: str, *, agents) -> frozenset[str]:
     """중간 깨우기의 **대상 집합** (v10.79.0, docs/wait/DESIGN.md §6) — `wake_sources`
     와 같은 것들의 id, 예약만 뺀다. 예약만 기다리는 `wait` 는 빈 집합이라 타이머를
     걸지 않고, 예약과 작업을 함께 기다리면 걸되 알림에는 작업·monitor·에이전트만
     적힌다."""
-    return frozenset(i for i, _ in _wake_items(owner) if i != _SCHEDULE_ID)
+    return frozenset(
+        i for i, _ in _wake_items(owner, agents=agents) if i != _SCHEDULE_ID
+    )
 
 
 # ── `wait` 중간 깨우기 알림 (v10.79.0, docs/wait/DESIGN.md §6) ─────────────
@@ -188,12 +194,11 @@ def wait_checkin(
     return "\n".join([head, *lines, " ".join(closing)])
 
 
-def arrived_mail(owner: str) -> int:
+def arrived_mail(owner: str, *, agents) -> int:
     """이 소유자 앞에 **이미 도착해 다음 턴 경계에 배달될** 메일 수 (v10.66.2) —
     `wait` 의 둘째 판정. 깨울 것(`wake_sources`)이 "아직 돌고 있는 것" 이라면 이건
     "끝나서 통지가 와 있는 것": 모니터가 wait 보다 먼저 발화한 벤치 사례가 그렇다.
     0 이 아니면 wait 는 거부되고 런이 이어져 그 통지를 바로 받는다."""
-    agents = get_agent_registry()
     return agents.arrived_for(owner) if agents is not None else 0
 
 

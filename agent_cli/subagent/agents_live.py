@@ -1033,7 +1033,7 @@ class AgentRegistry:
                 )
         for debtor in self.parked_debtors_for(addr):
             key = debtor.split(":", 1)[1]
-            on = wake_sources(debtor, frozenset({addr}))
+            on = wake_sources(debtor, frozenset({addr}), agents=self)
             if not on:
                 continue  # 깨울 것이 없는 채무자는 깨울 근거가 아니다 (v10.77.0)
             line = (
@@ -1349,7 +1349,7 @@ class AgentRegistry:
     def next_checkin_s(self, owner: str) -> int | None:
         """이 소유자가 지금 `wait` 하면 걸릴 간격(초) — 없으면(예약만 기다림) None.
         `dispatch._op_wait` 가 결과 문장에 적고 `arm_checkin` 이 같은 값을 건다."""
-        ids = wake_source_ids(owner)
+        ids = wake_source_ids(owner, agents=self)
         if not ids:
             return None
         return CHECKIN_STEPS_S[
@@ -1371,7 +1371,7 @@ class AgentRegistry:
         기준을 함께 적는다: 작업별 로그 크기(P(a) "+N lines since your wait")와
         에이전트별 `last_ordinal`("N steps since your wait")."""
         self.run_started(owner)  # 이미 걸린 것이 있으면 푼다
-        ids = wake_source_ids(owner)
+        ids = wake_source_ids(owner, agents=self)
         if not ids:
             return None
         step = self._checkin_step(owner, ids)
