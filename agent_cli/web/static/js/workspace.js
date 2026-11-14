@@ -63,6 +63,8 @@ if ($btn && $drawer) {
     const row = document.createElement("div");
     row.className = "dl-row";
     row.style.paddingLeft = depth * 16 + "px";
+    // changes.js 가 이 두 속성으로 트리 행에 변경 표시를 단다(DOM 으로만 만난다, v10.138.0)
+    Object.assign(row.dataset, { rel: entry.rel, type: entry.type });
 
     const toggle = document.createElement("span");
     toggle.className = "dl-toggle";
@@ -146,6 +148,7 @@ if ($btn && $drawer) {
   function makeRootRow(totalSize) {
     const row = document.createElement("div");
     row.className = "dl-row";
+    Object.assign(row.dataset, { rel: "", type: "dir" });
     const spacer = document.createElement("span");
     spacer.className = "dl-toggle";
     const cb = document.createElement("input");
