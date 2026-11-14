@@ -27,6 +27,7 @@ from agent_cli.model_check import (
     list_models,
     verify_model,
 )
+from agent_cli.providers.credentials import Credentials
 
 MODELS = ("Qwen3.6-35B-A3B-8bit", "Qwen3.8-Flash-Next-oQ4e-mtp")
 URL = "http://127.0.0.1:8000/v1"
@@ -74,14 +75,14 @@ def _patch(monkeypatch, resp=None, exc=None):
 class TestListing:
     def test_success_returns_ids_and_available(self, monkeypatch):
         _patch(monkeypatch, _Resp(200, _ok_payload()))
-        r = list_models(URL)
+        r = list_models(URL, Credentials())
         assert r.available is True
         assert r.models == MODELS
 
     def test_network_failure_is_unavailable_not_empty(self, monkeypatch):
         """연결 실패를 "모델 0개"로 읽으면 오프라인에서 부팅이 막힌다."""
         _patch(monkeypatch, exc=OSError("connection refused"))
-        r = list_models(URL)
+        r = list_models(URL, Credentials())
         assert r.available is False
         assert r.models == ()
         assert "connection refused" in r.reason
@@ -89,29 +90,31 @@ class TestListing:
     def test_404_models_endpoint_is_unavailable(self, monkeypatch):
         """`/models` 미지원 서버 — 이름이 틀린 게 아니라 못 물어본 것이다."""
         _patch(monkeypatch, _Resp(404))
-        r = list_models(URL)
+        r = list_models(URL, Credentials())
         assert r.available is False
         assert "404" in r.reason
 
     def test_unparseable_body_is_unavailable(self, monkeypatch):
         _patch(monkeypatch, _Resp(200, boom=True))
-        assert list_models(URL).available is False
+        assert list_models(URL, Credentials()).available is False
 
     def test_empty_list_is_unavailable_not_a_verdict(self, monkeypatch):
         """200 인데 빈 목록: 형식이 다른 서버일 수 있어 단정하지 않는다 —
         여기서 "없다"고 단정하면 모든 모델이 거짓 거절된다."""
         _patch(monkeypatch, _Resp(200, {"data": []}))
-        assert list_models(URL).available is False
+        assert list_models(URL, Credentials()).available is False
 
     def test_result_is_cached_per_endpoint(self, monkeypatch):
         calls = _patch(monkeypatch, _Resp(200, _ok_payload()))
-        list_models(URL)
-        list_models(URL)
+        list_models(URL, Credentials())
+        list_models(URL, Credentials())
         assert len(calls) == 1, "같은 엔드포인트를 두 번 조회했다"
 
     def test_anthropic_uses_its_own_auth_headers(self, monkeypatch):
         calls = _patch(monkeypatch, _Resp(200, _ok_payload()))
-        list_models("https://api.anthropic.com/v1", "k", "anthropic")
+        list_models(
+            "https://api.anthropic.com/v1", Credentials(api_key="k"), "anthropic"
+        )
         h = calls[0]["headers"]
         assert h.get("x-api-key") == "k"
         assert "anthropic-version" in h
@@ -119,20 +122,25 @@ class TestListing:
 
     def test_openai_uses_bearer(self, monkeypatch):
         calls = _patch(monkeypatch, _Resp(200, _ok_payload()))
-        list_models(URL, "k", "openai")
+        list_models(URL, Credentials(api_key="k"), "openai")
         assert calls[0]["headers"].get("Authorization") == "Bearer k"
 
 
 class TestVerify:
     def test_known_model_passes(self, monkeypatch):
         _patch(monkeypatch, _Resp(200, _ok_payload()))
-        assert verify_model(MODELS[0], URL).available is True
+        assert verify_model(MODELS[0], URL, Credentials()).available is True
 
     def test_missing_model_raises_with_fix_information(self, monkeypatch):
         """메시지가 **고칠 수 있게** 만들어야 한다 — 이름·목록·출처."""
         _patch(monkeypatch, _Resp(200, _ok_payload()))
         with pytest.raises(ModelNotFound) as ei:
-            verify_model("Qwen-3.8-Flash-Next-Uncensored-MLX-MXFP4", URL, origin="cfg")
+            verify_model(
+                "Qwen-3.8-Flash-Next-Uncensored-MLX-MXFP4",
+                URL,
+                Credentials(),
+                origin="cfg",
+            )
         err = ei.value
         assert err.model.startswith("Qwen-3.8-Flash")
         assert err.listing.models == MODELS
@@ -142,19 +150,19 @@ class TestVerify:
         """추측 폴백을 없앴으므로 "안 골랐다"가 그대로 드러나야 한다."""
         _patch(monkeypatch, _Resp(200, _ok_payload()))
         with pytest.raises(NoModelSelected):
-            verify_model("", URL)
+            verify_model("", URL, Credentials())
 
     def test_unlistable_server_does_not_reject_the_name(self, monkeypatch):
         """★ 핵심 계약: 확인할 수 없는 것을 틀렸다고 하지 않는다."""
         _patch(monkeypatch, exc=OSError("offline"))
-        r = verify_model("whatever-model", URL)
+        r = verify_model("whatever-model", URL, Credentials())
         assert r.available is False  # 호출부가 이걸 보고 경고만 낸다
 
     def test_missing_name_still_raises_even_when_unlistable(self, monkeypatch):
         """이름이 아예 없는 것은 조회와 무관하게 확정적 오류다."""
         _patch(monkeypatch, exc=OSError("offline"))
         with pytest.raises(NoModelSelected):
-            verify_model("", URL)
+            verify_model("", URL, Credentials())
 
 
 class TestSuggest:

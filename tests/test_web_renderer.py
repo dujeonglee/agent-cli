@@ -25,6 +25,7 @@ import pytest
 
 from agent_cli.input_queue import InputQueue
 from agent_cli.instance_file import read_status_file
+from agent_cli.providers.credentials import Credentials
 from agent_cli.render.base import ConfirmOption
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
@@ -3052,7 +3053,7 @@ class TestCtxDirWiring:
                     binding=make_binding(
                         provider_name="openai",
                         base_url="",
-                        api_key="",
+                        credentials=Credentials(),
                         capabilities=caps,
                         model="m",
                     ),

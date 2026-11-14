@@ -15,6 +15,7 @@ import pytest
 import requests
 
 from agent_cli.providers import http as http_mod
+from agent_cli.providers.credentials import Credentials
 from agent_cli.providers.http import post_with_retry
 
 
@@ -446,7 +447,9 @@ class TestProviderWiring:
             "agent_cli.providers.anthropic.requests.post",
             side_effect=[requests.Timeout("t1"), good],
         ) as mock_post:
-            provider = AnthropicProvider("https://api.anthropic.com/v1", "test-key")
+            provider = AnthropicProvider(
+                "https://api.anthropic.com/v1", Credentials(api_key="test-key")
+            )
             resp = provider.call(messages=[], system="", model="m", capabilities=caps)
             assert resp.content == "ok"
             assert mock_post.call_count == 2
@@ -471,7 +474,9 @@ class TestProviderWiring:
             "agent_cli.providers.openai.requests.post",
             side_effect=[requests.ConnectionError("refused"), good],
         ) as mock_post:
-            provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
+            provider = OpenAIProvider(
+                "https://api.openai.com/v1", Credentials(api_key="test-key")
+            )
             resp = provider.call(messages=[], system="", model="m", capabilities=caps)
             assert resp.content == "ok"
             assert mock_post.call_count == 2
@@ -496,7 +501,9 @@ class TestProviderWiring:
             "agent_cli.providers.openai.requests.post",
             side_effect=[requests.Timeout("t1"), good],
         ) as mock_post:
-            provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
+            provider = OpenAIProvider(
+                "https://api.openai.com/v1", Credentials(api_key="test-key")
+            )
             resp = provider.call(messages=[], system="", model="m", capabilities=caps)
             assert resp.content == "ok"
             assert mock_post.call_count == 2
@@ -526,7 +533,9 @@ class TestProviderWiring:
             "agent_cli.providers.anthropic.requests.post",
             side_effect=[bad, good],
         ) as mock_post:
-            provider = AnthropicProvider("https://api.anthropic.com/v1", "test-key")
+            provider = AnthropicProvider(
+                "https://api.anthropic.com/v1", Credentials(api_key="test-key")
+            )
             resp = provider.call(messages=[], system="", model="m", capabilities=caps)
             assert resp.content == "ok"
             assert mock_post.call_count == 2
@@ -557,7 +566,9 @@ class TestProviderWiring:
             "agent_cli.providers.openai.requests.post",
             side_effect=[bad, good],
         ) as mock_post:
-            provider = OpenAIProvider("https://gateway.example/v1", "test-key")
+            provider = OpenAIProvider(
+                "https://gateway.example/v1", Credentials(api_key="test-key")
+            )
             resp = provider.call(messages=[], system="", model="m", capabilities=caps)
             assert resp.content == "ok"
             assert mock_post.call_count == 2

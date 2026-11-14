@@ -14,6 +14,7 @@ import os
 
 import pytest
 
+from agent_cli.providers.credentials import Credentials
 from tests.binding_support import make_binding
 from tests.conftest import OMLX_BASE_URL
 from tests.loop_kinds import make_caller
@@ -54,7 +55,7 @@ class TestCodeAnalystAgent:
                     capabilities=model_capabilities,
                     provider_name="openai",
                     base_url=OMLX_BASE_URL,
-                    api_key="",
+                    credentials=Credentials(),
                 ),
                 max_turns=5,
             ),
@@ -88,7 +89,7 @@ class TestCodeAnalystAgent:
                     capabilities=model_capabilities,
                     provider_name="openai",
                     base_url=OMLX_BASE_URL,
-                    api_key="",
+                    credentials=Credentials(),
                 ),
                 max_turns=5,
             ),

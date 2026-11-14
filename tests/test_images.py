@@ -13,6 +13,7 @@ from PIL import Image
 
 from agent_cli import images
 from agent_cli.images import ImageRef
+from agent_cli.providers.credentials import Credentials
 
 
 def make_png(path: Path, size=(64, 32), color=(255, 0, 0)) -> Path:
@@ -477,7 +478,7 @@ class TestCliStaging:
 
         class _Provider:
             @staticmethod
-            def capability_transport(base_url, model, api_key=""):
+            def capability_transport(base_url, model, credentials):
                 raise AssertionError("registered value must short-circuit the probe")
 
         class _Binding:
@@ -485,7 +486,7 @@ class TestCliStaging:
             provider = _Provider()
             base_url = "http://x"
             model = "m"
-            api_key = ""
+            credentials = Credentials()
 
         with pytest.raises(typer.Exit):
             _require_vision(_Binding())
@@ -586,7 +587,7 @@ class TestWebNoVisionNotice:
 
         class _Provider:
             @staticmethod
-            def capability_transport(base_url, model, api_key=""):
+            def capability_transport(base_url, model, credentials):
                 raise AssertionError("registered value must short-circuit the probe")
 
         class _Binding:
@@ -594,7 +595,7 @@ class TestWebNoVisionNotice:
             provider = _Provider()
             base_url = "http://x"
             model = "m"
-            api_key = ""
+            credentials = Credentials()
 
         assert binding_sees_images(_Binding()) is False
         assert "cannot view images" in NO_VISION_NOTICE

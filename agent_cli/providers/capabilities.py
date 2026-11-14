@@ -10,6 +10,7 @@ import requests
 
 from agent_cli.config import get_model_entry, save_model_entry
 from agent_cli.constants import DETECTION_PROBE_TIMEOUT
+from agent_cli.providers.credentials import Credentials
 from agent_cli.thinking_tags import THINK_TAG_NAMES as _THINKING_TAGS
 
 # Optional progress callback — set by the caller (main.py) before
@@ -129,9 +130,12 @@ def get_capabilities(
     model: str,
     provider: str | None = None,
     base_url: str | None = None,
-    api_key: str = "",
+    credentials: Credentials | None = None,
 ) -> ModelCapabilities:
-    """Look up capabilities with priority: models.json > runtime detection > defaults."""
+    """Look up capabilities with priority: models.json > runtime detection > defaults.
+
+    ``credentials`` 는 런타임 감지(``provider``·``base_url`` 이 있을 때)에만 쓰인다 —
+    그 경로에서 빠뜨리면 TypeError(빈 키로 조용히 묻지 않는다)."""
     global _last_was_runtime_detected
     _last_was_runtime_detected = False
 
@@ -146,7 +150,9 @@ def get_capabilities(
 
     # Priority 2: Runtime detection
     if provider and base_url:
-        detected = _detect_runtime_capabilities(provider, base_url, model, api_key)
+        if credentials is None:
+            raise TypeError("get_capabilities: runtime detection needs credentials")
+        detected = _detect_runtime_capabilities(provider, base_url, model, credentials)
         if detected is not None:
             _auto_save_detected(model, detected)
             _last_was_runtime_detected = True
@@ -227,7 +233,7 @@ def binding_sees_images(binding) -> bool:
         binding.provider.capability_transport,
         binding.base_url,
         binding.model,
-        binding.api_key,
+        binding.credentials,
     )
 
 
@@ -236,7 +242,7 @@ def vision_support(
     transport_factory,
     base_url: str,
     model: str,
-    api_key: str = "",
+    credentials: Credentials,
 ) -> bool:
     """모델이 이미지를 보는가 — 등록값이 있으면 그것, 없으면(``None``) 한 번
     프로브해 프로세스 안에 기억하고, **판정이 났으면 models.json 의 빠진 키에
@@ -257,7 +263,7 @@ def vision_support(
     if hit is None:
         settled = True
         try:
-            hit = bool(transport_factory(base_url, model, api_key).vision_probe())
+            hit = bool(transport_factory(base_url, model, credentials).vision_probe())
         except requests.HTTPError as exc:
             hit = False
             status = getattr(getattr(exc, "response", None), "status_code", 0) or 0
@@ -287,7 +293,7 @@ _GRAMMAR_PROBE_ANSWER = "GRAMMAR-OK"
 
 
 def probe_grammar_support(
-    provider: str, base_url: str, model: str, api_key: str = ""
+    provider: str, base_url: str, model: str, credentials: Credentials
 ) -> bool:
     """서버가 ``guided_grammar`` 를 **강제**하는지 한 번 묻는다 (v9.24.0).
 
@@ -297,7 +303,7 @@ def probe_grammar_support(
     """
     try:
         if provider == "openai":
-            t = _OpenAITransport(base_url, model, api_key)
+            t = _OpenAITransport(base_url, model, credentials)
             return t.grammar_probe()
     except Exception:
         return False
@@ -313,7 +319,7 @@ _THINKING_TAG_PATTERN = re.compile(
 
 
 def _detect_runtime_capabilities(
-    provider: str, base_url: str, model: str, api_key: str = ""
+    provider: str, base_url: str, model: str, credentials: Credentials
 ) -> ModelCapabilities | None:
     """Detect model capabilities at runtime via provider API.
 
@@ -327,7 +333,7 @@ def _detect_runtime_capabilities(
     transport_factory = getattr(cls, "capability_transport", None)
     if transport_factory is None:
         return None
-    return _detect_capabilities(model, transport_factory(base_url, model, api_key))
+    return _detect_capabilities(model, transport_factory(base_url, model, credentials))
 
 
 # Prompt whose natural answer is prose, not JSON. If the server does not
@@ -420,18 +426,22 @@ class _ProbeTransport:
         정규화해 태그 검출 하나로 합친다.
       - ``thinking_probe()`` 2단 · ``vision_probe()``.
 
-    서브클래스는 **모양만** 정한다: ``chat_url``·``_auth_headers()``·
-    ``_body()``·``_text()``·``_thinking()``·``_image_part()``·``grammar_probe()``.
+    서브클래스는 **모양만** 정한다: ``chat_path``·``provider_name``(헤더는
+    :meth:`Credentials.headers` 가 만든다)·``_body()``·``_text()``·
+    ``_thinking()``·``_image_part()``·``grammar_probe()``.
     요청 URL·헤더·JSON 본문은 통합 전(v10.113.x)의 두 전송·모듈 함수가 보내던
     것과 같다 — 옛 코드와 나란히 돌려 기록을 대조해 확인했다."""
 
     #: ``self.base`` 뒤에 붙는 채팅 끝점 경로 — 서브클래스가 정한다.
     chat_path: str = ""
 
-    def __init__(self, base_url: str, model: str, api_key: str = ""):
+    #: 요청 헤더의 프로바이더 이름(:meth:`Credentials.headers`) — 서브클래스가 정한다.
+    provider_name: str = ""
+
+    def __init__(self, base_url: str, model: str, credentials: Credentials):
         self.base = base_url.rstrip("/")
         self.model = model
-        self.api_key = api_key
+        self.credentials = credentials
 
     @property
     def chat_url(self) -> str:
@@ -441,7 +451,7 @@ class _ProbeTransport:
 
     def _auth_headers(self) -> dict:
         """인증·버전 헤더 — GET ``/models`` 는 이것만 보낸다(Content-Type 없음)."""
-        raise NotImplementedError
+        return self.credentials.headers(self.provider_name)
 
     def _body(
         self,
@@ -597,11 +607,7 @@ class _OpenAITransport(_ProbeTransport):
     · ``Authorization: Bearer`` · ``choices[0].message``."""
 
     chat_path = "/chat/completions"
-
-    def _auth_headers(self) -> dict:
-        if self.api_key:
-            return {"Authorization": f"Bearer {self.api_key}"}
-        return {}
+    provider_name = "openai"
 
     def _body(
         self,
@@ -667,12 +673,7 @@ class _AnthropicTransport(_ProbeTransport):
     가고, omlx 류는 ``max_model_len`` 을 싣는다."""
 
     chat_path = "/messages"
-
-    def _auth_headers(self) -> dict:
-        h = {"anthropic-version": "2023-06-01"}
-        if self.api_key:
-            h["x-api-key"] = self.api_key
-        return h
+    provider_name = "anthropic"
 
     def _body(
         self,

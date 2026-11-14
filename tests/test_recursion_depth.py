@@ -31,6 +31,7 @@ import pytest
 from agent_cli.loop.core import AgentLoop
 from agent_cli.prompts.system_prompt import _build_execution_context
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.providers.credentials import Credentials
 from agent_cli.recovery.recursion import (
     format_depth_limit_error,
     format_recursion_error,
@@ -199,7 +200,7 @@ class TestRunSkillDispatchDepthCheck:
                 binding=make_binding(
                     provider_name="openai",
                     base_url="",
-                    api_key="",
+                    credentials=Credentials(),
                     capabilities=_caps(),
                     model="m",
                 ),
@@ -229,7 +230,7 @@ class TestRunSkillDispatchDepthCheck:
                 binding=make_binding(
                     provider_name="openai",
                     base_url="",
-                    api_key="",
+                    credentials=Credentials(),
                     capabilities=_caps(),
                     model="m",
                 ),
@@ -254,7 +255,7 @@ class TestRunSkillDispatchDepthCheck:
                 binding=make_binding(
                     provider_name="openai",
                     base_url="",
-                    api_key="",
+                    credentials=Credentials(),
                     capabilities=_caps(),
                     model="m",
                 ),
@@ -535,7 +536,7 @@ class TestExistingRecursionPathsUnchanged:
                 binding=make_binding(
                     provider_name="openai",
                     base_url="",
-                    api_key="",
+                    credentials=Credentials(),
                     capabilities=_caps(),
                     model="m",
                 ),

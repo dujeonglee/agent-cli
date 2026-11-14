@@ -16,6 +16,7 @@ from agent_cli.providers.capabilities import (
     get_capabilities,
     set_progress_callback,
 )
+from agent_cli.providers.credentials import Credentials
 
 
 def _chat_resp(content: str) -> MagicMock:
@@ -148,7 +149,8 @@ class TestOpenAIRuntimeDetection:
         )
 
         caps = _detect_capabilities(
-            "local-model", _OpenAITransport("http://localhost:8080/v1", "local-model")
+            "local-model",
+            _OpenAITransport("http://localhost:8080/v1", "local-model", Credentials()),
         )
         assert caps is not None
         assert caps.context_window == 32768
@@ -188,7 +190,8 @@ class TestOpenAIRuntimeDetection:
         )
 
         caps = _detect_capabilities(
-            "local-model", _OpenAITransport("http://localhost:8080/v1", "local-model")
+            "local-model",
+            _OpenAITransport("http://localhost:8080/v1", "local-model", Credentials()),
         )
         assert caps is not None
         assert caps.supports_thinking is True
@@ -221,7 +224,8 @@ class TestOpenAIRuntimeDetection:
         )
 
         caps = _detect_capabilities(
-            "local-model", _OpenAITransport("http://localhost:8080/v1", "local-model")
+            "local-model",
+            _OpenAITransport("http://localhost:8080/v1", "local-model", Credentials()),
         )
         assert caps is not None
         assert caps.supports_thinking is True
@@ -248,7 +252,8 @@ class TestOpenAIRuntimeDetection:
         )
 
         caps = _detect_capabilities(
-            "local-model", _OpenAITransport("http://localhost:8080/v1", "local-model")
+            "local-model",
+            _OpenAITransport("http://localhost:8080/v1", "local-model", Credentials()),
         )
         assert caps is not None
         assert caps.supports_thinking is False
@@ -281,7 +286,7 @@ class TestOpenAIRuntimeDetection:
         _detect_capabilities(
             "model",
             _OpenAITransport(
-                "http://localhost:8080/v1", "model", api_key="test-key-123"
+                "http://localhost:8080/v1", "model", Credentials(api_key="test-key-123")
             ),
         )
 
@@ -317,7 +322,8 @@ class TestOpenAIRuntimeDetection:
         )
 
         _detect_capabilities(
-            "model", _OpenAITransport("http://localhost:8080/v1", "model", api_key="")
+            "model",
+            _OpenAITransport("http://localhost:8080/v1", "model", Credentials()),
         )
 
         get_headers = mock_get.call_args.kwargs.get("headers", {})
@@ -347,7 +353,8 @@ class TestOpenAIRuntimeDetection:
         )
 
         caps = _detect_capabilities(
-            "local-model", _OpenAITransport("http://localhost:8080/v1", "local-model")
+            "local-model",
+            _OpenAITransport("http://localhost:8080/v1", "local-model", Credentials()),
         )
         assert caps is not None
         assert caps.context_window == 131072  # 128K fallback
@@ -365,7 +372,8 @@ class TestOpenAIRuntimeDetection:
         )
 
         caps = _detect_capabilities(
-            "model", _OpenAITransport("http://localhost:8080/v1", "model")
+            "model",
+            _OpenAITransport("http://localhost:8080/v1", "model", Credentials()),
         )
         assert caps is None
 
@@ -386,7 +394,7 @@ class TestOpenAIRuntimeDetection:
         from agent_cli.providers.capabilities import _OpenAITransport
 
         ctx = _OpenAITransport(
-            "http://localhost:8080/v1", "target-model"
+            "http://localhost:8080/v1", "target-model", Credentials()
         ).context_window()
         assert ctx == 65536
 
@@ -575,7 +583,10 @@ class TestContextWindowProbe:
         from agent_cli.providers.capabilities import _OpenAITransport
 
         mock_post.return_value = self._resp(400, _OMLX_OVERFLOW_400)
-        assert _OpenAITransport("http://x/v1", "m")._overflow_window() == 262144
+        assert (
+            _OpenAITransport("http://x/v1", "m", Credentials())._overflow_window()
+            == 262144
+        )
 
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_probe_returns_none_when_prompt_fits(self, mock_post):
@@ -583,7 +594,10 @@ class TestContextWindowProbe:
         from agent_cli.providers.capabilities import _OpenAITransport
 
         mock_post.return_value = self._resp(200, "")
-        assert _OpenAITransport("http://x/v1", "m")._overflow_window() is None
+        assert (
+            _OpenAITransport("http://x/v1", "m", Credentials())._overflow_window()
+            is None
+        )
 
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_probe_returns_none_on_overflow_without_number(self, mock_post):
@@ -591,21 +605,30 @@ class TestContextWindowProbe:
 
         # Classified as overflow, but no parseable number.
         mock_post.return_value = self._resp(400, "context length exceeded")
-        assert _OpenAITransport("http://x/v1", "m")._overflow_window() is None
+        assert (
+            _OpenAITransport("http://x/v1", "m", Credentials())._overflow_window()
+            is None
+        )
 
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_probe_returns_none_on_non_overflow_400(self, mock_post):
         from agent_cli.providers.capabilities import _OpenAITransport
 
         mock_post.return_value = self._resp(400, "invalid_request: unknown field")
-        assert _OpenAITransport("http://x/v1", "m")._overflow_window() is None
+        assert (
+            _OpenAITransport("http://x/v1", "m", Credentials())._overflow_window()
+            is None
+        )
 
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_probe_returns_none_on_connection_error(self, mock_post):
         from agent_cli.providers.capabilities import _OpenAITransport
 
         mock_post.side_effect = Exception("Connection refused")
-        assert _OpenAITransport("http://x/v1", "m")._overflow_window() is None
+        assert (
+            _OpenAITransport("http://x/v1", "m", Credentials())._overflow_window()
+            is None
+        )
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
@@ -617,7 +640,10 @@ class TestContextWindowProbe:
         mock_get.return_value.json.return_value = {
             "data": [{"id": "m", "max_model_len": 32768}]
         }
-        assert _OpenAITransport("http://x/v1", "m").context_window() == 32768
+        assert (
+            _OpenAITransport("http://x/v1", "m", Credentials()).context_window()
+            == 32768
+        )
         mock_post.assert_not_called()
 
     @patch("agent_cli.providers.capabilities.requests.get")
@@ -629,7 +655,10 @@ class TestContextWindowProbe:
         mock_get.return_value = self._resp(200, "")
         mock_get.return_value.json.return_value = {"data": []}  # model absent
         mock_post.return_value = self._resp(400, _OMLX_OVERFLOW_400)
-        assert _OpenAITransport("http://x/v1", "m").context_window() == 262144
+        assert (
+            _OpenAITransport("http://x/v1", "m", Credentials()).context_window()
+            == 262144
+        )
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
@@ -640,7 +669,10 @@ class TestContextWindowProbe:
         mock_get.return_value = self._resp(200, "")
         mock_get.return_value.json.return_value = {"data": []}
         mock_post.return_value = self._resp(200, "")  # prompt fit → no number
-        assert _OpenAITransport("http://x/v1", "m").context_window() == 131072
+        assert (
+            _OpenAITransport("http://x/v1", "m", Credentials()).context_window()
+            == 131072
+        )
 
     # ── Anthropic 짝 (v10.114.0: 3단은 전송 기반 클래스 한 곳) ──
 
@@ -654,7 +686,10 @@ class TestContextWindowProbe:
         mock_get.return_value.json.return_value = {
             "data": [{"id": "m", "max_model_len": 32768}]
         }
-        assert _AnthropicTransport("http://x/v1", "m").context_window() == 32768
+        assert (
+            _AnthropicTransport("http://x/v1", "m", Credentials()).context_window()
+            == 32768
+        )
         mock_post.assert_not_called()
 
     @patch("agent_cli.providers.capabilities.requests.get")
@@ -666,7 +701,10 @@ class TestContextWindowProbe:
         mock_get.return_value = self._resp(200, "")
         mock_get.return_value.json.return_value = {"data": []}
         mock_post.return_value = self._resp(400, _OMLX_OVERFLOW_400)
-        assert _AnthropicTransport("http://x/v1", "m").context_window() == 262144
+        assert (
+            _AnthropicTransport("http://x/v1", "m", Credentials()).context_window()
+            == 262144
+        )
         assert mock_post.call_args.args[0] == "http://x/v1/messages"
         body = mock_post.call_args.kwargs["json"]
         assert list(body) == ["model", "max_tokens", "messages"]
@@ -682,7 +720,10 @@ class TestContextWindowProbe:
 
         mock_get.side_effect = Exception("Not found")
         mock_post.return_value = self._resp(200, "")
-        assert _AnthropicTransport("http://x/v1", "m").context_window() == 131072
+        assert (
+            _AnthropicTransport("http://x/v1", "m", Credentials()).context_window()
+            == 131072
+        )
 
     @patch("agent_cli.providers.capabilities.requests.get")
     def test_anthropic_models_get_headers(self, mock_get):
@@ -694,12 +735,14 @@ class TestContextWindowProbe:
         mock_get.return_value.json.return_value = {
             "data": [{"id": "m", "max_model_len": 32768}]
         }
-        _AnthropicTransport("http://x/v1", "m", "sk").context_window()
+        _AnthropicTransport(
+            "http://x/v1", "m", Credentials(api_key="sk")
+        ).context_window()
         assert mock_get.call_args.kwargs["headers"] == {
             "anthropic-version": "2023-06-01",
             "x-api-key": "sk",
         }
-        _AnthropicTransport("http://x/v1", "m").context_window()
+        _AnthropicTransport("http://x/v1", "m", Credentials()).context_window()
         assert mock_get.call_args.kwargs["headers"] == {
             "anthropic-version": "2023-06-01"
         }
@@ -741,7 +784,9 @@ class TestModelRejectAndOutputScaling:
         probe.json.return_value = {"choices": [{"message": {"content": "hi"}}]}
         probe.raise_for_status.return_value = None
         mock_post.return_value = probe
-        caps = _detect_capabilities("big", _OpenAITransport("http://x/v1", "big"))
+        caps = _detect_capabilities(
+            "big", _OpenAITransport("http://x/v1", "big", Credentials())
+        )
         assert caps.max_output_tokens == 262144 // 4
 
     @patch("agent_cli.providers.capabilities.requests.get")
@@ -758,7 +803,9 @@ class TestModelRejectAndOutputScaling:
         probe.raise_for_status.return_value = None
         mock_post.return_value = probe
         with pytest.raises(UnsupportedModelError):
-            _detect_capabilities("tiny", _OpenAITransport("http://x/v1", "tiny"))
+            _detect_capabilities(
+                "tiny", _OpenAITransport("http://x/v1", "tiny", Credentials())
+            )
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
@@ -774,7 +821,9 @@ class TestModelRejectAndOutputScaling:
         probe.json.return_value = {"choices": [{"message": {"content": "hi"}}]}
         probe.raise_for_status.return_value = None
         mock_post.return_value = probe
-        caps = _detect_capabilities("edge", _OpenAITransport("http://x/v1", "edge"))
+        caps = _detect_capabilities(
+            "edge", _OpenAITransport("http://x/v1", "edge", Credentials())
+        )
         assert caps is not None
         assert caps.max_output_tokens == MIN_CONTEXT_WINDOW // 4
 
@@ -795,7 +844,9 @@ class TestDetectionWiresStructuredFlags:
             _chat_resp('{"colors": ["red", "blue", "yellow"]}'),
             _chat_resp('{"colors": ["red", "blue", "yellow"]}'),
         ]
-        caps = _detect_capabilities("m", _OpenAITransport("http://x/v1", "m"))
+        caps = _detect_capabilities(
+            "m", _OpenAITransport("http://x/v1", "m", Credentials())
+        )
         assert caps is not None
         assert caps.supports_thinking is False
 
@@ -821,7 +872,7 @@ class TestAnthropicRuntimeDetection:
         from agent_cli.providers.capabilities import _detect_runtime_capabilities
 
         caps = _detect_runtime_capabilities(
-            "anthropic", "http://x/v1", "claude-x", "sk"
+            "anthropic", "http://x/v1", "claude-x", Credentials(api_key="sk")
         )
         assert caps is not None
         assert caps.context_window == 200000
@@ -852,7 +903,9 @@ class TestAnthropicRuntimeDetection:
 
         from agent_cli.providers.capabilities import _detect_runtime_capabilities
 
-        caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
+        caps = _detect_runtime_capabilities(
+            "anthropic", "http://x/v1", "m", Credentials()
+        )
         assert caps.supports_thinking is True
 
     @patch("agent_cli.providers.capabilities.requests.get")
@@ -883,7 +936,9 @@ class TestAnthropicRuntimeDetection:
 
         from agent_cli.providers.capabilities import _detect_runtime_capabilities
 
-        caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
+        caps = _detect_runtime_capabilities(
+            "anthropic", "http://x/v1", "m", Credentials()
+        )
         assert caps.supports_thinking is True
         # 재프로브 body 에 thinking 스위치 — 프로바이더가 보내는 것과 같은 모양,
         # max_tokens 는 그대로(예산을 더하지 않는다)
@@ -913,7 +968,9 @@ class TestAnthropicRuntimeDetection:
 
         from agent_cli.providers.capabilities import _detect_runtime_capabilities
 
-        caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
+        caps = _detect_runtime_capabilities(
+            "anthropic", "http://x/v1", "m", Credentials()
+        )
         assert caps is not None
         assert caps.supports_thinking is False
 
@@ -924,7 +981,7 @@ class TestAnthropicRuntimeDetection:
         from agent_cli.providers.capabilities import _AnthropicTransport
 
         assert (
-            _AnthropicTransport("http://x", "m")._text(
+            _AnthropicTransport("http://x", "m", Credentials())._text(
                 {
                     "content": [
                         {"type": "thinking", "thinking": "r"},
@@ -935,12 +992,15 @@ class TestAnthropicRuntimeDetection:
             == "Hello"
         )
         assert (
-            _AnthropicTransport("http://x", "m")._text(
+            _AnthropicTransport("http://x", "m", Credentials())._text(
                 {"content": [{"type": "text", "text": "x"}]}
             )
             == "x"
         )
-        assert _AnthropicTransport("http://x", "m")._text({"content": []}) == ""
+        assert (
+            _AnthropicTransport("http://x", "m", Credentials())._text({"content": []})
+            == ""
+        )
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
@@ -955,7 +1015,9 @@ class TestAnthropicRuntimeDetection:
 
         from agent_cli.providers.capabilities import _detect_runtime_capabilities
 
-        caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
+        caps = _detect_runtime_capabilities(
+            "anthropic", "http://x/v1", "m", Credentials()
+        )
         assert caps is not None
         # overflow probe hit /messages and parsed the limit
         assert any("/messages" in c.args[0] for c in mock_post.call_args_list)
@@ -992,7 +1054,7 @@ class TestVisionSupport:
             raise AssertionError("must not probe")
 
         caps = ModelCapabilities(1, 1, False, supports_vision=True)
-        assert vision_support(caps, boom, "http://x", "m") is True
+        assert vision_support(caps, boom, "http://x", "m", Credentials()) is True
 
     def test_unknown_probes_once_per_model_and_remembers(self, monkeypatch):
         from agent_cli.providers import capabilities as caps_mod
@@ -1009,9 +1071,9 @@ class TestVisionSupport:
                 return True
 
         caps = ModelCapabilities(1, 1, False)
-        assert vision_support(caps, _T, "http://x/", "m") is True
-        assert vision_support(caps, _T, "http://x", "m") is True
-        assert vision_support(caps, _T, "http://x", "other") is True
+        assert vision_support(caps, _T, "http://x/", "m", Credentials()) is True
+        assert vision_support(caps, _T, "http://x", "m", Credentials()) is True
+        assert vision_support(caps, _T, "http://x", "other", Credentials()) is True
         assert calls == [("http://x/", "m"), ("http://x", "other")]
 
     @pytest.mark.parametrize(
@@ -1055,7 +1117,9 @@ class TestVisionSupport:
                     raise _rq.HTTPError(response=r)
                 raise _rq.ConnectionError("timeout")
 
-        got = vision_support(ModelCapabilities(1, 1, False), _T, "http://x", "m")
+        got = vision_support(
+            ModelCapabilities(1, 1, False), _T, "http://x", "m", Credentials()
+        )
         assert got is (outcome == "yes")
         assert written.get("m") == (
             None if persisted is None else {"supports_vision": persisted}
@@ -1075,7 +1139,10 @@ class TestVisionSupport:
                 raise RuntimeError("400 images not supported")
 
         assert (
-            vision_support(ModelCapabilities(1, 1, False), _T, "http://x", "m") is False
+            vision_support(
+                ModelCapabilities(1, 1, False), _T, "http://x", "m", Credentials()
+            )
+            is False
         )
 
     @patch("agent_cli.providers.capabilities.requests.post")
@@ -1086,11 +1153,17 @@ class TestVisionSupport:
         r.raise_for_status.return_value = None
         r.json.return_value = {"content": [{"type": "text", "text": "Green, blue."}]}
         mock_post.return_value = r
-        assert _AnthropicTransport("http://x/v1", "m").vision_probe() is True
+        assert (
+            _AnthropicTransport("http://x/v1", "m", Credentials()).vision_probe()
+            is True
+        )
         body = mock_post.call_args.kwargs["json"]
         assert body["messages"][0]["content"][1]["type"] == "image"
         r.json.return_value = {"content": [{"type": "text", "text": "I see no image"}]}
-        assert _AnthropicTransport("http://x/v1", "m").vision_probe() is False
+        assert (
+            _AnthropicTransport("http://x/v1", "m", Credentials()).vision_probe()
+            is False
+        )
 
 
 class TestSamplingDefaultsInTheEntry:

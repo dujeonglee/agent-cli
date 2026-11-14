@@ -21,6 +21,7 @@ from agent_cli.providers.capabilities import (
     ModelCapabilities,
     vision_support,
 )
+from agent_cli.providers.credentials import Credentials
 from agent_cli.providers.http import (
     StreamEvent,
     post_with_retry,
@@ -49,15 +50,15 @@ class AnthropicProvider:
     """Adapter for the Anthropic Messages API (/v1/messages)."""
 
     @staticmethod
-    def capability_transport(base_url: str, model: str, api_key: str = ""):
+    def capability_transport(base_url: str, model: str, credentials: Credentials):
         """capability 프로브 transport — 프로바이더 클래스 소유 (v8.41.0)."""
         from agent_cli.providers.capabilities import _AnthropicTransport
 
-        return _AnthropicTransport(base_url, model, api_key)
+        return _AnthropicTransport(base_url, model, credentials)
 
-    def __init__(self, base_url: str, api_key: str):
+    def __init__(self, base_url: str, credentials: Credentials):
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+        self.credentials = credentials
 
     def call(
         self,
@@ -72,8 +73,7 @@ class AnthropicProvider:
         url = f"{self.base_url}/messages"
         headers = {
             "Content-Type": "application/json",
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
+            **self.credentials.headers("anthropic"),
         }
         # System is sent as a single content block with ``cache_control``
         # to enable Anthropic prompt caching. The whole system prompt is
@@ -86,7 +86,11 @@ class AnthropicProvider:
         enabled = any(
             isinstance(m.get("images"), list) and m["images"] for m in messages
         ) and vision_support(
-            capabilities, self.capability_transport, self.base_url, model, self.api_key
+            capabilities,
+            self.capability_transport,
+            self.base_url,
+            model,
+            self.credentials,
         )
         messages = _images.expand(
             messages,

@@ -7,6 +7,7 @@ import pytest
 
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.providers.credentials import Credentials
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
@@ -3722,7 +3723,7 @@ class TestSkillStack:
                 binding=make_binding(
                     provider_name="openai",
                     base_url="http://localhost:11434",
-                    api_key="",
+                    credentials=Credentials(),
                     capabilities=caps,
                     model="test",
                 ),
@@ -3746,7 +3747,7 @@ class TestSkillStack:
                 binding=make_binding(
                     provider_name="openai",
                     base_url="http://localhost:11434",
-                    api_key="",
+                    credentials=Credentials(),
                     capabilities=caps,
                     model="test",
                 ),

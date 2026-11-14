@@ -16,6 +16,7 @@ from rich.table import Table
 from rich.text import Text
 
 from agent_cli.config import save_config
+from agent_cli.providers.credentials import Credentials
 
 console = Console()
 
@@ -32,7 +33,7 @@ _DEFAULT_URLS = {
 
 
 def _list_models(
-    base_url: str, api_key: str = "", provider: str = "openai"
+    base_url: str, credentials: Credentials, provider: str = "openai"
 ) -> list[str]:
     """List model ids from a provider's ``/models`` endpoint.
 
@@ -44,13 +45,7 @@ def _list_models(
     to manual entry.
     """
     try:
-        headers = {}
-        if provider == "anthropic":
-            headers["anthropic-version"] = "2023-06-01"  # required by /v1/models
-            if api_key:
-                headers["x-api-key"] = api_key
-        elif api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+        headers = credentials.headers(provider)
         r = requests.get(f"{base_url.rstrip('/')}/models", headers=headers, timeout=10)
         if r.status_code == 200:
             data = r.json().get("data", [])
@@ -196,7 +191,7 @@ class SetupWizard:
     def _select_model_from_list(
         self, base_url: str, api_key: str, provider: str, manual_default: str
     ) -> str:
-        models = _list_models(base_url, api_key, provider)
+        models = _list_models(base_url, Credentials(api_key=api_key), provider)
         if not models:
             self.console.print(
                 "   [yellow]Could not list models from /models. "

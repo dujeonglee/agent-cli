@@ -21,6 +21,7 @@ from agent_cli.context.manager import (
     CompactionError,
     ContextManager,
 )
+from agent_cli.providers.credentials import Credentials
 from agent_cli.tools.registry import extract_file_paths
 from tests.loop_ports import TEST_PORTS
 
@@ -1243,7 +1244,7 @@ class TestCompactorStreams:
         ]
         with patch("agent_cli.providers.openai.requests.post") as post:
             post.return_value = self._sse(sse)
-            loop = self._loop(OpenAIProvider("http://gw/v1", "k"))
+            loop = self._loop(OpenAIProvider("http://gw/v1", Credentials(api_key="k")))
             out = loop._llm_compact_summarize([{"role": "user", "content": "t"}])
         assert out == "TASK - fix the bug"
         body = post.call_args.kwargs["json"]
@@ -1266,7 +1267,7 @@ class TestCompactorStreams:
             loop = make_loop(
                 ports=TEST_PORTS,
                 query="x",
-                provider=OpenAIProvider("http://gw/v1", "k"),
+                provider=OpenAIProvider("http://gw/v1", Credentials(api_key="k")),
                 capabilities=caps,
                 model="mock-model",
                 ctx=ContextManager(tmp_path / "s", max_context_tokens=1_000_000),
@@ -1309,7 +1310,7 @@ class TestCompactorStreams:
         ]
         with patch("agent_cli.providers.openai.requests.post") as post:
             post.return_value = self._sse(sse)
-            loop = self._loop(OpenAIProvider("http://gw/v1", "k"))
+            loop = self._loop(OpenAIProvider("http://gw/v1", Credentials(api_key="k")))
             out = loop._llm_compact_summarize([{"role": "user", "content": "t"}])
         assert out.strip() == "STATE - ok"
 
@@ -1324,7 +1325,8 @@ class TestCompactorStreams:
         with patch("agent_cli.providers.openai.requests.post") as post:
             post.return_value = self._sse(sse)
             loop = self._loop(
-                OpenAIProvider("http://gw/v1", "k"), dialect=dialects.get("native_fc")
+                OpenAIProvider("http://gw/v1", Credentials(api_key="k")),
+                dialect=dialects.get("native_fc"),
             )
             assert (
                 loop._llm_compact_summarize([{"role": "user", "content": "t"}]) == "S"
@@ -1340,7 +1342,7 @@ class TestCompactorStreams:
 
         with patch("agent_cli.providers.openai.requests.post") as post:
             post.return_value = self._sse(sse)
-            loop = self._loop(OpenAIProvider("http://gw/v1", "k"))
+            loop = self._loop(OpenAIProvider("http://gw/v1", Credentials(api_key="k")))
             return loop._llm_compact_summarize([{"role": "user", "content": "t"}])
 
     _ERR = b'data: {"error":{"code":"timeout","message":"upstream timed out"}}'
@@ -1392,7 +1394,9 @@ class TestCompactorStreams:
         ]
         with patch("agent_cli.providers.anthropic.requests.post") as post:
             post.return_value = self._sse(sse)
-            loop = self._loop(AnthropicProvider("http://gw/v1", "k"))
+            loop = self._loop(
+                AnthropicProvider("http://gw/v1", Credentials(api_key="k"))
+            )
             out = loop._llm_compact_summarize([{"role": "user", "content": "t"}])
         assert out == "DONE - edited a.py"
         body = post.call_args.kwargs["json"]
@@ -1528,7 +1532,7 @@ class TestCompactNow:
 
         streams = TestCompactorStreams()
         ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
-        loop = streams._loop(OpenAIProvider("http://gw/v1", "k"))
+        loop = streams._loop(OpenAIProvider("http://gw/v1", Credentials(api_key="k")))
         ctx.set_compactor(loop._llm_compact_summarize)
         ctx.add({"role": "system", "content": "sys"})
         for i in range(20):

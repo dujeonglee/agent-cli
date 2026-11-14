@@ -19,8 +19,10 @@ from agent_cli.providers.capabilities import (
     UnsupportedModelError,
     get_capabilities,
 )
+from agent_cli.providers.credentials import Credentials
 
 __all__ = [
+    "Credentials",
     "LLMProvider",
     "LLMResponse",
     "ModelCapabilities",
@@ -77,10 +79,12 @@ def available_providers() -> list[str]:
     return sorted(_PROVIDERS)
 
 
-def create_provider(provider: str, base_url: str, api_key: str) -> LLMProvider:
+def create_provider(
+    provider: str, base_url: str, credentials: Credentials
+) -> LLMProvider:
     """Create a provider adapter instance by name."""
     cls = get_provider_class(provider)
     if cls is None:
         available = ", ".join(available_providers())
         raise ValueError(f"Unknown provider: {provider}. Available: {available}")
-    return cls(base_url, api_key)
+    return cls(base_url, credentials)

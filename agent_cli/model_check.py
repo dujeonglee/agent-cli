@@ -27,6 +27,10 @@ from __future__ import annotations
 import difflib
 import os
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent_cli.providers.credentials import Credentials
 
 __all__ = [
     "ModelListing",
@@ -37,7 +41,7 @@ __all__ = [
 ]
 
 # 프로세스 수명 캐시 — 부팅 1회 + 에이전트 spawn 마다 조회하면 같은 목록을
-# 반복해서 받는다. 키는 (base_url, provider): api_key 는 키에서 뺀다(비밀을
+# 반복해서 받는다. 키는 (base_url, provider): 자격(키)은 키에서 뺀다(비밀을
 # 캐시 키로 쓰지 않는다; 한 프로세스가 같은 엔드포인트에 두 키를 쓰는 일은 없다).
 _cache: dict[tuple[str, str], ModelListing] = {}
 
@@ -89,7 +93,7 @@ class NoModelSelected(Exception):
 
 
 def list_models(
-    base_url: str, api_key: str = "", provider: str = "openai"
+    base_url: str, credentials: Credentials, provider: str = "openai"
 ) -> ModelListing:
     """`GET {base_url}/models` — 성공/실패를 구분해 돌려준다.
 
@@ -100,21 +104,15 @@ def list_models(
     hit = _cache.get(key)
     if hit is not None:
         return hit
-    result = _fetch(base_url, api_key, provider)
+    result = _fetch(base_url, credentials, provider)
     _cache[key] = result
     return result
 
 
-def _fetch(base_url: str, api_key: str, provider: str) -> ModelListing:
+def _fetch(base_url: str, credentials: Credentials, provider: str) -> ModelListing:
     import requests
 
-    headers: dict[str, str] = {}
-    if provider == "anthropic":
-        headers["anthropic-version"] = "2023-06-01"
-        if api_key:
-            headers["x-api-key"] = api_key
-    elif api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    headers = credentials.headers(provider)
     try:
         r = requests.get(f"{base_url.rstrip('/')}/models", headers=headers, timeout=10)
     except Exception as e:  # 네트워크·DNS·타임아웃 — 서버를 못 만났다
@@ -155,7 +153,7 @@ def _short_reason(exc: Exception) -> str:
 def verify_model(
     model: str,
     base_url: str,
-    api_key: str = "",
+    credentials: Credentials,
     provider: str = "openai",
     *,
     origin: str = "",
@@ -169,7 +167,7 @@ def verify_model(
     ``origin`` 은 그 이름이 어디서 왔는지(설정 파일 경로·``--model``·역할 md)
     — 실패 메시지에서 **고칠 곳을 지목**하는 데 쓴다.
     """
-    listing = list_models(base_url, api_key, provider)
+    listing = list_models(base_url, credentials, provider)
     if not model:
         raise NoModelSelected(listing, base_url)
     if not listing.available:

@@ -9,6 +9,7 @@ from agent_cli.providers import create_provider
 from agent_cli.providers.anthropic import AnthropicProvider
 from agent_cli.providers.base import CallSettings, LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.providers.credentials import Credentials
 from agent_cli.providers.http import interruptible_lines
 from agent_cli.providers.openai import OpenAIProvider
 
@@ -50,7 +51,9 @@ class TestAnthropicProvider:
             }
         )
 
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "test-key")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="test-key")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hello"}],
             system="system prompt",
@@ -82,7 +85,9 @@ class TestAnthropicProvider:
                 "stop_reason": "end_turn",
             }
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="s",
@@ -105,7 +110,9 @@ class TestAnthropicProvider:
                 "stop_reason": "end_turn",
             }
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="s",
@@ -125,7 +132,9 @@ class TestAnthropicProvider:
                 "stop_reason": "end_turn",
             }
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="my system",
@@ -156,7 +165,9 @@ class TestAnthropicProvider:
                 "stop_reason": "end_turn",
             }
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -179,7 +190,9 @@ class TestAnthropicProvider:
                 "stop_reason": "end_turn",
             }
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -211,7 +224,9 @@ class TestAnthropicProvider:
 
         seen: list[str] = []
 
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -243,7 +258,9 @@ class TestAnthropicProvider:
         r.raise_for_status.return_value = None
         mock_post.return_value = r
 
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -270,7 +287,9 @@ class TestStopReasonNormalization:
                     "stop_reason": stop_reason,
                 }
             )
-            provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+            provider = AnthropicProvider(
+                "https://api.anthropic.com/v1", Credentials(api_key="k")
+            )
             return provider.call(
                 messages=[{"role": "user", "content": "hi"}],
                 system="s",
@@ -301,7 +320,9 @@ class TestStopReasonNormalization:
         r.iter_lines.return_value = iter(sse)
         r.raise_for_status.return_value = None
         mock_post.return_value = r
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="s",
@@ -346,7 +367,9 @@ class TestDegenerationTrigger:
         r.iter_lines.return_value = iter(sse)
         r.raise_for_status.return_value = None
         mock_post.return_value = r
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="s",
@@ -375,7 +398,7 @@ class TestOpenAIProvider:
             "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}]
         }
         mock_post.return_value = r
-        provider = OpenAIProvider("https://api.openai.com/v1", "k")
+        provider = OpenAIProvider("https://api.openai.com/v1", Credentials(api_key="k"))
         for flag in (False, True):
             provider.call(
                 messages=[{"role": "user", "content": "hi"}],
@@ -407,7 +430,7 @@ class TestOpenAIProvider:
             "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}]
         }
         mock_post.return_value = r
-        provider = OpenAIProvider("https://api.openai.com/v1", "k")
+        provider = OpenAIProvider("https://api.openai.com/v1", Credentials(api_key="k"))
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="s",
@@ -437,7 +460,9 @@ class TestOpenAIProvider:
         mock_post.return_value = r
 
         chunks: list[str] = []
-        provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
+        provider = OpenAIProvider(
+            "https://api.openai.com/v1", Credentials(api_key="test-key")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -463,7 +488,9 @@ class TestOpenAIProvider:
         r.iter_lines.return_value = iter(sse)
         r.raise_for_status.return_value = None
         mock_post.return_value = r
-        provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
+        provider = OpenAIProvider(
+            "https://api.openai.com/v1", Credentials(api_key="test-key")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -492,7 +519,9 @@ class TestOpenAIProvider:
 
         seen: list[str] = []
 
-        provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
+        provider = OpenAIProvider(
+            "https://api.openai.com/v1", Credentials(api_key="test-key")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -519,7 +548,9 @@ class TestOpenAIProvider:
         r.iter_lines.return_value = iter(sse)
         r.raise_for_status.return_value = None
         mock_post.return_value = r
-        provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
+        provider = OpenAIProvider(
+            "https://api.openai.com/v1", Credentials(api_key="test-key")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -541,7 +572,7 @@ class TestOpenAIProvider:
             }
         )
 
-        provider = OpenAIProvider("http://localhost:8080/v1", "")
+        provider = OpenAIProvider("http://localhost:8080/v1", Credentials())
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -561,7 +592,9 @@ class TestOpenAIProvider:
                 "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
             }
         )
-        provider = OpenAIProvider("http://localhost:8080/v1", "my-key")
+        provider = OpenAIProvider(
+            "http://localhost:8080/v1", Credentials(api_key="my-key")
+        )
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -579,7 +612,7 @@ class TestOpenAIProvider:
                 "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
             }
         )
-        provider = OpenAIProvider("http://localhost:8080/v1", "")
+        provider = OpenAIProvider("http://localhost:8080/v1", Credentials())
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -621,7 +654,9 @@ class TestThinkingSwitch:
                 "stop_reason": "end_turn",
             }
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="key")
+        )
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -640,7 +675,9 @@ class TestThinkingSwitch:
         mock_post.return_value = _mock_response(
             {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="key")
+        )
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -659,7 +696,9 @@ class TestThinkingSwitch:
                 "stop_reason": "end_turn",
             }
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="key")
+        )
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -677,7 +716,9 @@ class TestThinkingSwitch:
         mock_post.return_value = _mock_response(
             {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="key")
+        )
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -698,7 +739,9 @@ class TestThinkingSwitch:
         mock_post.return_value = _mock_response(
             {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="key")
+        )
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -717,7 +760,9 @@ class TestThinkingSwitch:
                 "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
             }
         )
-        provider = OpenAIProvider("https://api.openai.com/v1", "key")
+        provider = OpenAIProvider(
+            "https://api.openai.com/v1", Credentials(api_key="key")
+        )
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -736,7 +781,9 @@ class TestThinkingSwitch:
                 "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
             }
         )
-        provider = OpenAIProvider("https://api.openai.com/v1", "key")
+        provider = OpenAIProvider(
+            "https://api.openai.com/v1", Credentials(api_key="key")
+        )
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -749,16 +796,20 @@ class TestThinkingSwitch:
 
 class TestCreateProvider:
     def test_anthropic(self):
-        p = create_provider("anthropic", "https://api.anthropic.com/v1", "key")
+        p = create_provider(
+            "anthropic", "https://api.anthropic.com/v1", Credentials(api_key="key")
+        )
         assert isinstance(p, AnthropicProvider)
 
     def test_openai(self):
-        p = create_provider("openai", "https://api.openai.com/v1", "key")
+        p = create_provider(
+            "openai", "https://api.openai.com/v1", Credentials(api_key="key")
+        )
         assert isinstance(p, OpenAIProvider)
 
     def test_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown provider"):
-            create_provider("gemini", "http://x", "")
+            create_provider("gemini", "http://x", Credentials())
 
 
 class TestThinkingFieldCapture:
@@ -779,7 +830,9 @@ class TestThinkingFieldCapture:
                 "stop_reason": "end_turn",
             }
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -804,7 +857,9 @@ class TestThinkingFieldCapture:
         r.raise_for_status.return_value = None
         mock_post.return_value = r
 
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -861,7 +916,9 @@ class TestThinkingSwitchGate:
                 "stop_reason": "end_turn",
             }
         )
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -887,7 +944,7 @@ class TestThinkingSwitchGate:
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5},
             }
         )
-        provider = OpenAIProvider("http://localhost:8000/v1", "")
+        provider = OpenAIProvider("http://localhost:8000/v1", Credentials())
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -913,7 +970,7 @@ class TestThinkingSwitchGate:
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5},
             }
         )
-        provider = OpenAIProvider("https://api.openai.com/v1", "k")
+        provider = OpenAIProvider("https://api.openai.com/v1", Credentials(api_key="k"))
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -1039,7 +1096,9 @@ class TestStripThinkBlocks:
     def test_openai_parse_response_strips(self):
         from agent_cli.providers.openai import OpenAIProvider
 
-        prov = OpenAIProvider(base_url="http://x/v1", api_key="k")
+        prov = OpenAIProvider(
+            base_url="http://x/v1", credentials=Credentials(api_key="k")
+        )
         data = {
             "choices": [
                 {
@@ -1056,7 +1115,9 @@ class TestStripThinkBlocks:
         # 서버 reasoning_content 와 인라인 태그가 공존해도 둘 다 thinking 으로.
         from agent_cli.providers.openai import OpenAIProvider
 
-        prov = OpenAIProvider(base_url="http://x/v1", api_key="k")
+        prov = OpenAIProvider(
+            base_url="http://x/v1", credentials=Credentials(api_key="k")
+        )
         data = {
             "choices": [
                 {
@@ -1090,7 +1151,7 @@ class TestProviderRegistry:
         from agent_cli.providers import create_provider
 
         with pytest.raises(ValueError) as exc:
-            create_provider("gemini", "u", "k")
+            create_provider("gemini", "u", Credentials(api_key="k"))
         # 종전 하드코딩 메시지와 동일 (정렬된 등록명 나열)
         assert "Unknown provider: gemini" in str(exc.value)
         assert "anthropic, openai" in str(exc.value)
@@ -1109,10 +1170,11 @@ class TestProviderRegistry:
             _OpenAITransport,
         )
 
-        t = OpenAIProvider.capability_transport("http://b/v1", "m1", "kk")
+        cred = Credentials(api_key="kk")
+        t = OpenAIProvider.capability_transport("http://b/v1", "m1", cred)
         assert isinstance(t, _OpenAITransport)
-        assert (t.base, t.model, t.api_key) == ("http://b/v1", "m1", "kk")
-        t2 = AnthropicProvider.capability_transport("http://b/v1", "m2")
+        assert (t.base, t.model, t.credentials) == ("http://b/v1", "m1", cred)
+        t2 = AnthropicProvider.capability_transport("http://b/v1", "m2", Credentials())
         assert isinstance(t2, _AnthropicTransport)
         assert (t2.base, t2.model) == ("http://b/v1", "m2")
 
@@ -1127,7 +1189,7 @@ class TestProviderRegistry:
 
         class _CustomProvider:
             @staticmethod
-            def capability_transport(base_url, model, api_key=""):
+            def capability_transport(base_url, model, credentials):
                 return sentinel_transport
 
         captured = {}
@@ -1144,13 +1206,13 @@ class TestProviderRegistry:
                 "agent_cli.providers.capabilities._detect_capabilities", fake_detect
             ),
         ):
-            _detect_runtime_capabilities("custom", "u", "m")
+            _detect_runtime_capabilities("custom", "u", "m", Credentials())
         assert captured["transport"] is sentinel_transport
 
     def test_detect_runtime_unknown_provider_none(self):
         from agent_cli.providers.capabilities import _detect_runtime_capabilities
 
-        assert _detect_runtime_capabilities("gemini", "u", "m") is None
+        assert _detect_runtime_capabilities("gemini", "u", "m", Credentials()) is None
 
 
 class TestDegenerationWindow:
@@ -1218,7 +1280,7 @@ class TestUnclosedThinkStop:
 
         from agent_cli.dialects import get
 
-        provider = OpenAIProvider("http://x/v1", "k")
+        provider = OpenAIProvider("http://x/v1", Credentials(api_key="k"))
         data = {
             "choices": [{"message": {"content": self.RAW}, "finish_reason": "stop"}]
         }
@@ -1232,7 +1294,9 @@ class TestUnclosedThinkStop:
     def test_anthropic_non_stream_keeps_call_after_unclosed_think(self):
         from agent_cli.dialects import get
 
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider = AnthropicProvider(
+            "https://api.anthropic.com/v1", Credentials(api_key="k")
+        )
         data = {
             "content": [{"type": "text", "text": self.RAW}],
             "stop_reason": "end_turn",
@@ -1261,7 +1325,7 @@ class TestStreamedToolCalls:
         r.iter_lines.return_value = iter(sse)
         r.raise_for_status.return_value = None
         mock_post.return_value = r
-        provider = OpenAIProvider("http://x/v1", "k")
+        provider = OpenAIProvider("http://x/v1", Credentials(api_key="k"))
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="s",
@@ -1295,7 +1359,7 @@ class TestStreamDump:
         r.iter_lines.return_value = iter(sse)
         r.raise_for_status.return_value = None
         mock_post.return_value = r
-        provider = OpenAIProvider("http://x/v1", "k")
+        provider = OpenAIProvider("http://x/v1", Credentials(api_key="k"))
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="s",
@@ -1317,7 +1381,7 @@ class TestNativeToolsInBody:
         mock_post.return_value = _mock_response(
             {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
         )
-        provider = OpenAIProvider("http://x/v1", "k")
+        provider = OpenAIProvider("http://x/v1", Credentials(api_key="k"))
         tools = [
             {
                 "type": "function",
@@ -1365,7 +1429,7 @@ class TestImagesAtProviderBoundary:
             {"choices": [{"message": {"content": "red"}, "finish_reason": "stop"}]}
         )
         caps = ModelCapabilities(32768, 4096, False, supports_vision=True)
-        OpenAIProvider("http://x/v1", "k").call(
+        OpenAIProvider("http://x/v1", Credentials(api_key="k")).call(
             messages=[
                 {"role": "user", "content": ref.placeholder, "images": [ref.to_dict()]},
                 {"role": "assistant", "content": "ok"},
@@ -1399,7 +1463,7 @@ class TestImagesAtProviderBoundary:
             {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
         )
         caps = ModelCapabilities(32768, 4096, False, supports_vision=True)
-        OpenAIProvider("http://x/v1", "k").call(
+        OpenAIProvider("http://x/v1", Credentials(api_key="k")).call(
             messages=[
                 {"role": "user", "content": ref.placeholder, "images": [ref.to_dict()]}
             ],
@@ -1426,7 +1490,7 @@ class TestImagesAtProviderBoundary:
             }
         )
         caps = ModelCapabilities(32768, 4096, False, supports_vision=True)
-        AnthropicProvider("http://x/v1", "k").call(
+        AnthropicProvider("http://x/v1", Credentials(api_key="k")).call(
             messages=[
                 {"role": "user", "content": ref.placeholder, "images": [ref.to_dict()]}
             ],
@@ -1451,7 +1515,7 @@ class TestImagesAtProviderBoundary:
             {"choices": [{"message": {"content": "?"}, "finish_reason": "stop"}]}
         )
         caps = ModelCapabilities(32768, 4096, False, supports_vision=False)
-        OpenAIProvider("http://x/v1", "k").call(
+        OpenAIProvider("http://x/v1", Credentials(api_key="k")).call(
             messages=[
                 {"role": "user", "content": ref.placeholder, "images": [ref.to_dict()]}
             ],
@@ -1483,7 +1547,7 @@ class TestImagesAtProviderBoundary:
         )
         mock_post.side_effect = [probe, chat, chat]
         caps = ModelCapabilities(32768, 4096, False)  # supports_vision=None
-        provider = OpenAIProvider("http://x/v1", "k")
+        provider = OpenAIProvider("http://x/v1", Credentials(api_key="k"))
         msgs = [{"role": "user", "content": ref.placeholder, "images": [ref.to_dict()]}]
         provider.call(messages=msgs, system="s", model="m", capabilities=caps)
         provider.call(messages=msgs, system="s", model="m", capabilities=caps)
@@ -1499,7 +1563,7 @@ class TestImagesAtProviderBoundary:
         mock_post.return_value = _mock_response(
             {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
         )
-        OpenAIProvider("http://x/v1", "k").call(
+        OpenAIProvider("http://x/v1", Credentials(api_key="k")).call(
             messages=[{"role": "user", "content": "hi"}],
             system="s",
             model="m",
@@ -1545,7 +1609,7 @@ class TestSamplingInTheBody:
     @patch("agent_cli.providers.openai.requests.post")
     def test_openai_body(self, mock_post):
         self._ok(mock_post, "openai")
-        provider = OpenAIProvider("http://x/v1", "k")
+        provider = OpenAIProvider("http://x/v1", Credentials(api_key="k"))
         entry = ModelCapabilities(32768, 4096, False, temperature=0.3)
         plain = ModelCapabilities(32768, 4096, False)
         call = lambda caps, **kw: provider.call(
@@ -1567,7 +1631,7 @@ class TestSamplingInTheBody:
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_anthropic_body(self, mock_post):
         self._ok(mock_post, "anthropic")
-        provider = AnthropicProvider("http://x/v1", "k")
+        provider = AnthropicProvider("http://x/v1", Credentials(api_key="k"))
         caps = ModelCapabilities(32768, 4096, False, top_p=0.95)
         provider.call(
             messages=[{"role": "user", "content": "hi"}],

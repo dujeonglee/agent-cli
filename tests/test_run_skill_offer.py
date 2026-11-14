@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.providers.credentials import Credentials
 from agent_cli.skills.models import Skill
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
@@ -109,7 +110,7 @@ class TestNotFound:
                 binding=make_binding(
                     provider_name="openai",
                     base_url="http://localhost:11434",
-                    api_key="",
+                    credentials=Credentials(),
                     capabilities=_caps(),
                     model="test",
                 ),

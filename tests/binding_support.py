@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from agent_cli.providers.binding import ModelBinding
+from agent_cli.providers.credentials import Credentials
 
 
 def make_binding(
@@ -12,7 +13,7 @@ def make_binding(
     model: str = "m",
     provider_name: str = "openai",
     base_url: str = "",
-    api_key: str = "",
+    credentials=None,
     dialect=None,
 ) -> ModelBinding:
     if isinstance(dialect, str) or dialect is None:
@@ -23,7 +24,7 @@ def make_binding(
         provider=provider,
         provider_name=provider_name,
         base_url=base_url,
-        api_key=api_key,
+        credentials=credentials if credentials is not None else Credentials(),
         model=model,
         capabilities=capabilities,
         dialect=dialect,

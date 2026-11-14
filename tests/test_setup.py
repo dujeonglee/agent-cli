@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+from agent_cli.providers.credentials import Credentials
 from agent_cli.setup import (
     SetupWizard,
     _list_models,
@@ -24,7 +25,7 @@ class TestListOpenAIModels:
                     ]
                 },
             )
-            models = _list_models("http://127.0.0.1:8000/v1")
+            models = _list_models("http://127.0.0.1:8000/v1", Credentials())
             assert models == ["Qwen3.6-27B-MLX-8bit", "Qwen3.6-35B-A3B-MLX-8bit"]
 
     def test_passes_api_key(self):
@@ -32,7 +33,7 @@ class TestListOpenAIModels:
             mock_get.return_value = MagicMock(
                 status_code=200, json=lambda: {"data": []}
             )
-            _list_models("http://x/v1", api_key="secret")
+            _list_models("http://x/v1", Credentials(api_key="secret"))
             headers = mock_get.call_args.kwargs.get("headers", {})
             assert headers.get("Authorization") == "Bearer secret"
 
@@ -43,7 +44,9 @@ class TestListOpenAIModels:
                 status_code=200,
                 json=lambda: {"data": [{"id": "claude-sonnet-4-20250514"}]},
             )
-            models = _list_models("http://x/v1", api_key="sk", provider="anthropic")
+            models = _list_models(
+                "http://x/v1", Credentials(api_key="sk"), provider="anthropic"
+            )
             headers = mock_get.call_args.kwargs.get("headers", {})
             assert headers.get("x-api-key") == "sk"
             assert headers.get("anthropic-version") == "2023-06-01"
@@ -55,19 +58,19 @@ class TestListOpenAIModels:
             mock_get.return_value = MagicMock(
                 status_code=200, json=lambda: {"data": []}
             )
-            _list_models("http://x/v1", provider="anthropic")
+            _list_models("http://x/v1", Credentials(), provider="anthropic")
             headers = mock_get.call_args.kwargs.get("headers", {})
             assert headers.get("anthropic-version") == "2023-06-01"
             assert "x-api-key" not in headers  # no key → omit
 
     def test_empty_on_failure(self):
         with patch("agent_cli.setup.requests.get", side_effect=Exception("fail")):
-            assert _list_models("http://x/v1") == []
+            assert _list_models("http://x/v1", Credentials()) == []
 
     def test_empty_on_non_200(self):
         with patch("agent_cli.setup.requests.get") as mock_get:
             mock_get.return_value = MagicMock(status_code=404, json=dict)
-            assert _list_models("http://x/v1") == []
+            assert _list_models("http://x/v1", Credentials()) == []
 
     def test_skips_entries_without_id(self):
         with patch("agent_cli.setup.requests.get") as mock_get:
@@ -75,7 +78,7 @@ class TestListOpenAIModels:
                 status_code=200,
                 json=lambda: {"data": [{"object": "model"}, {"id": "good"}]},
             )
-            assert _list_models("http://x/v1") == ["good"]
+            assert _list_models("http://x/v1", Credentials()) == ["good"]
 
 
 class TestSelectModelRouting:

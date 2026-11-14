@@ -17,6 +17,7 @@ import typer
 
 import agent_cli.config as _config
 from agent_cli.main import _resolve_provider
+from agent_cli.providers.credentials import Credentials
 
 _U = "http://127.0.0.1:1/v1"
 _M = "SENTINEL-model"
@@ -73,7 +74,7 @@ def test_no_flag_env_base_url_only(cfg, monkeypatch):
 def test_no_flag_config_api_key_without_provider(cfg):
     cfg({"api_key": _K})
     _provider, _url, _model, key = _resolve_provider(None, None, None, None)
-    assert key == _K
+    assert key == Credentials(api_key=_K)
 
 
 def test_openai_flag_matches_config_without_provider(cfg):
@@ -99,7 +100,7 @@ def test_config_provider_anthropic_uses_its_url(cfg):
 def test_flags_still_win(cfg):
     cfg({"base_url": "http://127.0.0.1:2/v1", "default_model": "other"})
     _provider, url, model, key = _resolve_provider("openai", _M, _U, _K)
-    assert (url, model, key) == (_U, _M, _K)
+    assert (url, model, key) == (_U, _M, Credentials(api_key=_K))
 
 
 @pytest.mark.parametrize(
