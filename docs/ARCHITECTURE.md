@@ -962,6 +962,7 @@ Task Guidelines(`TASK_GUIDELINES`)는 이 파일이 단일 소스지만 꼬리�
 
 - **실브라우저 테스트**는 실서버(`WebRenderer`+`WebServer`+uvicorn)와 헤드리스 Chromium 으로 유닛이 못 보는 것 — 연결 풀, CSS 렌더링,
   실 SSE 타이밍, 서버↔프런트 계약 — 을 본다. 파일 하나가 화면의 한 부분(카드·띠·서랍·칩·스크롤·재생)이다. CI 의 브라우저 잡이 옵트인으로 돈다.
+- **멈춤 기록**: `pyproject.toml` 의 `faulthandler_timeout`(120초) — 한 테스트가 넘기면 모든 스레드의 스택을 터미널에 남긴다(테스트는 계속).
 - **등가성 코퍼스** `tests/equivalence/` — 방언 엔진의 고정 출력.
 - **구조 가드**: `tests/test_architecture_doc.py`(이 문서) · `tests/test_import_graph.py`(§3) · `tests/test_import_cycles.py`(콜드 스타트) · `tests/test_ui_english.py`(사용자 표면은 영어).
 - 공용 도우미: `tests/loopkit.py`·`tests/loop_ports.py`·`tests/binding_support.py`·`tests/pump_support.py`·`tests/web_static.py`·`tests/import_graph.py`.
