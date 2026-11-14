@@ -2324,7 +2324,8 @@ def _print_session(s, indent: str = "  ") -> None:
     `session_lock.session_is_open`. 닫혀 있으면 ``(no answer)``(종전엔 LLM 실패로 끝난
     세션까지 전부 "in progress" 였다).
     """
-    from agent_cli.context.session import get_session_dir, session_summary
+    from agent_cli.context.exchanges import session_summary
+    from agent_cli.context.session import get_session_dir
     from agent_cli.context.session_lock import session_is_open
 
     console.print(

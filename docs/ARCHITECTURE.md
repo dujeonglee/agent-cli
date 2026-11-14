@@ -144,6 +144,7 @@ agent_cli/
 │   ├── records.py           디스크 레코드 모양의 단일 리더·분류기(ops·개입 종류)
 │   ├── store.py             세션 영속화 디스크 I/O primitive(history 추가·compaction.json·fork)
 │   ├── session.py           세션 디렉터리 배치·메타 `session.jsonl`·목록·resume
+│   ├── exchanges.py         history 의 사용자 요청↔답 쌍 — 세션 목록·resume 의 요약(방언 알림 접두를 거른다)
 │   ├── session_lock.py      한 세션 한 프로세스 — `session.lock` flock
 │   ├── overflow.py          프로바이더별 컨텍스트 초과 감지·`ContextOverflowError`
 │   └── _file_extract.py     축출된 메시지에서 도구가 만진 파일 목록 추출(`Tool.touched_paths` 위임)

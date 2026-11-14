@@ -25,7 +25,6 @@ import time
 from dataclasses import dataclass, fields
 from pathlib import Path
 
-from agent_cli.dialects import all_system_user_prefixes
 from agent_cli.fsio import atomic_write_text
 from agent_cli.paths import sessions_dir
 
@@ -202,84 +201,3 @@ def finalize_session(meta, ctx=None) -> None:
     """Update session metadata on session end."""
     if meta:
         save_meta(meta)
-
-
-def recent_exchanges(history_path: Path, n: int = 10) -> list[tuple[str, str]]:
-    """Return the last `n` (user_query, assistant_final) pairs from
-    history.jsonl, in chronological order.
-
-    A "user query" is a role=user message that is neither a tool
-    observation (content starting with "Observation:" or carrying a
-    `tool` field) nor a loop-emitted system notice (retry hints,
-    interrupt notices). Those all share the role=user shape but are
-    not real user input.
-
-    The set of "system notice" prefixes comes from
-    :func:`agent_cli.dialects.all_system_user_prefixes` so any
-    registered dialect plugin's framing strings are picked up
-    automatically — no edit here when a new plugin is added.
-
-    The paired final is the next role=assistant `complete` action's
-    result. If a new user query arrives before the previous one
-    completes, the previous pair is closed with "(no completion)" so
-    interrupted runs still surface.
-    """
-    system_prefixes = all_system_user_prefixes()
-
-    if not history_path.is_file():
-        return []
-
-    pairs: list[tuple[str, str]] = []
-    pending: str | None = None
-
-    with open(history_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            role = msg.get("role")
-            if role == "user":
-                content = msg.get("content", "")
-                if not isinstance(content, str):
-                    content = ""
-                if msg.get("tool") or content.startswith("Observation:"):
-                    continue
-                if any(content.startswith(p) for p in system_prefixes):
-                    continue
-                if pending is not None:
-                    pairs.append((pending, "(no completion)"))
-                pending = content
-            elif role == "assistant" and msg.get("action") == "complete":
-                if pending is None:
-                    continue
-                action_input = msg.get("action_input", {})
-                if isinstance(action_input, dict):
-                    result = action_input.get("result", "")
-                else:
-                    result = str(action_input) if action_input else ""
-                pairs.append((pending, result))
-                pending = None
-
-    if pending is not None:
-        pairs.append((pending, "(no completion)"))
-
-    return pairs[-n:] if n > 0 else pairs
-
-
-def session_summary(meta: SessionMeta) -> tuple[str, str]:
-    """``(last_user_request, last_result)`` for a session, read from its
-    history.jsonl — the replacement for the removed ``query`` meta field.
-
-    ``last_result`` is the last ``complete`` action's result, or
-    "(no completion)" for a run still open / interrupted. Returns
-    ``("", "")`` when the session has no history yet. Reads the file path
-    directly (no mkdir side-effect, unlike ``get_session_dir``).
-    """
-    hp = _SESSIONS_DIR / meta.session_id / "history.jsonl"
-    pairs = recent_exchanges(hp, n=1)
-    return pairs[-1] if pairs else ("", "")
