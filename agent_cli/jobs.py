@@ -98,6 +98,74 @@ class ProcHandle:
         return f"`kill -- -{self.proc.pid}`"
 
 
+def group_alive(pgid: int) -> bool:
+    """프로세스 그룹에 살아 있는 프로세스가 있는가 — 신호 0 (보내지 않고 확인만)."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # 있다 — 다른 사용자 것이라 신호는 못 보낸다
+    return True
+
+
+def group_size(pgid: int) -> int:
+    """그룹의 프로세스 수 — 넘겨받을 때 결과 한 줄에 적는다(`ps`, 실패하면 1)."""
+    try:
+        out = subprocess.run(
+            ["ps", "-A", "-o", "pgid="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return 1
+    n = sum(1 for ln in out.split() if ln.strip() == str(pgid))
+    return max(n, 1)
+
+
+class GroupHandle:
+    """전경 `shell` 명령이 남긴 프로세스 그룹 (v10.135.0) — 리더(`sh -c`)는 이미 끝나
+    거둬졌고, 출력을 파이프 밖으로 돌린 `&` 자식들이 같은 그룹에 남았다. 끝은 그룹이
+    사라진 것으로 판정한다(종료 코드는 알 수 없다). **한 번 사라졌다고 본 그룹에는 다시
+    신호를 보내지 않는다** — 같은 번호가 남의 새 그룹에 다시 쓰일 수 있다."""
+
+    def __init__(self, pgid: int) -> None:
+        self.pgid = pgid
+        self._gone = False
+
+    @property
+    def pid(self) -> int:
+        return self.pgid
+
+    def poll(self) -> int | None:
+        """사라졌으면 0(종료 코드 자리 — `Job.adopted` 가 "모름" 으로 적는다), 아직이면 None."""
+        if not self._gone and not group_alive(self.pgid):
+            self._gone = True
+        return 0 if self._gone else None
+
+    def stop(self) -> None:
+        self._signal(signal.SIGTERM)
+
+    def force(self) -> None:
+        self._signal(signal.SIGKILL)
+
+    def _signal(self, sig) -> None:
+        if self._gone:
+            return
+        try:
+            os.killpg(self.pgid, sig)
+        except ProcessLookupError:
+            self._gone = True
+        except PermissionError:
+            pass
+
+    @property
+    def stop_hint(self) -> str:
+        return f"`kill -- -{self.pgid}`"
+
+
 @dataclass
 class Job:
     id: int
@@ -118,6 +186,9 @@ class Job:
     #: 멈춤이 닿기 전에 프로세스가 스스로 끝났다(TERM 전 rc 확정, 또는 rc >= 0) —
     #: 보고가 "it had already exited, rc=R" 를 붙인다(멈춘 것처럼 말하면 거짓이다)
     exited_before_stop: bool = False
+    #: 전경 명령이 남긴 그룹을 넘겨받았다 (v10.135.0) — 출력은 받지 못했고 종료 코드는
+    #: 모른다. 보고·로그의 종료 코드 자리가 "exit code unknown" 이다.
+    adopted: bool = False
 
     @property
     def running(self) -> bool:
@@ -158,6 +229,11 @@ def _short(cmd: str, n: int = 80) -> str:
     return one if len(one) <= n else one[: n - 1] + "…"
 
 
+def _rc_text(job: Job) -> str:
+    """종료 코드 자리 — ``rc=0``, 넘겨받은 그룹이면 ``(exit code unknown)`` (v10.135.0)."""
+    return "(exit code unknown)" if job.adopted else f"rc={job.rc}"
+
+
 def _stopped_text(job: Job) -> str:
     """``stopped by user alice after 12m`` (+ 이미 끝났으면 ``· it had already exited,
     rc=0``) — 보고 머리줄과 로그 끝 줄이 같은 사실.
@@ -168,6 +244,8 @@ def _stopped_text(job: Job) -> str:
     who = f"user {job.stopped_by}" if job.stopped_by else "a user"
     text = f"stopped by {who} after {job.elapsed()}"
     if job.exited_before_stop:
+        if job.adopted:
+            return f"{text} · it had already exited"
         return f"{text} · it had already exited, rc={job.rc}"
     return text
 
@@ -241,6 +319,38 @@ class JobRegistry:
             log=rel,
             owner=owner,
             handle=ProcHandle(proc),
+        )
+        with self._lock:
+            self._jobs[job_id] = job
+        self._start_thread()
+        self._changed()
+        return job
+
+    def adopt(self, command: str, pgid: int, *, owner: str) -> Job:
+        """전경 `shell` 명령이 남긴 프로세스 그룹을 작업으로 넘겨받는다 (v10.135.0, 사용자
+        결정 2026-11-14) — 바로 죽이지 않는다: 모델이 서버를 띄우고 다음 명령에서 쓰는
+        흐름이 있다. 넘겨받은 뒤는 다른 작업과 같다 — 꼬리에 보이고, 끝나면 소유자에게
+        통지가 가고, 세션 정리·소유자 release·SIGTERM 정리가 멈춘다.
+        출력은 명령이 스스로 돌렸으므로 로그에는 그 사실 한 줄만 쓴다."""
+        self._ensure_available()
+        log_dir = self._cwd / LOG_DIR
+        log_dir.mkdir(parents=True, exist_ok=True)
+        job_id = self._next_id()
+        rel = LOG_DIR / f"{job_id}.log"
+        (self._cwd / rel).write_text(
+            f"$ {command}\n"
+            "(left running by a foreground command; output was redirected by the "
+            "command; not captured)\n",
+            encoding="utf-8",
+        )
+        job = Job(
+            id=job_id,
+            pid=pgid,
+            command=command,
+            log=rel,
+            owner=owner,
+            handle=GroupHandle(pgid),
+            adopted=True,
         )
         with self._lock:
             self._jobs[job_id] = job
@@ -393,8 +503,9 @@ class JobRegistry:
             if rc is None:
                 job.handle.force()
                 rc = self._await(job.handle, deadline)
-            # 신호로 죽으면 음수다 — 0 이상이면 스스로 종료 코드를 냈다
-            job.exited_before_stop = rc is not None and rc >= 0
+            # 신호로 죽으면 음수다 — 0 이상이면 스스로 종료 코드를 냈다. 넘겨받은 그룹은
+            # 종료 코드를 모른다(사라지면 0) — 멈춤 뒤에 사라졌으면 멈춘 것이다.
+            job.exited_before_stop = rc is not None and rc >= 0 and not job.adopted
         self._finish(job, rc if rc is not None else -1, notify=by is not None)
         return True
 
@@ -477,7 +588,9 @@ class JobRegistry:
             if job.stopped_by is not None:
                 line = f"\n[job #{job.id} {_stopped_text(job)}]\n"
             else:
-                line = f"\n[job #{job.id} exited rc={job.rc} after {job.elapsed()}]\n"
+                line = (
+                    f"\n[job #{job.id} exited {_rc_text(job)} after {job.elapsed()}]\n"
+                )
             try:
                 with (self._cwd / job.log).open("a", encoding="utf-8") as f:
                     f.write(line)
@@ -509,7 +622,7 @@ class JobRegistry:
             head = f"🧵 job #{job.id} {_stopped_text(job)} — `{_short(job.command)}`"
         else:
             head = (
-                f"🧵 job #{job.id} finished rc={job.rc} after {job.elapsed()} — "
+                f"🧵 job #{job.id} finished {_rc_text(job)} after {job.elapsed()} — "
                 f"`{_short(job.command)}`"
             )
         body = [f"log: {job.log.as_posix()} (last {len(tail)} line(s))"]
