@@ -5,7 +5,8 @@ Maintains an in-memory context cache that fits within a token budget.
 
 Before each LLM call the loop calls ``ensure_within(target)`` (flow 1),
 which triggers a *compaction* pass when the cache exceeds the target
-(``(context − system − output) × 0.8``, system measured live). The pass
+(``context × compaction_ratio − system − session_state − minimum output``,
+system measured live; ratio default 1.0). The pass
 (RFC docs/context-compaction/):
 
   1. Split cache into system anchor + dynamic.
@@ -82,13 +83,13 @@ def _current_scope_id() -> str:
 # ── Defaults / constants ─────────────────────────────────
 DEFAULT_TOKEN_BUDGET = 100_000
 # 압축은 캐시가 호출별 목표치(``ensure_within(target)``, 루프가 ``context ×
-# compaction_ratio − system − 세션상태`` 로 계산)를 **넘는 순간** 돈다 — 별도의
-# 90% 임계는 없다(v9.25.1 에 잔재 상수 제거; 꼬리의 퍼센트가 곧 그 목표치 대비).
+# compaction_ratio − system − 세션상태 − 최소 출력 몫`` 으로 계산)를 **넘는 순간**
+# 돈다 — 별도의 임계 비율은 없다.
 _SUMMARY_CHAR_CAP = 8000  # ≈ 2000 tokens at 4 chars/token
 
-# Compaction TARGET ratio: the loop squeezes the cache down to this fraction of
-# available headroom before each LLM call (``(context − system − output) ×
-# ratio``). Lower = compact earlier/more aggressively (more headroom, less
+# Compaction TARGET ratio: before each LLM call the loop squeezes the cache to
+# ``context × ratio − system − session_state − minimum output``
+# (``loop/llm.py`` ``_call_llm``). Lower = compact earlier/more aggressively (more headroom, less
 # context kept); higher = compact later (more context, higher overflow risk).
 # Lives on the ContextManager (not a loop constant) so the web UI can adjust it
 # live — the loop and the web server share one ctx instance, so a slider write
@@ -208,7 +209,7 @@ def compute_token_budget(context_window: int) -> int:
 
     NOTE: this is no longer the live compaction threshold. flow 1
     computes the real target per call as ``context × compaction_ratio −
-    system(measured) − session_state`` in ``AgentLoop._call_llm`` (v8.53.0
+    system(measured) − session_state − minimum output`` in ``LLMCaller._call_llm`` (v8.53.0
     — 총입력 기준; max_output 예약은 요청-시 클램프로 대체). This value remains
     the ``_evict_fifo`` default target and the budget used to restore the
     cache on resume (before the first call's ``ensure_within`` refines it).
@@ -493,10 +494,9 @@ class ContextManager:
         Compaction is NOT triggered here. Preventive compaction (flow 1)
         runs once per turn — right before the LLM call — via
         ``ensure_within``. The loop knows the live system-prompt size and
-        the model's context window at that point, so the threshold
-        reflects actual headroom ``(context − system − output) × 0.8``
-        instead of a fixed 90%-of-budget estimate against a 4000-token
-        system reserve. See docs/ARCHITECTURE.md §5.4.
+        the model's context window at that point, so the target
+        reflects actual headroom (``context × compaction_ratio − system −
+        session_state − minimum output``). See docs/ARCHITECTURE.md §5.4.
 
         Pure storage: oversized tool outputs are already nudge-capped at the
         loop's result→observation seam, so no message reaching here can blow
@@ -904,7 +904,7 @@ class ContextManager:
              summary edge case in §2.1 of DESIGN.
 
         The loop computes ``target_tokens`` as ``context_window ×
-        compaction_ratio − system − session_state`` (v8.53.0) each call — system measured
+        compaction_ratio − system − session_state − minimum output`` each call — system measured
         live, so a large tool-laden system prompt correctly reduces the
         room left for messages. Paired with ``reconcile_actual_tokens``
         keeping ``_cache_tokens`` anchored to the server's real count,
@@ -1350,9 +1350,9 @@ class ContextManager:
         (``max_context_tokens``) — same semantic as the pre-compaction
         FIFO path. ``force_fit`` passes a smaller target to shed more
         aggressively after a server-side overflow rejection. The
-        belt-and-braces case where a rebuilt cache lands in the 90-100%
-        band is acceptable: the next ``add`` that pushes it over 90%
-        will simply re-enter compaction, and compaction reliably shrinks
+        belt-and-braces case where a rebuilt cache lands just under the
+        target is acceptable: the next call's ``ensure_within`` re-enters
+        compaction once the cache exceeds the target, and compaction reliably shrinks
         the cache (summary is capped, retained tail is half-by-tokens).
         """
         target = target_tokens if target_tokens is not None else self.max_context_tokens
@@ -1397,7 +1397,8 @@ class ContextManager:
 
         Args:
             target_tokens: desired post-shrink prompt size, typically
-                ``limit * 0.8`` (server limit with output headroom).
+                ``limit × compaction_ratio`` (server limit; the loop's
+                flow 2).
             actual_tokens: server-reported actual prompt size, when the
                 400 message carried it. ``None`` falls back to a fixed
                 25% trim per call.

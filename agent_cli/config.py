@@ -1,14 +1,14 @@
 """Configuration loading: config.json + models.json registry + provider defaults.
 
-Config loading priority (highest wins):
-  1. .agent-cli/config.json          (workspace)
-  2. ~/.agent-cli/config.json        (user)
-  3. Environment variables            (global)
+Config loading priority (highest wins, per key):
+  1. ~/.agent-cli/config.json        (user)
+  2. Environment variables            (AGENT_CLI_PROVIDER / _BASE_URL / _API_KEY)
 
-Models.json search paths (project local takes priority):
-  1. .agent-cli/models.json           (project local, read-only)
-  2. ~/.agent-cli/models.json         (user global, auto-save target)
-  3. agent_cli/default_models.json    (package defaults, read-only)
+Models.json search paths (earlier wins, per model):
+  1. ~/.agent-cli/models.json         (user, auto-save target)
+  2. agent_cli/default_models.json    (package defaults, read-only)
+
+No project-local (``<cwd>/.agent-cli/``) config.json or models.json is read.
 """
 
 from __future__ import annotations
@@ -29,9 +29,9 @@ class ProviderDefaults:
     default_model: str
 
 
-# v9.0.0 — models.json 은 **유저 스코프만** (docs/config-scopes). capability
-# 탐지(콜드 로드 유발)의 캐시라 머신 단위가 맞고, 자동 저장도 원래 여기였다.
-# 종전의 프로젝트 models.json 은 무시된다.
+# models.json 은 **유저 스코프만** (docs/config-scopes). capability 탐지(콜드
+# 로드 유발)의 캐시라 머신 단위가 맞고, 자동 저장도 여기다. 프로젝트의
+# models.json 은 읽지 않는다.
 from agent_cli.paths import user_dir
 
 _GLOBAL_MODELS_PATH = user_dir() / "models.json"
@@ -67,10 +67,10 @@ def _load_registry() -> dict[str, Any]:
     if _cached_registry is not None and stamp == _cached_stamp:
         return _cached_registry
 
-    # Merge: load global first, then overlay project-local on top
+    # Merge: package defaults first, then overlay the user file on top
     merged: dict[str, Any] = {"models": {}, "provider_defaults": {}}
 
-    for p in reversed(_SEARCH_PATHS):  # global first, then local overrides
+    for p in reversed(_SEARCH_PATHS):  # defaults first, then the user file overrides
         if p.is_file():
             try:
                 with open(p, encoding="utf-8") as f:
@@ -228,9 +228,9 @@ def reload_registry() -> None:
 
 # ── Config.json (provider/model/url settings) ──────────────────
 
-# v9.0.0 — config.json 은 **유저 스코프만** (docs/config-scopes): provider·
-# API 키는 머신 사실이다. 우선순위는 유저 파일 > env. 프로젝트별 모델 고정은
-# `--model`/env 로 (종전의 프로젝트 config.json 은 무시된다).
+# config.json 은 **유저 스코프만** (docs/config-scopes): provider·API 키는 머신
+# 사실이다. 우선순위는 유저 파일 > env. 프로젝트별 모델 고정은 `--model`/env 로
+# (프로젝트의 config.json 은 읽지 않는다).
 _CONFIG_PATHS = [user_dir() / "config.json"]
 
 # Environment variable → config key mapping
