@@ -1,4 +1,5 @@
-"""Tests for context/session.py — project-local session persistence."""
+"""Tests for context/session.py — project-local session persistence — and
+context/exchanges.py (the last user↔answer pairs read from history)."""
 
 from __future__ import annotations
 
@@ -7,10 +8,10 @@ import json
 import pytest
 
 import agent_cli.context.session as session_mod
+from agent_cli.context.exchanges import recent_exchanges
 from agent_cli.context.session import (
     create_session,
     load_session,
-    recent_exchanges,
     save_meta,
 )
 
@@ -430,7 +431,7 @@ class TestSessionSummary:
         )
 
     def test_last_user_and_complete(self):
-        from agent_cli.context.session import session_summary
+        from agent_cli.context.exchanges import session_summary
 
         meta = create_session("/tmp/ws")
         self._write_history(
@@ -454,7 +455,7 @@ class TestSessionSummary:
         assert session_summary(meta) == ("build the game", "game built")
 
     def test_in_progress_run_marked(self):
-        from agent_cli.context.session import session_summary
+        from agent_cli.context.exchanges import session_summary
 
         meta = create_session("/tmp/ws")
         self._write_history(meta, [{"role": "user", "content": "do X"}])
@@ -463,7 +464,7 @@ class TestSessionSummary:
         assert result == "(no completion)"
 
     def test_no_history_returns_empty(self):
-        from agent_cli.context.session import session_summary
+        from agent_cli.context.exchanges import session_summary
 
         meta = create_session("/tmp/ws")  # no history.jsonl written
         assert session_summary(meta) == ("", "")

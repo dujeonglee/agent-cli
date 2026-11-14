@@ -463,7 +463,7 @@ class DialectBase(ABC):
     def system_user_prefixes(self) -> tuple[str, ...]:
         """Return the list of recovery framing prefixes this plugin emits.
 
-        Used by ``recent_exchanges`` (context/session.py) to skip
+        Used by ``recent_exchanges`` (context/exchanges.py) to skip
         system-injected user messages when surfacing the resume preview
         — without this list the user would see "Your response was not
         valid JSON." style hints as if they were real conversation.

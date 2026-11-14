@@ -94,12 +94,13 @@ def test_query_does_not_take_the_lock_away(tmp_path):
 def test_print_session_says_in_progress_only_when_open(
     tmp_path, monkeypatch, is_open, shown
 ):
+    from agent_cli.context import exchanges as _exchanges
     from agent_cli.context import session as _session
     from agent_cli.context.session import SessionMeta
 
     monkeypatch.setattr(_session, "_SESSIONS_DIR", tmp_path)
     monkeypatch.setattr(
-        _session, "session_summary", lambda s: ("do it", "(no completion)")
+        _exchanges, "session_summary", lambda s: ("do it", "(no completion)")
     )
     seen = []
 
@@ -118,11 +119,12 @@ def test_print_session_says_in_progress_only_when_open(
 
 
 def test_answered_session_shows_the_answer(tmp_path, monkeypatch):
+    from agent_cli.context import exchanges as _exchanges
     from agent_cli.context import session as _session
     from agent_cli.context.session import SessionMeta
 
     monkeypatch.setattr(_session, "_SESSIONS_DIR", tmp_path)
-    monkeypatch.setattr(_session, "session_summary", lambda s: ("q", "the answer"))
+    monkeypatch.setattr(_exchanges, "session_summary", lambda s: ("q", "the answer"))
     con = Console(width=80, record=True, color_system=None)
     monkeypatch.setattr(m, "console", con)
     m._print_session(
