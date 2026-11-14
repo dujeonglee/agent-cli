@@ -126,6 +126,9 @@ agent_cli = [
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
+# 한 테스트가 이 초를 넘기면 모든 스레드의 스택을 터미널에 남긴다(테스트를 끊지는 않는다).
+# 실브라우저 첫 실행이 600초 멈췄는데 남은 출력이 없어 원인을 못 찾은 적이 있다.
+faulthandler_timeout = 120
 markers = [
     "omlx_integration: requires a live OpenAI-compatible omlx server (see tests/conftest.py)",
     "browser: real-browser (playwright) tests — opt-in via AGENT_CLI_BROWSER_TESTS=1",
