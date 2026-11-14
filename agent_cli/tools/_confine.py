@@ -24,6 +24,16 @@ confined.
 없고 유출 경로도 아니며, 비대화형 방에서 `/tmp` 한 토큰이 거절이 됐다. 민감
 사전은 그대로 건다.
 
+셸 판정의 세 규칙 (v10.135.1 — 과거 거절 재판정에서 남은 오탐 세 갈래):
+
+- **명령 단어는 경로가 아니다** — `/usr/bin/python t.py` 의 실행 파일(대입·짧은 래퍼 뒤 포함)은
+  워크스페이스 검사에서 뺀다. 같은 세그먼트의 다른 토큰은 그대로 보고, 민감 사전은 건다.
+- **입력 리다이렉트 `<` 는 읽기다** — 대상은 워크스페이스 검사에서 뺀다(`<<`·`<<<`·`<>` 는
+  아님). 민감 사전은 건다(`cat < ~/.ssh/id_rsa`).
+- **리다이렉트는 따옴표 밖에서, 그 세그먼트에만** — 판정은 따옴표·이스케이프를 가린
+  문자열(`_unquoted_mask`)에서 하고, 한 세그먼트의 `>` 가 다른 세그먼트를 "바꿀 수 있음"
+  으로 올리지 않는다.
+
 Root = the process cwd at call time, or ``AGENT_CLI_WORKSPACE_ROOT`` if set.
 agent-board spawns each instance with cwd = its post workspace, so the default
 lands exactly right. Disable entirely with ``AGENT_CLI_WORKSPACE_CONFINE=0``.
@@ -334,6 +344,119 @@ _WRITE_FLAGS: dict[str, frozenset[str]] = {
 }
 
 
+def _unquoted_mask(cmd: str) -> str:
+    """같은 길이의 문자열 — 홑·쌍따옴표 안(과 이스케이프된 문자)은 ``x`` 로 가려
+    정규식이 인용부 밖만 보게 한다. 끼워 넣은 글(heredoc 본문)은 가리지 못한다 —
+    종전 거부 판별도 같은 한계였고, 지운 것은 결과에 적으므로 모델이 본다.
+
+    봉쇄의 리다이렉트·세그먼트 판정과 셸 도구의 데몬화 조각 지우기(`shell.py`)가 같이
+    쓴다 (v10.135.1 에 `shell.py` 에서 옮겨 왔다 — 한 벌)."""
+    out: list[str] = []
+    quote = ""
+    i = 0
+    while i < len(cmd):
+        ch = cmd[i]
+        if quote:
+            if ch == quote:
+                quote = ""
+                out.append(ch)
+            elif ch == "\\" and quote == '"' and i + 1 < len(cmd):
+                out.append("xx")
+                i += 1
+            else:
+                out.append("x" if ch != "\n" else "\n")
+        elif ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+        elif ch == "\\" and i + 1 < len(cmd):
+            out.append("xx")
+            i += 1
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+# 따옴표 밖의 명령 구분자 — 원문을 세그먼트로 가른다(리다이렉트를 그 세그먼트에만
+# 귀속시키려고). `>&2`·`<&0`·`&>f` 의 `&` 는 구분자가 아니다. 줄바꿈도 가른다 — shlex 는
+# 줄바꿈을 공백으로 읽어 `ls /x` 줄과 다음 줄의 `rm` 이 한 세그먼트가 됐다.
+# 괄호는 **가르지 않는다**: `rm $(echo /etc/x)` 의 안쪽을 따로 떼면 `echo` 세그먼트(읽기
+# 전용)가 되어 `rm` 의 실제 인자가 빠진다. 종전처럼 바깥 명령과 한 세그먼트로 둔다.
+_RAW_SEP = re.compile(r"&&|\|\||[;\n|]|(?<![<>])&(?!>)")
+
+
+def _raw_segments(cmd: str) -> list[str]:
+    """원문을 따옴표 밖 구분자로 가른 조각들 (빈 조각 제외)."""
+    mask = _unquoted_mask(cmd)
+    out: list[str] = []
+    start = 0
+    for m in _RAW_SEP.finditer(mask):
+        out.append(cmd[start : m.start()])
+        start = m.end()
+    out.append(cmd[start:])
+    return [s for s in out if s.strip()]
+
+
+# 명령 단어 앞에 올 수 있는 변수 대입 (`FOO=1 cmd`).
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# 다음 토큰을 명령으로 실행하는 래퍼 — 그 다음 토큰도 명령 단어다. 짧게 둔다: 목록에
+# 없는 래퍼(`nice -n 5` 의 값, `sudo`)는 뒤의 실행 파일이 경로 후보로 남을 뿐이다
+# (= 종전 동작, 묻는 쪽으로 틀린다). `sudo` 는 일부러 뺐다 — 권한 상승은 묻는 게 맞다.
+_COMMAND_WRAPPERS = frozenset({"env", "time", "nice", "command", "exec"})
+
+
+def _command_word_indices(seg: list[str]) -> set[int]:
+    """세그먼트에서 **실행 파일 자리**의 토큰 위치들 — 대입을 건너뛴 첫 토큰, 그리고
+    래퍼(`_COMMAND_WRAPPERS`) 뒤라면 래퍼의 옵션(`-…`)과 대입을 건너뛴 다음 토큰."""
+    idx: set[int] = set()
+    i, n = 0, len(seg)
+    while i < n:
+        while i < n and _ASSIGNMENT.match(seg[i]):
+            if "$(" in seg[i] or "`" in seg[i]:
+                # `FOO=$(rm /etc/x)` — shlex 가 치환 안을 다음 토큰으로 흘린다. 그건
+                # 실행 파일 자리가 아니다: 면제를 멈추고 종전처럼 전부 후보로 둔다.
+                return idx
+            i += 1
+        if i >= n:
+            break
+        idx.add(i)
+        if seg[i].rsplit("/", 1)[-1] not in _COMMAND_WRAPPERS:
+            break
+        i += 1
+        while i < n and (seg[i].startswith("-") or _ASSIGNMENT.match(seg[i])):
+            i += 1
+    return idx
+
+
+# 입력 리다이렉트 토큰 — ``<f``·``0<f``·맨 ``<``. ``<<``(heredoc)·``<<<``(here-string)·
+# ``<>``(읽기쓰기)·``<&``(fd 복제)·``<(``(프로세스 치환)은 아니다.
+_INPUT_REDIRECT = re.compile(r"^\d*<(?![<>&(])(.*)$", re.DOTALL)
+# 같은 것을 따옴표를 가린 원문에서 — shlex 토큰은 따옴표를 잃어 `cp "<" /out` 의 글자
+# ``<`` 와 진짜 리다이렉트를 구별 못 한다. 토큰 판정은 여기서 찾은 대상과 맞을 때만 쓴다.
+_INPUT_REDIRECT_OP = re.compile(r"(?<!<)<(?![<>&(])")
+_WORD_END = frozenset(" \t\n<>|&;()")
+
+
+def _input_redirect_targets(raw: str, mask: str) -> list[str]:
+    """``raw`` 의 따옴표 밖 입력 리다이렉트 ``<`` 들의 대상 글자(따옴표 벗김)."""
+    out: list[str] = []
+    for m in _INPUT_REDIRECT_OP.finditer(mask):
+        start = m.end()
+        while start < len(mask) and mask[start] in " \t":
+            start += 1
+        end = start
+        while end < len(mask) and mask[end] not in _WORD_END:
+            end += 1
+        word = raw[start:end]
+        try:
+            word = "".join(shlex.split(word, posix=True))
+        except ValueError:
+            pass
+        if word:
+            out.append(word)
+    return out
+
+
 def _shell_segments(tokens: list[str]) -> list[list[str]]:
     """배칭된 명령줄을 명령 단위로 가른다 (``a && b | c; d``).
 
@@ -359,13 +482,19 @@ def _shell_segments(tokens: list[str]) -> list[list[str]]:
     return [s for s in out if s]
 
 
-def _writes_a_file(cmd: str) -> bool:
+def _writes_a_file(cmd: str, mask: str | None = None) -> bool:
     """리다이렉션 중 **파일에 쓰는 것**이 하나라도 있나. ``2>/dev/null`` 과
     ``2>&1`` 은 쓰기가 아니다 — 종전엔 ``>`` 만 보고 세그먼트 전체를 "바꿀 수
     있음"으로 올려, ``cat /tmp/a.log 2>/dev/null`` 의 **읽기** 대상 ``/tmp/a.log``
-    에 "워크스페이스 밖" 확인을 물었다(c28435 라이브, v9.26.2)."""
-    for m in _REDIRECT_TARGET.finditer(cmd):
-        target = m.group(1).strip("'\";)")
+    에 "워크스페이스 밖" 확인을 물었다(c28435 라이브, v9.26.2).
+
+    ``mask`` (``_unquoted_mask(cmd)``)가 오면 리다이렉트는 그 위에서 찾고 대상 글자는
+    같은 자리의 원문에서 읽는다 — 따옴표 안의 ``->`` 는 리다이렉트가 아니다."""
+    scan = cmd if mask is None else mask
+    if not _REDIRECT.search(scan):
+        return False
+    for m in _REDIRECT_TARGET.finditer(scan):
+        target = cmd[m.start(1) : m.end(1)].strip("'\";)")
         if target.startswith("&"):
             continue  # fd 복제 — 파일이 아니다
         if _device_pass(target, Path(target).expanduser().resolve()):
@@ -374,16 +503,18 @@ def _writes_a_file(cmd: str) -> bool:
     return False
 
 
-def _can_mutate(seg: list[str], cmd: str) -> bool:
+def _can_mutate(seg: list[str], redirect_writes: bool) -> bool:
     """이 세그먼트가 파일을 만들/지울 수 있나 — **모르면 True**.
 
     봉쇄는 *변경*을 막는 장치다(읽기는 `read_file` 과 같은 이유로 게이트하지
     않는다). 그래서 읽기 전용이 확실한 세그먼트는 워크스페이스 검사를 건너뛴다
     — 정규식이 경로로 오인되던 오탐이 여기서 대부분 사라진다.
+
+    ``redirect_writes`` — 이 세그먼트(따옴표 밖)에 파일로 가는 리다이렉션이 있나.
     """
     if not seg:
         return False
-    if _REDIRECT.search(cmd) and _writes_a_file(cmd):
+    if redirect_writes:
         return True  # 파일로 가는 셸 리다이렉션은 명령 판정을 이긴다
     name = seg[0].rsplit("/", 1)[-1]
     flags = _WRITE_FLAGS.get(name)
@@ -413,30 +544,88 @@ def extract_shell_paths(cmd: str) -> list[str]:
     유출을 여는 정반대의 실수다.
     """
     try:
-        tokens = shlex.split(cmd, posix=True)
+        shlex.split(cmd, posix=True)
     except ValueError:
-        # Unbalanced quotes — fall back to whitespace split. Better to
-        # over-extract (an extra prompt) than to miss a path silently.
+        # Unbalanced quotes — fall back to whitespace split over the whole line
+        # with the raw-text redirect check (the pre-v10.135.1 behavior, no
+        # exemptions). Better to over-extract (an extra prompt) than to miss a
+        # path silently; the shell will reject the line anyway.
         tokens = cmd.split()
-    found: list[str] = []
-    for seg in _shell_segments(tokens):
-        mutating = _can_mutate(seg, cmd)
-        for tok in seg:
-            cand = _path_candidate(tok)
-            if cand is None or cand == "/":
-                # 맨 ``/`` 는 awk ``-F/`` 나 정규식 구분자이지 대상이 아니다.
-                # 루트를 진짜로 건드리는 명령은 위험 키워드 가드가 본다.
-                continue
-            if _IMPLAUSIBLE_IN_PATH.search(cand):
-                continue
-            # 읽기 전용 세그먼트라도 **민감 경로는 통과시킨다** — 안 그러면
-            # `cat ~/.ssh/id_rsa` 가 조용해진다. 오탐을 없애려다 자격증명
-            # 유출을 열어 주는 것이라 정반대의 실수다. 봉쇄(워크스페이스)만
-            # 건너뛰고 사전은 모든 세그먼트에 건다.
-            if not mutating and not sensitive_reason(cand):
-                continue
-            found.append(cand)
+        writes = _writes_a_file(cmd)
+        found: list[str] = []
+        for seg in _shell_segments(tokens):
+            mutating = _can_mutate(seg, writes)
+            for tok in seg:
+                _collect(_path_candidate(tok), mutating, found)
+        return found
+    found = []
+    for raw in _raw_segments(cmd):
+        try:
+            tokens = shlex.split(raw, posix=True)
+        except ValueError:
+            tokens = raw.split()
+        # 리다이렉트는 이 조각의 따옴표 밖에서만 (v10.135.1) — 종전엔 원문 전체에
+        # 정규식을 돌려 `python3 -c "print('a -> b')"` 의 `->` 가 쓰기로 읽혔고, 한 조각의
+        # `>` 가 줄 전체를 "바꿀 수 있음"으로 올렸다(읽기 전용 `grep -v "/.bk/"` 까지).
+        mask = _unquoted_mask(raw)
+        writes = _writes_a_file(raw, mask)
+        reads = _input_redirect_targets(raw, mask)
+        for seg in _shell_segments(tokens):
+            mutating = _can_mutate(seg, writes)
+            command_words = _command_word_indices(seg)
+            read_next = False
+            for i, tok in enumerate(seg):
+                if read_next:
+                    # 맨 ``<`` 다음 토큰 — 입력 리다이렉트의 대상(읽기).
+                    read_next = False
+                    _collect(_path_candidate(tok), False, found)
+                    continue
+                if i in command_words and tok.startswith(("/", "~/")):
+                    # 실행 파일 자리 — 실행은 그 파일을 바꾸지 않는다(v10.135.1).
+                    # `/usr/bin/python t.py` 가 "밖을 건드린다" 로 물었다. 사전만 건다.
+                    _collect(_path_candidate(tok), False, found)
+                    continue
+                m = _INPUT_REDIRECT.match(tok)
+                if m:
+                    # 입력 리다이렉트 ``<`` 는 읽기다 (v10.135.1). 사전만 건다. 같은 토큰에
+                    # 붙은 출력 리다이렉트(``</a>/out``)는 셸이 그대로 쓰므로 쓰기로 본다.
+                    # 따옴표 안의 글자 ``<`` 는 리다이렉트가 아니다 — 원문에서 찾은 대상과
+                    # 맞을 때만 읽기로 친다(아니면 종전대로).
+                    rest = m.group(1)
+                    if not rest:
+                        nxt = seg[i + 1] if i + 1 < len(seg) else None
+                        if nxt is not None and nxt in reads:
+                            reads.remove(nxt)
+                            read_next = True
+                            continue
+                    else:
+                        read_part, gt, write_part = rest.partition(">")
+                        if read_part in reads:
+                            reads.remove(read_part)
+                            _collect(_path_candidate(read_part), False, found)
+                            if gt:
+                                _collect(
+                                    _path_candidate(">" + write_part), mutating, found
+                                )
+                            continue
+                _collect(_path_candidate(tok), mutating, found)
     return found
+
+
+def _collect(cand: str | None, mutating: bool, found: list[str]) -> None:
+    """경로 후보 하나를 ``found`` 에 — 바꿀 수 없는 자리면 민감 경로만."""
+    if cand is None or cand == "/":
+        # 맨 ``/`` 는 awk ``-F/`` 나 정규식 구분자이지 대상이 아니다.
+        # 루트를 진짜로 건드리는 명령은 위험 키워드 가드가 본다.
+        return
+    if _IMPLAUSIBLE_IN_PATH.search(cand):
+        return
+    # 읽기 자리라도 **민감 경로는 통과시킨다** — 안 그러면 `cat ~/.ssh/id_rsa` 가
+    # 조용해진다. 오탐을 없애려다 자격증명 유출을 열어 주는 것이라 정반대의
+    # 실수다. 봉쇄(워크스페이스)만 건너뛰고 사전은 모든 자리에 건다.
+    if not mutating and not sensitive_reason(cand):
+        return
+    found.append(cand)
 
 
 # A path-continuation char: if a path literal is FOLLOWED by one of these it is

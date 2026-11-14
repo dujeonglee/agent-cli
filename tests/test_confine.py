@@ -652,3 +652,125 @@ class TestDangerousInTempDirs:
         r = tool_shell({"command": f"rm {target}"})
         assert r.success, r.error
         assert not target.exists()
+
+
+# ── 셸 오탐 세 갈래 (v10.135.1) — 명령 단어 · 입력 리다이렉트 · 따옴표 안 `>` ──────
+
+
+def _blocked(cmd: str, ws: pathlib.Path) -> list[str]:
+    """`guard` 가 물을 경로들 — 밖(장치·임시 아님)이거나 민감."""
+    from agent_cli.tools._sensitive import sensitive_reason
+
+    out = []
+    for p in _confine.extract_shell_paths(cmd):
+        res, inside = _confine.resolve_within(p, root=ws)
+        if sensitive_reason(res) or not (
+            inside or _confine._device_pass(p, res) or _confine._temp_pass(res)
+        ):
+            out.append(str(res))
+    return out
+
+
+#: 정당한 거절 — 이 변경 전에도 걸렸고 뒤에도 걸려야 한다.
+_STILL_BLOCKED = [
+    "echo x >> ~/.bash_profile",
+    "cp a.txt /etc/hosts",
+    "rm -rf /opt/x",
+    "/usr/bin/tee /outside/f < in",
+    "python3 gen.py > /outside/out.txt",
+    "sed -i 's/a/b/' /outside/f",
+    "mv build ../sibling/",
+    "cat < ~/.ssh/id_rsa",  # 입력 리다이렉트도 민감 사전은 건다
+    "/usr/bin/cat ~/.ssh/id_rsa",  # 명령 단어 면제가 사전을 비키지 않는다
+    'echo "a > b" > /outside/f',  # 따옴표 밖 `>` 는 여전히 쓰기
+    "env FOO=1 /usr/bin/python x.py > /outside/o",
+    "FOO=1 /usr/bin/cp a /outside/b",
+    "time /bin/cp a /outside/b",
+    "/usr/bin/python x.py 2>/outside/err.log",
+    "cat in </a>/outside/f",  # 붙은 출력 리다이렉트는 쓰기
+    "cat < /a/b > /outside/o",
+    "ls; echo hi > /outside/g",
+    "echo 'q' && cp x /outside/h",
+    "/usr/bin/env cp a /outside/i",
+    "exec /bin/rm /outside/j",
+    "cat <<EOF > /outside/k\nhi\nEOF",
+    "tee /outside/l <<< 'x'",
+    "cat 0< ~/.aws/credentials",
+    "~/.ssh/id_rsa",  # 명령 단어 자리라도 민감
+    "nice -n 5 /bin/cp a /outside/m",
+    "echo a\\>b > /outside/n",
+    'cp "<" /outside/q',  # 따옴표 안의 `<` 는 리다이렉트가 아니다
+    "FOO=$(rm /etc/x) ls",  # 대입 안의 치환은 명령 단어가 아니다
+    "rm $(echo /etc/x)",
+    "ls /x\nrm -rf /outside/p",  # 줄바꿈도 세그먼트 경계 (종전엔 놓쳤다)
+]
+
+#: 오탐이었던 것 — 이제 묻지 않는다.
+_NOW_PASSES = [
+    "/usr/bin/python tests/test_parse.py",
+    "/usr/local/bin/python3 tests/test_parse.py",
+    "grep -rniE 'todo|fixme' --include='*.py' . </parameter> </invoke>",
+    (
+        "find . -name '*.py' | sort; echo \"---\"; "
+        "grep -rniE 'todo|fixme' --include='*.py' . | wc -l </parameter> </invoke>"
+    ),
+    (
+        'echo "=== c ==="; python3 -c "from s import m; print(\'import mean_of OK ->\', '
+        'm.__name__)"; grep -rn "compute_mean" . --include="*.py" | grep -v "/.bk/"; '
+        'echo "(empty)"'
+    ),
+    "/usr/bin/env python3 t.py",
+    'grep -v "/x/" f | wc -l',
+    "python3 -c \"print('a -> b')\"; ls",
+    "sort < /usr/share/dict/words | head",
+    "PYTHONPATH=. /usr/bin/python3 -m pytest -q",
+    "time /usr/bin/make -j4",
+    "echo 'a > /outside/q'",
+    "wc -l < /etc/hosts",
+    'cat < "/my dir/f" | wc -l',
+]
+
+
+class TestShellFalsePositives:
+    @pytest.mark.parametrize("cmd", _STILL_BLOCKED)
+    def test_legitimate_refusals_stay(self, confined, cmd):
+        ws, _ = confined
+        assert _blocked(cmd, ws), cmd
+
+    @pytest.mark.parametrize("cmd", _NOW_PASSES)
+    def test_former_false_positives_pass(self, confined, cmd):
+        ws, _ = confined
+        assert _blocked(cmd, ws) == [], cmd
+
+    def test_other_tokens_of_an_exempt_command_are_still_checked(self):
+        assert _confine.extract_shell_paths("/usr/bin/tee /outside/f") == ["/outside/f"]
+
+    def test_redirect_is_attributed_to_its_own_segment(self):
+        # 종전엔 앞 세그먼트의 `>` 가 줄 전체를 "바꿀 수 있음"으로 올려 grep 의 인자까지 뽑았다.
+        assert _confine.extract_shell_paths("echo a > out.txt; grep /x/ f") == []
+
+    def test_heredoc_and_readwrite_are_not_input_redirects(self):
+        assert _confine.extract_shell_paths("cmd <>/outside/rw") == ["/outside/rw"]
+
+    def test_unbalanced_quotes_fall_back_to_over_extracting(self):
+        assert _confine.extract_shell_paths("/usr/bin/cp a /outside/x 'oops") == [
+            "/usr/bin/cp",
+            "/outside/x",
+        ]
+
+    def test_shell_tool_runs_an_absolute_executable(self, confined):
+        r = tool_shell({"command": "/usr/bin/env echo hi-from-abs"})
+        assert r.success, r.error
+        assert "hi-from-abs" in (r.output or "")
+
+    def test_refusal_wording_unchanged(self, confined):
+        r = tool_shell({"command": "/bin/cp x /etc/passwd"})
+        assert not r.success
+        assert "Refused: shell command touches path(s) outside the workspace" in (
+            r.error or ""
+        )
+
+    def test_shell_uses_the_one_unquoted_mask(self):
+        from agent_cli.tools import shell
+
+        assert shell._unquoted_mask is _confine._unquoted_mask
