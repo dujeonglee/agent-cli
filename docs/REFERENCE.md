@@ -128,6 +128,30 @@ agent-cli run "hello" --base-url http://127.0.0.1:8000/v1 -m Qwen3.6-35B-A3B-8bi
 `-p anthropic` 처럼 다른 provider 를 고르면 쓰이지 않습니다(설정 값은 그 설정의 provider 에만).
 모르는 provider 이름(`-p gemini`, 설정의 오타)은 사용 가능한 이름을 보여 주고 종료 코드 `2` 로 멈춥니다.
 
+**추가 헤더 `extra_headers` (v10.134.0)** — 사내 게이트웨이처럼 키 말고도 헤더를 요구하는 서버에
+임의 헤더를 붙입니다. 키(`api_key`)가 가는 **모든** 요청 — 대화 호출(서브에이전트·압축 요약 포함),
+능력 감지 프로브, `/models` 조회 — 에 같이 실리고, 키와 같은 범위입니다(설정의 provider 로 갈 때만).
+
+```json
+{
+  "provider": "openai",
+  "base_url": "https://gateway.example.com/v1",
+  "api_key": "test-…",
+  "default_model": "my-model",
+  "extra_headers": [
+    {"name": "x-service-id", "value": "test-service", "enabled": true},
+    {"name": "x-user-id", "value": "test-user", "enabled": false}
+  ]
+}
+```
+
+`enabled` 가 없으면 켜짐, `false` 면 저장만 하고 보내지 않습니다. 규칙(어기면 종료 코드 `2`, 메시지에는
+헤더 **이름**만 나오고 값은 나오지 않습니다): 이름은 HTTP 헤더 이름 글자(RFC 7230 token), 값은 줄바꿈·NUL
+없는 문자열, 하니스가 정하는 헤더(`Authorization`·`Proxy-Authorization`·`x-api-key`·`anthropic-version`·
+`Content-Type`·`Content-Length`·`Host`·`Transfer-Encoding`·`Connection`)는 쓸 수 없고, 켜진 것끼리 같은
+이름(대소문자 무시)은 한 번만. 헤더는 HTTP 층에만 있어 모델이 받는 프롬프트는 바뀌지 않습니다. `agent-cli setup`
+은 이 목록을 묻지 않고 기존 값을 그대로 보존해 저장합니다. 보드의 admin 화면에서 체크박스로 켜고 끌 수 있습니다.
+
 **읽지 못한 `config.json` 은 멈춥니다 (v10.123.4)** — JSON 오류(끝 쉼표 등)·객체가 아닌 내용이면
 `Could not read config <경로>: <오류, 줄·열>` 한 줄과 종료 코드 `2`. 종전엔 조용히 env·기본값으로
 내려가 "No model is specified" 가 되거나 공개 엔드포인트로 갔습니다. `agent-cli setup` 은 깨진 파일을
@@ -487,7 +511,7 @@ v10.66.0 부터 있던 `python` 도구(호출 사이에 변수·데이터가 남
   `~/.npmrc` `~/.cargo/credentials.toml` `~/.config/gh/hosts.yml` `~/.netrc`
   셸·DB 히스토리 `/etc/shadow` 계열) · 비밀키 파일명(`id_rsa` 계열 — `.pub` 제외,
   `privkey.pem`, `*.p12`/`*.pfx`/`*.jks`) · **agent-cli 자신의
-  `~/.agent-cli/config.json`**(여기에 `api_key` 가 있습니다).
+  `~/.agent-cli/config.json`**(여기에 `api_key`·`extra_headers` 가 있습니다).
 - **일부러 넣지 않은 것**: `.env`(에이전트는 보통 그 `.env` 를 가진 프로젝트를
   작업 중입니다) · `*.pem`(CA 번들이 지천) · `*.key`(macOS 에선 Keynote 문서) ·
   `~/.zshrc`(실제 유출 벡터지만 PATH 디버깅으로 매일 읽습니다) ·
@@ -556,7 +580,7 @@ agent-cli run "task description" [options]
 |---|---|
 | `0` | 답했다 — argv 질의의 답 사슬(질의 런 + 질의가 백그라운드 작업·`wait` 로 답을 미뤘으면 그 뒤 깨우기 런)의 **마지막 런**이 성공. 빈 답 성공도 0(파일은 안 생김). 목록 명령(`/help`·`/skills`·`@agents`·`@`) — `--resume` 없이 부르면 provider·서버·세션 없이 부트 전에 답하고 `sessions` 에 빈 세션을 남기지 않습니다(v10.127.1; `/help` 는 `--resume` 이어도 부트 전, 목록은 `--resume` 이면 살아난 상주 에이전트까지 보이도록 종전 경로) |
 | `1` | 실패/무답 — LLM 호출 실패·max turns·실패한 `@agent task`·`/skill`, 못 찾은 명령(`Unknown command`·`Agent not found`). 잡히지 않은 예외도 1(traceback) |
-| `2` | 설정·사용법 오류 — 모르는 provider, 읽지 못한 `config.json`, 방언 없는 모델, 잘못된 옵션 |
+| `2` | 설정·사용법 오류 — 모르는 provider, 읽지 못한 `config.json`, 규칙을 어긴 `extra_headers`, 방언 없는 모델, 잘못된 옵션 |
 | `130` | 중단(Ctrl-C) |
 
 사슬 밖의 런(예약 발화, 사슬이 닫힌 뒤의 깨우기, 런 도중 합류한 명령)은 판정을 바꾸지 않습니다. `run "/sh <cmd>"` 는 그 명령의 종료 코드를 그대로 돌려줍니다(시간 초과 124, 종전 항상 0). Harbor 벤치 어댑터는 0·1 을 흡수해 검증기로 보냅니다(`bench/harbor/README.md`).
@@ -746,7 +770,7 @@ curl -X POST "http://localhost:49374/api/input?token=<TOKEN>" \
 agent-cli setup
 ```
 
-프로바이더, 접속 정보, 기본 모델을 대화형으로 설정합니다. 설정이 없을 때 자동으로 실행되며, 언제든 수동으로 다시 실행할 수 있습니다.
+프로바이더, 접속 정보, 기본 모델을 대화형으로 설정합니다. 설정이 없을 때 자동으로 실행되며, 언제든 수동으로 다시 실행할 수 있습니다. 기존 설정의 `extra_headers` 는 묻지 않고 그대로 보존하며 모델 목록 조회에도 싣습니다.
 
 ### `sessions` — 세션 관리
 

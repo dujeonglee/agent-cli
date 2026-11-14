@@ -196,12 +196,29 @@ def _resolve_provider(
             env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
             api_key = os.environ.get(env_map.get(effective_provider, ""), "")
 
-    return (
-        effective_provider,
-        resolved_url,
-        resolved_model,
-        Credentials(api_key=api_key),
+    # 추가 헤더는 키와 같은 범위다 — 설정 파일의 provider 로 갈 때만 그 파일의 것.
+    # 규칙 위반은 이름만 말하고(값은 안 쓴다) 설정 오류로 끝낸다.
+    from agent_cli.providers.credentials import (
+        ExtraHeaderError,
+        credentials_from_config,
     )
+
+    if config_provider == effective_provider:
+        try:
+            credentials = credentials_from_config(config, api_key=api_key)
+        except ExtraHeaderError as e:
+            console.print(
+                f"Invalid extra_headers in {user_dir() / 'config.json'}: {e}. "
+                "Fix the entry or remove it.",
+                style=C["error"],
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
+            raise typer.Exit(2) from None
+    else:
+        credentials = Credentials(api_key=api_key)
+    return effective_provider, resolved_url, resolved_model, credentials
 
 
 def _flags_complete(base_url: str | None, model: str | None) -> bool:
