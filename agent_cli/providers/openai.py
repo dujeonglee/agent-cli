@@ -24,6 +24,7 @@ from agent_cli.providers.base import (
     thinking_switch,
 )
 from agent_cli.providers.capabilities import ModelCapabilities, vision_support
+from agent_cli.providers.credentials import Credentials
 from agent_cli.providers.http import (
     StreamEvent,
     post_with_retry,
@@ -41,16 +42,16 @@ class OpenAIProvider:
     """Adapter for OpenAI-compatible /v1/chat/completions API."""
 
     @staticmethod
-    def capability_transport(base_url: str, model: str, api_key: str = ""):
+    def capability_transport(base_url: str, model: str, credentials: Credentials):
         """capability 프로브 transport — 프로바이더 클래스 소유 (v8.41.0
         self-register: 종전 capabilities 쪽 provider-이름 분기 흡수)."""
         from agent_cli.providers.capabilities import _OpenAITransport
 
-        return _OpenAITransport(base_url, model, api_key)
+        return _OpenAITransport(base_url, model, credentials)
 
-    def __init__(self, base_url: str, api_key: str):
+    def __init__(self, base_url: str, credentials: Credentials):
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+        self.credentials = credentials
 
     def call(
         self,
@@ -64,15 +65,20 @@ class OpenAIProvider:
         # v10.1.4: 방언의 첫 구조 토큰 — 미닫힘 <think> 격리가 여기서 멈춘다
         thinking_stop = kwargs.get("thinking_stop")
         url = f"{self.base_url}/chat/completions"
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        headers = {
+            "Content-Type": "application/json",
+            **self.credentials.headers("openai"),
+        }
 
         # 이미지 (v10.59.0): 레코드의 ``images`` 참조를 여기서만 ``image_url``
         # 조각으로 펼친다 — 방언·컨텍스트는 공급자 모양을 모른다. 모델이 못
         # 보면(등록값·프로브) 조각 없이 그 사실을 글로 남긴다.
         enabled = _has_images(messages) and vision_support(
-            capabilities, self.capability_transport, self.base_url, model, self.api_key
+            capabilities,
+            self.capability_transport,
+            self.base_url,
+            model,
+            self.credentials,
         )
         blocked = (kwargs.get("settings") or CallSettings()).blocked_images
         messages = _images.expand(

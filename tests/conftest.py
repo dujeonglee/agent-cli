@@ -244,18 +244,23 @@ def integration_model(request, omlx_available):
 @pytest.fixture(scope="session")
 def omlx_provider():
     """Real OpenAIProvider pointed at the omlx server."""
+    from agent_cli.providers.credentials import Credentials
     from agent_cli.providers.openai import OpenAIProvider
 
-    return OpenAIProvider(OMLX_BASE_URL, OMLX_API_KEY)
+    return OpenAIProvider(OMLX_BASE_URL, Credentials(api_key=OMLX_API_KEY))
 
 
 @pytest.fixture
 def model_capabilities(integration_model):
     """Runtime-detected capabilities for the integration model."""
     from agent_cli.providers.capabilities import get_capabilities
+    from agent_cli.providers.credentials import Credentials
 
     return get_capabilities(
-        integration_model, provider="openai", base_url=OMLX_BASE_URL
+        integration_model,
+        provider="openai",
+        base_url=OMLX_BASE_URL,
+        credentials=Credentials(api_key=OMLX_API_KEY),
     )
 
 

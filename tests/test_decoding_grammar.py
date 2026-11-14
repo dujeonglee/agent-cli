@@ -37,6 +37,7 @@ from agent_cli.dialects.grammar import (
 )
 from agent_cli.providers.base import CallSettings, LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.providers.credentials import Credentials
 from agent_cli.tools.registry import (
     TOOL_SCHEMAS,
     effective_tool_names,
@@ -235,7 +236,7 @@ class TestProviderBody:
             "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}]
         }
         mock_post.return_value = r
-        OpenAIProvider("http://s/v1", "k").call(
+        OpenAIProvider("http://s/v1", Credentials(api_key="k")).call(
             messages=[{"role": "user", "content": "hi"}],
             system="s",
             model="m",
@@ -333,7 +334,7 @@ class TestCapabilityFlag:
         아니라 출력이 문법에 묶였는지로 판정한다."""
         from agent_cli.providers.capabilities import _OpenAITransport
 
-        t = _OpenAITransport("http://s/v1", "m")
+        t = _OpenAITransport("http://s/v1", "m", Credentials())
         r = MagicMock()
         r.raise_for_status.return_value = None
         r.json.return_value = {"choices": [{"message": {"content": "GRAMMAR-OK"}}]}
@@ -365,7 +366,9 @@ class TestCapabilityFlag:
     def test_anthropic_transport_has_no_grammar(self):
         from agent_cli.providers.capabilities import _AnthropicTransport
 
-        assert _AnthropicTransport("http://s", "m").grammar_probe() is False
+        assert (
+            _AnthropicTransport("http://s", "m", Credentials()).grammar_probe() is False
+        )
 
 
 # ── 5. 세션/env 오버라이드 ────────────────────────

@@ -22,6 +22,7 @@ from agent_cli.prompts.compaction import (
     looks_like_summary,
     summary_heading_count,
 )
+from agent_cli.providers.credentials import Credentials
 from tests.loop_ports import TEST_PORTS
 
 SUMMARY = "TASK — fix a.py\nSTATE — f0..f2 read\nFACTS — path f1.py"
@@ -77,7 +78,7 @@ def _loop(tmp_path: Path, dialect_name: str, *, context_window: int = 200_000):
     loop = make_loop(
         ports=TEST_PORTS,
         query="x",
-        provider=OpenAIProvider("http://gw/v1", "k"),
+        provider=OpenAIProvider("http://gw/v1", Credentials(api_key="k")),
         capabilities=caps,
         model="m",
         ctx=ctx,

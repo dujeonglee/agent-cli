@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agent_cli.providers.credentials import Credentials
 from agent_cli.providers.http import (
     StreamIdleTimeout,
     interruptible_lines,
@@ -112,7 +113,7 @@ class TestStreamingReconnect:
     def _provider(self):
         from agent_cli.providers.openai import OpenAIProvider
 
-        return OpenAIProvider("http://x", "")
+        return OpenAIProvider("http://x", Credentials())
 
     def _args(self):
         from agent_cli.providers.capabilities import ModelCapabilities
@@ -328,7 +329,7 @@ class TestBrokenStreamRetry:
     def _provider(self):
         from agent_cli.providers.openai import OpenAIProvider
 
-        return OpenAIProvider("http://x", "")
+        return OpenAIProvider("http://x", Credentials())
 
     def _args(self):
         from agent_cli.providers.capabilities import ModelCapabilities

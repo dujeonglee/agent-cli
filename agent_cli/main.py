@@ -28,6 +28,7 @@ from agent_cli.dialects import (
 from agent_cli.knobs import knob_options
 from agent_cli.paths import user_dir
 from agent_cli.providers import (
+    Credentials,
     UnsupportedModelError,
     create_provider,
     get_capabilities,
@@ -132,6 +133,9 @@ def _resolve_provider(
 ):
     """Resolve provider settings: CLI args > config.json > provider defaults.
 
+    Returns ``(provider, base_url, model, credentials)`` — 키는 `Credentials` 로
+    감싸 그 뒤로는 문자열로 흐르지 않는다(요청 헤더는 ``Credentials.headers``).
+
     ``provider`` is the ``-p`` flag value, or ``None`` when not passed.
     Precedence: explicit flag → config's provider. A config (file or env)
     that names no provider is an "openai" (OpenAI-compatible: OpenAI, vLLM,
@@ -192,7 +196,12 @@ def _resolve_provider(
             env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
             api_key = os.environ.get(env_map.get(effective_provider, ""), "")
 
-    return effective_provider, resolved_url, resolved_model, api_key
+    return (
+        effective_provider,
+        resolved_url,
+        resolved_model,
+        Credentials(api_key=api_key),
+    )
 
 
 def _flags_complete(base_url: str | None, model: str | None) -> bool:
@@ -1132,7 +1141,7 @@ def _verify_model_or_exit(
     resolved_model: str,
     provider: str,
     base_url: str,
-    api_key: str,
+    credentials: Credentials,
     *,
     explicit: bool,
     quiet: bool,
@@ -1159,7 +1168,7 @@ def _verify_model_or_exit(
     origin = "--model" if explicit else str(user_dir() / "config.json")
     try:
         listing = verify_model(
-            resolved_model, base_url, api_key, provider, origin=origin
+            resolved_model, base_url, credentials, provider, origin=origin
         )
     except NoModelSelected as e:
         return _choose_model_or_exit(
@@ -1307,7 +1316,7 @@ def _setup_provider(
         render_status,
     )
 
-    provider, resolved_url, resolved_model, resolved_key = _resolve_provider(
+    provider, resolved_url, resolved_model, credentials = _resolve_provider(
         provider,
         model,
         base_url,
@@ -1319,11 +1328,11 @@ def _setup_provider(
         resolved_model,
         provider,
         resolved_url,
-        resolved_key,
+        credentials,
         explicit=explicit or bool(model),
         quiet=quiet,
     )
-    llm_provider = create_provider(provider, resolved_url, resolved_key)
+    llm_provider = create_provider(provider, resolved_url, credentials)
     # Surface runtime-detection probe steps to the user. Only emits
     # when the model isn't cached in models.json — silent fast path
     # otherwise. Cleared in finally so a later detection doesn't
@@ -1332,7 +1341,7 @@ def _setup_provider(
         set_progress_callback(lambda msg: render_status("running", msg))
     try:
         capabilities = get_capabilities(
-            resolved_model, provider, resolved_url, resolved_key
+            resolved_model, provider, resolved_url, credentials
         )
     except UnsupportedModelError as e:
         # Context window below the agent's minimum — fail fast with a
@@ -1368,7 +1377,7 @@ def _setup_provider(
         capabilities,
         resolved_model,
         resolved_url,
-        resolved_key,
+        credentials,
         provider,
     )
 
@@ -1455,7 +1464,7 @@ def _bootstrap_provider(
     > models.json 모델 바인딩. 둘 다 없거나 unknown 이름이면 세션 생성
     전에 fail-fast (D2) — 기본값 없음, 사용자가 모델에 방언을 묶는다.
     """
-    llm_provider, capabilities, resolved_model, resolved_url, resolved_key, name = (
+    llm_provider, capabilities, resolved_model, resolved_url, credentials, name = (
         _setup_provider(
             provider, model, base_url, api_key, quiet=quiet, explicit=explicit_model
         )
@@ -1491,7 +1500,7 @@ def _bootstrap_provider(
         provider=llm_provider,
         provider_name=name,
         base_url=resolved_url,
-        api_key=resolved_key,
+        credentials=credentials,
         model=resolved_model,
         capabilities=capabilities,
         dialect=dialect_plugin,

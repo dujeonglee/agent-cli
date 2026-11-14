@@ -23,6 +23,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.providers.credentials import Credentials
 
 
 @dataclass
@@ -32,7 +33,7 @@ class ModelBinding:
     provider: Any
     provider_name: str
     base_url: str
-    api_key: str
+    credentials: Credentials
     model: str
     capabilities: ModelCapabilities
     dialect: Any
@@ -98,7 +99,7 @@ class ModelBinding:
             self,
             model=model,
             capabilities=get_capabilities(
-                model, self.provider_name, self.base_url, self.api_key
+                model, self.provider_name, self.base_url, self.credentials
             ),
             dialect=resolve_dialect(model),
         )

@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agent_cli.providers.credentials import Credentials
 from agent_cli.runtime import (
     AgentRuntime,
     build_agent_registry,
@@ -88,7 +89,7 @@ class TestAgentRuntimeEquivalence:
                 model="m",
                 provider_name="openai",
                 base_url="http://x/v1",
-                api_key="k",
+                credentials=Credentials(api_key="k"),
             ),
             "max_turns": 5,
             "depth": 0,
@@ -312,7 +313,7 @@ class TestRegistryAssembly:
                 model="m",
                 provider_name="p",
                 base_url="u",
-                api_key="k",
+                credentials=Credentials(api_key="k"),
             ),
             max_turns=0,
             depth=0,
@@ -336,7 +337,7 @@ class TestRegistryAssembly:
                 model="m",
                 provider_name="p",
                 base_url="u",
-                api_key="k",
+                credentials=Credentials(api_key="k"),
             ),
             max_turns=0,
             depth=0,
@@ -417,7 +418,7 @@ class TestRegistryAssembly:
                 model="m",
                 provider_name="p",
                 base_url="u",
-                api_key="k",
+                credentials=Credentials(api_key="k"),
             ),
             max_turns=0,
             depth=0,

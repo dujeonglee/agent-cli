@@ -32,6 +32,7 @@ from agent_cli.main import (
     _ConsoleDispatchOutput,
     try_dispatch_agent_or_skill,
 )
+from agent_cli.providers.credentials import Credentials
 from tests.binding_support import make_binding
 
 # ── Recording adapter ───────────────────────────────────
@@ -688,7 +689,7 @@ class TestLooksLikeSlashCommand:
                 model="m",
                 provider_name="openai",
                 base_url="",
-                api_key="",
+                credentials=Credentials(),
             ),
             max_turns=0,
             verbose=False,

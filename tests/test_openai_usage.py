@@ -17,6 +17,7 @@ import pytest
 
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.providers.credentials import Credentials
 from agent_cli.providers.openai import OpenAIProvider, _map_openai_payload
 from tests.loop_ports import TEST_PORTS
 
@@ -116,7 +117,9 @@ def _json_resp(usage: dict) -> MagicMock:
 
 def _call(resp: MagicMock, *, stream: bool) -> LLMResponse:
     with patch("agent_cli.providers.openai.requests.post", return_value=resp):
-        provider = OpenAIProvider("http://localhost:8000/v1", "key")
+        provider = OpenAIProvider(
+            "http://localhost:8000/v1", Credentials(api_key="key")
+        )
         kwargs = {"on_chunk": lambda _c: None} if stream else {}
         return provider.call(
             messages=[], system="", model="m", capabilities=_CAPS, **kwargs
@@ -174,7 +177,9 @@ class TestBudgetInvariant:
             session_dir=tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
         )
         ctx.add({"role": "user", "content": "x" * 40})
-        parsed = OpenAIProvider("http://localhost:8000/v1", "k")._parse_response(
+        parsed = OpenAIProvider(
+            "http://localhost:8000/v1", Credentials(api_key="k")
+        )._parse_response(
             {
                 "choices": [
                     {

@@ -1572,7 +1572,7 @@ class AgentRegistry:
             verify_model(
                 model,
                 binding.base_url,
-                binding.api_key,
+                binding.credentials,
                 binding.provider_name or "openai",
             )
         except ModelNotFound as e:

@@ -9,6 +9,7 @@ import pytest
 
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.providers.credentials import Credentials
 from tests.loop_ports import TEST_PORTS
 
 # Shared test capabilities
@@ -57,7 +58,9 @@ class TestOpenAIStreaming:
         collected = []
 
         with patch("agent_cli.providers.openai.requests.post", return_value=resp):
-            provider = OpenAIProvider("http://localhost:8000/v1", "key")
+            provider = OpenAIProvider(
+                "http://localhost:8000/v1", Credentials(api_key="key")
+            )
             result = provider.call(
                 messages=[],
                 system="",
@@ -84,7 +87,9 @@ class TestOpenAIStreaming:
         with patch(
             "agent_cli.providers.openai.requests.post", return_value=resp
         ) as mock_post:
-            provider = OpenAIProvider("http://localhost:8000/v1", "key")
+            provider = OpenAIProvider(
+                "http://localhost:8000/v1", Credentials(api_key="key")
+            )
             result = provider.call(
                 messages=[], system="", model="m", capabilities=_CAPS
             )
@@ -135,7 +140,9 @@ class TestAnthropicStreaming:
         collected = []
 
         with patch("agent_cli.providers.anthropic.requests.post", return_value=resp):
-            provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+            provider = AnthropicProvider(
+                "https://api.anthropic.com/v1", Credentials(api_key="key")
+            )
             result = provider.call(
                 messages=[{"role": "user", "content": "hi"}],
                 system="sys",
@@ -162,7 +169,9 @@ class TestAnthropicStreaming:
         resp.raise_for_status.return_value = None
 
         with patch("agent_cli.providers.anthropic.requests.post", return_value=resp):
-            provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+            provider = AnthropicProvider(
+                "https://api.anthropic.com/v1", Credentials(api_key="key")
+            )
             result = provider.call(
                 messages=[{"role": "user", "content": "hi"}],
                 system="sys",
@@ -197,7 +206,9 @@ class TestAnthropicStreaming:
         ]
         resp = _make_response(lines)
         with patch("agent_cli.providers.anthropic.requests.post", return_value=resp):
-            provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+            provider = AnthropicProvider(
+                "https://api.anthropic.com/v1", Credentials(api_key="key")
+            )
             result = provider.call(
                 messages=[{"role": "user", "content": "hi"}],
                 system="sys",
@@ -258,7 +269,9 @@ class TestTTFTMeasurement:
         resp = _make_response(lines)
 
         with patch("agent_cli.providers.openai.requests.post", return_value=resp):
-            provider = OpenAIProvider("http://localhost:8000/v1", "key")
+            provider = OpenAIProvider(
+                "http://localhost:8000/v1", Credentials(api_key="key")
+            )
             result = provider.call(
                 messages=[],
                 system="",
@@ -299,7 +312,9 @@ class TestTTFTMeasurement:
         resp = _make_response(lines)
 
         with patch("agent_cli.providers.anthropic.requests.post", return_value=resp):
-            provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+            provider = AnthropicProvider(
+                "https://api.anthropic.com/v1", Credentials(api_key="key")
+            )
             result = provider.call(
                 messages=[{"role": "user", "content": "hi"}],
                 system="sys",
@@ -325,7 +340,9 @@ class TestTTFTMeasurement:
         resp.raise_for_status.return_value = None
 
         with patch("agent_cli.providers.openai.requests.post", return_value=resp):
-            provider = OpenAIProvider("http://localhost:8000/v1", "key")
+            provider = OpenAIProvider(
+                "http://localhost:8000/v1", Credentials(api_key="key")
+            )
             result = provider.call(
                 messages=[], system="", model="m", capabilities=_CAPS
             )

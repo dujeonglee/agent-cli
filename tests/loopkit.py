@@ -55,7 +55,7 @@ def static_binding(
     model: str = "",
     provider_name: str = "openai",
     base_url: str = "",
-    api_key: str = "",
+    credentials=None,
     dialect=None,
     ctx=None,
 ):
@@ -63,6 +63,7 @@ def static_binding(
     포맷이 갈리는 split-brain 방지: ctx 를 만든 방언을 루프도 쓴다)."""
     from agent_cli.dialects import get as get_dialect
     from agent_cli.providers.binding import ModelBinding
+    from agent_cli.providers.credentials import Credentials
 
     if isinstance(dialect, str):
         dialect = get_dialect(dialect)
@@ -72,7 +73,7 @@ def static_binding(
         provider=provider,
         provider_name=provider_name,
         base_url=base_url,
-        api_key=api_key,
+        credentials=credentials if credentials is not None else Credentials(),
         model=model,
         capabilities=capabilities,
         dialect=dialect,
@@ -90,7 +91,7 @@ def _split(
     dialect,
     provider_name: str = "openai",
     base_url: str = "",
-    api_key: str = "",
+    credentials=None,
     binding=None,
     active_tools: list[str] | None = None,
     query_author: str | None = None,
@@ -116,7 +117,7 @@ def _split(
             model=model,
             provider_name=provider_name,
             base_url=base_url,
-            api_key=api_key,
+            credentials=credentials,
             dialect=dialect,
             ctx=ctx,
         )

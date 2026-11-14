@@ -28,6 +28,7 @@ import agent_cli.dialects as _dialects
 import agent_cli.main as m
 from agent_cli import model_check
 from agent_cli.providers import capabilities as _caps
+from agent_cli.providers.credentials import Credentials
 from agent_cli.providers.http import classify_connection_error
 
 URL = "http://127.0.0.1:1/v1"
@@ -283,7 +284,7 @@ def test_dns_and_tls_failures_are_unreachable(monkeypatch):
     ):
         model_check._cache.clear()
         _models_get(monkeypatch, exc=exc)
-        listing = model_check.list_models(URL)
+        listing = model_check.list_models(URL, Credentials())
         assert listing.unreachable is True and listing.available is False
         assert listing.reason.startswith(reason)
 
@@ -304,7 +305,7 @@ def test_dns_and_tls_failures_are_unreachable(monkeypatch):
 )
 def test_other_unavailable_listings_keep_the_old_path(monkeypatch, out, probes, setup):
     _models_get(monkeypatch, **setup)
-    listing = model_check.list_models(URL)
+    listing = model_check.list_models(URL, Credentials())
     assert listing.available is False and listing.unreachable is False
     model_check._cache.clear()
     monkeypatch.setenv("AGENT_CLI_NO_INPUT", "1")

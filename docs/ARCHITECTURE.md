@@ -135,6 +135,7 @@ agent_cli/
 │   ├── base.py              `LLMProvider` 프로토콜, `LLMResponse`·`TokenUsage`·`CallSettings`, 샘플링·사고 스위치
 │   ├── binding.py           `ModelBinding` — 세션이 지금 쓰는 모델 하나(이름·능력·방언·예산)
 │   ├── capabilities.py      `ModelCapabilities` 조회(models.json > 런타임 탐지 > 기본값), vision·문법 프로브
+│   ├── credentials.py       `Credentials` — API 키, 요청 인증 헤더를 만드는 유일한 곳(`headers(provider)`)
 │   ├── http.py              HTTP 재시도·SSE 스트림 읽기·재접속·연결 오류 분류
 │   ├── runaway.py           스트리밍 경로의 내용 무관 폭주 감지기 `RunawayDetector`
 │   ├── openai.py            `OpenAIProvider` — `/v1/chat/completions` 호환 서버(vLLM·LM Studio·omlx)
@@ -774,7 +775,9 @@ OpenAIProvider 하나로 OpenAI·vLLM·LM Studio·omlx 를 `--base-url` 만 바�
 ### 7.3 프로바이더 팩토리 (`providers/__init__.py`)
 
 각 프로바이더 모듈이 import 될 때 `register_provider` 로 스스로 등록한다. 내장 목록은 `_BUILTIN_MODULES`(openai·anthropic).
-`create_provider(name, base_url, api_key)` 가 이름으로 클래스를 찾고, 프로바이더 클래스는 능력 프로브 전송을 `capability_transport` 로 소유한다.
+`create_provider(name, base_url, credentials)` 가 이름으로 클래스를 찾고, 프로바이더 클래스는 능력 프로브 전송을 `capability_transport` 로 소유한다.
+키는 `main._resolve_provider` 에서 `Credentials` 로 감싸여 provider·`ModelBinding.credentials`·능력 프로브·`model_check`(/models) 로 하나로 흐르고,
+요청 헤더(OpenAI `Authorization: Bearer` / Anthropic `anthropic-version` + `x-api-key`)는 모든 자리가 `Credentials.headers(provider)` 로 만든다. `Content-Type` 은 POST 하는 쪽이 붙인다.
 
 ### 7.4 Thinking 적용
 
