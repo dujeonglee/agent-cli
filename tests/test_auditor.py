@@ -25,6 +25,7 @@ from agent_cli.harness.jobs import HarnessJobs, load_harness_profile
 from agent_cli.knobs import KNOB_BY_NAME, KnobSession
 from agent_cli.pump import WAKE_AUTHOR, RunRequest
 from agent_cli.subagent.profiles import available_profiles, load_profile
+from agent_cli.tools.registry import extract_file_paths
 from agent_cli.tools.result import ToolResult
 from tests.test_agents_live import make_registry, make_runner, wait_until
 
@@ -139,6 +140,7 @@ class TestRequestText:
         res = tool_history(
             {"query": "SELECT seq, kind, author FROM history ORDER BY seq"},
             session_dir=ctx.history_path.parent,
+            extract_paths=extract_file_paths,
         )
         assert res.success, res.error
         rows = res.output

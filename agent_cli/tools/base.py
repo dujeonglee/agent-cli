@@ -700,7 +700,7 @@ class Tool(ABC):
         Default: none. Path-handling tools override to pull paths out of
         their OWN action_input shape (prefixed keys, arrays) — keeping that
         schema knowledge in the tool itself, not duplicated in the
-        compaction extractor (:func:`context._file_extract`). Overrides
+        compaction extractor (:func:`tools.registry.extract_file_paths`). Overrides
         should use :meth:`strip_prefix` so they read standard keys.
         """
         return []

@@ -143,8 +143,7 @@ agent_cli/
 │   ├── render.py            record → LLM 메시지 렌더, 예산 추정, 압축 요약 입력 (무상태)
 │   ├── store.py             세션 영속화 디스크 I/O primitive(history 추가·compaction.json·fork)
 │   ├── exchanges.py         history 의 사용자 요청↔답 쌍 — 세션 목록·resume 의 요약(방언 알림 접두를 거른다)
-│   ├── overflow.py          프로바이더별 컨텍스트 초과 감지·`ContextOverflowError`
-│   └── _file_extract.py     축출된 메시지에서 도구가 만진 파일 목록 추출(`Tool.touched_paths` 위임)
+│   └── overflow.py          프로바이더별 컨텍스트 초과 감지·`ContextOverflowError`
 ├── session/                 세션 디렉터리 저장소 — 맨 아래 층, 위로 아무것도 import 하지 않는다
 │   ├── __init__.py          패키지 표식(docstring) — 아무것도 내보내지 않는다
 │   ├── store.py             세션 디렉터리 배치·메타 `session.jsonl`·목록·resume
@@ -160,7 +159,7 @@ agent_cli/
 ├── tools/                   도구 — `Tool` 하위 클래스 하나가 스키마·검증·실행을 소유
 │   ├── __init__.py          레지스트리 표면 재수출(`TOOLS`·`RunContext`·`ToolResult` …)
 │   ├── base.py              `Tool` 기반 클래스·`RunContext`·지연 로딩 뼈대·큰 출력 저장 (docs/tool-help/DESIGN.md)
-│   ├── registry.py          `TOOLS` 인스턴스화, 도구 설명 렌더, 입력 검증, 액션 추론
+│   ├── registry.py          `TOOLS` 인스턴스화, 도구 설명 렌더, 입력 검증, 액션 추론, 기록에서 건드린 파일 뽑기
 │   ├── result.py            `ToolResult` 데이터클래스
 │   ├── virtual.py           루프가 가로채는 스키마 전용 도구 — `complete`·`wait`·`ask`·`message`·`reply`·`run_skill`
 │   ├── read_file.py         `read_file` — 해시라인(`LINE#HASH`) 형식 읽기

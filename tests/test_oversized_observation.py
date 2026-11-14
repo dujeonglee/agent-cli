@@ -32,6 +32,7 @@ from agent_cli.tools.base import (
     oversized_excerpt,
     persist_oversized,
 )
+from agent_cli.tools.registry import extract_file_paths
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loopkit import make_config
@@ -610,7 +611,9 @@ class TestReadContextVerbatim:
         long = "A" * 5000  # well over the old 200-char cell cap
         sdir = self._session(tmp_path, "Observation: " + long)
         res = tool_history(
-            {"query": "SELECT text FROM history WHERE turn=3"}, session_dir=sdir
+            {"query": "SELECT text FROM history WHERE turn=3"},
+            session_dir=sdir,
+            extract_paths=extract_file_paths,
         )
         assert res.success, res.error
         assert long in res.output  # verbatim, no '…' truncation
@@ -622,7 +625,9 @@ class TestReadContextVerbatim:
         code = "1#def f():\n2#    if x:\n3#        return y"
         sdir = self._session(tmp_path, code)
         res = tool_history(
-            {"query": "SELECT text FROM history WHERE turn=3"}, session_dir=sdir
+            {"query": "SELECT text FROM history WHERE turn=3"},
+            session_dir=sdir,
+            extract_paths=extract_file_paths,
         )
         assert res.success, res.error
         # newlines + indentation survive (no whitespace collapse)
@@ -633,7 +638,11 @@ class TestReadContextVerbatim:
         from agent_cli.tools.history import tool_history
 
         sdir = self._session(tmp_path, "hi")
-        res = tool_history({"query": "SELECT content FROM history"}, session_dir=sdir)
+        res = tool_history(
+            {"query": "SELECT content FROM history"},
+            session_dir=sdir,
+            extract_paths=extract_file_paths,
+        )
         # the spill-era 'content' column is gone → querying it is an error
         assert not res.success
 

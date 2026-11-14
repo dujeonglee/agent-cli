@@ -27,8 +27,8 @@ Table ``history`` — one row per history.jsonl record:
     author   TEXT     nickname (web multi-user)
     text     TEXT     flat searchable + readable surface
 
-Columns are derived on read (shared ``manager._classify_record`` /
-``extract_file_paths``), so the query works regardless of whether records carry
+Columns are derived on read (shared ``session.records._classify_record`` /
+``tools.registry.extract_file_paths``), so the query works regardless of whether records carry
 the persisted enrich keys. Read-only: a SQLite authorizer denies everything but
 SELECT/READ, and the in-memory DB is rebuilt per call and thrown away.
 """
@@ -36,6 +36,7 @@ SELECT/READ, and the in-memory DB is rebuilt per call and thrown away.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -87,13 +88,21 @@ _COLUMNS = (
 # ── Public entry point ────────────────────────────────────────────
 
 
-def tool_history(args: dict, *, session_dir: Path | None = None) -> ToolResult:
+def tool_history(
+    args: dict,
+    *,
+    session_dir: Path | None = None,
+    extract_paths: Callable[[list[dict]], list[str]],
+) -> ToolResult:
     """Run a SQL query over session history.
 
     ``args``: ``{query: "SELECT …", sessions?: current|all|<id>|[…]}``.
     With no ``query``, returns the schema + example queries + session list so
     the model can discover what to ask. ``session_dir`` scopes the default
-    (current session) when ``sessions`` is omitted.
+    (current session) when ``sessions`` is omitted. ``extract_paths`` fills the
+    ``files`` column — ``tools.registry.extract_file_paths``, handed in because
+    the registry imports this module (required: no default that would leave
+    ``files`` silently empty).
     """
     query = (args.get("query") or "").strip()
     sessions = args.get("sessions")
@@ -123,7 +132,7 @@ def tool_history(args: dict, *, session_dir: Path | None = None) -> ToolResult:
             ),
         )
 
-    rows = _load_rows(target_dirs)
+    rows = _load_rows(target_dirs, extract_paths=extract_paths)
     conn = _build_db(rows)
     try:
         return _run_sql(conn, query)
@@ -178,15 +187,15 @@ def _resolve_session_dirs(
 # ── Load records → table rows ──────────────────────────────────────
 
 
-def _load_rows(target_dirs: list[Path]) -> list[tuple]:
+def _load_rows(
+    target_dirs: list[Path], *, extract_paths: Callable[[list[dict]], list[str]]
+) -> list[tuple]:
     """Read every history.jsonl under the target dirs into table rows.
 
     Each record's ``kind``/``tools``/``text`` come from the shared
-    ``_classify_record`` and ``files`` from ``extract_file_paths`` (computed on
+    ``_classify_record`` and ``files`` from ``extract_paths`` (computed on
     read so any record shape works); ``turn``/``ts``/``author`` from the record.
     """
-    from agent_cli.context._file_extract import extract_file_paths
-
     rows: list[tuple] = []
     for sdir in target_dirs:
         if not sdir.is_dir():
@@ -206,7 +215,7 @@ def _load_rows(target_dirs: list[Path]) -> list[tuple]:
                         except json.JSONDecodeError:
                             continue
                         kind, tools, text = _classify_record(rec)
-                        files = extract_file_paths([rec])
+                        files = extract_paths([rec])
                         turn = rec.get("turn")
                         rows.append(
                             (
@@ -427,5 +436,12 @@ class HistoryTool(Tool):
         "the one row you need."
     )
 
+    def __init__(self, *, extract_paths: Callable[[list[dict]], list[str]]):
+        self._extract_paths = extract_paths
+
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        return tool_history(args, session_dir=ctx.session_dir if ctx else None)
+        return tool_history(
+            args,
+            session_dir=ctx.session_dir if ctx else None,
+            extract_paths=self._extract_paths,
+        )

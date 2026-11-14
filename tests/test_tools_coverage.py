@@ -20,6 +20,7 @@ from agent_cli.tools.read_file import (
     _read_one,
     compute_line_hash,
 )
+from agent_cli.tools.registry import extract_file_paths
 from agent_cli.tools.shell import tool_shell
 from agent_cli.tools.write_file import tool_write_file
 from tests.loop_ports import TEST_PORTS
@@ -1255,6 +1256,34 @@ class TestHistoryTool:
         assert "`query` is a read-only SELECT" in tool.description
         assert "read_context" not in tool.description
 
+    def test_registered_tool_fills_files_from_the_registry_extractor(
+        self, tmp_path, monkeypatch
+    ):
+        """레지스트리가 history 도구에 ``extract_file_paths`` 를 쥐여 준다 — history 는
+        registry 를 import 할 수 없어(registry 가 history 를 import) 생성 때 받는다.
+        필수 인자라 빠뜨리면 ``files`` 열이 조용히 비지 않고 TypeError 다."""
+        from agent_cli.tools.history import HistoryTool, tool_history
+        from agent_cli.tools.registry import TOOLS
+
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"assistant","thought":"t","ops":[{"action":"read_file","action_input":{"path":"auth.py"}}]}'
+            ],
+        )
+        result = TOOLS["history"].run(
+            {"query": "SELECT files FROM history"},
+            ctx=RunContext(session_dir=cur),
+        )
+        assert result.success
+        assert "files=auth.py" in result.output
+        with pytest.raises(TypeError):
+            HistoryTool()
+        with pytest.raises(TypeError):
+            tool_history({"query": "SELECT files FROM history"}, session_dir=cur)
+
     # ── No-query help ──────────────────────────────────────────
 
     def test_no_query_returns_help(self, tmp_path, monkeypatch):
@@ -1263,7 +1292,7 @@ class TestHistoryTool:
         monkeypatch.setattr(session_mod, "_SESSIONS_DIR", tmp_path / "sessions")
         from agent_cli.tools.history import tool_history
 
-        result = tool_history({})
+        result = tool_history({}, extract_paths=extract_file_paths)
         assert result.success
         assert "history" in result.output and "SELECT" in result.output
         # schema columns shown
@@ -1296,7 +1325,7 @@ class TestHistoryTool:
         )
         from agent_cli.tools.history import tool_history
 
-        result = tool_history({})  # no query → help
+        result = tool_history({}, extract_paths=extract_file_paths)  # no query → help
         assert result.success
         assert "1781440579" in result.output
 
@@ -1308,7 +1337,9 @@ class TestHistoryTool:
         from agent_cli.tools.history import tool_history
 
         result = tool_history(
-            {"query": "SELECT kind, text FROM history"}, session_dir=cur
+            {"query": "SELECT kind, text FROM history"},
+            session_dir=cur,
+            extract_paths=extract_file_paths,
         )
         assert result.success
         assert "kind=query" in result.output
@@ -1325,12 +1356,16 @@ class TestHistoryTool:
         monkeypatch.setattr(ctx_mod, "_sqlite", lambda: None)
 
         result = ctx_mod.tool_history(
-            {"query": "SELECT text FROM history"}, session_dir=cur
+            {"query": "SELECT text FROM history"},
+            session_dir=cur,
+            extract_paths=extract_file_paths,
         )
         assert not result.success
         assert "sqlite" in result.error.lower()
         # help (no query) does not need sqlite and still works
-        assert ctx_mod.tool_history({}, session_dir=cur).success
+        assert ctx_mod.tool_history(
+            {}, session_dir=cur, extract_paths=extract_file_paths
+        ).success
 
     def test_kind_classified_on_read(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
@@ -1347,7 +1382,9 @@ class TestHistoryTool:
         from agent_cli.tools.history import tool_history
 
         result = tool_history(
-            {"query": "SELECT kind FROM history ORDER BY seq"}, session_dir=cur
+            {"query": "SELECT kind FROM history ORDER BY seq"},
+            session_dir=cur,
+            extract_paths=extract_file_paths,
         )
         assert result.success
         out = result.output
@@ -1375,6 +1412,7 @@ class TestHistoryTool:
         result = tool_history(
             {"query": "SELECT loc, files FROM history WHERE files LIKE '%auth.py%'"},
             session_dir=cur,
+            extract_paths=extract_file_paths,
         )
         assert result.success
         assert "auth.py" in result.output
@@ -1396,6 +1434,7 @@ class TestHistoryTool:
         result = tool_history(
             {"query": "SELECT kind FROM history WHERE tools LIKE '%read_file%'"},
             session_dir=cur,
+            extract_paths=extract_file_paths,
         )
         assert result.success
         # action + observation both carry read_file; shell op excluded
@@ -1417,6 +1456,7 @@ class TestHistoryTool:
         result = tool_history(
             {"query": "SELECT text, author FROM history WHERE author='Alice'"},
             session_dir=cur,
+            extract_paths=extract_file_paths,
         )
         assert result.success
         assert "do X" in result.output and "Bob" not in result.output
@@ -1437,6 +1477,7 @@ class TestHistoryTool:
         result = tool_history(
             {"query": "SELECT turn FROM history WHERE turn>=1 ORDER BY turn"},
             session_dir=cur,
+            extract_paths=extract_file_paths,
         )
         assert result.success
         assert "turn=1" in result.output and "turn=2" in result.output
@@ -1457,6 +1498,7 @@ class TestHistoryTool:
         result = tool_history(
             {"query": "SELECT text FROM history WHERE text LIKE '%auth%'"},
             session_dir=cur,
+            extract_paths=extract_file_paths,
         )
         assert result.success
         assert "check the auth flow" in result.output
@@ -1469,7 +1511,8 @@ class TestHistoryTool:
         from agent_cli.tools.history import tool_history
 
         result = tool_history(
-            {"query": "SELECT DISTINCT session FROM history", "sessions": "all"}
+            {"query": "SELECT DISTINCT session FROM history", "sessions": "all"},
+            extract_paths=extract_file_paths,
         )
         assert result.success
         assert "session=s1" in result.output and "session=s2" in result.output
@@ -1481,7 +1524,11 @@ class TestHistoryTool:
         cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
         from agent_cli.tools.history import tool_history
 
-        result = tool_history({"query": "DELETE FROM history"}, session_dir=cur)
+        result = tool_history(
+            {"query": "DELETE FROM history"},
+            session_dir=cur,
+            extract_paths=extract_file_paths,
+        )
         assert not result.success
         assert "select" in result.error.lower()
 
@@ -1490,7 +1537,11 @@ class TestHistoryTool:
         cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
         from agent_cli.tools.history import tool_history
 
-        result = tool_history({"query": "DROP TABLE history"}, session_dir=cur)
+        result = tool_history(
+            {"query": "DROP TABLE history"},
+            session_dir=cur,
+            extract_paths=extract_file_paths,
+        )
         assert not result.success
 
     def test_bad_sql_friendly_error(self, tmp_path, monkeypatch):
@@ -1498,7 +1549,11 @@ class TestHistoryTool:
         cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
         from agent_cli.tools.history import tool_history
 
-        result = tool_history({"query": "SELECT nope FROM history"}, session_dir=cur)
+        result = tool_history(
+            {"query": "SELECT nope FROM history"},
+            session_dir=cur,
+            extract_paths=extract_file_paths,
+        )
         assert not result.success
         assert "sql error" in result.error.lower()
 
@@ -1511,7 +1566,8 @@ class TestHistoryTool:
         from agent_cli.tools.history import tool_history
 
         result = tool_history(
-            {"query": "SELECT session FROM history", "sessions": "s1"}
+            {"query": "SELECT session FROM history", "sessions": "s1"},
+            extract_paths=extract_file_paths,
         )
         assert result.success
         assert "session=s1" in result.output and "session=s2" not in result.output
@@ -1520,7 +1576,10 @@ class TestHistoryTool:
         self._patch_base(monkeypatch, tmp_path)
         from agent_cli.tools.history import tool_history
 
-        result = tool_history({"query": "SELECT * FROM history", "sessions": "nope"})
+        result = tool_history(
+            {"query": "SELECT * FROM history", "sessions": "nope"},
+            extract_paths=extract_file_paths,
+        )
         assert not result.success
         assert "not found" in result.error.lower()
 
@@ -1533,7 +1592,11 @@ class TestHistoryTool:
         )
         from agent_cli.tools.history import tool_history
 
-        result = tool_history({"query": "SELECT text FROM history"}, session_dir=cur)
+        result = tool_history(
+            {"query": "SELECT text FROM history"},
+            session_dir=cur,
+            extract_paths=extract_file_paths,
+        )
         assert result.success
         assert "valid line" in result.output
 
@@ -1547,7 +1610,9 @@ class TestHistoryTool:
         from agent_cli.tools.history import tool_history
 
         result = tool_history(
-            {"query": "SELECT loc, text FROM history"}, session_dir=cur
+            {"query": "SELECT loc, text FROM history"},
+            session_dir=cur,
+            extract_paths=extract_file_paths,
         )
         assert result.success
         assert "sub line" in result.output and "delegate-1" in result.output
@@ -1566,7 +1631,11 @@ class TestHistoryTool:
         cur = self._make_session(base, "s", lines)
         from agent_cli.tools.history import tool_history
 
-        result = tool_history({"query": "SELECT text FROM history"}, session_dir=cur)
+        result = tool_history(
+            {"query": "SELECT text FROM history"},
+            session_dir=cur,
+            extract_paths=extract_file_paths,
+        )
         assert result.success
         assert "80 row(s)" in result.output
         assert "line 79" in result.output  # all rows present, none capped
@@ -1578,7 +1647,9 @@ class TestHistoryTool:
         from agent_cli.tools.history import tool_history
 
         result = tool_history(
-            {"query": "SELECT text FROM history WHERE kind='final'"}, session_dir=cur
+            {"query": "SELECT text FROM history WHERE kind='final'"},
+            session_dir=cur,
+            extract_paths=extract_file_paths,
         )
         assert result.success
         assert "No rows" in result.output
