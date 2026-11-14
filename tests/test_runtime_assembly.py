@@ -165,7 +165,7 @@ class TestAgentRuntimeEquivalence:
         mcp.disconnect_all.side_effect = lambda: order.append("mcp")
         with (
             patch("agent_cli.render.render_spinner_stop") as spin,
-            patch("agent_cli.context.session.finalize_session") as fin,
+            patch("agent_cli.session.store.finalize_session") as fin,
         ):
             spin.side_effect = lambda: order.append("spinner")
             fin.side_effect = lambda s, c: order.append("finalize")
@@ -179,7 +179,7 @@ class TestAgentRuntimeEquivalence:
         registry, _mcp, session = self._mocks(stuck=["agt-1"])
         with (
             patch("agent_cli.render.render_spinner_stop"),
-            patch("agent_cli.context.session.finalize_session"),
+            patch("agent_cli.session.store.finalize_session"),
         ):
             teardown_session(session, None, agent_registry=registry, warn_stuck=False)
             registry.open_human_question_keys.assert_not_called()
@@ -191,7 +191,7 @@ class TestAgentRuntimeEquivalence:
         저장 생략 (종전 _finalize_run 의 session None 조기 반환과 동형)."""
         with (
             patch("agent_cli.render.render_spinner_stop"),
-            patch("agent_cli.context.session.finalize_session") as fin,
+            patch("agent_cli.session.store.finalize_session") as fin,
         ):
             teardown_session(None, None)
             fin.assert_not_called()
@@ -210,7 +210,7 @@ class TestAgentRuntimeEquivalence:
         registry.shutdown_all.side_effect = lambda: order.append("shutdown")
         with (
             patch("agent_cli.render.render_spinner_stop"),
-            patch("agent_cli.context.session.finalize_session") as fin,
+            patch("agent_cli.session.store.finalize_session") as fin,
         ):
             fin.side_effect = lambda s, c: order.append("finalize")
             teardown_session(
@@ -233,7 +233,7 @@ class TestAgentRuntimeEquivalence:
         mcp.disconnect_all.side_effect = lambda: order.append("mcp")
         with (
             patch("agent_cli.render.render_spinner_stop"),
-            patch("agent_cli.context.session.finalize_session"),
+            patch("agent_cli.session.store.finalize_session"),
         ):
             teardown_session(None, None, agent_registry=registry, mcp_manager=mcp)
         assert order.index("shutdown") < order.index("mcp")
@@ -706,9 +706,9 @@ class TestRunCommandTeardownIntegration:
                 patch("agent_cli.main._setup_mcp", return_value=("MCP", {}))
             )
             st.enter_context(
-                patch("agent_cli.context.session.create_session", return_value=session)
+                patch("agent_cli.session.store.create_session", return_value=session)
             )
-            st.enter_context(patch("agent_cli.context.session.save_meta"))
+            st.enter_context(patch("agent_cli.session.store.save_meta"))
             st.enter_context(patch("agent_cli.main._build_context", return_value=None))
             st.enter_context(patch("agent_cli.hooks.load_hooks", return_value={}))
             st.enter_context(

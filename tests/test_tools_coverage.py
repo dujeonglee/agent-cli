@@ -1258,7 +1258,7 @@ class TestHistoryTool:
     # ── No-query help ──────────────────────────────────────────
 
     def test_no_query_returns_help(self, tmp_path, monkeypatch):
-        import agent_cli.context.session as session_mod
+        import agent_cli.session.store as session_mod
 
         monkeypatch.setattr(session_mod, "_SESSIONS_DIR", tmp_path / "sessions")
         from agent_cli.tools.history import tool_history
@@ -1273,7 +1273,7 @@ class TestHistoryTool:
     def test_help_lists_sessions(self, tmp_path, monkeypatch):
         import json as _json
 
-        import agent_cli.context.session as session_mod
+        import agent_cli.session.store as session_mod
 
         monkeypatch.setattr(session_mod, "_SESSIONS_DIR", tmp_path / "sessions")
         sdir = tmp_path / "sessions" / "1781440579"

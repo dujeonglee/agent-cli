@@ -154,7 +154,7 @@ def generate_subdir_name(prefix: str, name: str) -> str:
 
 def _generate_run_dir_name(agent_name: str) -> str:
     """Generate a unique run directory name: run_{name}_{hash}_{ts}"""
-    from agent_cli.context.session import RUN_PREFIX
+    from agent_cli.session.store import RUN_PREFIX
 
     return generate_subdir_name(RUN_PREFIX, agent_name or "task")
 

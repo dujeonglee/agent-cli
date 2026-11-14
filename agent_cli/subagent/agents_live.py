@@ -50,8 +50,8 @@ from agent_cli.constants import (
     has_words,
     is_private_owner,
 )
-from agent_cli.context.session import AGENTS_DIR
 from agent_cli.loop.kind import LoopKindError
+from agent_cli.session.store import AGENTS_DIR
 from agent_cli.token_estimator import estimate_tokens
 from agent_cli.tools.result import ToolResult
 

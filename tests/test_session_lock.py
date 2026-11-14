@@ -14,7 +14,7 @@ import textwrap
 
 import pytest
 
-from agent_cli.context.session_lock import (
+from agent_cli.session.lock import (
     SessionBusy,
     claim_session,
     release_session,
@@ -23,7 +23,7 @@ from agent_cli.context.session_lock import (
 _HOLD = textwrap.dedent(
     """
     import sys, time
-    from agent_cli.context.session_lock import claim_session
+    from agent_cli.session.lock import claim_session
     claim_session(sys.argv[1])
     print("held", flush=True)
     time.sleep(60)
@@ -86,7 +86,7 @@ class TestCliRefusesABusySession:
         import typer
 
         from agent_cli import main
-        from agent_cli.context import session as session_mod
+        from agent_cli.session import store as session_mod
 
         meta = session_mod.SessionMeta(
             session_id="s1", workspace=str(tmp_path), updated_at=""

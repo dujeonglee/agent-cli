@@ -370,7 +370,7 @@ def teardown_session(
     if mcp_manager:
         mcp_manager.disconnect_all()
     if session is not None:
-        from agent_cli.context.session import finalize_session
+        from agent_cli.session.store import finalize_session
 
         finalize_session(session, ctx)
 

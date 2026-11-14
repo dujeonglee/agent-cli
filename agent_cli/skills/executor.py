@@ -159,8 +159,8 @@ class SkillLoop(LoopKind):
     ) -> None:
         import uuid as _uuid
 
-        from agent_cli.context.session import SKILL_PREFIX
         from agent_cli.hooks import merge_hooks_configs
+        from agent_cli.session.store import SKILL_PREFIX
         from agent_cli.subagent.report import generate_subdir_name
 
         self.skill = skill

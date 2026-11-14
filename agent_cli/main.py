@@ -750,7 +750,7 @@ def try_dispatch_agent_or_skill(
     fall through to the LLM: a typo shouldn't accidentally trigger a
     round-trip with the LLM (the web UI's dispatch contract).
     """
-    from agent_cli.context.session import save_meta
+    from agent_cli.session.store import save_meta
 
     if message.startswith("@"):
         # 상주 방향 명령이 먼저 — ``@agents`` 통합 목록 / ``@agt-<key>``
@@ -1511,7 +1511,7 @@ def _apply_title(session, title: str) -> None:
 def _load_resume_session(resume_id: str):
     """``--resume <id>`` 공용 경로: unknown ID 는 provider 핸드셰이크 전에
     fail-fast, 성공 시 SessionMeta 반환 + 배너. run/web 동형."""
-    from agent_cli.context.session import load_session
+    from agent_cli.session.store import load_session
 
     session = load_session(resume_id)
     if session is None:
@@ -1536,8 +1536,8 @@ def _claim_session(session) -> None:
     """한 세션 = 한 프로세스 (docs/schedule/DESIGN.md §4.3). 다른 프로세스가
     이미 연 세션이면 여기서 끝낸다 — 둘이 같은 history 에 쓰고 같은 예약을
     발화하는 것을 기동 시점에 막는다."""
-    from agent_cli.context.session import get_session_dir
-    from agent_cli.context.session_lock import SessionBusy, claim_session
+    from agent_cli.session.lock import SessionBusy, claim_session
+    from agent_cli.session.store import get_session_dir
 
     try:
         claim_session(get_session_dir(session))
@@ -1551,8 +1551,8 @@ def _build_context(session, binding, *, resume: bool = False):
     토큰 예산은 바인딩에서 매번 읽는다. 노브(압축 비율·무진전 한도·사고·문법)는
     여기서 받지 않는다 — 소유자들이 전부 선 뒤 `knobs.apply_all` 이 CLI > env >
     기본값으로 적용한다 (v10.43.0)."""
-    from agent_cli.context.session import get_session_dir
     from agent_cli.paths import scratch_dir
+    from agent_cli.session.store import get_session_dir
 
     # 모델이 쓰는 임시 디렉토리는 세션과 함께 생긴다 (v10.90.0) — 프롬프트가 가리키는
     # 곳이 실제로 있어야 첫 쓰기가 실패하지 않는다.
@@ -1746,7 +1746,7 @@ def run(
 
         TOOLS.update(mcp_tools)
 
-    from agent_cli.context.session import create_session, save_meta
+    from agent_cli.session.store import create_session, save_meta
 
     session = session_resumed if session_resumed is not None else create_session()
     _apply_title(session, title)
@@ -2210,7 +2210,7 @@ def sessions(
     ),
 ):
     """List previous sessions. Use with 'web --resume <id>' to continue."""
-    from agent_cli.context.session import list_sessions as _list_sessions
+    from agent_cli.session.store import list_sessions as _list_sessions
 
     ws = workspace or os.getcwd()
     session_list = _list_sessions(ws)
@@ -2321,12 +2321,12 @@ def _print_session(s, indent: str = "  ") -> None:
     the last user↔complete pair from history (the old ``query`` field is gone).
 
     답이 없는 세션은 쥔 프로세스가 살아 있을 때만 ``(in progress)`` (v10.127.2) —
-    `session_lock.session_is_open`. 닫혀 있으면 ``(no answer)``(종전엔 LLM 실패로 끝난
+    `session.lock.session_is_open`. 닫혀 있으면 ``(no answer)``(종전엔 LLM 실패로 끝난
     세션까지 전부 "in progress" 였다).
     """
     from agent_cli.context.exchanges import session_summary
-    from agent_cli.context.session import get_session_dir
-    from agent_cli.context.session_lock import session_is_open
+    from agent_cli.session.lock import session_is_open
+    from agent_cli.session.store import get_session_dir
 
     console.print(
         f"{indent}[{C['accent']}]{s.session_id}[/] [{C['muted']}]{s.updated_at}[/]"
@@ -2363,7 +2363,7 @@ def _maybe_resume_recent(workspace: str, prompt_fn) -> tuple:
     non-interactive (pipes / cron), in which case we never prompt and always
     start new. Returns ``(SessionMeta, is_resume)``.
     """
-    from agent_cli.context.session import (
+    from agent_cli.session.store import (
         create_session,
         list_sessions,
         load_session,
@@ -2678,7 +2678,7 @@ def web(
     # 2. Session + ContextManager.
     import sys
 
-    from agent_cli.context.session import (
+    from agent_cli.session.store import (
         get_session_dir,
         save_meta,
     )
@@ -2920,13 +2920,13 @@ def web(
     # (host/port/token/pid). Written on start, removed in finally on exit (and
     # self-reaped via --idle-timeout), so the board can spawn-or-attach by
     # reading one file. Lives next to history.jsonl in the session dir.
-    from agent_cli.context.session import get_session_dir
     from agent_cli.instance_file import (
         remove_instance_file,
         remove_status_file,
         write_instance_file,
         write_status_file,
     )
+    from agent_cli.session.store import get_session_dir
 
     _session_dir = get_session_dir(session)
     write_instance_file(

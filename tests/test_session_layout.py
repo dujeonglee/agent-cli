@@ -1,4 +1,4 @@
-"""세션 디렉토리 배치는 `context.session` 이 한 번 선언한다 (v10.42.0).
+"""세션 디렉토리 배치는 `session.store` 가 한 번 선언한다 (v10.42.0).
 
 종전엔 만드는 쪽 셋(main ctx·팀원·delegate/스킬)이 각자 이름을 박았고, 읽는 쪽
 (`history` 도구)은 배치를 모른 채 `rglob` 로 "세션 밑은 전부 대화" 라고 추정했다.
@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.context.session import (
+from agent_cli.session.store import (
     AGENTS_DIR,
     HARNESS_DIR,
     HISTORY_NAME,

@@ -84,7 +84,7 @@ class TestSessionRunner:
         from agent_cli.runtime import teardown_session
 
         build_hook_runner()
-        with patch("agent_cli.context.session.finalize_session"):
+        with patch("agent_cli.session.store.finalize_session"):
             teardown_session(MagicMock(), None)
         assert get_hook_runner() is None
 

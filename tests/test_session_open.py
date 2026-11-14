@@ -15,8 +15,8 @@ import pytest
 from rich.console import Console
 
 import agent_cli.main as m
-from agent_cli.context import session_lock
-from agent_cli.context.session_lock import (
+from agent_cli.session import lock as session_lock
+from agent_cli.session.lock import (
     claim_session,
     release_session,
     session_is_open,
@@ -26,7 +26,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 _HOLDER = """
 import sys, time
-from agent_cli.context.session_lock import claim_session
+from agent_cli.session.lock import claim_session
 claim_session(sys.argv[1])
 print("ready", flush=True)
 time.sleep(60)
@@ -95,8 +95,8 @@ def test_print_session_says_in_progress_only_when_open(
     tmp_path, monkeypatch, is_open, shown
 ):
     from agent_cli.context import exchanges as _exchanges
-    from agent_cli.context import session as _session
-    from agent_cli.context.session import SessionMeta
+    from agent_cli.session import store as _session
+    from agent_cli.session.store import SessionMeta
 
     monkeypatch.setattr(_session, "_SESSIONS_DIR", tmp_path)
     monkeypatch.setattr(
@@ -120,8 +120,8 @@ def test_print_session_says_in_progress_only_when_open(
 
 def test_answered_session_shows_the_answer(tmp_path, monkeypatch):
     from agent_cli.context import exchanges as _exchanges
-    from agent_cli.context import session as _session
-    from agent_cli.context.session import SessionMeta
+    from agent_cli.session import store as _session
+    from agent_cli.session.store import SessionMeta
 
     monkeypatch.setattr(_session, "_SESSIONS_DIR", tmp_path)
     monkeypatch.setattr(_exchanges, "session_summary", lambda s: ("q", "the answer"))
