@@ -116,7 +116,7 @@ class TestAdvertisedOnlyWhereAWakeExists:
 
     def test_main_queue_and_resident_inbox_show_wait(self):
         assert "wait" in self._tools(WAKEABLE)
-        assert "wait" in self._tools(make_ports(absorb_inbox=list))
+        assert "wait" in self._tools(make_ports(inbox=list))
 
 
 class TestWaitEndsTheRun:

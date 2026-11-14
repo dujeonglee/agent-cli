@@ -1032,7 +1032,7 @@ class TestAgentLoopsAreUntouched:
             key="agt-x",
             message_handler=None,
             questions=None,
-            absorb_inbox=None,
+            inbox=None,
             peer_roster=None,
         )
 

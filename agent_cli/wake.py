@@ -241,7 +241,7 @@ def mail_record(mail: dict) -> dict:
 
 
 def _private_inbox(owner: str):
-    """private 주소의 메일함을 턴 경계에 흡수하는 ``absorb_inbox`` 포트 (v10.84.0)."""
+    """private 주소의 메일함을 턴 경계에 흡수하는 함수 — 메일함 포트의 ``take`` (v10.84.0)."""
 
     def absorb() -> list[dict]:
         reg = get_agent_registry()

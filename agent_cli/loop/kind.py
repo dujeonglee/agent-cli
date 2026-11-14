@@ -276,9 +276,9 @@ class LoopKind:
         registry = self.ports.agent_registry
         if registry is not None:
             items.extend({"mail": r} for r in registry.drain_replies())
-        absorb = self.ports.absorb_inbox
-        if absorb is not None:
-            items.extend(absorb() or [])
+        mailbox = self.ports.mailbox
+        if mailbox.has_inbox:
+            items.extend(mailbox.take() or [])
         return items
 
     def prompt_profile(self) -> PromptProfile:
@@ -380,7 +380,6 @@ class PrivateLoop(LoopKind):
             route_message=None,
             dequeue_user_message=None,
             enqueue_user_message=None,
-            absorb_inbox=_private_inbox(owner),
             peer_roster=None,
             mailbox=Mailbox(get_agent_registry(), owner, take=_private_inbox(owner)),
             unwired={
@@ -406,7 +405,7 @@ class PrivateLoop(LoopKind):
         return WAIT_BLOCK  # 런이 곧 함수 호출 — 메일함에 통지가 올 때까지 여기서 막는다
 
     def intake(self) -> list[dict]:
-        return list(self.ports.absorb_inbox() or [])  # 자기 메일함 → `mail_record`
+        return list(self.ports.mailbox.take() or [])  # 자기 메일함 → `mail_record`
 
     def prompt_profile(self) -> PromptProfile:
         return PromptProfile(

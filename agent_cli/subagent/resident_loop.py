@@ -67,16 +67,16 @@ class ResidentLoop(LoopKind):
             key=tm.key,
             message_handler=registry._make_message_handler(tm),
             questions=registry.question_port(tm.key),
-            absorb_inbox=lambda: registry.absorb_pending(tm),
+            inbox=lambda: registry.absorb_pending(tm),
             peer_roster=self.peer_roster,
         )
         self._items: list[dict] = []
 
     @staticmethod
     def make_ports(
-        *, key: str, message_handler, questions, absorb_inbox, peer_roster
+        *, key: str, message_handler, questions, inbox, peer_roster
     ) -> LoopPorts:
-        """상주 런의 포트. ``absorb_inbox`` (v9.25.0) 가 턴 경계마다 받은편지함을 이 런으로
+        """상주 런의 포트. ``inbox`` (v9.25.0, 메일함 포트의 ``take``) 가 턴 경계마다 받은편지함을 이 런으로
         흡수하고, ``peer_roster`` (v10.1.0) 가 매 턴 꼬리에 실을 동료 로스터를 돌려준다."""
         from agent_cli.loop.ports import (
             _AS_BEFORE,
@@ -91,9 +91,8 @@ class ResidentLoop(LoopKind):
             owner=f"agent:{key}",
             message_handler=message_handler,
             questions=questions,
-            absorb_inbox=absorb_inbox,
             peer_roster=peer_roster,
-            mailbox=Mailbox(get_agent_registry(), f"agent:{key}", take=absorb_inbox),
+            mailbox=Mailbox(get_agent_registry(), f"agent:{key}", take=inbox),
             agent_registry=None,
             mcp_manager=None,
             hook_runner=_hook_runner_port(),
@@ -123,7 +122,7 @@ class ResidentLoop(LoopKind):
     def intake(self) -> list[dict]:
         """런 도중 받은편지함에 도착한 항목을 지금 흡수한다 (v9.25.0) — 11시간 런 동안
         오케스트레이터 메시지 8건이 안 읽히던 것."""
-        return list(self.registry.absorb_pending(self.tm) or [])
+        return list(self.ports.mailbox.take() or [])
 
     def prompt_profile(self) -> PromptProfile:
         return PromptProfile(

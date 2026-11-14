@@ -217,7 +217,7 @@ class TestPrivateLoop:
                 author="harness",
                 expects_reply=False,
             )
-            assert [m["record"]["tool"] for m in k.ports.absorb_inbox()] == ["job"]
+            assert [m["record"]["tool"] for m in k.ports.mailbox.take()] == ["job"]
             reg.deliver(
                 "run:t9",
                 mail={"kind": "job", "output": "late", "success": True},
@@ -295,7 +295,7 @@ class TestKindsStateTheirPolicy:
             == WAIT_END_RUN
         )
         assert (
-            make_kind(ports=make_ports(owner="run:x", absorb_inbox=list)).wait_policy()
+            make_kind(ports=make_ports(owner="run:x", inbox=list)).wait_policy()
             == WAIT_BLOCK
         )
 

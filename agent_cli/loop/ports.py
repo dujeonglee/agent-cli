@@ -59,12 +59,6 @@ class LoopPorts:
     #: 넣는다. 사람이 입력창에 친 메시지와 같은 길(다음 턴 경계 흡수 → ``u-N`` 장부)로
     #: 가야 하는 하니스 쪽 입력이 쓴다: 제자리 고리 확인(StaleGuard)의 Hint.
     enqueue_user_message: Any
-    #: 상주 에이전트 전용 (v9.25.0): 턴 경계에서 받은편지함을 비워
-    #: ``[{"record": …} | {"user_request": …}]`` 로 돌려주는 콜러블. 런 도중
-    #: 도착한 요청이 다음 런까지 기다리지 않게 한다 — main 이 ``dequeue_user_
-    #: message``/메일박스로 하는 일의 상주판. 장부·질문·영속은 레지스트리 쪽이
-    #: 한다(서브루프는 레지스트리에 닿지 않는다).
-    absorb_inbox: Any
     #: 상주 에이전트 전용 (v10.1.0): 매 턴 꼬리에 실을 **동료 로스터**를 돌려주는
     #: 콜러블(``() -> str``). 종전엔 로스터가 런 시작에 한 번 시스템 프롬프트에
     #: 박혀, 런 도중 spawn 된 동료를 그 런이 끝날 때까지 못 봤다(실측 cnr60g:
@@ -75,7 +69,9 @@ class LoopPorts:
     #: (레지스트리가 없는 세션이면 그 안이 None 일 뿐 — 미연결이 아니다). 권한인
     #: ``agent_registry`` 와 갈라 둔다: 깨우기 판정·체크인·제자리 기다림은 모든 루프의 일이다.
     #: 엔진은 우편 일을 이것으로만 한다 — 전역 에이전트 레지스트리를 읽지 않는다(v10.133.28,
-    #: 가드 `tests/test_mailbox.py`).
+    #: 가드 `tests/test_mailbox.py`). 턴 경계에 흡수할 받은편지함(`has_inbox`·`take`)도 여기
+    #: 있다(v10.133.29, 종전 포트 ``absorb_inbox``): 상주(v9.25.0)·private(v10.84.0)만 —
+    #: 런 도중 도착한 요청·통지가 다음 런까지 기다리지 않게 한다. main 은 입력 큐·메일박스다.
     mailbox: Any
 
     #: 미연결 포트의 **사유** — 이름 → 왜. 값이 `None` 인 포트는 여기
@@ -97,10 +93,10 @@ class LoopPorts:
 
     def wakeable(self) -> bool:
         """이 루프를 **깨울 길이 있는가** (v10.65.0, `wait` 의 전제) — main 은 입력
-        큐(``dequeue_user_message``), 상주는 받은편지함(``absorb_inbox``). 스킬·
-        일회성 루프는 둘 다 없다: 결과가 호출자에게 돌아가는 인라인 런이라 끝나면
-        그만이고, `wait` 로 끝낸 결과는 호출자에게 "기다리는 중" 으로 돌아가 버린다."""
-        return self.dequeue_user_message is not None or self.absorb_inbox is not None
+        큐(``dequeue_user_message``), 상주·private(one-shot·하니스) 는 받은편지함(``mailbox.has_inbox``). 스킬
+        루프는 둘 다 없다: 결과가 호출자에게 돌아가는 인라인 런이라 끝나면 그만이고,
+        `wait` 로 끝낸 결과는 호출자에게 "기다리는 중" 으로 돌아가 버린다."""
+        return self.dequeue_user_message is not None or self.mailbox.has_inbox
 
     def handler_resources(self) -> dict[str, Any]:
         """``Tool.requires_handler`` 가 보는 뷰 — 손으로 안 적는다.
@@ -130,7 +126,6 @@ class LoopPorts:
 # 유지" 로 적어 둔다 — 지어낸 근거보다 낫다.
 
 _WEB_ONLY = "main 루프 전용 — 입력 큐가 있는 호스트(run·web)에만 있다"
-_NO_INBOX = "받은편지함이 없다 — main 은 웹 큐·메일박스, 일회성 루프는 받을 상대가 없다"
 _NO_HOOK_RUNNER = (
     "세션 부트스트랩(run/web 의 build_hook_runner)을 거치지 않은 직접 호출 경로"
 )

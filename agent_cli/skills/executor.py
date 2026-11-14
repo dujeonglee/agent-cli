@@ -211,7 +211,6 @@ class SkillLoop(LoopKind):
         에이전트에게 보고해야 한다(기본값 없음: 상속이 빠지면 조용히 main 으로 가므로)."""
         from agent_cli.loop.ports import (
             _AS_BEFORE,
-            _NO_INBOX,
             _RESIDENT_ROSTER,
             _WEB_ONLY,
             LoopPorts,
@@ -229,7 +228,6 @@ class SkillLoop(LoopKind):
             route_message=None,
             dequeue_user_message=None,
             enqueue_user_message=None,
-            absorb_inbox=None,
             peer_roster=None,
             mailbox=Mailbox(get_agent_registry(), owner),
             unwired={
@@ -240,7 +238,6 @@ class SkillLoop(LoopKind):
                 "route_message": _WEB_ONLY,
                 "dequeue_user_message": _WEB_ONLY,
                 "enqueue_user_message": _WEB_ONLY,
-                "absorb_inbox": _NO_INBOX,
                 "peer_roster": _RESIDENT_ROSTER,
             },
         )

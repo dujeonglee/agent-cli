@@ -47,7 +47,7 @@ def _all_ports():
             route_message=_S,
         ),
         "resident": ResidentLoop.make_ports(
-            key="k1", message_handler=_S, questions=_S, absorb_inbox=_S, peer_roster=_S
+            key="k1", message_handler=_S, questions=_S, inbox=_S, peer_roster=_S
         ),
         "skill": SkillLoop.make_ports(agent_registry=_Reg(), owner="agent:parent"),
         "oneshot": PrivateLoop.make_ports("run:parent"),
