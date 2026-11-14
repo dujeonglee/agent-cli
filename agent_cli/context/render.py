@@ -12,6 +12,7 @@ import json
 
 from agent_cli import images as _images
 from agent_cli.token_estimator import estimate_tokens, utf8_len
+from agent_cli.tools.registry import TOOLS
 
 # ── Defaults / constants ─────────────────────────────────
 DEFAULT_TOKEN_BUDGET = 100_000
@@ -31,7 +32,6 @@ def _context_view(message: dict) -> dict:
     """
     if message.get("role") != "assistant":
         return message
-    from agent_cli.tools import TOOLS  # lazy: registry → context.render cycle
 
     def _view(action: str, ai):
         if not action or not isinstance(ai, dict):
@@ -299,10 +299,7 @@ def _to_summary_text(msg: dict) -> str:
     op_list = ops if isinstance(ops, list) else ([msg] if msg.get("action") else [])
     # Delegate the per-action label to the tool itself (sibling of
     # touched_paths): each tool reads its OWN prefixed/array action_input
-    # shape. Lazy import avoids the module-load cycle (registry →
-    # context-tool → context.render).
-    from agent_cli.tools.registry import TOOLS
-
+    # shape.
     action_lines: list[str] = []
     for op in op_list:
         if not isinstance(op, dict):
