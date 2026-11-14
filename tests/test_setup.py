@@ -92,7 +92,7 @@ class TestSelectModelRouting:
             ) as mock_list,
             patch("agent_cli.setup.IntPrompt.ask", return_value=2),
         ):
-            selected = wiz._select_model("openai", "http://x/v1", "")
+            selected = wiz._select_model("openai", "http://x/v1", Credentials())
         mock_list.assert_called_once()
         assert selected == "m2"
 
@@ -102,7 +102,7 @@ class TestSelectModelRouting:
             patch("agent_cli.setup._list_models", return_value=[]),
             patch("agent_cli.setup.Prompt.ask", return_value="typed-model"),
         ):
-            selected = wiz._select_model("openai", "http://x/v1", "")
+            selected = wiz._select_model("openai", "http://x/v1", Credentials())
         assert selected == "typed-model"
 
     def test_anthropic_provider_lists_models(self):
@@ -115,7 +115,9 @@ class TestSelectModelRouting:
             ) as mock_list,
             patch("agent_cli.setup.IntPrompt.ask", return_value=2),
         ):
-            selected = wiz._select_model("anthropic", "http://x/v1", "k")
+            selected = wiz._select_model(
+                "anthropic", "http://x/v1", Credentials(api_key="k")
+            )
         mock_list.assert_called_once()
         # listing was queried with the anthropic provider
         assert (
@@ -130,7 +132,7 @@ class TestSelectModelRouting:
             patch("agent_cli.setup._list_models", return_value=[]),
             patch("agent_cli.setup.Prompt.ask", return_value="claude-typed"),
         ):
-            selected = wiz._select_model("anthropic", "http://x/v1", "")
+            selected = wiz._select_model("anthropic", "http://x/v1", Credentials())
         assert selected == "claude-typed"
 
 

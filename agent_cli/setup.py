@@ -16,7 +16,11 @@ from rich.table import Table
 from rich.text import Text
 
 from agent_cli.config import save_config
-from agent_cli.providers.credentials import Credentials
+from agent_cli.providers.credentials import (
+    Credentials,
+    ExtraHeaderError,
+    credentials_from_config,
+)
 
 console = Console()
 
@@ -55,6 +59,34 @@ def _list_models(
     return []
 
 
+def _existing_extra_headers():
+    """기존 유저 config.json 의 ``extra_headers`` 원본 — 없거나 못 읽으면 None.
+
+    마법사는 추가 헤더를 묻지 않으므로 저장할 때 이것을 그대로 되쓴다(보드나 손으로
+    적은 것이 마법사 한 번에 사라지지 않게)."""
+    from agent_cli.config import ConfigError, read_config_file
+    from agent_cli.paths import user_dir
+
+    path = user_dir() / "config.json"
+    if not path.is_file():
+        return None
+    try:
+        return read_config_file(path).get("extra_headers")
+    except ConfigError:
+        return None
+
+
+def _wizard_credentials(api_key: str, extra_headers) -> Credentials:
+    """모델 목록 조회용 — 기존 추가 헤더가 규칙을 어기면 헤더 없이 묻는다(마법사는
+    깨진 설정을 고치는 길이라 멈추지 않는다; 부팅이 그 오류를 이름과 함께 알린다)."""
+    try:
+        return credentials_from_config(
+            {"extra_headers": extra_headers}, api_key=api_key
+        )
+    except ExtraHeaderError:
+        return Credentials(api_key=api_key)
+
+
 class SetupWizard:
     """Interactive setup wizard for agent-cli configuration."""
 
@@ -67,12 +99,19 @@ class SetupWizard:
         self._show_existing_configs()
         provider = self._select_provider()
         base_url, api_key = self._configure_connection(provider)
-        default_model = self._select_model(provider, base_url, api_key)
+        # 추가 헤더(`extra_headers`)는 마법사가 묻지 않는다 — 기존 설정의 것을 그대로
+        # 두고(저장 때 보존), 모델 목록 조회에도 싣는다(게이트웨이가 요구할 수 있다).
+        extra_headers = _existing_extra_headers()
+        default_model = self._select_model(
+            provider, base_url, _wizard_credentials(api_key, extra_headers)
+        )
         if not default_model:
             self.console.print("[yellow]No model selected. Setup cancelled.[/]")
             return None
 
         config = self._build_config(provider, base_url, api_key, default_model)
+        if extra_headers is not None:
+            config["extra_headers"] = extra_headers
         if not self._review(config):
             self.console.print("[yellow]Setup cancelled.[/]")
             return None
@@ -176,7 +215,9 @@ class SetupWizard:
         self.console.print()
         return base_url, api_key
 
-    def _select_model(self, provider: str, base_url: str, api_key: str) -> str:
+    def _select_model(
+        self, provider: str, base_url: str, credentials: Credentials
+    ) -> str:
         self.console.print("[bold]3. Select Default Model[/]")
         # Both providers expose ``/models`` (omlx serves the same models under
         # both APIs; real Anthropic has GET /v1/models too) — list them so the
@@ -184,14 +225,18 @@ class SetupWizard:
         # when listing fails (no key / unsupported endpoint).
         if provider == "anthropic":
             return self._select_model_from_list(
-                base_url, api_key, "anthropic", "claude-sonnet-4-20250514"
+                base_url, credentials, "anthropic", "claude-sonnet-4-20250514"
             )
-        return self._select_model_from_list(base_url, api_key, "openai", "gpt-4o")
+        return self._select_model_from_list(base_url, credentials, "openai", "gpt-4o")
 
     def _select_model_from_list(
-        self, base_url: str, api_key: str, provider: str, manual_default: str
+        self,
+        base_url: str,
+        credentials: Credentials,
+        provider: str,
+        manual_default: str,
     ) -> str:
-        models = _list_models(base_url, Credentials(api_key=api_key), provider)
+        models = _list_models(base_url, credentials, provider)
         if not models:
             self.console.print(
                 "   [yellow]Could not list models from /models. "

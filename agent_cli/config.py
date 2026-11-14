@@ -240,7 +240,11 @@ _ENV_MAP = {
     "AGENT_CLI_API_KEY": "api_key",
 }
 
-_cached_config: dict[str, str] | None = None
+# 문자열이 아닌 값을 그대로 두는 키 — 나머지는 종전대로 ``str()`` 로 접는다.
+# ``extra_headers`` 는 객체 목록이다(검증은 ``providers.credentials``).
+_STRUCTURED_KEYS = frozenset({"extra_headers"})
+
+_cached_config: dict[str, Any] | None = None
 
 
 class ConfigError(Exception):
@@ -268,11 +272,13 @@ def read_config_file(path: Path) -> dict:
     return data
 
 
-def load_config(use_cache: bool = True) -> dict[str, str]:
+def load_config(use_cache: bool = True) -> dict[str, Any]:
     """Load config by merging: env vars → user config (v9.0.0: 유저 단일).
 
     Higher priority layers override lower ones per-field.
-    Returns a dict with keys: provider, base_url, api_key, default_model.
+    Returns a dict with keys: provider, base_url, api_key, default_model
+    (strings) and, when set, ``extra_headers`` (the raw list — validated by
+    ``providers.credentials.credentials_from_config``).
     Raises :class:`ConfigError` when a config file exists but cannot be read.
     """
     global _cached_config
@@ -280,7 +286,7 @@ def load_config(use_cache: bool = True) -> dict[str, str]:
         return _cached_config
 
     # Layer 1: environment variables (lowest priority)
-    merged: dict[str, str] = {}
+    merged: dict[str, Any] = {}
     for env_key, config_key in _ENV_MAP.items():
         val = os.environ.get(env_key, "")
         if val:
@@ -291,7 +297,7 @@ def load_config(use_cache: bool = True) -> dict[str, str]:
         if config_path.is_file():
             for k, v in read_config_file(config_path).items():
                 if v:  # skip empty values
-                    merged[k] = str(v)
+                    merged[k] = v if k in _STRUCTURED_KEYS else str(v)
 
     _cached_config = merged
     return merged

@@ -65,8 +65,11 @@ _DIRS: tuple[str, ...] = (
 # ── 정확한 파일 ────────────────────────────────────────────
 # 상시 읽는 디렉터리 **안의** 자격증명만 집는다 — 디렉터리째 넣으면 툴체인
 # 읽기가 전부 걸린다(`~/.cargo/` 는 크레이트 소스, `~/.docker/` 는 buildx).
+_AGENT_CLI_CONFIG = "~/.agent-cli/config.json"
+# 확인 창 문구에 무엇이 들었는지 — 모델이 이 파일을 읽으려 할 때 보인다(영어).
+_AGENT_CLI_CONFIG_HOLDS = "(api_key, extra_headers)"
 _FILES: tuple[str, ...] = (
-    "~/.agent-cli/config.json",  # 이 도구 자신의 api_key (config.py:3-5, :162)
+    _AGENT_CLI_CONFIG,  # 이 도구 자신의 api_key·extra_headers (config.py)
     "~/.docker/config.json",
     "~/.netrc",
     "~/_netrc",
@@ -166,6 +169,8 @@ def sensitive_reason(path: str | Path) -> str | None:
             return f"credential directory {d}"
     for f in _FILES:
         if _fold(str(resolved)) == _fold(str(canonical(f))):
+            if f == _AGENT_CLI_CONFIG:
+                return f"agent-cli's own config `{f}` {_AGENT_CLI_CONFIG_HOLDS}"
             return f"credential file {f}"
 
     name = _fold(resolved.name)
@@ -176,5 +181,5 @@ def sensitive_reason(path: str | Path) -> str | None:
     tail = _fold(str(resolved))
     for rel in _WORKSPACE_FILES:
         if tail.endswith("/" + _fold(rel)):
-            return f"agent-cli's own config `{rel}` (api_key)"
+            return f"agent-cli's own config `{rel}` {_AGENT_CLI_CONFIG_HOLDS}"
     return None

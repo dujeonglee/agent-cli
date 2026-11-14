@@ -135,7 +135,7 @@ agent_cli/
 │   ├── base.py              `LLMProvider` 프로토콜, `LLMResponse`·`TokenUsage`·`CallSettings`, 샘플링·사고 스위치
 │   ├── binding.py           `ModelBinding` — 세션이 지금 쓰는 모델 하나(이름·능력·방언·예산)
 │   ├── capabilities.py      `ModelCapabilities` 조회(models.json > 런타임 탐지 > 기본값), vision·문법 프로브
-│   ├── credentials.py       `Credentials` — API 키, 요청 인증 헤더를 만드는 유일한 곳(`headers(provider)`)
+│   ├── credentials.py       `Credentials` — API 키 + 추가 헤더, 요청 헤더를 만드는 유일한 곳·`extra_headers` 검증
 │   ├── http.py              HTTP 재시도·SSE 스트림 읽기·재접속·연결 오류 분류
 │   ├── runaway.py           스트리밍 경로의 내용 무관 폭주 감지기 `RunawayDetector`
 │   ├── openai.py            `OpenAIProvider` — `/v1/chat/completions` 호환 서버(vLLM·LM Studio·omlx)
@@ -777,7 +777,8 @@ OpenAIProvider 하나로 OpenAI·vLLM·LM Studio·omlx 를 `--base-url` 만 바�
 각 프로바이더 모듈이 import 될 때 `register_provider` 로 스스로 등록한다. 내장 목록은 `_BUILTIN_MODULES`(openai·anthropic).
 `create_provider(name, base_url, credentials)` 가 이름으로 클래스를 찾고, 프로바이더 클래스는 능력 프로브 전송을 `capability_transport` 로 소유한다.
 키는 `main._resolve_provider` 에서 `Credentials` 로 감싸여 provider·`ModelBinding.credentials`·능력 프로브·`model_check`(/models) 로 하나로 흐르고,
-요청 헤더(OpenAI `Authorization: Bearer` / Anthropic `anthropic-version` + `x-api-key`)는 모든 자리가 `Credentials.headers(provider)` 로 만든다. `Content-Type` 은 POST 하는 쪽이 붙인다.
+요청 헤더(OpenAI `Authorization: Bearer` / Anthropic `anthropic-version` + `x-api-key`, 그 뒤에 config 의 켜진 `extra_headers`)는 모든 자리가 `Credentials.headers(provider)` 로 만든다. `Content-Type` 은 POST 하는 쪽이 붙인다.
+`extra_headers` 검증(`validate_extra_headers` — 이름 token·줄바꿈/NUL·하니스 소유 이름·켜진 이름 중복)은 이 모듈 하나이고 보드 admin 도 이것을 부른다. 위반은 `ExtraHeaderError`(이름만, 값 없음) → `_resolve_provider` 가 종료 코드 2.
 
 ### 7.4 Thinking 적용
 
@@ -849,11 +850,13 @@ OpenAIProvider 하나로 OpenAI·vLLM·LM Studio·omlx 를 `--base-url` 만 바�
   "provider": "openai",
   "base_url": "http://127.0.0.1:8000/v1",
   "api_key": "",
-  "default_model": "<model>"
+  "default_model": "<model>",
+  "extra_headers": [{"name": "x-service-id", "value": "…", "enabled": true}]
 }
 ```
 
 `load_config()` 는 env(`AGENT_CLI_PROVIDER`·`AGENT_CLI_BASE_URL`·`AGENT_CLI_API_KEY`, 최저) 위에 `~/.agent-cli/config.json` 을 필드 단위로 덮는다.
+값은 문자열로 접고, `extra_headers` 만 목록 그대로 둔다(`credentials_from_config` 가 검증). 마법사는 `extra_headers` 를 묻지 않고 보존해 저장한다.
 CLI 파라미터가 그 위의 임시 오버라이드다. 파일이 있는데 못 읽으면 `ConfigError`.
 
 **SetupWizard** (`setup.py`): 설정이 없고, 대화형이고, `--base-url`·`-m` 을 다 주지 않았을 때만 자동으로 뜬다(`main._maybe_setup`). `agent-cli setup` 으로 다시 띄운다.
