@@ -18,9 +18,8 @@ REPO = Path(__file__).resolve().parent.parent
 # 순환 회피용 lazy 간선 — (출발 모듈, 대상 모듈). `agent_cli.` 접두는 뺐다.
 CYCLE_AVOIDING_LAZY: set[tuple[str, str]] = {
     # ① private 종류(`PrivateLoop`)가 세션을 올려다본다 — 포트 배선(`make_ports`: 훅 포트·사서함·
-    #    배선 안 함 사유)과 해제(`release`: `release_owner`·`main_registry`).
+    #    배선 안 함 사유)과 해제(`release`: `release_owner`).
     ("loop.kind", "runtime"),
-    ("loop.kind", "subagent.agents_live"),
     # ② 재귀 — 종류가 엔진을 돌리고 엔진은 `agent`·`run_skill` 도구로 다시 종류를 만든다.
     #    기본 엔진은 호출 시점에 읽는다(테스트 패치 자리이기도 하다).
     ("loop.kind", "loop.run"),

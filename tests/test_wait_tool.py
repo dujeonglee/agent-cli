@@ -16,9 +16,10 @@ import pytest
 from agent_cli.context.manager import _OBS_COMPLETE_NUDGE, ContextManager
 from agent_cli.dialects import get as get_dialect
 from agent_cli.dialects.grammar import terminal_tools
-from agent_cli.jobs import JobRegistry, set_job_registry
+from agent_cli.jobs import JobRegistry
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.session_slots import set_job_registry
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 from agent_cli.tools.virtual import WaitTool
 from tests.loop_ports import TEST_PORTS, make_ports
@@ -204,11 +205,11 @@ class TestAlreadyArrived:
     거부됐다. 거부는 맞지만(런을 끝내면 바로 다시 깨울 뿐) 문구가 사실과 달랐다."""
 
     def _registry(self, tmp_path):
-        from agent_cli.subagent.agents_live import set_main_registry
+        from agent_cli.session_slots import set_agent_registry
         from tests.test_agents_live import make_registry
 
         reg = make_registry(tmp_path)
-        set_main_registry(reg)
+        set_agent_registry(reg)
         return reg
 
     def _monitor_mail(self, reg):
@@ -453,17 +454,16 @@ class TestCircularWait:
 
     @pytest.fixture
     def reg(self, tmp_path, monkeypatch):
-        import agent_cli.schedule.runtime as sched
-        from agent_cli.subagent.agents_live import set_main_registry
+        from agent_cli.session_slots import set_agent_registry, set_schedule_registry
         from tests.test_agents_live import make_registry, wait_until
 
-        monkeypatch.setattr(sched, "get_schedule_registry", lambda: None)
+        set_schedule_registry(None)
         r = make_registry(tmp_path)
         keys = [r.spawn()[0] for _ in range(3)]
         assert wait_until(lambda: all(r.get(k).state == "idle" for k in keys))
-        set_main_registry(r)
+        set_agent_registry(r)
         yield r, keys
-        set_main_registry(None)
+        set_agent_registry(None)
         r.shutdown_all()
 
     @staticmethod

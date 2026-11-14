@@ -164,7 +164,7 @@ class TestToolRegistration:
     """`monitor add` 가 등록 근거를 관찰에 붙이고, 초기 커서를 공개 전에 심는다."""
 
     def _registry(self):
-        from agent_cli.monitor.runtime import set_monitor_registry
+        from agent_cli.session_slots import set_monitor_registry
 
         r = MonitorRegistry()
         r.deliver = RecordingDelivery()
@@ -173,7 +173,7 @@ class TestToolRegistration:
         return r
 
     def test_add_carries_the_note_and_uses_observed_at(self, tmp_path):
-        from agent_cli.monitor.runtime import set_monitor_registry
+        from agent_cli.session_slots import set_monitor_registry
         from agent_cli.tools.base import RunContext
         from agent_cli.tools.registry import TOOLS
 
@@ -202,7 +202,7 @@ class TestToolRegistration:
             r.stop()
 
     def test_add_without_ctx_still_registers(self, tmp_path):
-        from agent_cli.monitor.runtime import set_monitor_registry
+        from agent_cli.session_slots import set_monitor_registry
         from agent_cli.tools.registry import TOOLS
 
         r = self._registry()

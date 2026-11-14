@@ -16,13 +16,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_cli.jobs import (
-    JobRegistry,
-    JobsUnavailable,
-    get_job_registry,
-    set_job_registry,
-)
+from agent_cli.jobs import JobRegistry, JobsUnavailable
 from agent_cli.loop.ledger import Ledger
+from agent_cli.session_slots import get_job_registry, set_job_registry
 from tests.loop_kinds import make_kind
 from tests.loop_ports import make_ports
 from tests.monitor_delivery import RecordingDelivery

@@ -19,7 +19,7 @@ from rich.console import Console
 from agent_cli.constants import RUN_OWNER_PREFIX, is_private_owner
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get as get_dialect
-from agent_cli.jobs import JobRegistry, set_job_registry
+from agent_cli.jobs import JobRegistry
 from agent_cli.loop.kind import PrivateLoop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
@@ -29,7 +29,11 @@ from agent_cli.runtime import (
     release_owner,
     wake_sources,
 )
-from agent_cli.subagent.agents_live import set_main_registry
+from agent_cli.session_slots import (
+    set_agent_registry,
+    set_job_registry,
+    set_schedule_registry,
+)
 from agent_cli.tools.result import ToolResult
 from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS
@@ -40,9 +44,9 @@ from tests.test_agents_live import make_registry
 @pytest.fixture
 def reg(tmp_path):
     r = make_registry(tmp_path / "reg")
-    set_main_registry(r)
+    set_agent_registry(r)
     yield r
-    set_main_registry(None)
+    set_agent_registry(None)
 
 
 @pytest.fixture
@@ -285,9 +289,7 @@ class TestWakeItemsForPrivateOwners:
             def has_active_work(self):
                 return True
 
-        monkeypatch.setattr(
-            "agent_cli.schedule.runtime.get_schedule_registry", lambda: Sched()
-        )
+        set_schedule_registry(Sched())
         assert "a schedule" in wake_sources("main")
         assert (
             wake_sources("run:x") == []

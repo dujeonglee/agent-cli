@@ -62,6 +62,7 @@ from agent_cli.render import (
     render_run_ended,
     render_step,
 )
+from agent_cli.session_slots import get_agent_registry
 from agent_cli.tools import TOOLS, infer_action
 from agent_cli.tools.registry import effective_tool_names
 from agent_cli.tools.result import ToolResult
@@ -1232,9 +1233,7 @@ class TurnDispatcher:
             return _CONTINUE
         sources = wake_sources(self.cfg.kind.ports.owner)
         if not sources:
-            from agent_cli.subagent.agents_live import main_registry
-
-            reg = main_registry()
+            reg = get_agent_registry()
             parked = (
                 reg.parked_debtors_for(self.cfg.kind.ports.owner)
                 if reg is not None
@@ -1261,9 +1260,8 @@ class TurnDispatcher:
             )
             return _CONTINUE
         from agent_cli.constants import format_duration
-        from agent_cli.subagent.agents_live import main_registry
 
-        reg = main_registry()
+        reg = get_agent_registry()
         private = policy == WAIT_BLOCK
         kept = ""
         if not private:

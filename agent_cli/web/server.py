@@ -55,6 +55,7 @@ from agent_cli import images as _images
 from agent_cli.input_queue import InputQueue
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
+from agent_cli.session_slots import get_job_registry, get_schedule_registry
 
 # C3: 도메인 로직은 분리 모듈 소유 — server 는 전송(라우팅·SSE·미들웨어) 전용.
 from agent_cli.web.directives import generate_directive_section
@@ -868,8 +869,6 @@ def create_app(server: WebServer) -> FastAPI:
     # 보드는 세션 폴더의 파일을 읽어 배지만 그린다.
 
     def _schedules():
-        from agent_cli.schedule.runtime import get_schedule_registry
-
         reg = get_schedule_registry()
         if reg is None:
             raise HTTPException(status_code=503, detail="no schedule registry")
@@ -1479,8 +1478,6 @@ def create_app(server: WebServer) -> FastAPI:
         "stopped by a user …".
         Unknown or already finished id → 404; another stop already in progress → 409.
         Returns the updated running-jobs view."""
-        from agent_cli.jobs import get_job_registry
-
         reg = get_job_registry()
         if reg is None:
             raise HTTPException(status_code=503, detail="no job registry")

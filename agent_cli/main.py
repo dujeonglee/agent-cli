@@ -957,7 +957,7 @@ def _dispatch_skill(
 
     from agent_cli.hooks import load_hooks as _load_hooks
     from agent_cli.loop.kind import Caller
-    from agent_cli.subagent.agents_live import main_registry
+    from agent_cli.session_slots import get_agent_registry
 
     # 디스크 훅(~/.agent-cli/hooks.json / .agent-cli/hooks.json)을 스킬 자신의 훅과 병합해
     # 보이게 한다. load_hooks() 는 캐시라 반복 호출이 싸다. 스코프(카드 하나)·들여쓰기·
@@ -978,7 +978,7 @@ def _dispatch_skill(
             stop_event=stop_event,
             graceful_interrupt=graceful_interrupt,
             verbose=verbose,
-            agent_registry=main_registry(),
+            agent_registry=get_agent_registry(),
         ),
     ).run()
 

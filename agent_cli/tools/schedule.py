@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from agent_cli.schedule.registry import ScheduleError
-from agent_cli.schedule.runtime import get_schedule_registry
+from agent_cli.session_slots import get_schedule_registry
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 

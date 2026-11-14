@@ -213,23 +213,16 @@ class TestTurnPairs:
 
 class TestHarnessWork:
     def test_running_job_or_live_monitor_of_the_owner(self, monkeypatch):
-        import agent_cli.monitor.runtime as mon
-        from agent_cli import jobs
         from agent_cli.runtime import harness_work_running
+        from agent_cli.session_slots import set_job_registry, set_monitor_registry
 
         running = {"main": [object()]}
-        monkeypatch.setattr(
-            jobs,
-            "get_job_registry",
-            lambda: MagicMock(running=lambda owner: running.get(owner, [])),
-        )
-        monkeypatch.setattr(mon, "get_monitor_registry", lambda: None)
+        set_job_registry(MagicMock(running=lambda owner: running.get(owner, [])))
+        set_monitor_registry(None)
         assert harness_work_running("main") is True
         assert harness_work_running("agent:k") is False
         m = MagicMock(owner="agent:k")
-        monkeypatch.setattr(
-            mon, "get_monitor_registry", lambda: MagicMock(list_all=lambda: [m])
-        )
+        set_monitor_registry(MagicMock(list_all=lambda: [m]))
         assert harness_work_running("agent:k") is True
 
 

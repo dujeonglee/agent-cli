@@ -52,6 +52,7 @@ from agent_cli.render import (
     render_token_usage,
     render_turn_sep,
 )
+from agent_cli.session_slots import get_agent_registry
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.registry import strip_depth_gated
 from agent_cli.tools.result import ToolResult
@@ -843,7 +844,7 @@ class AgentLoop:
     def _note_run_started(self) -> None:
         """이 소유자의 런이 **입력을 받아** 시작됐다 — `wait` 중간 깨우기 타이머를
         푼다 (v10.79.0, docs/wait/DESIGN.md §6). main·상주·run·web 네 경로가 이 한
-        지점을 지난다. 상주 포트는 `agent_registry=None` 이라 전역 `main_registry()`
+        지점을 지난다. 상주 포트는 `agent_registry=None` 이라 전역 `get_agent_registry()`
         로 간다(`dispatch._op_wait` 와 같은 방식).
 
         자리는 첫 배달 **뒤**, 빈 깨우기 런의 조기 반환 뒤다 — 다른 런이 메일을
@@ -851,9 +852,7 @@ class AgentLoop:
         모델의 기다림에 깨우기가 없어진다. 배달과 이 호출 사이에 타이머가 발화하면
         그 알림은 다음 턴 경계에 배달되거나 `wait` 를 "already arrived" 로 거부시킨다
         — 사실 진술이라 어느 쪽도 거짓이 아니다."""
-        from agent_cli.subagent.agents_live import main_registry
-
-        registry = main_registry()
+        registry = get_agent_registry()
         if registry is not None:
             registry.run_started(self._config.kind.ports.owner)
 

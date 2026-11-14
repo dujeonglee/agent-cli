@@ -31,6 +31,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from agent_cli.session_slots import get_agent_registry
+
 if TYPE_CHECKING:
     from agent_cli.loop.ports import LoopPorts
 
@@ -399,9 +401,8 @@ class PrivateLoop(LoopKind):
 
     def release(self) -> str:
         from agent_cli.runtime import release_owner
-        from agent_cli.subagent.agents_live import main_registry
 
-        return release_owner(self.owner, registry=main_registry()).note
+        return release_owner(self.owner, registry=get_agent_registry()).note
 
     # ── 엔진이 묻는 것 — private 종류의 명시 정책 ──
     def wait_policy(self) -> str:

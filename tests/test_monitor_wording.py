@@ -16,7 +16,7 @@ import re
 from agent_cli.monitor import MonitorRegistry, build
 from agent_cli.monitor.conditions import SHAPES
 from agent_cli.monitor.registry import describe_previous
-from agent_cli.monitor.runtime import set_monitor_registry
+from agent_cli.session_slots import set_monitor_registry
 from agent_cli.tools import monitor_tool as mt
 from agent_cli.tools.base import RunContext
 from agent_cli.tools.monitor_tool import MonitorTool

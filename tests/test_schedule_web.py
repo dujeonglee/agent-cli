@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from agent_cli.render.web import WebRenderer
 from agent_cli.schedule.registry import ScheduleRegistry
-from agent_cli.schedule.runtime import set_schedule_registry
+from agent_cli.session_slots import set_schedule_registry
 from agent_cli.web.server import WebServer, create_app
 
 T = "?token=t"

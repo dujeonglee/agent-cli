@@ -83,6 +83,7 @@ agent_cli/
 ├── web_sources.py           꼬리 `## Web Sources` 정보원 목록 — 패키지 기본값 + 프로젝트의 바꾼 것만 (docs/web-sources/DESIGN.md)
 ├── thinking_tags.py         content 안 사고 태그를 걷어내는 `strip_think_blocks` 단일 소스
 ├── agent_icon.py            상주 에이전트 key → 아이콘·별명(표시 전용) — 프런트와 같은 풀·해시
+├── session_slots.py         세션 슬롯 다섯 — 잡·모니터·예약 레지스트리, 훅 러너, 에이전트 레지스트리의 프로세스 전역 자리
 ├── verbose.py               `--verbose` 기록기 — 모든 루프의 LLM 호출을 `<session>/verbose.jsonl` 에
 ├── default_models.json      패키지 기본 모델 정의 (models.json 검색 경로의 마지막)
 ├── default_web_sources.json 기본 정보원 목록 (`web_sources.py` 가 읽는다)
@@ -185,13 +186,11 @@ agent_cli/
 ├── monitor/                 조건 → 보고 감시 (docs/monitor/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── conditions.py        감시 조건 레지스트리 — `match`·`silence`·`command`
-│   ├── registry.py          `MonitorRegistry` — 조건 평가 스레드, 설치한 주소로 보고 배달
-│   └── runtime.py           프로세스 단위 monitor 레지스트리 전역(`set_`/`get_monitor_registry`)
+│   └── registry.py          `MonitorRegistry` — 조건 평가 스레드, 설치한 주소로 보고 배달
 ├── schedule/                세션 소유 예약 실행 (docs/schedule/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── cron.py              5필드 cron 식 엔진(의존성 0)
 │   ├── registry.py          `ScheduleRegistry` — 예약 소유·발화 스레드, `schedules.json`, 놓친 발화는 질문으로
-│   ├── runtime.py           프로세스 단위 schedule 레지스트리 전역
 │   └── view.py              예약의 화면용 뷰(web API·SSE 공용)
 ├── subagent/                서브에이전트 — 일회성·상주 실행 (docs/teammate/DESIGN.md · docs/agent-unification/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
@@ -211,7 +210,6 @@ agent_cli/
 │   ├── context.py           훅 함수가 받는 `HookContext`
 │   ├── loader.py            Python 훅 파일 스캔·로드(내장 먼저, 프로젝트 뒤)
 │   ├── runner.py            `HookRunner` — 이벤트마다 Python(+선택적으로 셸) 훅 실행
-│   ├── runtime.py           세션 단위 훅 러너 전역 — 모든 루프 종류가 같은 인스턴스
 │   ├── shell.py             셸 훅(`hooks.json`) — PreToolUse·PostToolUse·PostToolUseFailure
 │   └── builtin/             패키지 내장 Python 훅
 │       ├── __init__.py      내장 훅 관례(docstring)
@@ -349,7 +347,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 | 3 | `dialects/` · `mcp/` · `web/` |
 | 2 | `tools/` · `render/` · `pump` · `setup` |
 | 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` · `instance_file` |
-| 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `agents/` |
+| 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `session_slots` · `agents/` |
 
 `context/`·`prompts/`·`providers/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).
 그래서 한 층의 한 묶음으로 적는다. `main` 은 명령 함수 안에서 지연 import 하는 것이 많아(`runtime`·`loop/` 등) 층이 낮게 나온다.
@@ -359,8 +357,8 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 - **모듈 수준 import 순환은 0 이다.** `tests/test_import_graph.py::test_no_module_level_import_cycle` 이 지킨다.
 - **순환을 피하려고 지연인 import** — 대상 모듈이 모듈 수준 import 만으로 출발 모듈에 닿는 간선 — 는 테스트 안의 이름 붙은 목록
   `CYCLE_AVOIDING_LAZY` 와 정확히 같아야 한다(`test_cycle_avoiding_lazy_imports_are_the_named_list`). 간선 목록 자체는 테스트가 주인이다.
-  남은 것은 `loop.kind` 에서 나가는 셋이다 — private 종류가 세션을 올려다보는 `loop.kind` → `runtime`·`subagent.agents_live`
-  (포트 배선과 해제의 `release_owner`·`main_registry`), 그리고 재귀인 `loop.kind` → `loop.run`(종류가 엔진을 돌리고 엔진은
+  남은 것은 `loop.kind` 에서 나가는 둘이다 — private 종류가 세션을 올려다보는 `loop.kind` → `runtime`
+  (포트 배선과 해제의 `release_owner`), 그리고 재귀인 `loop.kind` → `loop.run`(종류가 엔진을 돌리고 엔진은
   `agent`·`run_skill` 도구로 다시 종류를 만든다 — 기본 엔진은 호출 시점에 읽는다).
   `loop/__init__.py` 는 아무것도 재수출하지 않는다 — 재수출하면 `loop.kind` 만 쓰는 세션 쪽이 패키지 머리를 거쳐 엔진 전체를 끌고 와
   `loop.core`·`loop.dispatch`·`loop.tool_bridge`·`loop.skill_invoke` 의 세션 쪽 지연 import 까지 순환 회피가 된다.
@@ -1106,7 +1104,7 @@ You are a code reviewer. Read $ARGUMENTS and analyze for bugs.
 ### 14.1 개요
 
 - **Python 훅**: `agent_cli/hooks/builtin/`(내장, 먼저) 다음 `.agent-cli/hooks/*.py`(프로젝트) — 컨텍스트 조작, MCP 메모리 접근.
-  세션에 러너 하나(`runtime.build_hook_runner` → `hooks/runtime.py`)를 모든 루프 종류가 같이 쓴다.
+  세션에 러너 하나(`runtime.build_hook_runner` → `session_slots.set_hook_runner`)를 모든 루프 종류가 같이 쓴다.
 - **셸 훅**: `.agent-cli/hooks.json` — 외부 명령, stdin 으로 JSON, 종료 코드 0 허용 · 2 차단(PreToolUse) · 그 밖 경고 (`hooks/shell.py`).
 - **스킬·에이전트 로컬 셸 훅**: SKILL.md 나 프로파일 frontmatter 의 `hooks:` — `merge_hooks_configs(parent, local)` 로 호출자의 훅 뒤에 붙는다.
 - 내장 훅 `10_snapshot.py`: 세션 시작 안내와 변경 도구(`snapshot.MUTATING_TOOLS`) 직전 체크포인트 (docs/snapshot/DESIGN.md).

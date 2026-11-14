@@ -27,7 +27,7 @@
 - **수명**: `runtime.session_has_live_work(jobs=)` 의 한 항. run 은 `QuietPolicy` 가 `on_wait("jobs")` 로 한 번 알리고 기다린다(`🧵 백그라운드 작업 N개 대기 중`), web 은 `web_instance_is_active` 가 거두지 않는다.
   **알려진 한계 (2026-11-10, docs/complete-while-running/REVIEW-fable.md §4 E2):** `complete` 로 끝난 런에는 체크인을 걸지 않는다(의도). 끝나지 않는 작업을 둔 채 `complete` 하면 run 은 종료 통지까지 기다리고 web 방은 reap 되지 않는다. 하니스는 유한·무한 작업을 구별하지 않는다. web 에서는 v10.121.0 부터 방의 🧵 칩(보드 카드에도 🧵 N)으로 보이고 사람이 ■ 로 멈출 수 있다.
 - **정리**: 소유자(에이전트) 사망 → `JobRegistry.drop_owner` 가 그 작업을 죽인다(`AgentRegistry._drop_monitors` 와 같은 자리). 세션 종료(`teardown_session`) → `stop_all` 이 남은 작업을 전부 죽이고 콘솔에 적는다. 프로세스 그룹에 TERM, 3초 뒤 KILL. 영속 없음(PID 는 프로세스와 함께 죽는다).
-- **배선**: `build_job_registry()` → 프로세스 전역(`jobs.get_job_registry`, 도구가 닿는 길) + `wire_job_delivery(agent_registry, jobs)`(`deliver` seam, 역방향 `registry.jobs`). `build_agent_registry(jobs=)` 가 monitor 와 같은 자리에서 건다.
+- **배선**: `build_job_registry()` → 세션 슬롯(`session_slots.get_job_registry`, 도구가 닿는 길) + `wire_job_delivery(agent_registry, jobs)`(`deliver` seam, 역방향 `registry.jobs`). `build_agent_registry(jobs=)` 가 monitor 와 같은 자리에서 건다.
 
 그냥 `cmd &` 는 종전대로 된다(추적 없음) — 안내가 `background: true` 로 유도한다.
 

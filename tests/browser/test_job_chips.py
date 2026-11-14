@@ -13,7 +13,8 @@ import time
 
 import pytest
 
-from agent_cli.jobs import JobRegistry, set_job_registry
+from agent_cli.jobs import JobRegistry
+from agent_cli.session_slots import set_job_registry
 from tests.monitor_delivery import RecordingDelivery
 
 

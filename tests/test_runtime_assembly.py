@@ -24,6 +24,7 @@ from agent_cli.runtime import (
     teardown_session,
     wire_agent_mail,
 )
+from agent_cli.session_slots import get_agent_registry
 from tests.binding_support import make_binding
 
 _MAIN_SRC = Path("agent_cli/main.py").read_text(encoding="utf-8")
@@ -256,15 +257,12 @@ class TestRegistryAssembly:
             max_depth=2,
             session=None,
         )
-        with (
-            patch("agent_cli.subagent.agents_live.AgentRegistry") as reg_cls,
-            patch("agent_cli.subagent.agents_live.set_main_registry") as set_main,
-        ):
+        with patch("agent_cli.subagent.agents_live.AgentRegistry") as reg_cls:
             reg = build_agent_registry("/sess", rt)
         # max_agents=None = 미지정 → registry 가 env/기본값을 고른다
         # (v8.61.0 --max-agents). 여기서 값을 정하면 env 가 무시된다.
         reg_cls.assert_called_once_with("/sess", runtime=rt.as_dict(), max_agents=None)
-        set_main.assert_called_once_with(reg)
+        assert get_agent_registry() is reg
 
     def test_build_agent_registry_passes_explicit_cap(self):
         """CLI ``--max-agents`` 가 registry 까지 닿는지 — 이 배선이 끊기면
@@ -283,10 +281,7 @@ class TestRegistryAssembly:
             max_depth=2,
             session=None,
         )
-        with (
-            patch("agent_cli.subagent.agents_live.AgentRegistry") as reg_cls,
-            patch("agent_cli.subagent.agents_live.set_main_registry"),
-        ):
+        with patch("agent_cli.subagent.agents_live.AgentRegistry") as reg_cls:
             build_agent_registry("/sess", rt, max_agents=3)
         assert reg_cls.call_args.kwargs["max_agents"] == 3
 
@@ -367,8 +362,7 @@ class TestRegistryAssembly:
             max_depth=2,
             session=None,
         )
-        with patch("agent_cli.subagent.agents_live.set_main_registry"):
-            reg = build_agent_registry(None, rt, monitors=monitors)
+        reg = build_agent_registry(None, rt, monitors=monitors)
         assert monitors.deliver == reg.deliver
         assert reg.monitors is monitors
 

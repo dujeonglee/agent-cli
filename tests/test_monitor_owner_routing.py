@@ -23,6 +23,7 @@ from agent_cli.monitor.registry import (
     MonitorRegistry,
     MonitorUnavailable,
 )
+from agent_cli.session_slots import set_monitor_registry
 from agent_cli.tools import RunContext
 from agent_cli.tools.monitor_tool import NEEDS_SHELL, MonitorTool
 from tests.monitor_delivery import RecordingDelivery
@@ -59,9 +60,7 @@ class TestToolKnowsItsAddress:
     def test_tool_stamps_the_run_contexts_owner(self, reg, tmp_path, monkeypatch):
         """`MonitorTool` 은 `ctx.owner` 로 등록한다 — 새 전역이 아니라
         이미 있는 per-call `RunContext` 의 필드다."""
-        monkeypatch.setattr(
-            "agent_cli.monitor.runtime.get_monitor_registry", lambda: reg
-        )
+        set_monitor_registry(reg)
         log = tmp_path / "t.log"
         log.write_text("")
         res = MonitorTool().run(
@@ -77,9 +76,7 @@ class TestToolKnowsItsAddress:
 
     def test_no_ctx_falls_back_to_main(self, reg, tmp_path, monkeypatch):
         """직접 호출(루프 밖)은 main — 그 경우 상주 루프가 아니다."""
-        monkeypatch.setattr(
-            "agent_cli.monitor.runtime.get_monitor_registry", lambda: reg
-        )
+        set_monitor_registry(reg)
         log = tmp_path / "t.log"
         log.write_text("")
         MonitorTool().run(
@@ -96,9 +93,7 @@ class TestToolKnowsItsAddress:
         """예외가 도구 경계를 넘지 않는다 — ToolResult 로."""
         bare = MonitorRegistry()
         bare.stop()
-        monkeypatch.setattr(
-            "agent_cli.monitor.runtime.get_monitor_registry", lambda: bare
-        )
+        set_monitor_registry(bare)
         log = tmp_path / "t.log"
         log.write_text("")
         res = MonitorTool().run(
@@ -567,7 +562,7 @@ class TestProfileReach:
         뒷문이 되지 않게 (v10.42.0, 감사자 프로파일의 전제). ``run`` 은 v10.79.0 에
         지웠다 — 거부 문구가 그 이름을 다시 말하지 않는다."""
         from agent_cli.monitor.registry import MonitorRegistry
-        from agent_cli.monitor.runtime import set_monitor_registry
+        from agent_cli.session_slots import set_monitor_registry
         from agent_cli.tools.base import RunContext
         from agent_cli.tools.monitor_tool import MonitorTool
 

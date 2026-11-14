@@ -52,11 +52,11 @@ class TestSpec:
             build({"type": "match", "file": "x", "pattern": "a", "silent": "soon"})
 
     def test_tool_passes_silent_into_the_spec(self, tmp_path, monkeypatch):
-        from agent_cli.monitor import runtime as mrt
+        from agent_cli.session_slots import set_monitor_registry
         from agent_cli.tools.monitor_tool import MonitorTool
 
         reg = _reg(tmp_path)
-        monkeypatch.setattr(mrt, "_MAIN", reg)
+        set_monitor_registry(reg)
         r = MonitorTool()._run(
             {
                 "mode": "add",
