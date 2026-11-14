@@ -152,3 +152,30 @@ disk now — nothing to restore`. 종전 한 문구("no snapshot holds a differe
 **지표**(다음 벤치, GLM 2회): restore 의 "다른 판 없음" 비율(59/110 → 0 근방), 복구 뒤 같은 파괴 반복 수,
 list→at 우회 시퀀스 수, db-wal·financial 통과(35B 가 민감). 테스트 `tests/test_snapshot.py`
 (`TestSessionBoundary`·`TestLabel`·원인 줄·경로 정규화), `tests/test_snapshot_tool.py`.
+
+## 7. 기준점 — 웹 Changes 패널 (v10.137.0, 2026-11-14)
+
+사람이 보는 목록 "기준점 이후 디스크에서 바뀐 파일" 이다. 모델이 받는 것은 바뀌지 않는다.
+
+- **기준점**: ref `refs/agent-cli/baseline` 이 있으면 그 커밋(사람이 Clear 를 누른 때). 없으면 **이 세션 id 로 찍힌
+  가장 이른** `session start (<sid>)` 커밋 — resume 은 프로세스마다 시작 커밋을 새로 찍으므로 "가장 최근" 이면 resume
+  할 때마다 목록이 비워진다. 그것도 없으면 HEAD. `GitSnapshot.baseline()` 이 `(commit, kind, when)` 을 준다.
+- **지금 디스크**: 커밋을 만들지 않는다. 임시 색인(`GIT_INDEX_FILE`, 저장소 안 `index.changes-<pid>-<thread>`)에
+  체크포인트와 같은 pathspec 으로 `add -A --force` → `write-tree`. 실제 색인을 **mtime 까지** 복사해 시작한다 —
+  stat 캐시로 안 바뀐 파일을 다시 해시하지 않되, 새 mtime 의 복사본은 racy-git 검사를 꺼 같은 초·같은 크기 편집을
+  놓친다(실측). 실제 색인·HEAD·`_last_checkpoint` 를 건드리지 않으므로 런 도중에 불러도 체크포인트와 엉키지 않고
+  `_lock` 도 잡지 않는다.
+- **목록·diff**: 기준 커밋 ↔ 그 트리의 `diff --no-renames -z`(`--name-status`·`--numstat`) — 이름 바뀜은 D+A, 바이너리는
+  줄 수 없음. 파일 diff 는 `relative` 로 경로를 검사하고 `CHANGE_DIFF_MAX_LINES` 에서 자른다.
+- **Clear**: 지금 트리를 `commit-tree`(부모 HEAD, 라벨 `baseline (cleared)`) 하고 이전 기준 커밋을
+  `refs/agent-cli/baseline-prev` 에, 새 커밋을 `refs/agent-cli/baseline` 에 둔다. **HEAD 는 옮기지 않는다** — 모델의
+  `snapshot` `list` 는 HEAD 로그라 사람의 커밋이 섞이지 않는다. ref 가 커밋을 붙잡아 gc 에 안전하다.
+- **Undo**(한 단계): `baseline-prev` 가 Clear 커밋이면 그리로, 세션 시작(또는 HEAD)이면 `baseline` ref 를 지운다.
+  `baseline-prev` 는 지운다 — 두 번째 Undo 는 무동작.
+- 저장소가 세션을 넘어 이어지므로 Clear 한 기준점은 방을 다시 띄워도·`--resume` 해도 남는다. 스냅샷이 꺼지면
+  (`AGENT_CLI_SNAPSHOT=0`·git 없음) 패널도 없다.
+
+웹(`/api/changes`·`/diff`·`/clear`·`/undo`)은 저장소 메서드를 실행기에서 부르는 얇은 층이고, 프런트 `js/changes.js`
+는 페이지 로드·패널 열기·↻·런 끝(main 은 `worker_state` 바쁨→한가, 그 밖은 `scope_end`)에만 다시 센다.
+테스트 `tests/test_snapshot_baseline.py`, `tests/test_web_server.py::TestChangesEndpoints`,
+`tests/browser/test_changes_panel.py`.

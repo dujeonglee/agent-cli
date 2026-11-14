@@ -304,6 +304,7 @@ agent_cli/
             ├── ledger.js        📋 열린 항목 띠
             ├── stuck.js         🔁 제자리 고리 띠
             ├── jobs.js          🧵 백그라운드 작업 칩과 ■ 멈춤
+            ├── changes.js       Δ 칩과 Changes 패널 — 스냅샷 기준점 ↔ 지금 디스크의 바뀐 파일
             ├── channels.js      채널·트레이 상태, 채널 필터·점프 — 순환 묶음의 진입점
             ├── timeline.js      카드 시각, 접히는 그룹, 타임라인 추가, `scope_*` 배선
             ├── frames.js        모델 시점(`ctx_view`)과 틀(맨 위 카드·맨 아래 띠 — 채널 것은 `#ctx-head`·`#ctx-tail` 고정 자리)
@@ -1118,6 +1119,7 @@ You are a code reviewer. Read $ARGUMENTS and analyze for bugs.
 - **셸 훅**: `.agent-cli/hooks.json` — 외부 명령, stdin 으로 JSON, 종료 코드 0 허용 · 2 차단(PreToolUse) · 그 밖 경고 (`hooks/shell.py`).
 - **스킬·에이전트 로컬 셸 훅**: SKILL.md 나 프로파일 frontmatter 의 `hooks:` — `merge_hooks_configs(parent, local)` 로 호출자의 훅 뒤에 붙는다.
 - 내장 훅 `10_snapshot.py`: 세션 시작 안내와 변경 도구(`snapshot.MUTATING_TOOLS`) 직전 체크포인트 (docs/snapshot/DESIGN.md).
+- 웹 Changes 패널의 기준점은 같은 저장소의 ref `refs/agent-cli/baseline`(없으면 이 세션 id 의 가장 이른 시작 커밋) — HEAD 는 옮기지 않고, 지금 디스크는 임시 색인으로 읽는다(`GitSnapshot.baseline`·`changes`·`clear`, `web/server.py` `/api/changes*`, docs/snapshot/DESIGN.md §7).
 
 ### 14.2 라이프사이클 이벤트 (`hooks/events.py`)
 

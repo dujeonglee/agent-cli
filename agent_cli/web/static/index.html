@@ -36,6 +36,10 @@
     <!-- 방 제목 (v10.71.0): ``ready`` 의 title — 보드 글의 topic 이 --title 로 온다. 없으면 숨김. -->
     <span id="room-title" class="hd-title" hidden></span>
     <span id="token-usage" class="hd-chip" title="token usage" hidden><span id="tok-base"></span></span>
+    <!-- Δ 칩 (v10.137.0, js/changes.js): 기준점 이후 디스크에서 바뀐 파일 수 → Changes 패널.
+         스냅샷이 없는 방이면 숨김. -->
+    <button id="changes-chip" class="hd-chip hd-chip-btn" type="button" hidden
+            aria-haspopup="dialog" aria-expanded="false" aria-controls="changes-drawer">Δ 0</button>
     <button id="chip-ws" class="hd-chip hd-chip-btn" type="button" hidden
             title="">
       <span id="ws-copy-ic">📋</span><span id="ws-tail" class="hd-chip-text"></span>
@@ -176,6 +180,24 @@
         <span id="websrc-status" class="de-status"></span>
       </div>
     </form>
+  </aside>
+
+  <!-- Δ Changes 패널 (v10.137.0, js/changes.js · docs/snapshot/DESIGN.md §7) — 기준점(세션
+       시작 또는 마지막 Clear) ↔ 지금 디스크의 바뀐 파일. Clear 는 목록만 비운다. -->
+  <div id="changes-backdrop" hidden></div>
+  <aside id="changes-drawer" aria-hidden="true" role="dialog" aria-modal="true"
+    aria-label="Changes">
+    <div class="de-head">
+      <div class="de-title">Changes</div>
+      <span id="changes-since" class="de-path"></span>
+      <button id="changes-refresh" type="button" class="btn-icon" title="Count again">↻</button>
+      <button id="changes-clear" type="button" class="btn-ghost"
+        title="Start the list over from now — files on disk are not touched">Clear list</button>
+      <button id="changes-close" type="button" class="btn-icon" title="Close">✕</button>
+    </div>
+    <div id="changes-list" class="chg-list"></div>
+    <pre id="changes-diff" class="chg-diff" hidden></pre>
+    <div id="changes-toast" class="chg-toast" role="status" hidden></div>
   </aside>
 
   <!-- Directive Editor drawer (📝 toolbar) — dedicated directive editing.

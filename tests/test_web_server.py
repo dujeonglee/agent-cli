@@ -3826,3 +3826,89 @@ class TestAgentInputImages:
         )
         assert r.status_code == 400 and "answer" in r.json()["detail"]
         assert reg.requests == []
+
+
+class TestChangesEndpoints:
+    """Changes 패널 경로 넷 (v10.137.0) — 세션의 스냅샷 저장소를 부르는 얇은 층.
+    저장소는 runtime 이 만든다(여기선 만들지 않는다): 없거나 꺼지면 enabled false·409."""
+
+    @pytest.fixture
+    def ws(self, tmp_path, server_and_client):
+        from agent_cli.snapshot import get_snapshot, git_available, reset_snapshot
+
+        if not git_available()[0]:
+            pytest.skip("git not installed")
+        server, _, client = server_and_client
+        w = tmp_path / "ws"
+        w.mkdir()
+        (w / "a.py").write_text("one\ntwo\n")
+        (w / "b.txt").write_text("keep\n")
+        server.workspace = w.resolve()
+        reset_snapshot()
+        store = get_snapshot(w, create=True, session_id="sess-1")
+        assert store.enabled, store.reason
+        yield w, client, store
+        reset_snapshot()
+
+    def test_requires_auth(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.get("/api/changes").status_code == 401
+        assert client.post("/api/changes/clear").status_code == 401
+
+    def test_no_store_means_off(self, server_and_client):
+        from agent_cli.snapshot import reset_snapshot
+
+        reset_snapshot()
+        _, _, client = server_and_client
+        assert client.get("/api/changes?token=testtoken").json() == {"enabled": False}
+        for path in ("/api/changes/clear", "/api/changes/undo"):
+            assert client.post(path + "?token=testtoken").status_code == 409
+        r = client.get("/api/changes/diff?path=a.py&token=testtoken")
+        assert r.status_code == 409
+
+    def test_list_diff_clear_undo_round_trip(self, ws):
+        w, client, store = ws
+        q = "?token=testtoken"
+        first = client.get("/api/changes" + q).json()
+        assert first["enabled"] is True and first["files"] == []
+        assert first["baseline"]["kind"] == "session"
+        assert isinstance(first["baseline"]["when"], int)
+        (w / "a.py").write_text("one\nTWO\n")
+        (w / "new.md").write_text("x\n")
+        got = client.get("/api/changes" + q).json()["files"]
+        assert [(f["path"], f["status"], f["added"], f["deleted"]) for f in got] == [
+            ("a.py", "M", 1, 1),
+            ("new.md", "A", 1, 0),
+        ]
+        d = client.get("/api/changes/diff?path=a.py&token=testtoken").json()
+        assert d["path"] == "a.py" and "-two" in d["diff"] and "+TWO" in d["diff"]
+        bad = client.get("/api/changes/diff?path=../x&token=testtoken")
+        assert bad.status_code == 400
+        head = store.head()
+        cleared = client.post("/api/changes/clear" + q).json()
+        assert cleared["files"] == [] and cleared["baseline"]["kind"] == "cleared"
+        assert (w / "a.py").read_text() == "one\nTWO\n"  # 파일은 그대로
+        assert store.head() == head
+        undo = client.post("/api/changes/undo" + q).json()
+        assert undo["undone"] is True and undo["baseline"]["kind"] == "session"
+        assert [f["path"] for f in undo["files"]] == ["a.py", "new.md"]
+        again = client.post("/api/changes/undo" + q).json()
+        assert again["undone"] is False and len(again["files"]) == 2
+
+    def test_git_runs_off_the_event_loop(self):
+        """git 을 부르는 경로는 실행기에서 — 큰 워크스페이스가 SSE 를 막지 않게."""
+        import inspect
+
+        from agent_cli.web import server as srv
+
+        src = inspect.getsource(srv.create_app)
+        body = src[
+            src.index('@app.get("/api/changes")') : src.index('@app.get("/api/stream")')
+        ]
+        for call in (
+            "store.change_diff",
+            "store.clear",
+            "store.undo_clear",
+            "_changes_payload",
+        ):
+            assert f"_in_executor({call}" in body, call

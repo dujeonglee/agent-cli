@@ -52,6 +52,16 @@ MUTATING_TOOLS: tuple[str, ...] = ("shell", "edit_file", "write_file")
 MUTATING_TOOLS_PHRASE = " / ".join(f"`{t}`" for t in MUTATING_TOOLS)
 #: 체크포인트 라벨에 붙는 호출 요약의 상한(문자) — "before shell (turn 7): sqlite3 main.db"
 LABEL_SUMMARY_CHARS = 60
+#: 웹 Changes 패널의 기준점(v10.137.0, docs/snapshot/DESIGN.md §7). 사람이 Clear 를 누르면
+#: 그때의 디스크를 커밋으로 찍어 이 ref 로 가리킨다 — HEAD 는 옮기지 않는다(모델의
+#: `snapshot` `list` 는 HEAD 로그라 사람의 커밋이 섞이지 않는다). ``-prev`` 는 Undo 한 단계.
+BASELINE_REF = "refs/agent-cli/baseline"
+BASELINE_PREV_REF = "refs/agent-cli/baseline-prev"
+BASELINE_LABEL = "baseline (cleared)"
+#: 패널의 파일 diff 상한(줄). 사람이 읽는 화면이라 모델 관찰(`tools/_diff.py` 100줄)보다
+#: 넉넉하다. 그 모듈의 상수는 못 쓴다 — `tools` 패키지는 import 하면 도구 레지스트리를
+#: 통째로 싣고, 이 모듈은 0층이다.
+CHANGE_DIFF_MAX_LINES = 1000
 
 
 def checkpoint_label(tool: str, turn: int, summary: str = "") -> str:
@@ -124,6 +134,7 @@ class GitSnapshot:
         self._lock = threading.Lock()
         self._last_checkpoint = 0.0
         self._big_files: list[str] = []
+        self.session_id: str | None = None  # 기준점(세션 시작 커밋)을 찾는 열쇠
 
     # ── git plumbing ─────────────────────────────────────────
 
@@ -145,11 +156,14 @@ class GitSnapshot:
         )
         return env
 
-    def _git(self, *args: str, timeout: float = 300) -> subprocess.CompletedProcess:
+    def _git(
+        self, *args: str, timeout: float = 300, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess:
+        """``env`` 는 덧붙일 변수(임시 색인 ``GIT_INDEX_FILE`` 등)."""
         return subprocess.run(
             ["git", "-c", "safe.directory=*", "-c", "core.hooksPath=/dev/null", *args],
             cwd=str(self.workspace),
-            env=self._env(),
+            env={**self._env(), **(env or {})},
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -172,6 +186,7 @@ class GitSnapshot:
 
         시작 커밋은 변경이 없어도(빈 워크스페이스여도) 찍는다 — 저장소가 세션을 넘어
         이어지므로 `list` 에서 세션의 경계가 되고, 라벨이 세션 id 를 말한다."""
+        self.session_id = session_id
         ok, why = git_available()
         if not ok:
             self.enabled, self.reason = False, why
@@ -432,6 +447,171 @@ class GitSnapshot:
             f'restored {rel} from {at[:8]} — intact at "{self.label(last_good)}", '
             f'changed by "{self.label(first_bad)}".'
         )
+
+    # ── 기준점 ↔ 디스크 (웹 Changes 패널, docs/snapshot/DESIGN.md §7) ──────
+    # 사람이 보는 목록이다 — 모델에게 가는 것은 하나도 바뀌지 않는다. 지금 디스크는
+    # 커밋을 만들지 않고 **임시 색인**으로 트리를 만든다: 실제 색인·HEAD·체크포인트
+    # 간격(``_last_checkpoint``)을 건드리지 않으므로 런 도중 불러도 체크포인트와 엉키지
+    # 않고, 그래서 ``_lock`` 도 잡지 않는다(git 객체 쓰기는 동시에 안전하다).
+
+    def _rev(self, rev: str) -> str | None:
+        r = self._git("rev-parse", "--verify", "-q", f"{rev}^{{commit}}")
+        return r.stdout.strip() or None
+
+    def _commit_time(self, commit: str) -> int:
+        out = self._git("log", "-1", "--format=%ct", commit).stdout.strip()
+        return int(out) if out.isdigit() else 0
+
+    def baseline(self) -> tuple[str, str, int] | None:
+        """``(commit, kind, when)`` — 목록의 기준점. Clear 한 적이 있으면 그 커밋(kind
+        ``"cleared"``), 없으면 **이 세션 id 로 찍힌 가장 이른** 시작 커밋(``"session"`` —
+        resume 은 프로세스마다 시작 커밋을 새로 찍으므로 가장 최근이 아니다), 그것도
+        없으면 HEAD(``"head"``). ``when`` 은 커밋 시각(epoch 초). 커밋이 없으면 None."""
+        if not self.enabled:
+            return None
+        c = self._rev(BASELINE_REF)
+        if c:
+            return c, "cleared", self._commit_time(c)
+        if self.session_id:
+            label = f"session start ({self.session_id})"
+            r = self._git(
+                "log", "--format=%H%x09%ct%x09%s", "--fixed-strings", f"--grep={label}"
+            )
+            hits = [
+                ln.split("\t", 2)
+                for ln in r.stdout.splitlines()
+                if ln.count("\t") >= 2 and ln.split("\t", 2)[2] == label
+            ]
+            if hits:
+                sha, ct, _ = hits[-1]  # log 는 최근 것부터 — 끝이 가장 이른 것
+                return sha, "session", int(ct) if ct.isdigit() else 0
+        head = self.head()
+        if head:
+            return head, "head", self._commit_time(head)
+        return None
+
+    def _disk_tree(self) -> str | None:
+        """지금 디스크의 트리 sha — 체크포인트와 같은 pathspec 으로, 임시 색인에서.
+        실제 색인을 복사해 시작한다(stat 캐시라 바뀌지 않은 파일은 다시 해시하지 않는다;
+        git 은 색인을 lock 파일 + rename 으로 쓰므로 복사는 늘 온전한 판을 읽는다).
+        복사는 **mtime 까지**(``copy2``) — git 은 색인보다 늦지 않은 mtime 의 항목만 내용을
+        다시 보므로(racy-git), 새 mtime 의 복사본은 같은 초·같은 크기로 바뀐 파일을
+        "그대로" 로 믿는다(실측: `one\ntwo` → `one\nTWO` 가 목록에서 빠졌다)."""
+        tmp = self.git_dir / f"index.changes-{os.getpid()}-{threading.get_ident()}"
+        env = {"GIT_INDEX_FILE": str(tmp)}
+        try:
+            real = self.git_dir / "index"
+            if real.is_file():
+                shutil.copy2(real, tmp)
+            r = self._git("add", "-A", "--force", *self._pathspec(), env=env)
+            if r.returncode != 0:
+                return None
+            return self._git("write-tree", env=env).stdout.strip() or None
+        finally:
+            for p in (tmp, tmp.with_name(tmp.name + ".lock")):
+                try:
+                    p.unlink()
+                except FileNotFoundError:
+                    pass
+
+    def changes(self) -> list[dict] | None:
+        """기준점 ↔ 지금 디스크의 바뀐 파일 — ``{path, status, added, deleted}``.
+        ``status`` 는 ``A``·``M``·``D``(이름 바뀜은 D+A, ``--no-renames``)·``T`` 등 git 의
+        글자, 바이너리는 ``added``·``deleted`` 가 None. 비교할 수 없으면 None."""
+        base = self.baseline()
+        tree = self._disk_tree() if base else None
+        if not base or not tree:
+            return None
+        common = ("diff", "--no-renames", "-z")
+        st = self._git(*common, "--name-status", base[0], tree)
+        ns = self._git(*common, "--numstat", base[0], tree)
+        if st.returncode != 0 or ns.returncode != 0:
+            return None
+        parts = st.stdout.split("\0")
+        status = {parts[i + 1]: parts[i] for i in range(0, len(parts) - 1, 2)}
+        counts: dict[str, tuple[int | None, int | None]] = {}
+        for rec in ns.stdout.split("\0"):
+            f = rec.split("\t", 2)
+            if len(f) == 3:
+                counts[f[2]] = (
+                    int(f[0]) if f[0].isdigit() else None,
+                    int(f[1]) if f[1].isdigit() else None,
+                )
+        return [
+            {
+                "path": path,
+                "status": code[:1],
+                "added": counts.get(path, (None, None))[0],
+                "deleted": counts.get(path, (None, None))[1],
+            }
+            for path, code in sorted(status.items())
+        ]
+
+    def change_diff(
+        self, path: str, *, max_lines: int = CHANGE_DIFF_MAX_LINES
+    ) -> tuple[str | None, str]:
+        """기준점 ↔ 지금 디스크의 그 경로 unified diff. 반환 ``(diff, 오류)`` 중 하나만
+        채워진다 — 경로는 ``relative`` 로 검사한다(워크스페이스 밖은 거절). ``max_lines``
+        를 넘으면 앞부분과 ``… truncated, N more lines`` 한 줄."""
+        rel, err = self.relative(path)
+        if rel is None:
+            return None, err
+        base = self.baseline()
+        tree = self._disk_tree() if base else None
+        if not base or not tree:
+            return None, self.reason if not self.enabled else "nothing to compare"
+        r = self._git("diff", "--no-renames", base[0], tree, "--", rel)
+        if r.returncode != 0:
+            return None, r.stderr.strip() or "git diff failed"
+        lines = r.stdout.rstrip("\n").split("\n") if r.stdout else []
+        if len(lines) > max_lines:
+            more = len(lines) - max_lines
+            lines = lines[:max_lines] + [f"… truncated, {more} more lines"]
+        return "\n".join(lines), ""
+
+    def clear(self) -> tuple[str, str, int] | None:
+        """지금 디스크를 새 기준점으로 — 그 트리를 커밋(부모 HEAD, 라벨
+        ``BASELINE_LABEL``)하고 ``BASELINE_REF`` 를 옮긴다. 옮기기 전 기준점 커밋은
+        ``BASELINE_PREV_REF`` 에(Undo 한 단계). HEAD·색인·파일은 건드리지 않는다.
+        새 기준점을 돌려준다(실패 None)."""
+        if not self.enabled:
+            return None
+        with self._lock:  # Clear·Undo 끼리의 순서 — ref 두 개를 함께 옮긴다
+            prev = self.baseline()
+            tree = self._disk_tree()
+            if not tree:
+                return None
+            head = self.head()
+            args = ["commit-tree", tree, "-m", BASELINE_LABEL]
+            if head:
+                args += ["-p", head]
+            new = self._git(*args).stdout.strip()
+            if not new:
+                return None
+            if prev:
+                self._git("update-ref", BASELINE_PREV_REF, prev[0])
+            else:
+                self._git("update-ref", "-d", BASELINE_PREV_REF)
+            if self._git("update-ref", BASELINE_REF, new).returncode != 0:
+                return None
+            return new, "cleared", self._commit_time(new)
+
+    def undo_clear(self) -> bool:
+        """마지막 Clear 를 되돌린다 — 한 단계만(두 번째는 무동작, False). 이전 기준점이
+        Clear 커밋이면 그리로, 세션 시작(또는 HEAD)이었으면 ``BASELINE_REF`` 를 지워
+        다시 그것을 기준으로 삼는다."""
+        if not self.enabled:
+            return False
+        with self._lock:
+            prev = self._rev(BASELINE_PREV_REF)
+            if not prev:
+                return False
+            if self.label(prev) == BASELINE_LABEL:
+                self._git("update-ref", BASELINE_REF, prev)
+            else:
+                self._git("update-ref", "-d", BASELINE_REF)
+            self._git("update-ref", "-d", BASELINE_PREV_REF)
+            return True
 
     # ── model-facing ─────────────────────────────────────────
 
