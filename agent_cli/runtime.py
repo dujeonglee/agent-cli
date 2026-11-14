@@ -44,6 +44,7 @@ from agent_cli.session_slots import (
     set_monitor_registry,
     set_schedule_registry,
 )
+from agent_cli.wake import Mailbox
 
 
 @dataclass(frozen=True)
@@ -708,6 +709,7 @@ class MainLoop(LoopKind):
             hook_runner=_hook_runner_port(),
             absorb_inbox=None,
             peer_roster=None,
+            mailbox=Mailbox(agent_registry, "main"),
             unwired={
                 "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
                 **_hook_unwired(),

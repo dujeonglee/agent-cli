@@ -24,7 +24,9 @@ from agent_cli.loop.kind import (
     PromptProfile,
     Start,
 )
+from agent_cli.session_slots import get_agent_registry
 from agent_cli.tools.result import ToolResult
+from agent_cli.wake import Mailbox
 
 if TYPE_CHECKING:
     from agent_cli.loop.ports import LoopPorts
@@ -91,6 +93,7 @@ class ResidentLoop(LoopKind):
             questions=questions,
             absorb_inbox=absorb_inbox,
             peer_roster=peer_roster,
+            mailbox=Mailbox(get_agent_registry(), f"agent:{key}", take=absorb_inbox),
             agent_registry=None,
             mcp_manager=None,
             hook_runner=_hook_runner_port(),
