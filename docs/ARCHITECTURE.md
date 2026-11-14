@@ -143,11 +143,13 @@ agent_cli/
 │   ├── render.py            record → LLM 메시지 렌더, 예산 추정, 압축 요약 입력 (무상태)
 │   ├── records.py           디스크 레코드 모양의 단일 리더·분류기(ops·개입 종류)
 │   ├── store.py             세션 영속화 디스크 I/O primitive(history 추가·compaction.json·fork)
-│   ├── session.py           세션 디렉터리 배치·메타 `session.jsonl`·목록·resume
 │   ├── exchanges.py         history 의 사용자 요청↔답 쌍 — 세션 목록·resume 의 요약(방언 알림 접두를 거른다)
-│   ├── session_lock.py      한 세션 한 프로세스 — `session.lock` flock
 │   ├── overflow.py          프로바이더별 컨텍스트 초과 감지·`ContextOverflowError`
 │   └── _file_extract.py     축출된 메시지에서 도구가 만진 파일 목록 추출(`Tool.touched_paths` 위임)
+├── session/                 세션 디렉터리 저장소 — 맨 아래 층, 위로 아무것도 import 하지 않는다
+│   ├── __init__.py          패키지 표식(docstring) — 아무것도 내보내지 않는다
+│   ├── store.py             세션 디렉터리 배치·메타 `session.jsonl`·목록·resume
+│   └── lock.py              한 세션 한 프로세스 — `session.lock` flock
 ├── prompts/                 모델이 읽는 글 — 시스템 프롬프트·꼬리·압축 지침 (docs/prompt-notation/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── system_prompt.py     능력에 맞춘 시스템 프롬프트 섹션 조립, 지시사항 파일 읽기·쓰기, 도구 설명 교체
@@ -343,13 +345,13 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 |----|------|
 | 6 | `runtime` · `subagent/` · `skills/` · `harness/` |
 | 5 | `loop/` · `__main__` |
-| 4 | `main` · `recovery/` · `mcp/` |
-| 3 | `context/` · `prompts/` · `providers/` · `tools/` (한 묶음) · `web/` |
-| 2 | `render/` · `pump` · `setup` |
-| 1 | `config` · `dialects/` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` · `instance_file` |
+| 4 | `main` · `recovery/` |
+| 3 | `context/` · `prompts/` · `providers/` (한 묶음) · `mcp/` · `web/` |
+| 2 | `tools/` · `render/` · `pump` · `setup` |
+| 1 | `session/` · `config` · `dialects/` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` · `instance_file` |
 | 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `agents/` |
 
-`context/`·`prompts/`·`providers/`·`tools/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).
+`context/`·`prompts/`·`providers/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).
 그래서 한 층의 한 묶음으로 적는다. `main` 은 명령 함수 안에서 지연 import 하는 것이 많아(`runtime`·`loop/` 등) 층이 낮게 나온다.
 
 ### 3.2 규칙
@@ -357,12 +359,10 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 - **모듈 수준 import 순환은 0 이다.** `tests/test_import_graph.py::test_no_module_level_import_cycle` 이 지킨다.
 - **순환을 피하려고 지연인 import** — 대상 모듈이 모듈 수준 import 만으로 출발 모듈에 닿는 간선 — 는 테스트 안의 이름 붙은 목록
   `CYCLE_AVOIDING_LAZY` 와 정확히 같아야 한다(`test_cycle_avoiding_lazy_imports_are_the_named_list`). 간선 목록 자체는 테스트가 주인이다.
-  두 무리가 있다:
-  - **루프 엔진이 세션·구체 종류를 올려다본다** — `loop.core`·`loop.dispatch`·`loop.kind`·`loop.tool_bridge` → `runtime`
-    (세션 자원 `browser_resource`·`skills_resource`·`snapshot_resource`, 깨우기 판정 `wake_sources`·`arrived_mail`·`harness_work_running`,
-    `release_owner`, `AgentRuntime`)·`subagent.agents_live`(`main_registry`·`tool_agent`·메일 레코드)·`subagent.oneshot`(`tool_delegate`),
-    `loop.skill_invoke` → `skills.executor`(`SkillLoop`).
-  - **아래층이 도구 목록을 읽는다** — `context._file_extract`·`context.render`·`dialects.base` → `tools`(`TOOLS`).
+  남은 것은 **루프 엔진이 세션·구체 종류를 올려다보는** 한 무리다 — `loop.core`·`loop.dispatch`·`loop.kind`·`loop.tool_bridge` → `runtime`
+  (세션 자원 `browser_resource`·`skills_resource`·`snapshot_resource`, 깨우기 판정 `wake_sources`·`arrived_mail`·`harness_work_running`,
+  `release_owner`, `AgentRuntime`)·`subagent.agents_live`(`main_registry`·`tool_agent`·메일 레코드)·`subagent.oneshot`(`tool_delegate`),
+  `loop.skill_invoke` → `skills.executor`(`SkillLoop`).
 - 그 밖의 지연 import 는 순환과 무관하고 가드하지 않는다. 출발 모듈로는 `main`·`runtime`·`prompts.inventory` 에 가장 많다.
   이유는 자리마다 다르다 — 예컨대 `main` 의 `web` 명령은 `agent_cli.web.server`(fastapi 선택 의존성)를 명령 안에서 import 해,
   없으면 그 명령만 안내와 함께 실패한다.
@@ -611,7 +611,7 @@ assistant 턴 하나는 세 형태를 지난다 — (A) 모델이 낸 원문 · 
 같은 세션의 다음 턴도 resume 도 (B) 에서 (C) 를 다시 만든다 — 모델이 흘린 와이어 조각은 저장 때(`sanitize_thought`) 한 번 정제되어 다시 새지 않는다.
 `context/render.py` 는 user·도구 분기만 직접 처리하고 assistant 분기는 방언에 맡긴다.
 
-#### 세션 파일 구조 (`context/session.py`)
+#### 세션 파일 구조 (`session/store.py`)
 
 ```
 .agent-cli/sessions/{session_id}/

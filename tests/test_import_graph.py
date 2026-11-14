@@ -17,7 +17,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 # 순환 회피용 lazy 간선 — (출발 모듈, 대상 모듈). `agent_cli.` 접두는 뺐다.
 CYCLE_AVOIDING_LAZY: set[tuple[str, str]] = {
-    # ① 루프 엔진이 세션·구체 종류를 올려다본다 — 세션 자원(`browser_resource` 등)·깨우기 판정
+    # 루프 엔진이 세션·구체 종류를 올려다본다 — 세션 자원(`browser_resource` 등)·깨우기 판정
     #    (`wake_sources`·`arrived_mail`·`harness_work_running`)·`release_owner`·`AgentRuntime`,
     #    main 레지스트리(`main_registry`)·`tool_agent`·`tool_delegate`, 스킬 실행기(`SkillLoop`).
     ("loop.core", "runtime"),
@@ -30,13 +30,6 @@ CYCLE_AVOIDING_LAZY: set[tuple[str, str]] = {
     ("loop.tool_bridge", "subagent.agents_live"),
     ("loop.tool_bridge", "subagent.oneshot"),
     ("loop.skill_invoke", "skills.executor"),
-    # ② 아래층이 도구 목록 `TOOLS` 를 읽는다.
-    ("context._file_extract", "tools"),
-    ("context._file_extract", "tools.registry"),
-    ("context.render", "tools"),
-    ("context.render", "tools.registry"),
-    ("dialects.base", "tools"),
-    ("dialects.base", "tools.registry"),
 }
 
 

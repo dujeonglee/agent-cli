@@ -116,7 +116,7 @@ def test_sh_timeout_is_124(isolated, monkeypatch):
 
 
 def _session_dirs(root) -> list[str]:
-    import agent_cli.context.session as session_mod
+    import agent_cli.session.store as session_mod
 
     d = root / session_mod._SESSIONS_DIR
     return sorted(p.name for p in d.iterdir()) if d.is_dir() else []
@@ -135,7 +135,7 @@ def test_config_error_leaves_no_session_dir(isolated):
 
 
 def test_two_runs_in_one_second_get_two_sessions(isolated, monkeypatch):
-    import agent_cli.context.session as session_mod
+    import agent_cli.session.store as session_mod
 
     monkeypatch.setattr(session_mod.time, "time", lambda: 1_800_000_000.0)
     for _ in range(2):

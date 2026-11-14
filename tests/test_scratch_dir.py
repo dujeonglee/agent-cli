@@ -10,16 +10,14 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from agent_cli.context.session import create_session
 from agent_cli.main import _build_context
 from agent_cli.paths import scratch_dir
+from agent_cli.session.store import create_session
 
 
 def test_build_context_creates_the_scratch_dir(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        "agent_cli.context.session._SESSIONS_DIR", tmp_path / "sessions"
-    )
+    monkeypatch.setattr("agent_cli.session.store._SESSIONS_DIR", tmp_path / "sessions")
     assert not (tmp_path / scratch_dir()).exists()
     with patch("agent_cli.main.ContextManager") as cm:
         _build_context(create_session(), binding=object())
@@ -30,9 +28,7 @@ def test_build_context_creates_the_scratch_dir(tmp_path, monkeypatch):
 def test_build_context_tolerates_an_existing_scratch_dir(tmp_path, monkeypatch):
     """두 번째 세션(resume·재시작)에서도 같은 자리 — 있으면 그대로 둔다."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        "agent_cli.context.session._SESSIONS_DIR", tmp_path / "sessions"
-    )
+    monkeypatch.setattr("agent_cli.session.store._SESSIONS_DIR", tmp_path / "sessions")
     (tmp_path / ".agent-cli" / "tmp").mkdir(parents=True)
     (tmp_path / ".agent-cli" / "tmp" / "keep.txt").write_text("x")
     with patch("agent_cli.main.ContextManager"):

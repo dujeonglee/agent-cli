@@ -9,7 +9,7 @@
 - **프로파일** `agent_cli/agents/harness/<job>.md` — 사용자 카탈로그
   (`subagent.profiles` 의 검색 경로) 밖이라 `@agents`·spawn·delegate 가 이름을
   모른다. 프로젝트의 `.agent-cli/agents/` 도 덮어쓰지 못한다.
-- **기록** `<session>/harness/<job>/<label>/` (`context.session.harness_run_dir`) —
+- **기록** `<session>/harness/<job>/<label>/` (`session.store.harness_run_dir`) —
   세션과 함께 지워지고 이전되지만 `history` 테이블 밖이다.
 - **결과** 런의 `complete` 결과(못 끝냈으면 그 사유)를 하니스가 main 메일함에
   넣는다(`deliver`). 전달은 모델의 선택이 아니다 — 3판까지의 회신 빚·독촉·
@@ -29,9 +29,9 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from agent_cli.context.session import HARNESS_DIR, harness_run_dir
 from agent_cli.loop.kind import LoopKindError, PrivateLoop, Start
 from agent_cli.resource_loader import ResourceLoader
+from agent_cli.session.store import HARNESS_DIR, harness_run_dir
 
 #: 하니스 프로파일의 자리 — `agents/builtin`(사용자 카탈로그)과 형제, 검색 경로는
 #: 이것 하나뿐이다.

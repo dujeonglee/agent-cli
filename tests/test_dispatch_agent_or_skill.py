@@ -252,13 +252,13 @@ class TestSessionPersistence:
     def test_successful_agent_dispatch_saves_session(
         self, base_state, monkeypatch, tmp_path
     ):
-        from agent_cli.context.session import SessionMeta
+        from agent_cli.session.store import SessionMeta
 
         session = SessionMeta(session_id="s1", workspace="/tmp", updated_at="now")
         base_state["session"] = session
         save_calls: list = []
         monkeypatch.setattr(
-            "agent_cli.context.session.save_meta",
+            "agent_cli.session.store.save_meta",
             lambda s: save_calls.append(s.session_id),
         )
         monkeypatch.setattr("agent_cli.main._dispatch_agent", lambda *a, **k: "ok")
@@ -268,13 +268,13 @@ class TestSessionPersistence:
         assert save_calls == ["s1"]
 
     def test_not_found_does_not_save_session(self, base_state, monkeypatch):
-        from agent_cli.context.session import SessionMeta
+        from agent_cli.session.store import SessionMeta
 
         session = SessionMeta(session_id="s1", workspace="/tmp", updated_at="now")
         base_state["session"] = session
         save_calls: list = []
         monkeypatch.setattr(
-            "agent_cli.context.session.save_meta",
+            "agent_cli.session.store.save_meta",
             lambda s: save_calls.append(s.session_id),
         )
         monkeypatch.setattr(

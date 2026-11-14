@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import pytest
 
-import agent_cli.context.session as session_mod
-from agent_cli.context.session import create_session, save_meta
+import agent_cli.session.store as session_mod
 from agent_cli.main import _maybe_resume_recent
+from agent_cli.session.store import create_session, save_meta
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +105,7 @@ class TestMaybeResumeRecent:
         ws = str(tmp_path / "ws")
         base = session_mod._SESSIONS_DIR
         for sid in ("1700000001", "1700000002", "1700000003"):
-            from agent_cli.context.session import SessionMeta
+            from agent_cli.session.store import SessionMeta
 
             d = base / sid
             d.mkdir(parents=True, exist_ok=True)

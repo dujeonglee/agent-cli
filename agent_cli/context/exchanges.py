@@ -2,7 +2,7 @@
 
 세션 목록·resume 프롬프트가 보여 주는 "마지막 요청 → 결과" 가 여기서 나온다. 시스템 알림
 (재시도 힌트·끼어들기 알림)을 사용자 입력에서 거르려고 방언의 알림 접두를 읽으므로, 세션
-디렉터리 저장소(``context/session.py``)가 아니라 맥락 쪽에 둔다.
+디렉터리 저장소(``session/store.py``)가 아니라 맥락 쪽에 둔다.
 """
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_cli.context import session as _session
 from agent_cli.dialects import all_system_user_prefixes
+from agent_cli.session import store as _store
 
 
 def recent_exchanges(history_path: Path, n: int = 10) -> list[tuple[str, str]]:
@@ -81,7 +81,7 @@ def recent_exchanges(history_path: Path, n: int = 10) -> list[tuple[str, str]]:
     return pairs[-n:] if n > 0 else pairs
 
 
-def session_summary(meta: _session.SessionMeta) -> tuple[str, str]:
+def session_summary(meta: _store.SessionMeta) -> tuple[str, str]:
     """``(last_user_request, last_result)`` for a session, read from its
     history.jsonl — the replacement for the removed ``query`` meta field.
 
@@ -90,6 +90,6 @@ def session_summary(meta: _session.SessionMeta) -> tuple[str, str]:
     ``("", "")`` when the session has no history yet. Reads the file path
     directly (no mkdir side-effect, unlike ``get_session_dir``).
     """
-    hp = _session._SESSIONS_DIR / meta.session_id / "history.jsonl"
+    hp = _store._SESSIONS_DIR / meta.session_id / "history.jsonl"
     pairs = recent_exchanges(hp, n=1)
     return pairs[-1] if pairs else ("", "")

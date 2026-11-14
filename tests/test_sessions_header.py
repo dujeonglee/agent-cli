@@ -15,9 +15,9 @@ import json
 import pytest
 from rich.console import Console
 
-import agent_cli.context.session as session_mod
 import agent_cli.main as m
-from agent_cli.context.session import SessionMeta, save_meta
+import agent_cli.session.store as session_mod
+from agent_cli.session.store import SessionMeta, save_meta
 
 _LONG = "/work/" + "/".join(["very-long-directory-name"] * 5) + "/project"
 _BRACKETS = "/work/[x]/proj [bold]tag[/bold]"

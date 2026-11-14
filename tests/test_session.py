@@ -1,4 +1,4 @@
-"""Tests for context/session.py — project-local session persistence — and
+"""Tests for session/store.py — project-local session persistence — and
 context/exchanges.py (the last user↔answer pairs read from history)."""
 
 from __future__ import annotations
@@ -7,9 +7,9 @@ import json
 
 import pytest
 
-import agent_cli.context.session as session_mod
+import agent_cli.session.store as session_mod
 from agent_cli.context.exchanges import recent_exchanges
-from agent_cli.context.session import (
+from agent_cli.session.store import (
     create_session,
     load_session,
     save_meta,
@@ -86,7 +86,7 @@ class TestSessionIdClaim:
         root = tmp_path / "proc-sessions"
         env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
         code = (
-            "import sys, agent_cli.context.session as s\n"
+            "import sys, agent_cli.session.store as s\n"
             "from pathlib import Path\n"
             "s._SESSIONS_DIR = Path(sys.argv[1])\n"
             "s.time.time = lambda: 1800000000.0\n"
