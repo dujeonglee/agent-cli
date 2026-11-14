@@ -305,17 +305,17 @@ function markClosed(raw, html, closed) {
   if (!m || !closed[m[1]]) return html;
   return html + ' <span class="insp-tag ok">✓ closed</span>';
 }
+/** 꼬리 섹션은 늘 접힌 채로 그린다 — 바뀐 양(`+N`·`−M`·`vs turn K`·`no change`)과
+ * 닫힌 항목(`✓ closed`)은 머리 줄 태그로 보인다. 사용자가 펼친 섹션은 `data-sec` 로
+ * 다음 호출에도 펼친 채 남는다(`frameSetHtml`). */
 function frameTailSecHtml(s, d, prevTurn, closed) {
   let tags = "";
   const lines = s.text.split("\n");
   const hasClosed = lines.some(function (l) { return markClosed(l, "", closed) !== ""; });
   let body = '<pre class="insp-body">' +
     lines.map(function (l) { return markClosed(l, escapeHtml(l), closed); }).join("\n") + "</pre>";
-  let open = true; // 첫 스냅샷 — 비교 대상이 없으면 펼친다
   if (d) {
-    // 바뀐 섹션만 펼친다 — Standing Rules 는 늘 접힌다. 닫힌 항목이 있으면 그 섹션도.
-    open = !!(d.ins || d.del) || hasClosed;
-    if (open) {
+    if (d.ins || d.del) {
       if (d.ins) tags += '<span class="insp-tag ins">+' + d.ins + "</span>";
       if (d.del) tags += '<span class="insp-tag del">−' + d.del + "</span>";
       if (prevTurn != null) tags += '<span class="insp-tag">vs turn ' + escapeHtml(prevTurn) + "</span>";
@@ -333,8 +333,9 @@ function frameTailSecHtml(s, d, prevTurn, closed) {
       tags += '<span class="insp-tag">no change</span>';
     }
   }
+  if (hasClosed) tags += '<span class="insp-tag ok">✓ closed</span>';
   return (
-    '<details class="insp-sec insp-tail"' + (open ? " open" : "") + ">" +
+    '<details class="insp-sec insp-tail" data-sec="' + escapeHtml("insp-tail:" + s.name) + '">' +
     "<summary>" +
     '<span class="insp-name">' + escapeHtml(s.name) + tags + "</span>" +
     '<span class="insp-tok">' + fmtTok(s.est_tokens) + "</span>" +
@@ -542,7 +543,7 @@ function frameRender(f) {
     }
     tl += "</div>";
   }
-  if (tl !== f.sig.tail) { f.sig.tail = tl; f.tail.innerHTML = tl; }
+  if (tl !== f.sig.tail) { f.sig.tail = tl; frameSetHtml(f.tail, tl); }
   f.tail.classList.toggle("open", f.open.tail);
   frameRenderBudget(f);
 }

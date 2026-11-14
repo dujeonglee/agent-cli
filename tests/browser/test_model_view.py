@@ -515,7 +515,10 @@ def test_tail_follows_the_call_and_marks_items_closed_after_it(stack, page):
                 lines: pre.textContent.split('\\n'),
                 tagged: tagged.map(e => e.textContent),
                 struck: struck.length,
-                tags: document.querySelectorAll('#ctx-tail .insp-tail .insp-tag.ok').length,
+                tags: pre.querySelectorAll('.insp-tag.ok').length,
+                head: [...document.querySelectorAll(
+                    '#ctx-tail .insp-tail > summary .insp-tag.ok')].map(e => e.textContent),
+                secOpen: document.querySelector('#ctx-tail .insp-tail').open,
                 body: pre.textContent,
             };
         }"""
@@ -534,5 +537,68 @@ def test_tail_follows_the_call_and_marks_items_closed_after_it(stack, page):
         if "[u-1]" not in ln
     )
     assert facts["tags"] == 1
+    # v10.136.2: 섹션은 접힌 채 — 닫힌 항목이 있다는 것은 머리 줄 태그 하나로 보인다
+    assert facts["head"] == ["✓ closed"] and facts["secOpen"] is False
     assert '[u-2] (dj) "B 해줘"' in facts["body"]  # 아직 열린 건 그대로
+    assert errors == []
+
+
+_TAIL_FACTS = """() => Object.fromEntries([...document.querySelectorAll('#ctx-tail .insp-tail')]
+    .map(d => [d.querySelector('.insp-name').firstChild.textContent,
+               {open: d.open,
+                tags: [...d.querySelectorAll(':scope > summary .insp-tag')]
+                        .map(e => e.textContent)}]))"""
+_SS = "Session State (per-turn tail)"
+_SR = "Standing Rules (per-turn tail)"
+
+
+def _snapshot(stack, page, turn, extra=""):
+    stack.renderer.note_system_prompt(
+        _SECTIONS, turn, grammar=(False, "root ::= x"), tail=_tail(turn, extra)
+    )
+    page.wait_for_function(
+        f"() => /turn {turn}\\/30/.test("
+        "document.querySelector('#ctx-tail .ctx-bar').textContent)",
+        timeout=8000,
+    )
+
+
+def test_tail_sections_start_folded_and_tag_the_change(stack, page):
+    """v10.136.2: 꼬리 섹션은 첫 스냅샷부터 접혀 있다 — 바뀐 양은 머리 줄 태그로."""
+    r = stack.renderer
+    stack.emit_ready()
+    r.replay_from_history(_Ctx(_history7()))
+    r.note_system_prompt(_SECTIONS, 4, grammar=(False, "root ::= x"), tail=_tail(4))
+    errors = _open(page, stack)
+    page.click("#ctx-tail .ctx-bar")
+    first = page.evaluate(_TAIL_FACTS)
+    assert first == {
+        _SR: {"open": False, "tags": []},
+        _SS: {"open": False, "tags": []},
+    }  # 첫 스냅샷 — 비교 대상이 없어 태그도 없다
+    _snapshot(stack, page, 5, "\n2. bar")
+    changed = page.evaluate(_TAIL_FACTS)
+    assert changed[_SS] == {"open": False, "tags": ["+2", "−1", "vs turn 4"]}
+    assert changed[_SR] == {"open": False, "tags": ["no change"]}
+    assert errors == []
+
+
+def test_tail_section_the_user_opened_stays_open(stack, page):
+    """펼친 섹션은 다음 호출(새 스냅샷)에도 펼친 채, 접으면 접힌 채."""
+    _seed_main(stack)
+    errors = _open(page, stack)
+    page.click("#ctx-tail .ctx-bar")
+    sel = '#ctx-tail .insp-tail[data-sec="insp-tail:' + _SS + '"] > summary .insp-name'
+    page.click(sel)
+    _snapshot(stack, page, 6, "\n2. bar\n3. baz")
+    kept = page.evaluate(_TAIL_FACTS)
+    assert kept[_SS]["open"] is True and kept[_SR]["open"] is False
+    assert kept[_SS]["tags"] == ["+2", "−1", "vs turn 5"]  # 새 스냅샷으로 다시 그려졌다
+    assert page.evaluate(
+        "() => !!document.querySelector('#ctx-tail .insp-tail[open] .insp-diff .ins')"
+    )
+    page.click(sel)
+    _snapshot(stack, page, 7, "\n2. bar\n3. baz")
+    folded = page.evaluate(_TAIL_FACTS)
+    assert folded[_SS]["open"] is False and folded[_SR]["open"] is False
     assert errors == []
