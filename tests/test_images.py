@@ -397,7 +397,7 @@ class TestLoopRecords:
 
     def test_append_observation_stores_images_on_the_record(self):
         from agent_cli.dialects import get as get_dialect
-        from agent_cli.loop import _append_observation
+        from agent_cli.loop.dispatch import _append_observation
 
         captured: list[dict] = []
 

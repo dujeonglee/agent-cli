@@ -42,7 +42,7 @@ class TestToolIntersection:
         """Skill tools ∩ parent tools = effective tools."""
         skill = _make_skill(allowed_tools=["read_file", "shell", "write_file"])
 
-        with patch("agent_cli.loop.run_loop") as mock_loop:
+        with patch("agent_cli.loop.run.run_loop") as mock_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_loop.return_value = _TR(True, output="done")
@@ -85,7 +85,7 @@ class TestToolIntersection:
         """호출자 도구 범위 없음(None) → 스킬 도구 그대로."""
         skill = _make_skill(allowed_tools=["read_file", "write_file"])
 
-        with patch("agent_cli.loop.run_loop") as mock_loop:
+        with patch("agent_cli.loop.run.run_loop") as mock_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_loop.return_value = _TR(True, output="done")
@@ -107,7 +107,7 @@ class TestToolIntersection:
         """Skill has no tool restriction → use parent's tools."""
         skill = _make_skill(allowed_tools=[])
 
-        with patch("agent_cli.loop.run_loop") as mock_loop:
+        with patch("agent_cli.loop.run.run_loop") as mock_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_loop.return_value = _TR(True, output="done")
@@ -132,7 +132,7 @@ class TestParentRoleInheritance:
         """호출자의 역할(`caller.agent_role`)이 run_loop 의 agent_role 로 간다 (D3)."""
         skill = _make_skill()
 
-        with patch("agent_cli.loop.run_loop") as mock_loop:
+        with patch("agent_cli.loop.run.run_loop") as mock_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_loop.return_value = _TR(True, output="done")
@@ -155,7 +155,7 @@ class TestParentRoleInheritance:
         """No parent_role → agent_role is empty."""
         skill = _make_skill()
 
-        with patch("agent_cli.loop.run_loop") as mock_loop:
+        with patch("agent_cli.loop.run.run_loop") as mock_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_loop.return_value = _TR(True, output="done")
@@ -178,7 +178,7 @@ class TestParentRoleInheritance:
         (the internal flag flowing to subagents)."""
         skill = _make_skill()
 
-        with patch("agent_cli.loop.run_loop") as mock_loop:
+        with patch("agent_cli.loop.run.run_loop") as mock_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_loop.return_value = _TR(True, output="done")
@@ -199,7 +199,7 @@ class TestParentRoleInheritance:
         """Backward-compat: omitting compaction_enabled keeps compaction on."""
         skill = _make_skill()
 
-        with patch("agent_cli.loop.run_loop") as mock_loop:
+        with patch("agent_cli.loop.run.run_loop") as mock_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_loop.return_value = _TR(True, output="done")
@@ -221,7 +221,7 @@ class TestSkillSubdir:
         """Skill creates its own subdir with history.jsonl."""
         skill = _make_skill(name="summarize")
 
-        with patch("agent_cli.loop.run_loop") as mock_loop:
+        with patch("agent_cli.loop.run.run_loop") as mock_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_loop.return_value = _TR(True, output="done")
@@ -253,7 +253,7 @@ class TestSkillRegistryInheritance:
     def test_skill_inherits_registry_for_spawn(self, caps, ctx):
         skill = _make_skill(allowed_tools=["read_file", "agent"])
         reg = MagicMock(name="registry")
-        with patch("agent_cli.loop.run_loop") as mock_loop:
+        with patch("agent_cli.loop.run.run_loop") as mock_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_loop.return_value = _TR(True, output="done")
@@ -374,7 +374,7 @@ class TestRegistryComesFromTheCaller:
 
     def _run_and_capture(self, caps, ctx, **kw):
         skill = _make_skill(allowed_tools=["read_file", "agent"])
-        with patch("agent_cli.loop.run_loop") as mock_loop:
+        with patch("agent_cli.loop.run.run_loop") as mock_loop:
             from agent_cli.tools.result import ToolResult as _TR
 
             mock_loop.return_value = _TR(True, output="done")
@@ -419,7 +419,7 @@ class TestPromptScopeUnification:
         spy = MagicMock()
         spy.current_scope.return_value = ""
         with (
-            patch("agent_cli.loop.run_loop") as mock_loop,
+            patch("agent_cli.loop.run.run_loop") as mock_loop,
             patch("agent_cli.render._renderer", spy),
             patch("agent_cli.render.get_renderer", return_value=spy),
         ):

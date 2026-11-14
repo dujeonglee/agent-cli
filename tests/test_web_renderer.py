@@ -3037,7 +3037,7 @@ class TestCtxDirWiring:
             monkeypatch.setattr(
                 "agent_cli.skills.load_skills", lambda: {"plan": FakeSkill()}
             )
-            monkeypatch.setattr("agent_cli.loop.run_loop", fake_run_loop)
+            monkeypatch.setattr("agent_cli.loop.run.run_loop", fake_run_loop)
             monkeypatch.setattr(SkillLoop, "__init__", spy_init)
             from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -3085,7 +3085,7 @@ class TestCtxDirWiring:
             success = True
             output = "ok"
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", lambda kind, start, ctx: R())
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", lambda kind, start, ctx: R())
         ctx = ContextManager(tmp_path, max_context_tokens=10000)
         caps = ModelCapabilities(
             context_window=32768,
@@ -3125,7 +3125,9 @@ class TestCtxDirWiring:
             success = True
             output = "ok"
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", lambda kind, start, ctx: LR())
+        monkeypatch.setattr(
+            "agent_cli.loop.run.run_loop", lambda kind, start, ctx: LR()
+        )
         from agent_cli.context.manager import ContextManager
 
         parent = ContextManager(tmp_path, max_context_tokens=10000)

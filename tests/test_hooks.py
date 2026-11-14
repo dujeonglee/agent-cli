@@ -368,7 +368,7 @@ class TestSkillHooksWiring:
             captured["kind"] = kind
             return ToolResult(True, output="done")
 
-        with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+        with patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop):
             SkillLoop(
                 skill,
                 "",
@@ -414,7 +414,7 @@ class TestSkillHooksWiring:
             captured["kind"] = kind
             return ToolResult(True, output="done")
 
-        with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+        with patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop):
             SkillLoop(
                 skill,
                 "",
@@ -622,7 +622,7 @@ class TestDelegateHooksWiring:
         # delegate.py imports run_loop lazily inside _run_single (to
         # break the circular dependency with loop.py), so patch at the
         # source module — the inline import picks up the patched value.
-        with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+        with patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop):
             tool_delegate(
                 {"tasks": [{"task": "trivial"}]},
                 make_caller(
@@ -663,7 +663,7 @@ class TestDelegateHooksWiring:
         # delegate.py imports run_loop lazily inside _run_single (to
         # break the circular dependency with loop.py), so patch at the
         # source module — the inline import picks up the patched value.
-        with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+        with patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop):
             tool_delegate(
                 {"tasks": [{"task": "trivial"}]},
                 make_caller(
@@ -731,7 +731,7 @@ class TestAgentFrontmatterHooks:
                 "agent_cli.subagent.oneshot.load_profile",
                 return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
             ),
-            patch("agent_cli.loop.run_loop", side_effect=fake_run_loop),
+            patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop),
         ):
             tool_delegate(
                 {"tasks": [{"task": "t", "agent": "probe"}]},
@@ -778,7 +778,7 @@ class TestAgentFrontmatterHooks:
                 "agent_cli.subagent.oneshot.load_profile",
                 return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
             ),
-            patch("agent_cli.loop.run_loop", side_effect=fake_run_loop),
+            patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop),
         ):
             tool_delegate(
                 {"tasks": [{"task": "t", "agent": "probe"}]},
@@ -814,7 +814,7 @@ class TestAgentFrontmatterHooks:
                 "agent_cli.subagent.oneshot.load_profile",
                 return_value=self._stubload_profile(hooks_raw=None),
             ),
-            patch("agent_cli.loop.run_loop", side_effect=fake_run_loop),
+            patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop),
         ):
             tool_delegate(
                 {"tasks": [{"task": "t", "agent": "probe"}]},

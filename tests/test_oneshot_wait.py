@@ -389,7 +389,7 @@ class TestOneShotHasItsOwnAddress:
             jobs.start("sleep 30", owner=ports.owner)  # 서브에이전트가 잡을 남기고 끝남
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", fake_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", fake_run_loop)
         caps = ModelCapabilities(
             context_window=32768, max_output_tokens=4096, supports_thinking=False
         )

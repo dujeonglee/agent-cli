@@ -25,8 +25,7 @@ import pytest
 
 from agent_cli.dialects import get as get_dialect
 from agent_cli.dialects.base import Op
-from agent_cli.loop import _append_observation
-from agent_cli.loop.dispatch import TurnDispatcher
+from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
 from tests.test_format_nudge_record import _dispatcher
 
 #: 디스패처가 ``op.action == "<name>"`` 으로 갈라 다루는 op 마다 실행 가능한 입력.

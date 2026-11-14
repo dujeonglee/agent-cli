@@ -29,7 +29,9 @@ from tests.binding_support import make_binding
 
 def _dispatcher(tmp_path, dialect_name="json_fc", **cfg_overrides):
     """``cfg_overrides`` — 포트 등 LoopConfig 필드(예: ``questions=``)."""
-    from agent_cli.loop import LoopState, ToolBridge, TurnDispatcher
+    from agent_cli.loop.dispatch import TurnDispatcher
+    from agent_cli.loop.state import LoopState
+    from agent_cli.loop.tool_bridge import ToolBridge
     from agent_cli.recovery.observability import TurnRecorder
     from tests.loopkit import make_config
 

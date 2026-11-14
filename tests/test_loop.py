@@ -2068,8 +2068,8 @@ class TestRunLoopForwarding:
     def test_forwards_every_agentloop_parameter(self):
         import inspect
 
-        from agent_cli.loop import run_loop
         from agent_cli.loop.core import AgentLoop
+        from agent_cli.loop.run import run_loop
 
         accepted = set(inspect.signature(run_loop).parameters)
         needed = set(inspect.signature(AgentLoop.__init__).parameters) - {"self"}
@@ -2087,8 +2087,8 @@ class TestRunLoopForwarding:
         # v10.87.0: main 은 run_loop 을 직접 부르지 않는다 — 종류(`LoopKind.run`)가 기본
         # 엔진으로 부른다. v10.132.0: 넘기는 것은 ``(kind, start, ctx)`` — 그 호출이
         # 진짜 서명에 묶이는지 본다.
-        from agent_cli.loop import run_loop
         from agent_cli.loop.kind import LoopKind, Start
+        from agent_cli.loop.run import run_loop
         from tests.loop_ports import make_ports
 
         sig = inspect.signature(run_loop)
@@ -2099,7 +2099,7 @@ class TestRunLoopForwarding:
             calls.append(args)
             return ToolResult(True, output="ok")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", spy)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", spy)
         kind = LoopKind()
         kind.owner, kind.ports = "main", make_ports()
         start = Start(query="q")
@@ -2870,7 +2870,7 @@ class TestAskTool:
         the user can see what they're answering without scrolling
         back. CLI renderers ignore ``context`` because the colored
         announcement above already covers them."""
-        from agent_cli.loop import _handle_ask
+        from agent_cli.loop.dispatch import _handle_ask
 
         captured: dict = {}
 
@@ -2906,7 +2906,7 @@ class TestAskTool:
     def test_ask_context_single_question_drops_numbering(self, monkeypatch):
         """Single-question shape mirrors the CLI's bullet form — no
         ``1.`` prefix — so the displayed question reads naturally."""
-        from agent_cli.loop import _handle_ask
+        from agent_cli.loop.dispatch import _handle_ask
 
         captured: dict = {}
 
@@ -3070,52 +3070,52 @@ class TestAskTool:
 
 class TestExtractQuestions:
     def test_dict_with_questions_list(self):
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         assert _extract_questions({"questions": ["a", "b"]}) == ["a", "b"]
 
     def test_dict_with_questions_string(self):
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         assert _extract_questions({"questions": "single"}) == ["single"]
 
     def test_dict_with_question_key(self):
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         assert _extract_questions({"question": "legacy"}) == ["legacy"]
 
     def test_string_input(self):
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         assert _extract_questions("direct question") == ["direct question"]
 
     def test_list_input(self):
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         assert _extract_questions(["q1", "q2"]) == ["q1", "q2"]
 
     def test_none_input(self):
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         assert _extract_questions(None) == []
 
     def test_empty_dict(self):
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         assert _extract_questions({}) == []
 
     def test_empty_list(self):
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         assert _extract_questions([]) == []
 
     def test_empty_string(self):
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         assert _extract_questions("") == []
 
     def test_filters_empty_items(self):
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         assert _extract_questions(["a", "", "b"]) == ["a", "b"]
 
@@ -3125,27 +3125,27 @@ class TestExtractQuestions:
         Previously the dict fell through to `str(q)` and the rendered
         question was the dict repr `{'question': '...'}`. Now extract
         the text from the dict."""
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         result = _extract_questions({"questions": [{"question": "What next?"}]})
         assert result == ["What next?"]
 
     def test_list_of_dicts_with_text_key(self):
         """Common alternate field name."""
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         result = _extract_questions({"questions": [{"text": "Pick one"}]})
         assert result == ["Pick one"]
 
     def test_list_of_dicts_with_content_key(self):
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         result = _extract_questions({"questions": [{"content": "Ready?"}]})
         assert result == ["Ready?"]
 
     def test_list_mixed_strings_and_dicts(self):
         """Extraction works item-by-item regardless of homogeneity."""
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         result = _extract_questions(
             {"questions": ["plain string", {"question": "nested"}, "another"]}
@@ -3155,7 +3155,7 @@ class TestExtractQuestions:
     def test_raw_questions_is_single_dict(self):
         """`action_input.get("questions")` returns a dict, not a list —
         treat as a single question."""
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         result = _extract_questions({"questions": {"question": "Solo?"}})
         assert result == ["Solo?"]
@@ -3163,7 +3163,7 @@ class TestExtractQuestions:
     def test_dict_without_known_text_field_skipped(self):
         """Dict items without any recognizable text key drop out of the
         list rather than becoming `str(dict)` noise."""
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         result = _extract_questions(
             {"questions": ["good", {"unknown_field": "value"}, "also good"]}
@@ -3173,7 +3173,7 @@ class TestExtractQuestions:
     def test_dict_with_non_string_value_skipped(self):
         """If the text field exists but isn't a string (e.g. nested
         dict), skip that item rather than str()-ing it."""
-        from agent_cli.loop import _extract_questions
+        from agent_cli.loop.dispatch import _extract_questions
 
         result = _extract_questions(
             {"questions": [{"question": {"nested": "obj"}}, "clean"]}
@@ -3354,7 +3354,7 @@ class TestAppendObservationHelpers:
     def test_append_observation_no_ctx(self):
         """Works without ctx (no crash)."""
         from agent_cli.dialects import get as get_dialect
-        from agent_cli.loop import _append_observation
+        from agent_cli.loop.dispatch import _append_observation
 
         messages = []
         wf = get_dialect("json_fc")
@@ -3374,7 +3374,7 @@ class TestAppendObservationHelpers:
         built once by ``_handle_text_path``) — the helper never re-parses raw
         text (v10.42.0: the re-parse default is what let the virtual-op paths
         store ``{"content": ""}`` under native_fc)."""
-        from agent_cli.loop import _append_observation
+        from agent_cli.loop.dispatch import _append_observation
 
         captured: list[dict] = []
 
@@ -3423,7 +3423,7 @@ class TestAppendObservationHelpers:
         Pins against any regression that re-feeds raw llm_text into the prior
         (the removed normalize_assistant_for_messages=identity path).
         """
-        from agent_cli.loop import _append_observation
+        from agent_cli.loop.dispatch import _append_observation
 
         class _FakePlugin:
             def serialize_assistant_for_history(self, raw_text):
@@ -3456,7 +3456,7 @@ class TestAppendObservationHelpers:
         and ``success`` fields used by the web renderer's
         ``replay_from_history`` to distinguish observations from plain
         user chat turns and to reproduce ✓/✗ on replay."""
-        from agent_cli.loop import _append_observation
+        from agent_cli.loop.dispatch import _append_observation
 
         captured: list[dict] = []
 
@@ -3493,7 +3493,7 @@ class TestAppendObservationHelpers:
         ``tool_name=""``. The ``tool`` key MUST still be present so
         ``replay_from_history`` routes the entry through ``observation()``
         rather than mis-classifying it as a user chat message."""
-        from agent_cli.loop import _append_observation
+        from agent_cli.loop.dispatch import _append_observation
 
         captured: list[dict] = []
 
@@ -3525,7 +3525,7 @@ class TestAppendObservationHelpers:
     def test_append_observation_stores_artifact_when_provided(self):
         """``artifact`` (e.g. delegate subdir path) is preserved on disk
         so a future session viewer can resolve the linked artefact."""
-        from agent_cli.loop import _append_observation
+        from agent_cli.loop.dispatch import _append_observation
 
         captured: list[dict] = []
 
@@ -3714,7 +3714,7 @@ class TestSkillStack:
 
     def test_skill_stack_blocks_recursive(self, caps, tmp_path):
         """Same skill in stack → blocked with error."""
-        from agent_cli.loop import _handle_run_skill
+        from agent_cli.loop.skill_invoke import _handle_run_skill
 
         obs = _handle_run_skill(
             {"name": "optimize", "arguments": "./"},
@@ -3736,7 +3736,7 @@ class TestSkillStack:
 
     def test_skill_stack_allows_different(self, caps, tmp_path):
         """Different skills in stack → allowed (A→B ok)."""
-        from agent_cli.loop import _handle_run_skill
+        from agent_cli.loop.skill_invoke import _handle_run_skill
 
         # This will fail because we can't actually execute, but it should
         # NOT be blocked by the stack check
@@ -4560,7 +4560,7 @@ class TestBuildTokenStats:
     (prefill only processes the non-cached portion)."""
 
     def test_in_includes_cache_occupancy(self):
-        from agent_cli.loop import _build_token_stats
+        from agent_cli.loop.llm import _build_token_stats
         from agent_cli.providers.base import TokenUsage
 
         usage = TokenUsage(
@@ -4574,7 +4574,7 @@ class TestBuildTokenStats:
         assert stats["cache_read"] == 8000  # breakdown surfaced separately
 
     def test_no_cache_in_equals_input(self):
-        from agent_cli.loop import _build_token_stats
+        from agent_cli.loop.llm import _build_token_stats
         from agent_cli.providers.base import TokenUsage
 
         usage = TokenUsage(input_tokens=1200, output_tokens=5)
@@ -4588,7 +4588,7 @@ class TestCombinedToolLabel:
     ``write_file+write_file+...`` that overflows the terminal line)."""
 
     def test_runs_compressed(self):
-        from agent_cli.loop import _combined_tool_label
+        from agent_cli.loop.dispatch import _combined_tool_label
 
         assert _combined_tool_label(["write_file"] * 12) == "write_file×12"
         assert (
@@ -4597,13 +4597,13 @@ class TestCombinedToolLabel:
         )
 
     def test_single_unchanged(self):
-        from agent_cli.loop import _combined_tool_label
+        from agent_cli.loop.dispatch import _combined_tool_label
 
         assert _combined_tool_label(["shell"]) == "shell"
         assert _combined_tool_label(["read_file", "read_file"]) == "read_file×2"
 
     def test_mixed_runs(self):
-        from agent_cli.loop import _combined_tool_label
+        from agent_cli.loop.dispatch import _combined_tool_label
 
         assert (
             _combined_tool_label(["read_file", "read_file", "shell"])
@@ -4616,7 +4616,7 @@ class TestCombinedToolLabel:
         )
 
     def test_empty(self):
-        from agent_cli.loop import _combined_tool_label
+        from agent_cli.loop.dispatch import _combined_tool_label
 
         assert _combined_tool_label([]) == ""
 
@@ -4629,7 +4629,8 @@ class TestLoopConfigStateOwnership:
     상태는 LoopState 로 — 기존 ``self.X`` 표면은 property 브리지가 유지."""
 
     def _bare(self):
-        from agent_cli.loop import AgentLoop, LoopState
+        from agent_cli.loop.core import AgentLoop
+        from agent_cli.loop.state import LoopState
         from tests.loopkit import make_config
 
         loop = AgentLoop.__new__(AgentLoop)
@@ -4699,7 +4700,7 @@ class TestCollaboratorsStandalone:
     cfg/state 만으로 단독 생성·테스트 가능."""
 
     def test_prompt_svc_rebuild_without_loop(self):
-        from agent_cli.loop import SystemPromptSvc
+        from agent_cli.loop.prompt import SystemPromptSvc
         from tests.loopkit import make_config
 
         svc = SystemPromptSvc(make_config(tools_list=["shell"]), ctx=None)
@@ -4708,7 +4709,8 @@ class TestCollaboratorsStandalone:
         assert svc.sections and svc.system == "\n\n".join(t for _, t in svc.sections)
 
     def test_tool_bridge_invoke_without_loop(self):
-        from agent_cli.loop import LoopState, ToolBridge
+        from agent_cli.loop.state import LoopState
+        from agent_cli.loop.tool_bridge import ToolBridge
         from tests.loopkit import make_config
 
         bridge = ToolBridge(
@@ -4726,11 +4728,9 @@ class TestPR3Collaborators:
     동등성도 여기서 고정."""
 
     def _dispatcher(self, tools_list=("shell", "complete")):
-        from agent_cli.loop import (
-            LoopState,
-            ToolBridge,
-            TurnDispatcher,
-        )
+        from agent_cli.loop.dispatch import TurnDispatcher
+        from agent_cli.loop.state import LoopState
+        from agent_cli.loop.tool_bridge import ToolBridge
         from tests.loopkit import make_config
 
         cfg = make_config(tools_list=list(tools_list))
@@ -4755,7 +4755,7 @@ class TestPR3Collaborators:
 
     def test_dispatcher_standalone_tool_op_continues(self):
         from agent_cli.dialects.base import Op, ParsedTurn
-        from agent_cli.loop import _CONTINUE
+        from agent_cli.loop.state import _CONTINUE
 
         d, _st = self._dispatcher()
         turn = ParsedTurn(
@@ -4778,14 +4778,16 @@ class TestPR3Collaborators:
 
     def test_op_ask_without_questions_falls_through(self):
         from agent_cli.dialects.base import Op, ParsedTurn
-        from agent_cli.loop import _NOT_HANDLED
+        from agent_cli.loop.state import _NOT_HANDLED
 
         d, _ = self._dispatcher()
         turn = ParsedTurn(thought="t", ops=[Op("ask", {})], raw="", parse_stage=1)
         assert d._op_ask("raw", turn, turn.ops[0], None) is _NOT_HANDLED
 
     def test_llm_caller_standalone_interrupt_check(self):
-        from agent_cli.loop import LLMCaller, LoopState, SystemPromptSvc
+        from agent_cli.loop.llm import LLMCaller
+        from agent_cli.loop.prompt import SystemPromptSvc
+        from agent_cli.loop.state import LoopState
         from tests.loopkit import make_config
 
         cfg = make_config()
@@ -4799,7 +4801,7 @@ class TestPR3Collaborators:
         assert llm.overflow_retries == 0
 
     def test_sentinels_are_module_constants_shared_via_loop(self):
-        from agent_cli.loop import _CONTINUE, _RETRY
+        from agent_cli.loop.state import _CONTINUE, _RETRY
         from tests.loopkit import make_loop
 
         loop = make_loop(

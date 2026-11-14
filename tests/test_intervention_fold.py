@@ -141,7 +141,9 @@ class TestManagerFold:
 class TestDispatcherIntegration:
     def test_parse_success_folds_prior_intervention(self, tmp_path):
         from agent_cli.dialects import get as get_wf
-        from agent_cli.loop import LoopState, ToolBridge, TurnDispatcher
+        from agent_cli.loop.dispatch import TurnDispatcher
+        from agent_cli.loop.state import LoopState
+        from agent_cli.loop.tool_bridge import ToolBridge
         from tests.loopkit import make_config
 
         wf = get_wf("json_fc")

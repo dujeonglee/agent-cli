@@ -59,7 +59,7 @@ os.environ.setdefault("NO_COLOR", "1")
 os.environ["TERM"] = "dumb"
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.loop import run_loop
+from agent_cli.loop.run import run_loop
 from agent_cli.providers import create_provider
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.runtime import ports_for_oneshot

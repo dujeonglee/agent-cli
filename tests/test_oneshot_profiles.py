@@ -213,7 +213,7 @@ class TestRunSingleWithAgent:
 
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", mock_run_loop)
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -249,7 +249,7 @@ class TestRunSingleWithAgent:
 
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", mock_run_loop)
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -283,7 +283,7 @@ class TestRunSingleWithAgent:
 
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", mock_run_loop)
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -354,7 +354,7 @@ class TestRunSingleWithAgent:
 
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", mock_run_loop)
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -399,7 +399,7 @@ class TestRunSingleWithAgent:
 
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", mock_run_loop)
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -444,7 +444,7 @@ class TestRunSingleWithAgent:
 
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", mock_run_loop)
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -479,7 +479,7 @@ class TestRunSingleWithAgent:
 
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", mock_run_loop)
 
         from agent_cli.providers.capabilities import ModelCapabilities
 

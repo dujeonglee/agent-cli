@@ -28,7 +28,7 @@ import re
 
 import pytest
 
-from agent_cli.loop import AgentLoop
+from agent_cli.loop.core import AgentLoop
 from agent_cli.prompts.system_prompt import _build_execution_context
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.recovery.recursion import (
@@ -191,7 +191,7 @@ class TestRunSkillDispatchDepthCheck:
     """
 
     def test_depth_at_limit_returns_depth_limit_error(self, tmp_path):
-        from agent_cli.loop import _handle_run_skill
+        from agent_cli.loop.skill_invoke import _handle_run_skill
 
         result = _handle_run_skill(
             {"name": "summarize"},
@@ -219,7 +219,7 @@ class TestRunSkillDispatchDepthCheck:
         assert "Recursive" not in result.error
 
     def test_depth_below_limit_proceeds_to_skill_check(self, tmp_path):
-        from agent_cli.loop import _handle_run_skill
+        from agent_cli.loop.skill_invoke import _handle_run_skill
 
         # Within limit but the skill doesn't exist → 'Skill "x" not
         # found", proving we got past the depth check.
@@ -246,7 +246,7 @@ class TestRunSkillDispatchDepthCheck:
         assert "not found" in result.error
 
     def test_cycle_blocked_with_actionable_options(self):
-        from agent_cli.loop import _handle_run_skill
+        from agent_cli.loop.skill_invoke import _handle_run_skill
 
         result = _handle_run_skill(
             {"name": "summarize"},
@@ -449,7 +449,7 @@ class TestSkillBumpsDepth:
             captured["kind"] = kind
             return ToolResult(True, output="ok")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", fake_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", fake_run_loop)
 
         skill = Skill(
             name="example",
@@ -494,7 +494,7 @@ class TestSkillBumpsDepth:
             captured["kind"] = kind
             return ToolResult(True, output="ok")
 
-        monkeypatch.setattr("agent_cli.loop.run_loop", fake_run_loop)
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", fake_run_loop)
 
         skill = Skill(
             name="example",
@@ -527,7 +527,7 @@ class TestExistingRecursionPathsUnchanged:
     refactor doesn't accidentally drop the block."""
 
     def test_skill_cycle_still_blocked(self):
-        from agent_cli.loop import _handle_run_skill
+        from agent_cli.loop.skill_invoke import _handle_run_skill
 
         result = _handle_run_skill(
             {"name": "summarize"},

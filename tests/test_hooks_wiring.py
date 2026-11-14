@@ -170,7 +170,8 @@ class TestBuiltinHooksDir:
         monkeypatch.setattr(
             "agent_cli.paths.project_dir", lambda: tmp_path / ".agent-cli"
         )
-        from agent_cli.loop import LoopState, ToolBridge
+        from agent_cli.loop.state import LoopState
+        from agent_cli.loop.tool_bridge import ToolBridge
         from agent_cli.runtime import MainLoop
         from tests.loopkit import make_config
 

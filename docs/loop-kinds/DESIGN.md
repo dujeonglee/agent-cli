@@ -32,8 +32,8 @@
 
 `run(start)` 템플릿: 스코프 열기 → `make_ctx`(실패 = `LoopKindError` → `rejected`) → 엔진
 `engine(kind, start, ctx)`(v10.132.0 — 종전 `engine(query, ctx, **loop_kwargs)`, §3.4) → `finally: release()` → `finish` → (예외는 `crashed`) →
-스코프 닫기. 엔진 호출 모양은 가짜 러너 계약과 같고, 기본은 `agent_cli.loop.run_loop` 를
-호출 시점에 읽으므로 `patch("agent_cli.loop.run_loop")` 하나가 다섯 종류에 닿는다.
+스코프 닫기. 엔진 호출 모양은 가짜 러너 계약과 같고, 기본은 `agent_cli.loop.run.run_loop` 를
+호출 시점에 읽으므로 `patch("agent_cli.loop.run.run_loop")` 하나가 다섯 종류에 닿는다.
 
 다섯 구현은 각자의 영역에 있다: `runtime.MainLoop` · `subagent.resident_loop.ResidentLoop` ·
 `subagent.oneshot.OneShotLoop` · `skills.executor.SkillLoop` · `harness.jobs.HarnessLoop`.
