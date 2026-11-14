@@ -55,6 +55,13 @@ from agent_cli.session.store import AGENTS_DIR
 from agent_cli.session_slots import get_job_registry
 from agent_cli.token_estimator import estimate_tokens
 from agent_cli.tools.result import ToolResult
+from agent_cli.wake import (
+    harness_record,
+    release_owner,
+    wait_checkin,
+    wake_source_ids,
+    wake_sources,
+)
 
 if TYPE_CHECKING:
     from agent_cli.context.manager import ContextManager
@@ -335,8 +342,6 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             ),
             "source": "harness",
         }
-
-    from agent_cli.runtime import harness_record
 
     harness = harness_record(reply)
     if harness is not None:
@@ -914,7 +919,7 @@ class AgentRegistry:
         self, addr: str, exclude: frozenset = frozenset()
     ) -> list[tuple[str, str]]:
         """`pending_for` 의 재료 — ``(에이전트 주소, 사람이 읽을 줄)`` 쌍 (v10.79.0).
-        주소는 `wait` 중간 깨우기의 대상 id(`runtime.wake_source_ids`)가 된다."""
+        주소는 `wait` 중간 깨우기의 대상 id(`wake.wake_source_ids`)가 된다."""
         out: list[tuple[str, str]] = []
         for kind, me in self._agent_relations(addr, exclude):
             if kind == "owes":
@@ -961,7 +966,7 @@ class AgentRegistry:
 
         작업·monitor 와 달리 에이전트는 로그 파일이 없다. 레지스트리가 **이미 아는
         것**만으로 그린다 — 상태·지금 처리 중인 요청자·받은편지함 미러·회신 빚과
-        스스로 잠듦·그 에이전트가 기다리는 것(`runtime.wake_sources`)·열린 사람
+        스스로 잠듦·그 에이전트가 기다리는 것(`wake.wake_sources`)·열린 사람
         질문·컨텍스트 기록의 서수와 시각. 새 필드는 없다. "step" 은 컨텍스트 기록
         하나(모델 턴 또는 관찰) — 모델에게 하니스 용어(턴·관찰)를 쓰지 않는다.
         ``step_marks`` 는 `wait` 때 적어 둔 에이전트별 `last_ordinal`.
@@ -1026,8 +1031,6 @@ class AgentRegistry:
                     f"{_label(key)} · owes you a reply · busy on another request"
                     f"{_last_step(tm)}"
                 )
-        from agent_cli.runtime import wake_sources
-
         for debtor in self.parked_debtors_for(addr):
             key = debtor.split(":", 1)[1]
             on = wake_sources(debtor, frozenset({addr}))
@@ -1052,7 +1055,7 @@ class AgentRegistry:
         """빚진 쪽이 **스스로 잠들어 있다** — 런이 `wait` 로 끝나 빚만 남은
         유휴 에이전트(보통의 런 끝은 빚을 비운다). 그런 채무자는 그 자체로는
         아무도 깨우지 못한다: 그를 깨울 것이 있어야 회신이 온다
-        (:meth:`parked_debtors_for` 와 `runtime.wake_sources` 가 거슬러 본다)."""
+        (:meth:`parked_debtors_for` 와 `wake.wake_sources` 가 거슬러 본다)."""
         if debtor == "main" or not debtor.startswith("agent:"):
             return False
         tm = self._agents.get(debtor.split(":", 1)[1])
@@ -1062,7 +1065,7 @@ class AgentRegistry:
 
     def parked_debtors_for(self, addr: str) -> list[str]:
         """``addr`` 에게 회신을 빚진 채 잠든 에이전트 주소들 (v10.77.0) — 그들을
-        깨울 것이 있는지는 호출자(`runtime.wake_sources`)가 거슬러 본다. 서로
+        깨울 것이 있는지는 호출자(`wake.wake_sources`)가 거슬러 본다. 서로
         `message` 하고 둘 다 `wait` 하면 아무도 깨지 않는 교착을 여기서 끊는다."""
         out: list[str] = []
         with self._cv:
@@ -1346,8 +1349,6 @@ class AgentRegistry:
     def next_checkin_s(self, owner: str) -> int | None:
         """이 소유자가 지금 `wait` 하면 걸릴 간격(초) — 없으면(예약만 기다림) None.
         `dispatch._op_wait` 가 결과 문장에 적고 `arm_checkin` 이 같은 값을 건다."""
-        from agent_cli.runtime import wake_source_ids
-
         ids = wake_source_ids(owner)
         if not ids:
             return None
@@ -1369,8 +1370,6 @@ class AgentRegistry:
 
         기준을 함께 적는다: 작업별 로그 크기(P(a) "+N lines since your wait")와
         에이전트별 `last_ordinal`("N steps since your wait")."""
-        from agent_cli.runtime import wake_source_ids
-
         self.run_started(owner)  # 이미 걸린 것이 있으면 푼다
         ids = wake_source_ids(owner)
         if not ids:
@@ -1430,8 +1429,6 @@ class AgentRegistry:
         main 이면 메일함(`_push_reply`, `MailWaker` 가 깨운다), 상주면 받은편지함
         (`request`, 봉투 ``checkin``). 둘 다 ``ledger: "none"`` — 장부 항목이 되지
         않고 영속되지 않는다(`_persists`)."""
-        from agent_cli.runtime import wait_checkin
-
         with self._cv:
             ck = self._checkin_armed.pop(owner, None)
         if ck is None:
@@ -1542,10 +1539,8 @@ class AgentRegistry:
 
     def _drop_monitors(self, key: str) -> int:
         """이 에이전트가 건 감시·띄운 백그라운드 작업을 폐기 — private 종류와 같은
-        함수(`runtime.release_owner`, v10.89.0). 메일함·체크인은 부르는 쪽이 따로(kill·종료는
+        함수(`wake.release_owner`, v10.89.0). 메일함·체크인은 부르는 쪽이 따로(kill·종료는
         자기 순서로 취소하고, 죽음의 정본 자리는 레지스트리까지 넘긴다)."""
-        from agent_cli.runtime import release_owner
-
         return release_owner(
             f"agent:{key}", jobs=self.jobs, monitors=self.monitors
         ).count
@@ -2035,9 +2030,7 @@ class AgentRegistry:
                 )
             else:
                 # 회신·통지 — 런 시작 항목과 같은 봉투. 하니스 통지(잡·모니터·체크인)는
-                # main·one-shot 과 같은 함수(`runtime.harness_record`, v10.89.0).
-                from agent_cli.runtime import harness_record
-
+                # main·one-shot 과 같은 함수(`wake.harness_record`, v10.89.0).
                 rec = harness_record(item) or {
                     "role": "user",
                     "tool": "agent",
@@ -2951,8 +2944,6 @@ class AgentRegistry:
             # 감시 폐기의 **정본 위치** — kill·크래시·세션 종료가 모두
             # 여기로 수렴하고, 여기가 죽음이 확정되는 곳이다. kill/
             # shutdown_all 의 조기 드롭은 그 앞 창을 좁힐 뿐이다.
-            from agent_cli.runtime import release_owner
-
             release_owner(
                 f"agent:{tm.key}", jobs=self.jobs, monitors=self.monitors, registry=self
             )

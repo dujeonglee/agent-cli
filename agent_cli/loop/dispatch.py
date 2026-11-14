@@ -67,6 +67,7 @@ from agent_cli.tools import TOOLS, infer_action
 from agent_cli.tools.registry import effective_tool_names
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
+from agent_cli.wake import arrived_mail, harness_work_running, wake_sources
 
 # parallel_safe 배치 디스패치 엔진이 실제로 배선된 도구들.
 # ``_dispatch_parallel_batch`` 는 도구별 병렬 엔진 호출을 알아야 하므로,
@@ -535,8 +536,6 @@ class TurnDispatcher:
         pairs = stale_turn_pairs(records_since(turn_start))
         if pairs is None:
             return
-        from agent_cli.runtime import harness_work_running
-
         guard = self.stale_guard
         fired = guard.observe(
             pairs,
@@ -1180,11 +1179,11 @@ class TurnDispatcher:
     def _op_wait(self, llm_text: str, turn, op, outcome: dict):
         """terminal ``wait`` op (v10.65.0, docs/wait/DESIGN.md).
 
-        깨울 것(`runtime.wake_sources`)이 있으면: 열린 요청을 ctx 에 넘기고
+        깨울 것(`wake.wake_sources`)이 있으면: 열린 요청을 ctx 에 넘기고
         (`park_requests` — 다음 런의 장부로), 호출과 관찰을 기록하고(히스토리는
         보통의 op + 관찰 모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다),
         런을 ``waiting`` 결과로 끝낸다. 없으면: 거부 관찰을 남기고 런을 잇는다 —
-        막혔을 때 wait 로 도피하는 길은 없다. 이미 도착한 통지(`runtime.arrived_mail`)
+        막혔을 때 wait 로 도피하는 길은 없다. 이미 도착한 통지(`wake.arrived_mail`)
         가 있어도 거부한다(v10.66.2): 다음 관찰에 그 통지가 온다고 말해 준다.
 
         v10.84.0 (docs/wait/DESIGN.md §7): 깨울 길이 없는 루프(스킬 — 호출자의 턴 안
@@ -1194,7 +1193,6 @@ class TurnDispatcher:
         런을 잇는다 — 다음 턴 경계의 흡수(`kind.intake`)가 통지를 넣는다. 장부는
         넘기지 않는다(같은 런)."""
         from agent_cli.loop.kind import WAIT_BLOCK, WAIT_REFUSE
-        from agent_cli.runtime import arrived_mail, wake_sources
 
         reason = ""
         if isinstance(op.action_input, dict):
@@ -1307,8 +1305,6 @@ class TurnDispatcher:
         여기서 기다려도 아무도 손해가 없다. 체크인 타이머는 상주·main 처럼 걸고(메일로
         온다), 깨면 푼다. 레지스트리가 없으면 기다릴 메일함이 없다 — 깨울 것이
         사라진 것과 같이 다룬다."""
-        from agent_cli.runtime import wake_sources
-
         owner = self.cfg.kind.ports.owner
         why = "nothing"
         if reg is not None:
@@ -1368,8 +1364,6 @@ class TurnDispatcher:
             else "(Last reminder — after this the harness closes the rest.)"
         )
         # 기다리려고 complete 를 썼다면 (v10.65.0) — 옛 습관을 한 번에 교정한다.
-        from agent_cli.runtime import wake_sources
-
         waiting_hint = (
             " If you are only waiting for something you started to report back, "
             "call `wait` instead — it keeps these items open and the report wakes you."

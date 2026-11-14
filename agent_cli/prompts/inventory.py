@@ -166,10 +166,10 @@ def _tools(dialect) -> list[dict]:
 
 
 def _wait_checkin_sample() -> str:
-    """`wait` 중간 깨우기 알림의 고정 문장들 (v10.79.0, `runtime.wait_checkin`) —
+    """`wait` 중간 깨우기 알림의 고정 문장들 (v10.79.0, `wake.wait_checkin`) —
     머리줄·선택지 문장을 자리 표시자로 채운 표본. 상태 줄(작업·monitor·에이전트)은
     사실 그대로라 표기 규칙의 대상이 아니다."""
-    from agent_cli.runtime import (
+    from agent_cli.wake import (
         CHECKIN_AGAIN,
         CHECKIN_AGENT_STUCK,
         CHECKIN_HEAD,

@@ -213,8 +213,8 @@ class TestTurnPairs:
 
 class TestHarnessWork:
     def test_running_job_or_live_monitor_of_the_owner(self, monkeypatch):
-        from agent_cli.runtime import harness_work_running
         from agent_cli.session_slots import set_job_registry, set_monitor_registry
+        from agent_cli.wake import harness_work_running
 
         running = {"main": [object()]}
         set_job_registry(MagicMock(running=lambda owner: running.get(owner, [])))

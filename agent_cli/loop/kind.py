@@ -371,8 +371,8 @@ class PrivateLoop(LoopKind):
             _WEB_ONLY,
             _hook_runner_port,
             _hook_unwired,
-            _private_inbox,
         )
+        from agent_cli.wake import _private_inbox
 
         return LoopPorts(
             owner=owner,
@@ -400,7 +400,7 @@ class PrivateLoop(LoopKind):
         )
 
     def release(self) -> str:
-        from agent_cli.runtime import release_owner
+        from agent_cli.wake import release_owner
 
         return release_owner(self.owner, registry=get_agent_registry()).note
 

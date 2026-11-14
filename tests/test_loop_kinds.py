@@ -421,10 +421,10 @@ class TestEngineAsksTheKind:
 
 class TestOneHarnessRecord:
     def test_main_resident_and_private_share_the_function(self):
-        """하니스 통지의 레코드는 `runtime.harness_record` 하나 — main 의 `build_reply_record`,
+        """하니스 통지의 레코드는 `wake.harness_record` 하나 — main 의 `build_reply_record`,
         private 의 `mail_record` 가 같은 사전을 돌려준다(상주의 `absorb_pending` 도 같은 함수)."""
-        from agent_cli.runtime import harness_record, mail_record
         from agent_cli.subagent.agents_live import build_reply_record
+        from agent_cli.wake import harness_record, mail_record
 
         mail = {"kind": "monitor", "success": True, "output": "👁 monitor m-1 fired"}
         rec = harness_record(mail)
@@ -444,8 +444,8 @@ class TestReleaseOwnerIsOneFunction:
     def test_private_and_resident_release_the_same_resources(self, monkeypatch):
         """잡·모니터·메일함(체크인) — 한 함수가 거둔다. 상주의 `_drop_monitors` 는
         같은 함수의 자원 몫(메일함은 죽음의 정본 자리인 워커 finally 가 레지스트리를 넘긴다)."""
-        from agent_cli.runtime import release_owner
         from agent_cli.subagent.agents_live import AgentRegistry
+        from agent_cli.wake import release_owner
 
         dropped: list[tuple[str, str]] = []
 

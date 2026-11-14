@@ -193,7 +193,7 @@ class TestWaitEndsTheRun:
 
     def test_agent_scoped_jobs_do_not_wake_main(self, jobs):
         jobs.start("sleep 30", owner="agent:x")
-        from agent_cli.runtime import wake_sources
+        from agent_cli.wake import wake_sources
 
         assert wake_sources("main") == []
         assert wake_sources("agent:x") == ["job #1 (`sleep 30`)"]
@@ -263,7 +263,7 @@ class TestAlreadyArrived:
         return loop
 
     def test_job_and_monitor_mail_count_as_arrived_not_as_wake_sources(self, tmp_path):
-        from agent_cli.runtime import arrived_mail, wake_sources
+        from agent_cli.wake import arrived_mail, wake_sources
 
         reg = self._registry(tmp_path)
         assert arrived_mail("main") == 0
@@ -475,7 +475,7 @@ class TestCircularWait:
         )
 
     def test_two_agents_waiting_on_each_other_refuse_the_second_wait(self, reg):
-        from agent_cli.runtime import wake_sources
+        from agent_cli.wake import wake_sources
 
         r, (a, b, _c) = reg
         self._owes(r, a, b, "r-1")  # a 는 b 에게 빚진 채 잠들었다(wait)
@@ -486,7 +486,7 @@ class TestCircularWait:
         assert r.parked_debtors_for(f"agent:{b}") == [f"agent:{a}"]
 
     def test_a_chain_to_a_working_agent_still_wakes(self, reg):
-        from agent_cli.runtime import wake_sources
+        from agent_cli.wake import wake_sources
 
         r, (a, b, c) = reg
         self._owes(r, a, b, "r-1")  # a 는 b 에게 빚진 채 잠들었고

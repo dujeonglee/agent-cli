@@ -18,7 +18,7 @@ trial 1,153개(통과 593 · 실패 553 · 판정 없음 7)에 모델 호출 없
   있었다. "본 것" 으로 치는 쌍도 (a)~(c) 를 만족한 것뿐이다.
 - 리셋(제자리 아님, 연속 수 0): `wait`·`monitor` 가 든 턴, 쌍이 없는 턴, **하니스 작업이 도는
   중인 턴**(그 런 소유의 `shell background` 작업이 running 이거나 살아 있는 모니터 —
-  `runtime.harness_work_running(owner)`).
+  `wake.harness_work_running(owner)`).
 - 제자리 턴이 **3번 연달아**면 발화. 발화 뒤 연속 수는 0 — 다음 발화는 다시 3턴. 런마다
   발화 수를 센다.
 - 상수 `STALE_WINDOW = 8`·`STALE_RUN = 3` 은 `recovery/detectors.py` 의 모듈 상수다(노브 아님).
