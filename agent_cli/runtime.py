@@ -31,6 +31,18 @@ from typing import Any, NamedTuple
 
 from agent_cli.loop.kind import WAIT_END_RUN, LoopKind, PromptProfile, Start
 from agent_cli.loop.ports import LoopPorts
+from agent_cli.session_slots import (
+    get_agent_registry,
+    get_hook_runner,
+    get_job_registry,
+    get_monitor_registry,
+    get_schedule_registry,
+    set_agent_registry,
+    set_hook_runner,
+    set_job_registry,
+    set_monitor_registry,
+    set_schedule_registry,
+)
 
 
 @dataclass(frozen=True)
@@ -83,12 +95,12 @@ def build_agent_registry(
 
     ``max_agents`` None = 미지정 → registry 가 env/기본값을 고른다 (v8.61.0,
     CLI ``--max-agents``)."""
-    from agent_cli.subagent.agents_live import AgentRegistry, set_main_registry
+    from agent_cli.subagent.agents_live import AgentRegistry
 
     registry = AgentRegistry(
         session_dir, runtime=runtime.as_dict(), max_agents=max_agents
     )
-    set_main_registry(registry)
+    set_agent_registry(registry)
     if monitors is not None:
         wire_monitor_delivery(registry, monitors)
     if jobs is not None:
@@ -107,7 +119,7 @@ def wire_job_delivery(registry, jobs) -> None:
 def build_job_registry(cwd=None):
     """백그라운드 작업 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용,
     `build_monitor_registry` 의 형제). 배달 배선은 `wire_job_delivery`."""
-    from agent_cli.jobs import JobRegistry, set_job_registry
+    from agent_cli.jobs import JobRegistry
 
     registry = JobRegistry(cwd)
     set_job_registry(registry)
@@ -135,12 +147,11 @@ def wire_monitor_delivery(registry, monitors) -> None:
 
 def build_hook_runner():
     """세션당 Python 훅 러너 하나 (v10.35.0) — run/web 부트스트랩이 부르고 네 포트
-    종류의 `make_ports`(`MainLoop`·`ResidentLoop`·`SkillLoop`·`PrivateLoop`)가 `hooks.runtime.get_hook_runner`
+    종류의 `make_ports`(`MainLoop`·`ResidentLoop`·`SkillLoop`·`PrivateLoop`)가 `session_slots.get_hook_runner`
     로 같은 인스턴스를 받는다. 셸 훅(`hooks.json`)은 종류의 `hooks_config`
     경로가 따로 돌므로 러너엔 주지 않는다(두 번 실행 방지). `teardown_session` 이
     푼다."""
     from agent_cli.hooks.runner import HookRunner
-    from agent_cli.hooks.runtime import set_hook_runner
 
     runner = HookRunner(shell_hooks_config=None)
     set_hook_runner(runner)
@@ -215,13 +226,12 @@ def skills_resource():
 def build_monitor_registry(session_dir=None):
     """monitor 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용).
 
-    `build_agent_registry` 의 형제다. 도구는 모듈 전역(`monitor/runtime.py`)
+    `build_agent_registry` 의 형제다. 도구는 세션 슬롯(`session_slots`)
     으로 닿는다 — 루프가 `LoopConfig.monitor_registry` 로도 닿던 두 번째
     경로는 주소 배달로 바뀌며 사라졌다(보고를 루프가 drain 하지 않는다).
     배달 배선은 `wire_monitor_delivery` 가 건다.
     """
     from agent_cli.monitor.registry import MonitorRegistry
-    from agent_cli.monitor.runtime import set_monitor_registry
 
     registry = MonitorRegistry(session_dir=session_dir)
     set_monitor_registry(registry)
@@ -236,7 +246,6 @@ def build_schedule_registry(session_dir=None):
     남긴다). docs/schedule/DESIGN.md §6.
     """
     from agent_cli.schedule.registry import ScheduleRegistry
-    from agent_cli.schedule.runtime import set_schedule_registry
 
     registry = ScheduleRegistry(session_dir=session_dir)
     set_schedule_registry(registry)
@@ -357,8 +366,6 @@ def teardown_session(
             )
     if agent_registry is not None:
         agent_registry.shutdown_all()
-    from agent_cli.hooks.runtime import set_hook_runner
-
     set_hook_runner(None)  # 세션 훅 러너 해제 (v10.35.0)
 
     from agent_cli.render import render_spinner_stop
@@ -644,8 +651,6 @@ _NO_HOOK_RUNNER = (
 
 def _hook_runner_port():
     """모든 종류의 `make_ports` 가 같은 세션 러너를 받는다 (v10.35.0)."""
-    from agent_cli.hooks.runtime import get_hook_runner
-
     return get_hook_runner()
 
 
@@ -674,22 +679,16 @@ def _wake_items(owner: str, _seen: frozenset = frozenset()) -> list[tuple[str, s
     줄로 비교하면 같은 에이전트라도 "queued↔working" 처럼 글이 바뀌어 헛되이
     5분으로 돌아간다."""
     out: list[tuple[str, str]] = []
-    from agent_cli.jobs import get_job_registry
-
     jobs = get_job_registry()
     if jobs is not None:
         for j in jobs.running(owner):
             out.append((f"job:{j.id}", f"job #{j.id} (`{j.command[:60]}`)"))
-    from agent_cli.monitor.runtime import get_monitor_registry
-
     mons = get_monitor_registry()
     if mons is not None:
         for m in mons.list_all():
             if m.owner == owner:
                 out.append((f"mon:{m.id}", f"monitor {m.id}"))
-    from agent_cli.subagent.agents_live import main_registry
-
-    agents = main_registry()
+    agents = get_agent_registry()
     if agents is not None:
         out.extend(agents.pending_agents_for(owner, exclude=_seen))
         seen = _seen | {owner}
@@ -701,7 +700,6 @@ def _wake_items(owner: str, _seen: frozenset = frozenset()) -> list[tuple[str, s
                     (debtor, f"{debtor} owes you a reply (it is waiting on others)")
                 )
     from agent_cli.constants import is_private_owner
-    from agent_cli.schedule.runtime import get_schedule_registry
 
     # 예약은 세션 것 — main 에게 발화한다. private 주소(one-shot·하니스 작업)의
     # 깨울 것으로 세면 잡 없이도 `wait` 가 받아들여져 영원히 막힌다 (v10.84.0).
@@ -715,9 +713,6 @@ def harness_work_running(owner: str) -> bool:
     """이 소유자의 하니스 작업이 도는 중인가 — 돌고 있는 `shell background` 작업이나 살아 있는
     모니터 (v10.120.0). StaleGuard 가 그 턴을 제자리로 세지 않는다: 작업을 기다리며 같은 로그를
     다시 보는 것은 고리가 아니다(오프라인 대입의 폴링 오탐 — apt-get 을 tail 로 반복해 봄)."""
-    from agent_cli.jobs import get_job_registry
-    from agent_cli.monitor.runtime import get_monitor_registry
-
     jobs = get_job_registry()
     if jobs is not None and jobs.running(owner):
         return True
@@ -791,8 +786,7 @@ def wait_checkin(
     조건과 남은 시간, 에이전트 줄은 레지스트리가 이미 아는 것(`checkin_agent_lines`).
     과제 시간은 하니스도 모른다 — 사실만 주고 판단은 모델이 한다."""
     from agent_cli.constants import format_duration
-    from agent_cli.jobs import _short, get_job_registry
-    from agent_cli.monitor.runtime import get_monitor_registry
+    from agent_cli.jobs import _short
 
     lines: list[str] = []
     stops: list[str] = []
@@ -850,9 +844,7 @@ def arrived_mail(owner: str) -> int:
     `wait` 의 둘째 판정. 깨울 것(`wake_sources`)이 "아직 돌고 있는 것" 이라면 이건
     "끝나서 통지가 와 있는 것": 모니터가 wait 보다 먼저 발화한 벤치 사례가 그렇다.
     0 이 아니면 wait 는 거부되고 런이 이어져 그 통지를 바로 받는다."""
-    from agent_cli.subagent.agents_live import main_registry
-
-    agents = main_registry()
+    agents = get_agent_registry()
     return agents.arrived_for(owner) if agents is not None else 0
 
 
@@ -1067,9 +1059,7 @@ def _private_inbox(owner: str):
     """private 주소의 메일함을 턴 경계에 흡수하는 ``absorb_inbox`` 포트 (v10.84.0)."""
 
     def absorb() -> list[dict]:
-        from agent_cli.subagent.agents_live import main_registry
-
-        reg = main_registry()
+        reg = get_agent_registry()
         if reg is None:
             return []
         return [mail_record(m) for m in reg.take_mail(owner)]
@@ -1090,9 +1080,6 @@ def release_owner(owner: str, *, jobs=None, monitors=None, registry=None) -> Rel
     돌고 있는 잡은 죽이고(결과에 알린다), 모니터는 폐기하고(재부모화하지 않는다),
     ``registry`` 가 있으면 메일함·체크인을 버린다(읽을 사람이 없다).
     ``jobs``·``monitors`` 는 레지스트리가 주입받은 것을 넘길 수 있고(테스트 DI) 없으면 전역."""
-    from agent_cli.jobs import get_job_registry
-    from agent_cli.monitor.runtime import get_monitor_registry
-
     count = 0
     parts: list[str] = []
     jobs = jobs if jobs is not None else get_job_registry()

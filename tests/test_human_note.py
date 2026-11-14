@@ -218,7 +218,8 @@ class TestShellPathCheck:
 
 @pytest.fixture
 def jobs(tmp_path):
-    from agent_cli.jobs import JobRegistry, set_job_registry
+    from agent_cli.jobs import JobRegistry
+    from agent_cli.session_slots import set_job_registry
     from tests.monitor_delivery import RecordingDelivery
 
     reg = JobRegistry(tmp_path)
@@ -264,7 +265,7 @@ class TestShellBackground:
 @pytest.fixture
 def monitors():
     from agent_cli.monitor import MonitorRegistry
-    from agent_cli.monitor.runtime import set_monitor_registry
+    from agent_cli.session_slots import set_monitor_registry
     from tests.monitor_delivery import RecordingDelivery
 
     reg = MonitorRegistry()

@@ -202,10 +202,11 @@ class TestPrivateLoop:
     def test_private_ports_absorb_their_own_mailbox_and_release_the_owner(
         self, monkeypatch
     ):
-        from agent_cli.subagent.agents_live import AgentRegistry, set_main_registry
+        from agent_cli.session_slots import set_agent_registry
+        from agent_cli.subagent.agents_live import AgentRegistry
 
         reg = AgentRegistry(None)
-        set_main_registry(reg)
+        set_agent_registry(reg)
         try:
             k = PrivateLoop("run:t9")
             assert k.ports.owner == "run:t9" and k.ports.wakeable()
@@ -227,7 +228,7 @@ class TestPrivateLoop:
             k.release()
             assert reg.take_mail("run:t9") == []  # 메일함이 버려졌다
         finally:
-            set_main_registry(None)
+            set_agent_registry(None)
 
 
 # ── PR 2 (v10.88.0): 엔진이 종류에게 묻는다 ─────────────────────────────────

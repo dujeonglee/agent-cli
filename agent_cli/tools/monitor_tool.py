@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from agent_cli.session_slots import get_monitor_registry
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
@@ -24,8 +25,6 @@ MODES = ("add", "list", "delete")
 
 
 def _registry():
-    from agent_cli.monitor.runtime import get_monitor_registry
-
     return get_monitor_registry()
 
 

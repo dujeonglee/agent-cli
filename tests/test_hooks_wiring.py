@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.hooks.runtime import get_hook_runner, set_hook_runner
 from agent_cli.runtime import (
     build_hook_runner,
 )
+from agent_cli.session_slots import get_hook_runner, set_hook_runner
 
 
 @pytest.fixture(autouse=True)

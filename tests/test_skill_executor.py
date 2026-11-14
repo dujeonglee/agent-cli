@@ -369,7 +369,7 @@ class TestSkillSpawnExecution:
 class TestRegistryComesFromTheCaller:
     """v10.87.0: 레지스트리는 호출자(`Caller`)가 준다 — 루프 안이면 그 루프의 것(main 아래
     스킬은 main 레지스트리, 서브에이전트 아래는 None = run-only 경계), 루프 밖 `/skill` 은
-    `main._dispatch_skill` 이 `main_registry()` 를 **명시**한다. 종전 `_INHERIT` 센티널(미지정
+    `main._dispatch_skill` 이 `get_agent_registry()` 를 **명시**한다. 종전 `_INHERIT` 센티널(미지정
     → main 슬롯 자동 상속)은 없다."""
 
     def _run_and_capture(self, caps, ctx, **kw):
@@ -398,9 +398,9 @@ class TestRegistryComesFromTheCaller:
     def test_none_stays_none_even_with_a_main_slot(self, caps, ctx):
         """경계 핵심: 서브에이전트 루프의 호출자는 레지스트리가 None — 슬롯이 차 있어도
         상속하지 않아야 run-only 가 유지된다."""
-        from agent_cli.subagent.agents_live import set_main_registry
+        from agent_cli.session_slots import set_agent_registry
 
-        set_main_registry(MagicMock(name="slot"))
+        set_agent_registry(MagicMock(name="slot"))
         assert self._run_and_capture(caps, ctx) is None
 
 

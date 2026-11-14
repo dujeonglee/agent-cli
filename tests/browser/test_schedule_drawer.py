@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from agent_cli.schedule.registry import ScheduleRegistry
-from agent_cli.schedule.runtime import set_schedule_registry
+from agent_cli.session_slots import set_schedule_registry
 
 
 def _wait(cond, timeout=8.0, step=0.05):

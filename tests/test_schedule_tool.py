@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from agent_cli.schedule.registry import AGENT_CAP, ScheduleRegistry
-from agent_cli.schedule.runtime import set_schedule_registry
+from agent_cli.session_slots import set_schedule_registry
 from agent_cli.tools import TOOLS
 from agent_cli.tools.schedule import MODES, ScheduleTool
 

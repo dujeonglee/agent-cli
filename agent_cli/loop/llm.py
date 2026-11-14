@@ -36,6 +36,7 @@ from agent_cli.render import (
     render_thinking_chunk,
     render_tool_call_chunk,
 )
+from agent_cli.session_slots import get_job_registry
 from agent_cli.token_estimator import utf8_len
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
@@ -257,8 +258,6 @@ class LLMCaller:
         notice, self._compaction_armed = compaction_notice_due(
             used, budget, self._compaction_armed
         )
-        from agent_cli.jobs import get_job_registry
-
         job_reg = get_job_registry()
         jobs = (
             job_reg.render_tail(self.cfg.kind.ports.owner)

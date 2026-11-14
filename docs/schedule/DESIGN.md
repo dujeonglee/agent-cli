@@ -134,7 +134,7 @@ missed(s, due):
 |---|---|
 | `cron.py` | 보드에서 이식 |
 | `registry.py` | `ScheduleRegistry(session_dir, enqueue)` — 저장·정산 스레드·`has_active_work()` |
-| `runtime.py` | 프로세스 전역 접근자 (`monitor/runtime.py` 와 같은 모양) |
+| `session_slots.py`(최상위) | 프로세스 전역 접근자 — 잡·모니터·훅·에이전트 자리와 한 모듈 |
 
 ### 6.2 `schedule` 도구
 

@@ -304,7 +304,7 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
   `{owner: _Checkin}`(걸린 것)과 `{owner: (ids, step)}`(직전에 발화한 것) 둘 — 배증이 치르는
   유일한 값이다.
 - **푸는 곳**: `AgentLoop.run()` 이 첫 턴 경계의 배달 **뒤**, 빈 깨우기 런의 조기 반환 뒤에
-  `_note_run_started()` → 전역 `main_registry().run_started(owner)` 를 한 번 부른다. 상주 포트는
+  `_note_run_started()` → 전역 `get_agent_registry().run_started(owner)` 를 한 번 부른다. 상주 포트는
   `agent_registry=None` 이라 전역으로 가야 하고(`dispatch._op_wait` 와 같은 방식), 네 경로가
   한 지점이다. 배달 뒤인 이유: 다른 런이 메일을 먼저 가져가 입력 없이 끝나는 런(`output=""`)이
   타이머를 풀면 잠든 모델의 기다림에 깨우기가 없어진다. 배달과 이 호출 사이에 타이머가 발화하면

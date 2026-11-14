@@ -20,19 +20,22 @@ import pytest
 
 from agent_cli.constants import CHECKIN_STEPS_S, format_duration
 from agent_cli.dialects import get as get_dialect
-from agent_cli.jobs import JobRegistry, set_job_registry
+from agent_cli.jobs import JobRegistry
 from agent_cli.loop.core import mail_item
 from agent_cli.monitor import MonitorRegistry, build
-from agent_cli.monitor.runtime import set_monitor_registry
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.runtime import wake_source_ids, wake_sources
+from agent_cli.session_slots import (
+    set_agent_registry,
+    set_job_registry,
+    set_monitor_registry,
+)
 from agent_cli.subagent.agents_live import (
     AgentInstance,
     Question,
     ReplyDebt,
     build_reply_record,
-    set_main_registry,
 )
 from tests.loop_ports import make_ports
 from tests.loopkit import make_loop
@@ -71,15 +74,15 @@ def jobs(tmp_path):
 
 @pytest.fixture
 def reg(tmp_path, monkeypatch):
-    import agent_cli.schedule.runtime as sched
+    from agent_cli.session_slots import set_schedule_registry
 
-    monkeypatch.setattr(sched, "get_schedule_registry", lambda: None)
+    set_schedule_registry(None)
     FakeTimer.made.clear()
     r = make_registry(tmp_path)
     r.checkin_timer_factory = FakeTimer
-    set_main_registry(r)
+    set_agent_registry(r)
     yield r
-    set_main_registry(None)
+    set_agent_registry(None)
     r.shutdown_all()
 
 
@@ -173,13 +176,9 @@ class TestArmAndFire:
         assert reg.fire_checkin("main") == "" and _mail(reg) == []
 
     def test_schedule_only_wait_arms_nothing(self, reg, monkeypatch):
-        import agent_cli.schedule.runtime as sched
+        from agent_cli.session_slots import set_schedule_registry
 
-        monkeypatch.setattr(
-            sched,
-            "get_schedule_registry",
-            lambda: SimpleNamespace(has_active_work=lambda: True),
-        )
+        set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
         assert wake_sources("main") == ["a schedule"]
         assert wake_source_ids("main") == frozenset()
         assert reg.next_checkin_s("main") is None
@@ -188,13 +187,9 @@ class TestArmAndFire:
     def test_a_schedule_beside_a_job_arms_but_is_not_in_the_notice(
         self, reg, jobs, monkeypatch
     ):
-        import agent_cli.schedule.runtime as sched
+        from agent_cli.session_slots import set_schedule_registry
 
-        monkeypatch.setattr(
-            sched,
-            "get_schedule_registry",
-            lambda: SimpleNamespace(has_active_work=lambda: True),
-        )
+        set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
         jobs.start("sleep 30", owner="main")
         assert wake_source_ids("main") == {"job:1"}
         reg.run_ended("main", "", waiting=True)
@@ -427,13 +422,13 @@ class TestResident:
     ):
         import threading
 
-        import agent_cli.schedule.runtime as sched
+        from agent_cli.session_slots import set_schedule_registry
 
-        monkeypatch.setattr(sched, "get_schedule_registry", lambda: None)
+        set_schedule_registry(None)
         gate = threading.Event()
         r = make_registry(tmp_path, runner=make_runner(block=gate))
         r.checkin_timer_factory = FakeTimer
-        set_main_registry(r)
+        set_agent_registry(r)
         try:
             key, _ = r.spawn()
             assert wait_until(lambda: r.get(key).state == "idle")
@@ -460,7 +455,7 @@ class TestResident:
             assert f"agent:{key}" in r.fire_checkin("main")
         finally:
             gate.set()
-            set_main_registry(None)
+            set_agent_registry(None)
             r.shutdown_all()
 
     def test_kill_and_shutdown_cancel_timers(self, reg, jobs):
@@ -518,13 +513,9 @@ class TestLoopWiring:
         )
 
     def test_wait_result_without_a_timer_is_unchanged(self, reg, monkeypatch):
-        import agent_cli.schedule.runtime as sched
+        from agent_cli.session_slots import set_schedule_registry
 
-        monkeypatch.setattr(
-            sched,
-            "get_schedule_registry",
-            lambda: SimpleNamespace(has_active_work=lambda: True),
-        )
+        set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
         set_job_registry(None)
         loop = _loop(_provider({"action": "wait"}))
         assert loop.run().waiting

@@ -519,17 +519,3 @@ class JobRegistry:
             if not ln.startswith("[job #") and not ln.startswith("$ ")
         ]
         return lines[-TAIL_LINES:]
-
-
-# ── 프로세스 전역 (monitor/runtime.py 와 같은 모양) ──────────────────────
-
-_MAIN: JobRegistry | None = None
-
-
-def set_job_registry(registry: JobRegistry | None) -> None:
-    global _MAIN
-    _MAIN = registry
-
-
-def get_job_registry() -> JobRegistry | None:
-    return _MAIN

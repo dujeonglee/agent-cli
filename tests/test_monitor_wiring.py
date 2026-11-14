@@ -110,7 +110,7 @@ class TestToolSurface:
 
     def test_bad_condition_becomes_a_toolresult_not_an_exception(self, monkeypatch):
         """도구는 예외를 못 던진다 — `constants.parse_duration` 과 같은 분업."""
-        from agent_cli.monitor.runtime import set_monitor_registry
+        from agent_cli.session_slots import set_monitor_registry
         from agent_cli.tools.registry import TOOLS
 
         r = MonitorRegistry()
@@ -126,7 +126,7 @@ class TestToolSurface:
             r.stop()
 
     def test_add_list_delete_round_trip(self, tmp_path):
-        from agent_cli.monitor.runtime import set_monitor_registry
+        from agent_cli.session_slots import set_monitor_registry
         from agent_cli.tools.registry import TOOLS
 
         r = MonitorRegistry()
@@ -162,7 +162,7 @@ class TestToolSurface:
         """필수로 두면 35B 가 상시 빠뜨려 등록이 실패한다 — clamp 를 택한
         §10.1 의 논리가 누락에 더 강하게 적용된다."""
         from agent_cli.constants import MONITOR_DEADLINE_DEFAULT_S
-        from agent_cli.monitor.runtime import set_monitor_registry
+        from agent_cli.session_slots import set_monitor_registry
         from agent_cli.tools.registry import TOOLS
 
         r = MonitorRegistry()
@@ -211,7 +211,7 @@ class TestRegistrationTimeGate:
     def test_same_env_bypass_as_shell(self, tmp_path, monkeypatch):
         """모니터만 모든 명령에 확인을 요구하면 harbor/CI 에서 못 쓰는데,
         **그 headless 환경이 monitor 를 만드는 근거였다**(§3.1)."""
-        from agent_cli.monitor.runtime import set_monitor_registry
+        from agent_cli.session_slots import set_monitor_registry
         from agent_cli.tools.registry import TOOLS
 
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "0")
@@ -236,8 +236,8 @@ class TestRegistrationTimeGate:
     def test_dangerous_command_refused_without_a_prompt_surface(
         self, tmp_path, monkeypatch
     ):
-        from agent_cli.monitor.runtime import set_monitor_registry
         from agent_cli.render import get_renderer
+        from agent_cli.session_slots import set_monitor_registry
         from agent_cli.tools.registry import TOOLS
 
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
@@ -261,8 +261,8 @@ class TestRegistrationTimeGate:
 
     def test_notify_only_monitor_needs_no_confirmation(self, tmp_path, monkeypatch):
         """새 권한이 아니다 — 파일을 보는 것뿐이다."""
-        from agent_cli.monitor.runtime import set_monitor_registry
         from agent_cli.render import get_renderer
+        from agent_cli.session_slots import set_monitor_registry
         from agent_cli.tools.registry import TOOLS
 
         monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: False)

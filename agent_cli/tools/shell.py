@@ -10,6 +10,7 @@ import subprocess
 from typing import ClassVar
 
 from agent_cli import jobs
+from agent_cli.session_slots import get_job_registry
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
@@ -299,7 +300,7 @@ def tool_shell_background(args: dict, *, owner: str, note: str = "") -> ToolResu
     """``background: true`` (v10.47.0, docs/jobs/DESIGN.md) — 하니스가 자식으로
     띄우고 로그로 보낸 뒤 즉시 돌아온다. 끝나면 소유자에게 통지가 간다. ``note``
     는 결과 앞에 붙는 사정(전경 한도 초과로 여기 왔다)."""
-    from agent_cli.jobs import JobsUnavailable, get_job_registry
+    from agent_cli.jobs import JobsUnavailable
 
     cmd, removed = strip_detachers(args.get("command", ""))
     if removed:
@@ -513,8 +514,6 @@ class ShellTool(Tool):
             # 상한 위의 값은 "이 명령은 길다" 는 뜻이다 — 전경에서 막혀 있다가 죽는 대신
             # 작업으로 띄우고 결과에 말한다 (v10.91.0, 사용자 결정 2026-10-31). 작업
             # 레지스트리가 없는 런만 상한으로 깎아 전경에서 돈다(`tool_shell`).
-            from agent_cli.jobs import get_job_registry
-
             reg = get_job_registry()
             if reg is not None and reg.available:
                 background = True

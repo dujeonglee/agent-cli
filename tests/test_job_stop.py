@@ -24,7 +24,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_cli.jobs import Job, JobRegistry, set_job_registry
+from agent_cli.jobs import Job, JobRegistry
+from agent_cli.session_slots import set_job_registry
 from tests.monitor_delivery import RecordingDelivery
 
 

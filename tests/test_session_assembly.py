@@ -163,7 +163,7 @@ class TestOneQueue:
     def test_schedule_wake_and_loop_ports_reach_the_same_queue(self, tmp_path):
         """예약 `enqueue`·깨우기·`MainLoop` 포트·펌프가 **같은 큐 객체**에 닿는다 —
         각각 넣어 보고 그 큐에서 꺼낸다."""
-        from agent_cli.schedule.runtime import set_schedule_registry
+        from agent_cli.session_slots import set_schedule_registry
 
         q = InputQueue()
         spec = _spec(ctx=None, session=SimpleNamespace(session_id="s"))
