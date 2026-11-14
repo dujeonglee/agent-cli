@@ -37,6 +37,7 @@ from agent_cli.loop.ports import (
     _hook_unwired,
 )
 from agent_cli.session_slots import (
+    clear_session_slots,
     set_agent_registry,
     set_hook_runner,
     set_job_registry,
@@ -291,7 +292,8 @@ def teardown_session(
 
     순서(종전 run 메인 경로와 동일): ①(옵션) 미답 질문 경고
     ② 생산자 정지(모니터·예약 스레드) ③ 상주 에이전트 전원 종료 ④ 스피너 정지
-    ⑤ MCP 해제(stdio 자식 프로세스·errlog fd 정리) ⑥ 세션 저장. 저장-완료
+    ⑤ MCP 해제(stdio 자식 프로세스·errlog fd 정리) ⑥ 세션 저장 ⑦ 세션 슬롯 비우기
+    (앞 단계가 실패해도). 저장-완료
     메시지는 표면별로 다르므로 호출자가 출력한다."""
     if warn_stuck and agent_registry is not None:
         stuck = agent_registry.open_human_question_keys()
@@ -335,20 +337,24 @@ def teardown_session(
             )
     if agent_registry is not None:
         agent_registry.shutdown_all()
-    set_hook_runner(None)  # 세션 훅 러너 해제 (v10.35.0)
+    try:
+        from agent_cli.render import render_spinner_stop
 
-    from agent_cli.render import render_spinner_stop
+        render_spinner_stop()
+        from agent_cli.browser import reset_browser
 
-    render_spinner_stop()
-    from agent_cli.browser import reset_browser
+        reset_browser()  # 세션 브라우저 종료 (없으면 no-op)
+        if mcp_manager:
+            mcp_manager.disconnect_all()
+        if session is not None:
+            from agent_cli.session.store import finalize_session
 
-    reset_browser()  # 세션 브라우저 종료 (없으면 no-op)
-    if mcp_manager:
-        mcp_manager.disconnect_all()
-    if session is not None:
-        from agent_cli.session.store import finalize_session
-
-        finalize_session(session, ctx)
+            finalize_session(session, ctx)
+    finally:
+        # ⑦ 세션 슬롯 다섯을 비운다 (v10.133.25) — 맨 마지막: 위 단계(에이전트 종료의
+        # release·잡 정리)는 아직 자리를 읽는다. 종전엔 훅 러너만 여기서 비웠고 나머지 넷은
+        # 닫힌 객체를 계속 가리켰다. 뒤늦게 도는 스레드는 None 을 읽는다(꺼내는 쪽이 처리한다).
+        clear_session_slots()
 
 
 # ── 세션 조립 — run·web 이 같은 함수 넷 (v10.131.0) ─────────────────────────────

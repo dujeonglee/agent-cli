@@ -84,7 +84,7 @@ agent_cli/
 ├── web_sources.py           꼬리 `## Web Sources` 정보원 목록 — 패키지 기본값 + 프로젝트의 바꾼 것만 (docs/web-sources/DESIGN.md)
 ├── thinking_tags.py         content 안 사고 태그를 걷어내는 `strip_think_blocks` 단일 소스
 ├── agent_icon.py            상주 에이전트 key → 아이콘·별명(표시 전용) — 프런트와 같은 풀·해시
-├── session_slots.py         세션 슬롯 다섯 — 잡·모니터·예약 레지스트리, 훅 러너, 에이전트 레지스트리의 프로세스 전역 자리
+├── session_slots.py         세션 슬롯 다섯 — 잡·모니터·예약 레지스트리, 훅 러너, 에이전트 레지스트리의 프로세스 전역 자리(세션 끝에 비운다)
 ├── verbose.py               `--verbose` 기록기 — 모든 루프의 LLM 호출을 `<session>/verbose.jsonl` 에
 ├── default_models.json      패키지 기본 모델 정의 (models.json 검색 경로의 마지막)
 ├── default_web_sources.json 기본 정보원 목록 (`web_sources.py` 가 읽는다)

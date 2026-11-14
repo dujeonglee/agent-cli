@@ -174,6 +174,68 @@ class TestAgentRuntimeEquivalence:
         assert order == ["shutdown", "spinner", "mcp", "finalize"]
         fin.assert_called_once_with(session, "CTX")
 
+    def test_slots_are_cleared_last(self):
+        """세션 슬롯 다섯은 정리의 **맨 마지막**에 비운다 (v10.133.25) — 앞 단계(에이전트
+        종료의 release·잡 정리·세션 저장)는 아직 자리를 읽는다. 종전엔 훅 러너만 비웠다."""
+        from agent_cli import session_slots as S
+
+        reg, mcp, session = self._mocks()
+        jobs, mons, scheds, hooks = MagicMock(), MagicMock(), MagicMock(), MagicMock()
+        jobs.stop_all.return_value = []
+        S.set_agent_registry(reg)
+        S.set_job_registry(jobs)
+        S.set_monitor_registry(mons)
+        S.set_schedule_registry(scheds)
+        S.set_hook_runner(hooks)
+
+        def seen():
+            return (
+                S.get_agent_registry(),
+                S.get_job_registry(),
+                S.get_monitor_registry(),
+                S.get_schedule_registry(),
+                S.get_hook_runner(),
+            )
+
+        live = (reg, jobs, mons, scheds, hooks)
+        at: dict[str, tuple] = {}
+        reg.shutdown_all.side_effect = lambda: at.__setitem__("shutdown", seen())
+        jobs.stop_all.side_effect = lambda: at.__setitem__("jobs", seen()) or []
+        mcp.disconnect_all.side_effect = lambda: at.__setitem__("mcp", seen())
+        with (
+            patch("agent_cli.render.render_spinner_stop"),
+            patch("agent_cli.session.store.finalize_session") as fin,
+        ):
+            fin.side_effect = lambda s, c: at.__setitem__("finalize", seen())
+            teardown_session(
+                session,
+                None,
+                agent_registry=reg,
+                mcp_manager=mcp,
+                monitors=mons,
+                schedules=scheds,
+                jobs=jobs,
+            )
+        assert at == {k: live for k in ("shutdown", "jobs", "mcp", "finalize")}
+        assert seen() == (None, None, None, None, None)
+
+    def test_slots_are_cleared_even_when_a_step_fails(self):
+        """저장이 실패해도 자리는 비운다 — 종전 훅 러너 해제는 MCP 해제·저장보다 앞이라
+        그 실패와 무관했다. 그 보장을 다섯 모두로."""
+        from agent_cli import session_slots as S
+
+        _reg, mcp, session = self._mocks()
+        S.set_hook_runner(MagicMock())
+        S.set_job_registry(MagicMock())
+        mcp.disconnect_all.side_effect = RuntimeError("boom")
+        with (
+            patch("agent_cli.render.render_spinner_stop"),
+            patch("agent_cli.session.store.finalize_session"),
+            pytest.raises(RuntimeError),
+        ):
+            teardown_session(session, None, mcp_manager=mcp)
+        assert S.get_hook_runner() is None and S.get_job_registry() is None
+
     def test_warn_stuck_only_when_enabled(self):
         """답변-대기 경고는 warn_stuck=True 에서만 (종전: 메인 펌프 경로
         전용 표면 — 조기-반환 경로는 경고 없음 유지)."""
