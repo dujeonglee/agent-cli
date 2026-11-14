@@ -84,7 +84,7 @@ def get_agent_registry() -> AgentRegistry | None:
 
 
 def clear_session_slots() -> None:
-    """다섯을 None 으로."""
+    """다섯을 None 으로 — 세션 정리(`runtime.teardown_session`)의 맨 마지막."""
     set_job_registry(None)
     set_monitor_registry(None)
     set_schedule_registry(None)
