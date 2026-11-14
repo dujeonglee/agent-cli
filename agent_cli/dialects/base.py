@@ -59,6 +59,8 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from agent_cli.tools.registry import TOOLS
+
 
 def _terminal_input(result: str, answers: list[str] | None) -> dict:
     """``action_input`` for a stored terminal ``complete``.
@@ -615,8 +617,6 @@ class DialectBase(ABC):
         json_fc) 여기서만 갈라진다."""
         if self.server_parsed:
             return f"`{tool}` {json.dumps(args, ensure_ascii=False)}"
-        from agent_cli.tools.registry import TOOLS
-
         return self.render_action_input(TOOLS[tool].add_prefix(args))
 
     def prompt_call_example(self, tool: str, args: dict) -> str:
