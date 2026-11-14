@@ -150,7 +150,7 @@ class AgentLoop:
         # 포트에서 **파생**한다 — 종전엔 여기 3키짜리 dict 리터럴이었고,
         # 새 포트가 생길 때마다 이 줄을 기억해서 고쳐야 했다. ``ctx`` 는
         # 포트가 아니므로(§4.2) 여기서 얹는다.
-        from agent_cli.runtime import (
+        from agent_cli.loop.ports import (
             browser_resource,
             skills_resource,
             snapshot_resource,

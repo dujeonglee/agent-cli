@@ -43,7 +43,7 @@ class SnapshotTool(Tool):
     #: 전문은 `tool_help`.
     deferred = True
     summary = "Bring back a file that a `shell`, `edit_file` or `write_file` call damaged or deleted."
-    #: 세션 저장소(`runtime.snapshot_resource`)가 없으면 — git 없음·`AGENT_CLI_SNAPSHOT=0`·
+    #: 세션 저장소(`loop.ports.snapshot_resource`)가 없으면 — git 없음·`AGENT_CLI_SNAPSHOT=0`·
     #: init 실패 — tools_list 에서 벗겨져 프롬프트에 나오지 않는다 (없는 기능을 약속하지 않는다).
     requires_handler = "snapshot"
     description = (

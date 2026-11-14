@@ -76,11 +76,11 @@ class ResidentLoop(LoopKind):
     ) -> LoopPorts:
         """상주 런의 포트. ``absorb_inbox`` (v9.25.0) 가 턴 경계마다 받은편지함을 이 런으로
         흡수하고, ``peer_roster`` (v10.1.0) 가 매 턴 꼬리에 실을 동료 로스터를 돌려준다."""
-        from agent_cli.loop.ports import LoopPorts
-        from agent_cli.runtime import (
+        from agent_cli.loop.ports import (
             _AS_BEFORE,
             _NO_REGISTRY_IN_SUBLOOP,
             _WEB_ONLY,
+            LoopPorts,
             _hook_runner_port,
             _hook_unwired,
         )

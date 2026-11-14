@@ -37,6 +37,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from typing import Any
 
+from agent_cli.session_slots import get_hook_runner
+
 
 @dataclass(frozen=True, kw_only=True)
 class LoopPorts:
@@ -106,3 +108,78 @@ class LoopPorts:
             for f in fields(self)
             if f.name not in self._NON_RESOURCE
         }
+
+
+# ── 루프 포트 — 종류마다 `make_ports` (v10.87.0 LoopKind; 종전 `ports_for_*` 넷) ──
+#
+# 종전엔 다섯 곳이 각자 부분집합을 손으로 나열했고, 포트 여덟 중 일곱이
+# 어딘가에선 빠져 있었다 — 그게 의도인지 사고인지 코드 어디에도 없었다.
+# 지금은 종류 객체(`MainLoop`·`PrivateLoop`·`ResidentLoop`·`SkillLoop`)의
+# `make_ports` 가 그 자리다; 사유 상수·훅 포트 헬퍼는 여기 있어 종류들이 쓴다.
+#
+# ``LoopPorts`` 에 기본값이 없으므로 새 포트를 더하면 **네 `make_ports` 가 전부
+# 즉시 안 만들어진다** — 호스트마다 "연결" 또는 "이래서 미연결" 중 하나를
+# 쓸 수밖에 없다. 사유 문자열은 **문서**지 검증물이 아니다(진위는 아무도
+# 못 잡는다). 그래서 확인된 사실만 적고, 확인 못 한 것은 "종전 배선
+# 유지" 로 적어 둔다 — 지어낸 근거보다 낫다.
+
+_WEB_ONLY = "main 루프 전용 — 입력 큐가 있는 호스트(run·web)에만 있다"
+_NO_INBOX = "받은편지함이 없다 — main 은 웹 큐·메일박스, 일회성 루프는 받을 상대가 없다"
+_NO_HOOK_RUNNER = (
+    "세션 부트스트랩(run/web 의 build_hook_runner)을 거치지 않은 직접 호출 경로"
+)
+
+
+def _hook_runner_port():
+    """모든 종류의 `make_ports` 가 같은 세션 러너를 받는다 (v10.35.0)."""
+    return get_hook_runner()
+
+
+def _hook_unwired() -> dict:
+    """러너가 없을 때만 `unwired` 에 사유를 싣는다 — 있으면 배선된 포트다."""
+    return {} if _hook_runner_port() is not None else {"hook_runner": _NO_HOOK_RUNNER}
+
+
+_NO_REGISTRY_IN_SUBLOOP = (
+    "서브루프에 레지스트리가 닿으면 안 된다 — 'teammate 안 teammate 금지'의 "
+    "단일 가드가 포트의 agent_registry 다"
+)
+_AS_BEFORE = "종전 배선 유지 — 이 호스트는 이 포트를 받은 적이 없다"
+_RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다 (v10.1.0)"
+
+
+# ── 세션 자원 — `Tool.requires_handler` 가 보는 것 ──
+#
+# 엔진이 `handler_resources` 로 포트와 함께 넘긴다. 자원 모듈(`snapshot`·`browser`·`skills`)은
+# 함수 안에서 import 한다 — 기동 비용.
+
+
+def snapshot_resource():
+    """`Tool.requires_handler="snapshot"` 이 보는 세션 자원 — 준비된 저장소, 아니면 None."""
+    from pathlib import Path
+
+    from agent_cli.snapshot import get_snapshot
+
+    store = get_snapshot(Path.cwd())
+    return store if store is not None and store.enabled else None
+
+
+def browser_resource():
+    """`Tool.requires_handler="browser"` 이 보는 세션 자원 — playwright 가 있고
+    `AGENT_CLI_BROWSER_TOOL` 이 꺼져 있지 않으면 True(브라우저 자체는 첫 호출 때
+    뜬다), 아니면 None → 도구가 프롬프트에서 빠진다."""
+    from agent_cli.browser import browser_available
+
+    return True if browser_available() else None
+
+
+def skills_resource():
+    """`Tool.requires_handler="skills"` 이 보는 자원 — 모델이 부를 수 있는 스킬이 있으면
+    True, 없으면(전부 ``disable-model-invocation``·읽기 실패) None → `run_skill` 이 빠진다.
+    Skills 절(`build_skill_descriptions`)과 같은 집합을 본다."""
+    try:
+        from agent_cli.skills import model_skills
+
+        return True if model_skills() else None
+    except Exception:
+        return None

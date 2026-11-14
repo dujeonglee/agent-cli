@@ -207,12 +207,12 @@ class SkillLoop(LoopKind):
     def make_ports(*, agent_registry, owner: str) -> LoopPorts:
         """스킬 루프의 포트. ``owner`` 는 호출자 것 — 상주 안에서 돈 스킬이 건 모니터는 그
         에이전트에게 보고해야 한다(기본값 없음: 상속이 빠지면 조용히 main 으로 가므로)."""
-        from agent_cli.loop.ports import LoopPorts
-        from agent_cli.runtime import (
+        from agent_cli.loop.ports import (
             _AS_BEFORE,
             _NO_INBOX,
             _RESIDENT_ROSTER,
             _WEB_ONLY,
+            LoopPorts,
             _hook_runner_port,
             _hook_unwired,
         )
