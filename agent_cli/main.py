@@ -1644,7 +1644,7 @@ def _answers_before_boot(query: str, *, resume: bool) -> bool:
 _TITLE_OPTION = typer.Option(
     "",
     "--title",
-    help="Room title (v10.71.0) — shown in the web header and browser tab, the "
+    help="Room title — shown in the web header and browser tab, the "
     "startup banner and web.json; saved in the session so --resume keeps it "
     "(giving --title again replaces it). agent-board passes the post's topic.",
 )

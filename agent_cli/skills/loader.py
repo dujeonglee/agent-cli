@@ -3,12 +3,11 @@
 Uses ResourceLoader for file discovery + frontmatter parsing.
 Skill-specific logic (hooks, Skill dataclass construction) stays here.
 
-Search paths (project root takes priority):
-  1. .agent-cli/skills/*.md  (project local, flat)
-  2. .agent-cli/skills/<name>/SKILL.md  (project local, directory)
-  3. ~/.agent-cli/skills/*.md (user global, flat)
-  4. ~/.agent-cli/skills/<name>/SKILL.md (user global, directory)
-  5. agent_cli/skills/builtin/* (package built-in)
+Search paths (``_SEARCH_PATHS``; an earlier path overrides a later one by name):
+  1. <cwd>/.agent-cli/skills/*.md and <name>/SKILL.md  (project)
+  2. agent_cli/skills/builtin/*.md and <name>/SKILL.md  (package built-in)
+
+``~/.agent-cli/skills`` is not searched.
 """
 
 from __future__ import annotations
@@ -19,13 +18,11 @@ from agent_cli.hooks import parse_hooks_config
 from agent_cli.resource_loader import ResourceLoader
 from agent_cli.skills.models import Skill
 
-# Search order: project root first (priority), then user home, then built-in
 _BUILTIN_DIR = Path(__file__).parent / "builtin"
 
 from agent_cli.paths import project_dir
 
-# v9.0.0: 프로젝트 > 내장 (docs/config-scopes). 종전의 ~/.agent-cli/skills 는
-# 무시된다 — 스킬은 프로젝트 자산(.gitignore 가 skills/ 만 커밋하는 관행).
+# 프로젝트 > 내장 (docs/config-scopes) — 스킬은 프로젝트 자산이라 ~/.agent-cli/skills 는 보지 않는다.
 _SEARCH_PATHS = [
     project_dir() / "skills",
     _BUILTIN_DIR,
@@ -42,7 +39,7 @@ def _reset_loader(search_paths: list[Path] | None = None) -> None:
 
 
 def load_skills() -> dict[str, Skill]:
-    """Load all skills from disk. Project-local skills override user-global.
+    """Load all skills from disk. Project skills override built-in ones of the same name.
 
     Always rescans disk so skills authored mid-session (e.g. via /create-skill)
     are visible without a restart. Cost is negligible for typical skill counts.

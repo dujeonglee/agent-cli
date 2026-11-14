@@ -46,9 +46,9 @@ _MAX_OVERFLOW_RETRIES = 5
 # 요약 프롬프트의 제목·IMAGES 항목은 경계 지침과 한 벌 (v10.123.0, prompts/compaction).
 _SUMMARY_IMAGES_LINE = SUMMARY_IMAGES_LINE
 # Compaction ratio: the per-call target is ``context_window × ratio − system −
-# session state`` (default 0.8 = leave a 20% margin) and compaction runs the
-# moment the cache EXCEEDS that target — there is no separate trigger
-# threshold (the manager's old 90% constant was a leftover, removed v9.25.1).
+# session state − minimum output`` (default 1.0 — the window is the trigger)
+# and compaction runs the moment the cache EXCEEDS that target — there is no
+# separate trigger threshold.
 # The value lives on the ContextManager (``self.ctx.compaction_ratio``) so the
 # web slider can tune it live; both the preventive (flow 1) and
 # overflow-recovery (flow 2) target computations in _call_llm read it from there.
