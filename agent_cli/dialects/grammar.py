@@ -26,6 +26,8 @@ from __future__ import annotations
 import itertools
 from dataclasses import dataclass, field
 
+from agent_cli.tools.registry import TOOLS
+
 #: Prose (the thought before the first tool call): what it may NOT contain is
 #: the format's *opener sequence* (``\n\n[`` / ``\n\n<tool_call>``), never a
 #: bare character, and it is NOT length-bounded. Two Harbor A/B lessons
@@ -396,8 +398,6 @@ def terminal_tools(names) -> frozenset[str]:
     declaration dispatch branches on, so the grammar and the loop cannot
     disagree. Names the registry does not know (MCP, test fakes) are not
     terminal."""
-    from agent_cli.tools.registry import TOOLS
-
     return frozenset(
         n for n in names if getattr(TOOLS.get(n), "terminal", False) is True
     )

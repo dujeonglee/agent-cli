@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 
+from agent_cli.tools.registry import TOOLS
+
 # 키-이름 closer 수용 — 설명은 옛 xml_fc 의 _PARAM_CLOSED 주석(v7.28.1 strict 대칭).
 _PARAM_CLOSED = re.compile(
     r"<parameter=([\w.\-]+)>(.*?)</(?:parameter|\1)>\s*"
@@ -48,8 +50,6 @@ def _lenient_tool_open_re() -> re.Pattern:
     """라인-단독 ``<TOOLNAME>`` 오픈 — 등록 도구명만 (매 파스 재조립: MCP
     도구가 런타임에 등록될 수 있다). 라인-앵커가 산문 속 인라인 언급
     (``use the <shell> tool``)의 오인 구제를 차단한다."""
-    from agent_cli.tools.registry import TOOLS
-
     names = "|".join(re.escape(n) for n in sorted(TOOLS, key=len, reverse=True))
     return re.compile(rf"^[ \t]*<({names})>[ \t]*\r?$", re.MULTILINE)
 

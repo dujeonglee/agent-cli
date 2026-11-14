@@ -43,6 +43,7 @@ from agent_cli.dialects.recovery.tagged import (
 )
 from agent_cli.dialects.spec import ArgStyle, DialectSpec, NameSlot
 from agent_cli.thinking_tags import ORPHAN_THINK_TAG_RE
+from agent_cli.tools.registry import TOOLS
 
 # JSON parse 를 시도할 스키마 타입 — string/미선언은 raw 유지.
 _COERCE_TYPES = frozenset({"integer", "number", "boolean", "array", "object"})
@@ -55,8 +56,6 @@ def coerce_params(action: str, params: dict) -> dict:
     파서가 검증을 중복하지 않는다 (발생 원인 위치 원칙). strict=False —
     raw 값이라 array/object 안의 literal 개행이 정당하다.
     """
-    from agent_cli.tools.registry import TOOLS
-
     tool = TOOLS.get(action)
     if tool is None:
         return params
@@ -248,8 +247,6 @@ class Dialect(DialectBase):
     def render_action_input(self, action_input) -> str:
         # 가이드는 wire-key prefixed dict 를 넘긴다 — flat 콜로.
         if isinstance(action_input, dict) and action_input:
-            from agent_cli.tools.registry import TOOLS
-
             # 접두 규칙은 도구가 소유한다(`Tool.key_prefix`·`strip_prefix`) — 긴
             # 이름 먼저라 `read_file_` 가 `read_` 류보다 앞선다.
             for tool_name in sorted(TOOLS, key=len, reverse=True):

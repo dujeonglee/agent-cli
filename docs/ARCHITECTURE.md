@@ -342,12 +342,13 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 
 | 층 | 항목 |
 |----|------|
-| 6 | `runtime` · `subagent/` · `skills/` · `harness/` |
-| 5 | `loop/` · `__main__` |
-| 4 | `main` · `recovery/` |
-| 3 | `context/` · `prompts/` · `providers/` (한 묶음) · `mcp/` · `web/` |
+| 7 | `runtime` · `subagent/` · `skills/` · `harness/` |
+| 6 | `loop/` · `__main__` |
+| 5 | `main` · `recovery/` |
+| 4 | `context/` · `prompts/` · `providers/` (한 묶음) |
+| 3 | `dialects/` · `mcp/` · `web/` |
 | 2 | `tools/` · `render/` · `pump` · `setup` |
-| 1 | `session/` · `config` · `dialects/` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` · `instance_file` |
+| 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` · `instance_file` |
 | 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `agents/` |
 
 `context/`·`prompts/`·`providers/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).
