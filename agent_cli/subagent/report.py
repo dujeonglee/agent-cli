@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from agent_cli.session.records import iter_record_ops
 from agent_cli.tools.result import ToolResult
 
 # ── Agent file loading ──────────────────────────
@@ -41,7 +42,7 @@ def _extract_activity_log(messages: list[dict]) -> list[str]:
     """Extract per-iteration action summaries from raw history records.
 
     Reads each assistant record's structured ops via
-    :func:`~agent_cli.context.manager.iter_record_ops` (multi-op ``ops``
+    :func:`~agent_cli.session.records.iter_record_ops` (multi-op ``ops``
     records and the base singular ``action`` shape both) and formats one
     line per TURN — a multi-op turn joins its op summaries with ``"; "``.
     Capped at ``_ACTIVITY_LOG_MAX_ENTRIES``; overflow surfaces as a single
@@ -50,8 +51,6 @@ def _extract_activity_log(messages: list[dict]) -> list[str]:
     Returns list of strings like:
       ["iter 1: read_file auth.py", "iter 2: shell pytest"]
     """
-    from agent_cli.context.records import iter_record_ops
-
     log: list[str] = []
     iter_num = 0
 
@@ -105,8 +104,6 @@ def _extract_last_actions(messages: list[dict]) -> list[str]:
       ["iter 4: shell pytest -> ERROR: 3 tests failed",
        "iter 5: edit_file test_auth.py -> hash mismatch"]
     """
-    from agent_cli.context.records import iter_record_ops
-
     actions: list[tuple[int, int, str]] = []
     iter_num = 0
     for i, msg in enumerate(messages):

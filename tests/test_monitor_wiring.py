@@ -440,7 +440,7 @@ class TestDeliveryToTheInstallingAddress:
         - 재생은 `tool` 키가 있으면 관찰로 취급
         - `is_format_intervention` 은 `tool == ""` 일 때만 (그래서 빈 문자열 금지)
         """
-        from agent_cli.context.records import _classify_record, is_format_intervention
+        from agent_cli.session.records import _classify_record, is_format_intervention
 
         rec = {"role": "user", "tool": "monitor", "success": True, "content": "🔔 x"}
         kind, tools, _ = _classify_record(rec)

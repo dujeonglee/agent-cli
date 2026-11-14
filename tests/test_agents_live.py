@@ -16,8 +16,8 @@ from typing import ClassVar
 import pytest
 
 import agent_cli.render as render_mod
-from agent_cli.context.records import is_format_intervention
 from agent_cli.resource_loader import ResourceLoader
+from agent_cli.session.records import is_format_intervention
 from agent_cli.subagent.agents_live import (
     _DEFAULT_MAX_AGENTS,
     AgentRegistry,

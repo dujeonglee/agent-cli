@@ -6,8 +6,8 @@ from typing import ClassVar
 import pytest
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.context.records import _classify_record, iter_record_ops
 from agent_cli.context.render import _to_natural_language
+from agent_cli.session.records import _classify_record, iter_record_ops
 
 # ── Fixtures ──────────────────────────────────────────
 

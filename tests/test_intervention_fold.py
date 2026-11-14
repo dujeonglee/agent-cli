@@ -8,7 +8,7 @@ B1(행동 루프)과 도구 실행 실패는 과제 정보라 잔류. history.js
 from __future__ import annotations
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.context.records import (
+from agent_cli.session.records import (
     fold_resolved_intervention_indices,
     is_format_intervention,
 )
