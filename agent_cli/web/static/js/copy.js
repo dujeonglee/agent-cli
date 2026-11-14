@@ -39,9 +39,13 @@ function cardMarkdown(card) {
   }
   return "";
 }
+// 채널의 맨 위 카드(Head)는 대화 밖 고정 자리(#ctx-head)에 선다 — 압축 요약을 싣는
+// 그 카드(`_md`)를 대화 앞에 둬, 대화 복사가 Head 가 대화 맨 앞에 있던 때와 같다.
+const $ctxHead = document.getElementById("ctx-head");
 function timelineMarkdown() {
-  return Array.prototype.slice
-    .call($messages.children)
+  const slice = Array.prototype.slice;
+  return ($ctxHead ? slice.call($ctxHead.children) : [])
+    .concat(slice.call($messages.children))
     .filter(function (n) { return !n.hidden; }) // 현재 채널에 보이는 것만
     .map(cardMarkdown)
     .filter(Boolean)

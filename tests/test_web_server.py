@@ -704,7 +704,9 @@ class TestStaticUI:
         assert 'ovActiveChannel !== "main"' in sc
         assert '"api/agent/" + encodeURIComponent(ovActiveChannel) + "/input"' in sc
         # 채널 전환이 **표시**까지 바꾼다 (⑥ 이전엔 입력 라우팅만 바뀌었다)
-        assert "applyChannelFilter()" in js_fn_body(js, "ovSetChannel")
+        # (필터와 고정 자리는 syncChannelView 한 곳 — 전환과 사라진 채널 되돌리기가 같이 쓴다)
+        assert "syncChannelView()" in js_fn_body(js, "ovSetChannel")
+        assert "applyChannelFilter()" in js_fn_body(js, "syncChannelView")
         # 필터의 대상은 `#messages` 직계 자식의 `data-ch` 뿐 — `data-ch` 가
         # 없는 노드(생성 중 한 줄)는 어느 채널에서나 보인다.
         f = js_fn_body(js, "applyChannelFilter")
@@ -722,12 +724,18 @@ class TestStaticUI:
         # 드로어·🔍 버튼은 없다 — 틀이 놓일 자리만 있다
         assert 'id="inspector"' not in html and 'id="insp-main-btn"' not in html
         assert 'id="ctx-tail"' in html and 'id="ctx-budget"' in html
+        # 채널의 맨 위 카드는 Context 줄 바로 아래 고정 자리(v10.136.3)
+        assert html.index('id="ctx-budget"') < html.index('id="ctx-head"')
+        assert html.index('id="ctx-head"') < html.index('id="messages"')
         assert "__openInspector" not in js and "task-inspect" not in js
         # 채널 틀의 스코프: main → "", 그 외 → 채널 key
         assert 'frameMake(key, key === "main" ? "" : key, true)' in js
         assert '"?task_id=" + encodeURIComponent(f.scope)' in js
         # 채널 전환이 띠·예산 줄을 바꾼다
-        assert "frameShowChannel(ovActiveChannel);" in js_fn_body(js, "ovSetChannel")
+        assert "syncChannelView()" in js_fn_body(js, "ovSetChannel")
+        assert "frameShowChannel(ovActiveChannel);" in js_fn_body(js, "syncChannelView")
+        # 보던 채널이 사라져 main 으로 되돌릴 때도 같은 함수
+        assert "syncChannelView()" in js_fn_body(js, "ovSyncChannels")
         # 인라인 카드(agent/skill)도 같은 틀을 갖는다
         assert "frameForCard(taskId, header, body);" in js
 

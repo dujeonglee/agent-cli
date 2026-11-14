@@ -6,7 +6,6 @@ import { session } from "./state.js";
 import { escapeAndFormat, escapeHtml } from "./markdown.js";
 import { scheduleScroll } from "./scroll.js";
 import {
-  applyChannelFilter,
   cssEsc,
   ovActiveChannel,
   ovAgentLabel,
@@ -17,6 +16,7 @@ import {
   ovRoster,
   setOvActiveChannel,
   setOvBack,
+  syncChannelView,
 } from "./channels.js";
 import { finishCard, scopeChannel, stampCard } from "./timeline.js";
 import { miniThumbs, thumbStrip } from "./thumbs.js";
@@ -255,7 +255,7 @@ export function ovSyncChannels() {
   if (ovActiveChannel !== "main" &&
       !ovRoster.some(function (t) { return t.key === ovActiveChannel; })) {
     setOvActiveChannel("main");
-    applyChannelFilter(); // 사라진 채널을 보고 있었다면 표시도 되돌린다
+    syncChannelView(); // 사라진 채널을 보고 있었다면 표시(필터·맨 위 카드·꼬리 띠)도 main 으로
   }
   // 돌아갈 채널이 사라졌으면 버튼도 사라진다(눌러도 갈 곳이 없다).
   if (ovBack && ovBack.ch !== "main" &&
