@@ -219,6 +219,13 @@ def render_token_usage(stats: dict, turn: int, verbose: bool = False) -> None:
     _renderer.token_usage(stats, turn, verbose)
 
 
+def render_usage_totals(totals) -> None:
+    """main 런이 끝났다 — 그 런의 호출 합(``loop.llm.UsageTotals``). 의미는
+    ``Renderer.usage_totals`` 참조."""
+    _flush_thought()
+    _renderer.usage_totals(totals)
+
+
 def render_context_view(view: dict) -> None:
     """컨텍스트 캐시가 바뀐 뒤(압축·FIFO·fold·복원) ContextManager 가 부른다 —
     챗이 "모델 시점" 을 그리는 사실(docs/inspector-model-view §3.1). CLI 는 no-op,

@@ -673,6 +673,14 @@ class Renderer(ABC):
         (CLI line) and WebRenderer (top-bar SSE) override.
         """
 
+    def usage_totals(self, totals) -> None:
+        """A main run ended: its summed calls (``loop.llm.UsageTotals`` —
+        input·cached·output·calls·llm_ns). Called only when the run made at
+        least one call. No-op default: WebRenderer's top bar already carries
+        the running sums (Σ↑·Σ↓, calls in the tooltip); MinimalRenderer prints
+        one ``Total:`` line (``format_usage_totals``).
+        """
+
     def model_detected(
         self, model: str, capabilities, provider: str, saved_path: str
     ) -> None:

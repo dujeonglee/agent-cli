@@ -226,7 +226,7 @@ class TestBudgetInvariant:
 
 def test_in_speed_counts_only_non_cached_tokens():
     """``in_speed`` = 캐시 아닌 입력 / 프리필 시간 — 적중 턴의 속도가 부풀지 않는다."""
-    from agent_cli.loop.llm import _build_token_stats
+    from agent_cli.loop.llm import UsageTotals, _build_token_stats
 
     usage = TokenUsage(
         input_tokens=200,
@@ -235,7 +235,9 @@ def test_in_speed_counts_only_non_cached_tokens():
         reasoning_tokens=4,
         prompt_eval_ns=1_000_000_000,
     )
-    stats = _build_token_stats(usage, context_window=4096, total_out=10)
+    stats = _build_token_stats(
+        usage, context_window=4096, totals=UsageTotals(output=10)
+    )
     assert stats["in_speed"] == 200
     assert stats["in"] == 1000
     assert stats["reasoning"] == 4
@@ -243,10 +245,10 @@ def test_in_speed_counts_only_non_cached_tokens():
 
 def test_cli_usage_line_shows_cache_hit():
     """CLI 사용량 줄은 cache_read 가 0 이 아니면 이미 ``cache hit:`` 칸을 그린다."""
-    from agent_cli.loop.llm import _build_token_stats
+    from agent_cli.loop.llm import UsageTotals, _build_token_stats
     from agent_cli.render.minimal import _format_token_stats
 
     usage = TokenUsage(input_tokens=200, output_tokens=10, cache_read_input_tokens=800)
-    line = _format_token_stats(_build_token_stats(usage, 4096, 10))
+    line = _format_token_stats(_build_token_stats(usage, 4096, UsageTotals(output=10)))
     assert "in: 1.0K" in line
     assert "cache hit: 800" in line

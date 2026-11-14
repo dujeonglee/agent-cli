@@ -53,7 +53,45 @@ if ($shareBtn) {
 
 export function fmtTok(n) {
   n = n || 0;
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
   return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
+}
+
+// 상단 사용량 칩의 글 — ctx 점유·이 턴의 출력(+디코드 속도)·이 루프의 입력/출력 합.
+// v8.57.0: ↑(턴 입력)은 ctx 분자와 동일 값이라 생략. 0/없는 조각은 뺀다.
+export function usageLine(d) {
+  const parts = [];
+  const inTok = d.in || 0;
+  const win = d.context_window || 0;
+  if (inTok && win) {
+    const pct = Math.round((inTok / win) * 100);
+    parts.push("ctx " + fmtTok(inTok) + "/" + fmtTok(win) + " (" + pct + "%)");
+  }
+  if (inTok || d.out) parts.push("↓" + fmtTok(d.out));
+  if (d.out_speed) parts.push(Math.round(d.out_speed) + " tok/s");
+  if (d.total_in) parts.push("Σ↑" + fmtTok(d.total_in));
+  if (d.total_out) parts.push("Σ↓" + fmtTok(d.total_out));
+  if (d.grammar) parts.push("📐"); // 이 턴은 문법 제약 하에 생성됐다
+  return parts.join(" · ");
+}
+
+// 상단 사용량 칩의 툴팁 — 줄에 없는 것(ttft·prefill 속도·캐시 적중 합·호출 수)까지.
+// 0/없는 조각은 뺀다(시간을 안 주는 경로는 속도·ttft 가 자연히 빠진다).
+export function usageTooltip(d) {
+  const lines = ["context " + fmtTok(d.in) + " / " + fmtTok(d.context_window)];
+  let turn = "turn out " + fmtTok(d.out);
+  if (d.out_speed) turn += " (" + Math.round(d.out_speed) + " tok/s)";
+  lines.push(turn);
+  if (d.ttft_ms) lines.push("ttft " + Math.round(d.ttft_ms) + " ms");
+  if (d.in_speed) lines.push("prefill " + Math.round(d.in_speed) + " tok/s");
+  if (d.total_in || d.total_out) {
+    let sum = "run in " + fmtTok(d.total_in);
+    if (d.total_cached) sum += " (cached " + fmtTok(d.total_cached) + ")";
+    sum += " · out " + fmtTok(d.total_out);
+    if (d.calls) sum += " · " + d.calls + (d.calls === 1 ? " call" : " calls");
+    lines.push(sum);
+  }
+  return lines.join("\n");
 }
 
 
@@ -128,37 +166,16 @@ es.addEventListener("prompt_snapshot", function (e) {
 });
 
 es.addEventListener("token_usage", function (e) {
-  // Top-bar readout: context occupancy %, this turn's in/out, and the
-  // cumulative session output. Server sends raw counts; we format here.
+  // Top-bar readout: context occupancy %, this turn's out (+decode speed), and
+  // the loop's running input/output sums. Server sends raw counts; we format here.
   const d = JSON.parse(e.data);
   // 모델 시점 틀: 이 호출을 낸 스코프의 스냅샷이 바뀌었다.
   frameTouch(frameOfScope(d.task_id || ""));
-  const parts = [];
   const inTok = d.in || 0;
   const win = d.context_window || 0;
-  if (inTok && win) {
-    const pct = Math.round((inTok / win) * 100);
-    parts.push("ctx " + fmtTok(inTok) + "/" + fmtTok(win) + " (" + pct + "%)");
-  }
-  // v8.57.0: ↑(턴 입력)은 ctx 분자와 동일 값이라 생략 — ↓(출력)·Σ↓(누적)만.
-  if (inTok || d.out) {
-    parts.push("↓" + fmtTok(d.out));
-  }
-  if (d.total_out) {
-    parts.push("Σ↓" + fmtTok(d.total_out));
-  }
-  if (d.grammar) parts.push("📐"); // 이 턴은 문법 제약 하에 생성됐다
   var $base = document.getElementById("tok-base");
-  if ($base) $base.textContent = parts.join(" · ");
-  $tokenUsage.title =
-    "context " +
-    fmtTok(inTok) +
-    " / " +
-    fmtTok(win) +
-    " · turn out " +
-    fmtTok(d.out) +
-    " · session out " +
-    fmtTok(d.total_out);
+  if ($base) $base.textContent = usageLine(d);
+  $tokenUsage.title = usageTooltip(d);
   // v8.57.0: 토큰 상세는 헤더에 상시 노출 (구 ctx 게이지 칩 폐기).
   if (inTok && win) $tokenUsage.hidden = false;
 });

@@ -21,7 +21,9 @@ _MUTED = "grey46"
 
 
 def _fmt_tok(n: int) -> str:
-    """Compact token count: 5234 → '5.2K', 980 → '980'."""
+    """Compact token count: 1_430_000 → '1.4M', 5234 → '5.2K', 980 → '980'."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
     return f"{n / 1000:.1f}K" if n >= 1000 else str(int(n))
 
 
@@ -35,7 +37,7 @@ def _fmt_mmss(seconds: float) -> str:
 def _format_token_stats(stats: dict) -> str:
     """Render the token-usage dict into the CLI's single-line summary.
 
-    Order: ttft, in (+speed), out (+speed), context %, cumulative out,
+    Order: ttft, in (+speed), out (+speed), context %, cumulative in/out,
     cache. Each part is omitted when its value is zero/absent so other
     providers' lines stay lean.
     """
@@ -55,6 +57,8 @@ def _format_token_stats(stats: dict) -> str:
         parts.append(
             f"ctx: {_fmt_tok(in_tok)}/{_fmt_tok(win)} ({in_tok / win * 100:.0f}%)"
         )
+    if stats.get("total_in"):
+        parts.append(f"Σin: {_fmt_tok(stats['total_in'])}")
     if stats.get("total_out"):
         parts.append(f"Σout: {_fmt_tok(stats['total_out'])}")
     if stats.get("cache_read"):
@@ -62,6 +66,32 @@ def _format_token_stats(stats: dict) -> str:
     if stats.get("cache_write"):
         parts.append(f"cache write: {_fmt_tok(stats['cache_write'])}")
     return " | ".join(parts)
+
+
+def _fmt_duration(seconds: float) -> str:
+    """합계 줄의 시간 — ``38s`` · ``4m12s`` · ``1h02m``."""
+    s = max(0, round(seconds))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m{s % 60:02d}s"
+    return f"{s // 3600}h{s % 3600 // 60:02d}m"
+
+
+def format_usage_totals(totals) -> str:
+    """런 끝 합계 한 줄 — ``Total: in 1.4M (cached 1.1M) · out 9.1K · 23 calls · LLM 4m12s``.
+
+    캐시 적중·LLM 시간은 0 이면 뺀다(서버가 안 준 경로). 호출 수는 늘 있다 —
+    호출이 없던 런은 이 줄을 부르지 않는다.
+    """
+    head = f"in {_fmt_tok(totals.input)}"
+    if totals.cached:
+        head += f" (cached {_fmt_tok(totals.cached)})"
+    parts = [head, f"out {_fmt_tok(totals.output)}"]
+    parts.append(f"{totals.calls} call" + ("" if totals.calls == 1 else "s"))
+    if totals.llm_ns:
+        parts.append(f"LLM {_fmt_duration(totals.llm_ns / 1e9)}")
+    return "Total: " + " · ".join(parts)
 
 
 def _colorize_diff_line(line: str) -> str:
@@ -546,6 +576,9 @@ class MinimalRenderer(Renderer):
         if not verbose:
             msg += "  (--verbose records raw responses to verbose.jsonl)"
         self.status("running", msg, turn)
+
+    def usage_totals(self, totals) -> None:
+        self._p(f"  ● {format_usage_totals(totals)}", highlight=False)
 
     def model_detected(
         self, model: str, capabilities, provider: str, saved_path: str
