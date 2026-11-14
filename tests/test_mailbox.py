@@ -107,3 +107,30 @@ class TestEveryKindHasOne:
             ("main",),
             ("agent:p",),
         ]
+
+
+class TestEngineDoesNotReadTheSlot:
+    """엔진(`loop/`)은 우편 일을 `ports.mailbox` 로만 한다 — 전역 에이전트 레지스트리를
+    import·참조하지 않는다(v10.133.28). 예외는 `kind.py`: 종류가 포트를 만드는 자리라 조립
+    시점에 슬롯을 한 번 읽는다(`make_ports`)."""
+
+    def test_engine_modules_never_name_get_agent_registry(self):
+        import ast
+        from pathlib import Path
+
+        loop_dir = Path(__file__).resolve().parent.parent / "agent_cli" / "loop"
+        offenders = []
+        for path in sorted(loop_dir.glob("*.py")):
+            if path.name == "kind.py":
+                continue
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                names = []
+                if isinstance(node, ast.ImportFrom):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.Name):
+                    names = [node.id]
+                elif isinstance(node, ast.Attribute):
+                    names = [node.attr]
+                if "get_agent_registry" in names:
+                    offenders.append(f"{path.name}:{node.lineno}")
+        assert offenders == [], f"엔진이 전역 레지스트리를 읽는다: {offenders}"

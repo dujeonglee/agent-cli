@@ -474,12 +474,12 @@ class TestResident:
 
 # ── 루프와 디스패치 ────────────────────────────────────────────
 
-WAKEABLE = make_ports(dequeue_user_message=lambda: None)
-
 
 def _loop(provider, *, query="Q", rid="u-1"):
+    # 포트는 런마다 만든다 — 메일함은 포트를 만들 때의 슬롯 레지스트리를 쥔다(v10.133.28,
+    # 프로덕션 빌더와 같다). 모듈 수준 상수면 import 때(슬롯 None)의 것이 된다.
     return make_loop(
-        ports=WAKEABLE,
+        ports=make_ports(dequeue_user_message=lambda: None),
         query=query,
         query_request_id=rid,
         provider=provider,
