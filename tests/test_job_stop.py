@@ -431,7 +431,7 @@ class TestOwnerRouting:
 
     def test_main_owned_stop_lands_in_the_main_mailbox(self, tmp_path, agents):
         from agent_cli.runtime import wire_job_delivery
-        from agent_cli.subagent.agents_live import build_reply_record
+        from agent_cli.subagent.agent_mail import build_reply_record
 
         registry, mail, requests = agents
         jobs = JobRegistry(tmp_path)

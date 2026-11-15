@@ -262,7 +262,7 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice=None, parent_ctx=N
     표면(콘솔/렌더러)으로 알린다. 감사자 핸들(`harness.auditor.build_auditor`)은
     호출자가 **이 앞에서** 만들고 노브를 적용한다(`knobs.apply_all`) — 상한
     노브가 restore/auto_spawn 의 게이트이기 때문이다 (v10.43.0)."""
-    from agent_cli.subagent.agents_live import MailWaker
+    from agent_cli.subagent.mail_waker import MailWaker
 
     # 깨울 메일만 센다 — "Stop everything" 의 정지 회신(``wakes_main`` 거짓)은 다음 사람 입력 런에 (v10.142.0)
     waker = MailWaker(enqueue_wake, registry.has_mail_that_wakes_main)

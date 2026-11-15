@@ -548,7 +548,7 @@ class TestMultiOpDelegateParallel:
 
     def _patch(self, monkeypatch):
         # 브리지가 tool_agent 를 함수-내부 import 하므로 소유 모듈을 patch 한다.
-        import agent_cli.subagent.agents_live as agents_live_mod
+        import agent_cli.subagent.agent_modes as agents_live_mod
         from agent_cli.tools.result import ToolResult
 
         calls = []

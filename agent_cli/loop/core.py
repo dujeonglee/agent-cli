@@ -883,7 +883,7 @@ class AgentLoop:
         over-cap 회신은 `build_reply_record` 가 디스크 포인터로 치환. 돌려주는 값: 귀속
         승계로 ``run_authors`` 가 바뀌었는가."""
         registry = self._config.kind.ports.agent_registry
-        from agent_cli.subagent.agents_live import build_reply_record, mail_queue_item
+        from agent_cli.subagent.agent_mail import build_reply_record, mail_queue_item
 
         # 회신을 기대하는 message (v9.22.0) — main 이 빚진다. 빚을 **먼저** 적는다:
         # 관찰 꼬리가 그 빚의 id 로 `reply(id=…)` 를 가리키고(v10.56.0 장부 P3), 그 원문이

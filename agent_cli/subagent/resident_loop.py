@@ -324,7 +324,7 @@ class ResidentLoop(LoopKind):
         import time as _time
 
         from agent_cli.render import get_renderer
-        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg, tm, items = self.registry, self.tm, self._items
         me = self.owner

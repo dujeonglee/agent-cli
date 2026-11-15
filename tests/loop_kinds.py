@@ -84,7 +84,8 @@ def run_tasks(args: dict, caller: Caller) -> list:
     from pathlib import Path
 
     from agent_cli.session_slots import get_agent_registry, set_agent_registry
-    from agent_cli.subagent.agents_live import _NO_REPLY_LABEL, AgentRegistry
+    from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
+    from agent_cli.subagent.agents_live import AgentRegistry
     from agent_cli.subagent.run_agent import launch_run
     from agent_cli.tools.result import ToolResult
 

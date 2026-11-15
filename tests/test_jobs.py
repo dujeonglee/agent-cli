@@ -427,7 +427,7 @@ class TestLifetime:
         assert not job.running
 
     def test_job_mail_renders_as_an_observation(self):
-        from agent_cli.subagent.agents_live import build_reply_record
+        from agent_cli.subagent.agent_mail import build_reply_record
 
         rec = build_reply_record(
             {"kind": "job", "success": True, "output": "🧵 job #1 finished rc=0"}

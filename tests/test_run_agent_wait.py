@@ -263,7 +263,7 @@ class TestOneContractForHarnessNotices:
         return reg, key, gate
 
     def test_job_mail_to_a_resident_absorbs_like_main_receives_it(self, tmp_path):
-        from agent_cli.subagent.agents_live import build_reply_record
+        from agent_cli.subagent.agent_mail import build_reply_record
 
         reg, key, gate = self._busy(tmp_path)
         mail = {"kind": "job", "success": True, "output": "🧵 job #1 finished rc=0"}

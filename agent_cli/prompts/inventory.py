@@ -212,6 +212,8 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
     도구 결과는 inventory 의 다른 경로(설명·절)를 거치지 않아 여기서 등록한다;
     표기 가드가 이 표본을 본다."""
     from agent_cli.prompts.system_prompt import build_live_agents_section
+    from agent_cli.subagent import agent_mail as mail
+    from agent_cli.subagent import agent_modes as am
     from agent_cli.subagent import agent_stop
     from agent_cli.subagent import agents_live as al
     from agent_cli.subagent.run_agent import RUN_STARTED
@@ -234,17 +236,17 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             "`agent` spawn accepted with a first task while a dead agent of the same profile exists",
             "\n".join(
                 [
-                    al.spawn_head("agt-3", ["code-writer", "api"]),
-                    al.SPAWN_DEAD_SAME_PROFILE.format(keys=al.quoted_keys(["agt-2"])),
-                    al.SPAWN_TASK_QUEUED.format(rid="r-4"),
-                    al.SPAWN_PEERS.format(who=al.peer_address("api", "agt-3")),
+                    am.spawn_head("agt-3", ["code-writer", "api"]),
+                    am.SPAWN_DEAD_SAME_PROFILE.format(keys=am.quoted_keys(["agt-2"])),
+                    am.SPAWN_TASK_QUEUED.format(rid="r-4"),
+                    am.SPAWN_PEERS.format(who=am.peer_address("api", "agt-3")),
                 ]
             ),
         ),
         (
             "agent_spawn_without_task",
             "`agent` spawn accepted without a task — the last line instead",
-            al.SPAWN_NO_TASK.format(key="agt-3"),
+            am.SPAWN_NO_TASK.format(key="agt-3"),
         ),
         (
             "agent_run_result",
@@ -256,8 +258,8 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             "`agent` resume accepted, with a task",
             "\n".join(
                 [
-                    al.RESUME_DONE.format(key="agt-2"),
-                    al.RESUME_TASK_QUEUED.format(rid="r-6"),
+                    am.RESUME_DONE.format(key="agt-2"),
+                    am.RESUME_TASK_QUEUED.format(rid="r-6"),
                 ]
             ),
         ),
@@ -265,7 +267,7 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             "agent_kill_result",
             "`agent` kill — first time, then again on the same key",
             "\n".join(
-                [al.KILL_DONE.format(key="agt-1"), al.KILL_ALREADY.format(key="agt-1")]
+                [am.KILL_DONE.format(key="agt-1"), am.KILL_ALREADY.format(key="agt-1")]
             ),
         ),
         (
@@ -277,7 +279,7 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             ),
             "\n\n".join(
                 [
-                    al.envelope(
+                    mail.envelope(
                         "reply",
                         "n-8",
                         "agt-3",
@@ -295,7 +297,7 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
                         re="r-21",
                         mark=agent_stop.STOPPED_MARK.format(by="user"),
                     ),
-                    al.envelope(
+                    mail.envelope(
                         "reply",
                         "n-9",
                         "agt-5",
@@ -338,7 +340,7 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
         (
             "agent_refused_no_registry",
             "A session without an agent registry asked for any `agent` mode",
-            al.NO_REGISTRY,
+            am.NO_REGISTRY,
         ),
     ]
 

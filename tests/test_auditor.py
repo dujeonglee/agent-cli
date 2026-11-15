@@ -314,7 +314,7 @@ class TestLiveDelivery:
 
 class TestMailRecord:
     def test_harness_result_is_an_observation_with_no_debt(self):
-        from agent_cli.subagent.agents_live import build_reply_record
+        from agent_cli.subagent.agent_mail import build_reply_record
 
         rec = build_reply_record(
             {"kind": "harness", "job": "auditor", "success": True, "output": "AUDIT"}

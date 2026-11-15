@@ -1,0 +1,126 @@
+"""에이전트 상태의 어휘와 ``agents.json`` 의 모양 — "작업 중" 판정, 에이전트 하나 ↔ 저장 항목, 파일 한 장의
+머리(버전)와 읽기.
+
+레지스트리(`agents_live`)가 언제 저장하고 무엇을 되살릴지 정한다(락·명단·워커). 여기는 그 사이의 직렬화만
+— 상태를 갖지 않는 잎이고 레지스트리를 import 하지 않는다. `agent_entry` 는 에이전트를 읽기만 한다.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from agent_cli.hooks.shell import hooks_from_json, hooks_to_json
+from agent_cli.session.store import AGENTS_DIR
+
+# agents.json 스키마 버전 — 비호환 변경 시 bump (구버전 파일은 무시=fresh).
+#: v2 (v10.77.0): 순번(`seq`) 대신 id 가 키 — 옛 파일은 무시한다(호환층 없음).
+AGENTS_STATE_VERSION = 2
+
+
+def state_is_active(state: str) -> bool:
+    """ "작업 중" 판정의 단일 소유 — worker 상태 어휘는
+    starting|idle|busy|dead (AgentInstance.state). idle/dead 가 아니면
+    mid-task 다(starting=곧 첫 요청 처리). ★v7.11.1: 표시/넛지/reap
+    코드가 존재하지 않는 "working" 문자열을 비교하던 버그의 수리 —
+    어휘는 여기서만."""
+    return state not in ("idle", "dead")
+
+
+def persists(mail: dict) -> bool:
+    """이 메일이 agents.json 미러에 남을 것인가 — 장부 밖(``ledger: "none"``) 메일은
+    "지금" 에만 참인 재알림이라 남기지 않는다. 다음 세션의 첫 턴에 낡은 채 배달되면
+    존재하지 않는 것에 대해 말하게 된다 (docs/ledger/DESIGN.md §14)."""
+    return mail.get("ledger") != "none"
+
+
+def agent_entry(tm) -> dict:
+    """에이전트 하나(`AgentInstance`) → ``agents`` 목록의 한 항목. 읽기만 한다."""
+    return {
+        "key": tm.key,
+        "profile": tm.profile_name,
+        "name": tm.instance_name,
+        "description": tm.description,
+        "instructions": tm.instructions,
+        # role_prompt 를 통째로 저장 — resume 시 역할 md 파일이
+        # 지워졌어도 teammate 는 갖고 있던 역할 그대로 살아난다.
+        "role_prompt": tm.role_prompt,
+        "allowed_tools": tm.allowed_tools,
+        "model": tm.model,
+        "hooks_config": hooks_to_json(tm.hooks_config),
+        "context_mode": tm.context_mode,
+        "created_at": tm.created_at,
+        "handled": tm.handled,
+        # 논리 생사: kill(revivable=False)·에러만 영구 dead —
+        # 세션 종료로 멈춘 teammate 는 idle 로 남아 resume 대상.
+        "state": "dead" if (not tm.revivable or tm.error) else "idle",
+        "error": tm.error,
+        # v9.24.5: 줄 선 요청과 처리 중이던 요청 — 재시작이 되살린다.
+        # 장부 밖 메일(``ledger: "none"``)은 "지금" 에만 참이라 남기지
+        # 않는다 (docs/ledger/DESIGN.md §14).
+        "inbox": [dict(i) for i in list(tm.inbox_items) if persists(i)],
+        "in_flight": [dict(i) for i in list(tm.in_flight)],
+        # 띄운 쪽의 깊이·스택 — 복원된 에이전트가 같은 자리에서 다시 선다
+        "depth": int((tm.caller_runtime or {}).get("depth", 0) or 0),
+        "agent_stack": list(tm.agent_stack),
+        # 띄운 쪽 — ✕ 가 그 run 을 함께 멈춘다 (v10.142.0, 더해진 키)
+        **({"parent": tm.parent} if tm.parent else {}),
+        # run 에이전트: 과제 하나 — 못 끝냈으면 resume 이 되살려 회신을 마친다
+        **(
+            {"ends_after_task": True, "task_id": tm.task_id}
+            if tm.ends_after_task
+            else {}
+        ),
+    }
+
+
+def state_document(
+    entries: list[dict], pending: list[dict], questions: list[dict]
+) -> dict:
+    """파일 한 장 — 명단·미배달 메일·열린 질문에 버전을 단다."""
+    return {
+        "version": AGENTS_STATE_VERSION,
+        "agents": entries,
+        "pending": pending,
+        "questions": questions,
+    }
+
+
+def read_state(path: Path) -> dict | None:
+    """``agents.json`` 을 읽는다 — 파일 부재·파손·버전 불일치는 None(fresh 세션과 같다)."""
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("version") != AGENTS_STATE_VERSION:
+        return None
+    return data
+
+
+def instance_args(e: dict, *, session_dir: Path, runtime: dict) -> dict:
+    """저장 항목 하나 → `AgentInstance` 의 키워드 인자(``key`` 밖). 숫자·상태 필드는 레지스트리가 따로 얹는다."""
+    key = e.get("key")
+    # 집 — 옛 파일(v10.140.0)의 run 에이전트는 세션 디렉터리의 ``run_…`` 에 살았다(``home``)
+    home = str(e.get("home") or "")
+    depth = int(e.get("depth", 0) or 0)
+    return {
+        "profile_name": e.get("profile", ""),
+        "role_prompt": e.get("role_prompt", ""),
+        "allowed_tools": e.get("allowed_tools"),
+        "model": e.get("model", ""),
+        "hooks_config": hooks_from_json(e.get("hooks_config")) or None,
+        "context_mode": e.get("context_mode", "none"),
+        "home_dir": (
+            session_dir / Path(home).name if home else session_dir / AGENTS_DIR / key
+        ),
+        "instance_name": e.get("name", ""),
+        "description": e.get("description", ""),
+        "instructions": e.get("instructions", ""),
+        "ends_after_task": bool(e.get("ends_after_task")),
+        # 띄운 쪽이 main 이 아니었으면 그 깊이로 (배선은 지금 세션의 것)
+        "caller_runtime": {**runtime, "depth": depth} if depth else None,
+        "agent_stack": [str(x) for x in (e.get("agent_stack") or [])],
+        "parent": str(e.get("parent") or ""),
+    }

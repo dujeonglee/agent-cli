@@ -193,7 +193,7 @@ class TestIsolationFromTheRegistry:
 
     def test_main_tool_schema_cannot_spawn_a_harness_profile(self, tmp_path):
         """`agent` 도구의 spawn 은 사용자 카탈로그 프로파일만 안다."""
-        from agent_cli.subagent.agents_live import _agent_spawn
+        from agent_cli.subagent.agent_modes import _agent_spawn
         from tests.loop_kinds import make_caller
 
         reg = make_registry(tmp_path)

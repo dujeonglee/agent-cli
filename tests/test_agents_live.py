@@ -18,12 +18,12 @@ import pytest
 import agent_cli.render as render_mod
 from agent_cli.resource_loader import ResourceLoader
 from agent_cli.session.records import is_format_intervention
+from agent_cli.subagent.agent_mail import build_reply_record
+from agent_cli.subagent.agent_modes import tool_agent
 from agent_cli.subagent.agents_live import (
     _DEFAULT_MAX_AGENTS,
     AgentRegistry,
-    build_reply_record,
     clamp_max_agents,
-    tool_agent,
 )
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
@@ -138,7 +138,7 @@ class _RecordingRunner:
 # v9.21.0 — `complete` 는 국소다. 러너가 요청자에게 `message` 를 안 보내면
 # 레지스트리가 런 요약을 **라벨 붙여** 폴백 배달한다. 아래 테스트들은 가짜
 # 러너가 message 를 안 보내므로 전부 이 경로다 — 라벨을 벗기고 내용을 본다.
-from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
 
 def _unlabel(output: str) -> str:
@@ -1766,7 +1766,7 @@ class TestP4Events:
 
 class TestMailWaker:
     def _waker(self, pending=lambda: True):
-        from agent_cli.subagent.agents_live import MailWaker
+        from agent_cli.subagent.mail_waker import MailWaker
 
         sent = []
         w = MailWaker(lambda conn, text: sent.append((conn, text)), pending)
@@ -1893,7 +1893,7 @@ class TestRunMessagePump:
 
     def test_plain_run_executes_once_and_exits(self):
         from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.agents_live import MailWaker
+        from agent_cli.subagent.mail_waker import MailWaker
 
         q = InputQueue()
         reg = self._FakeReg()
@@ -1905,7 +1905,7 @@ class TestRunMessagePump:
 
     def test_wake_cycle_delivers_then_quiesces(self):
         from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.agents_live import MailWaker
+        from agent_cli.subagent.mail_waker import MailWaker
 
         q = InputQueue()
         reg = self._FakeReg()
@@ -1942,7 +1942,7 @@ class TestRunMessagePump:
         # wake in the queue, the pump must arm one via mark_idle and deliver it,
         # not spin on the poll timeout (web would park forever).
         from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.agents_live import MailWaker
+        from agent_cli.subagent.mail_waker import MailWaker
 
         q = InputQueue()
         reg = self._FakeReg()
@@ -1959,7 +1959,7 @@ class TestRunMessagePump:
 
     def test_stale_wake_skipped(self):
         from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.agents_live import MailWaker
+        from agent_cli.subagent.mail_waker import MailWaker
 
         q = InputQueue()
         reg = self._FakeReg()
@@ -1974,7 +1974,7 @@ class TestRunMessagePump:
 
     def test_shutdown_exits(self):
         from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.agents_live import MailWaker
+        from agent_cli.subagent.mail_waker import MailWaker
 
         q = InputQueue()
         reg = self._FakeReg()
@@ -2170,7 +2170,7 @@ class TestMultiInstance:
         assert key == "" and "invalid instance name" in err
 
     def test_label_in_reply_record(self):
-        from agent_cli.subagent.agents_live import format_agent_label
+        from agent_cli.subagent.agent_mail import format_agent_label
 
         assert format_agent_label("agt-1", "coder", "ui") == "agt-1 (coder · ui)"
         assert format_agent_label("agt-1") == "agt-1"
@@ -3853,7 +3853,7 @@ class TestRunMode:
         """모드 테이블화 (리뷰 §4.4 T3): 스키마 enum·핸들러가 AGENT_MODES 한 곳에서 파생됨을
         고정 — 나열 불일치(enum 에만 추가하고 핸들러 누락 → 조용한 폴스루) 버그 클래스 차단.
         v10.141.0: run 도 같은 핸들러 표에 있고, request 는 없다(`message` 로 갔다)."""
-        from agent_cli.subagent.agents_live import _MODE_HANDLERS
+        from agent_cli.subagent.agent_modes import _MODE_HANDLERS
         from agent_cli.tools.agent_tool import AGENT_MODES
         from agent_cli.tools.registry import TOOLS
 
@@ -3871,7 +3871,7 @@ class TestRunMode:
         """unknown-mode 에러 문구가 핸들러 테이블에서 파생."""
         from unittest.mock import MagicMock
 
-        from agent_cli.subagent.agents_live import tool_agent
+        from agent_cli.subagent.agent_modes import tool_agent
 
         registry = MagicMock()
         r = tool_agent({"mode": "bogus"}, caller=MAIN_CALLER, registry=registry)
@@ -3880,7 +3880,7 @@ class TestRunMode:
         assert "run / spawn / status / resume / kill" in r.error
 
     def test_registry_none_error_is_one_fact(self):
-        from agent_cli.subagent.agents_live import NO_REGISTRY, tool_agent
+        from agent_cli.subagent.agent_modes import NO_REGISTRY, tool_agent
 
         r = tool_agent({"mode": "spawn"}, caller=MAIN_CALLER, registry=None)
         assert r.success is False and r.error == NO_REGISTRY
@@ -3955,7 +3955,7 @@ class TestAgentTaskFieldUnification:
         )  # task 생략은 허용
 
     def test_resume_task_queues(self, tmp_path, monkeypatch):
-        from agent_cli.subagent.agents_live import tool_agent
+        from agent_cli.subagent.agent_modes import tool_agent
 
         reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
         res = tool_agent(
@@ -3971,7 +3971,7 @@ class TestAgentTaskFieldUnification:
         """별칭 철회의 핵심: tool_agent 층까지 message 가 내려와도(검증 우회
         경로) 조용한 큐잉은 없다 — 유실이 아니라 무큐잉+ACK 무언급이며, 정상
         경로에서는 validate 가 먼저 막는다."""
-        from agent_cli.subagent.agents_live import tool_agent
+        from agent_cli.subagent.agent_modes import tool_agent
 
         reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
         res = tool_agent(
@@ -3984,7 +3984,7 @@ class TestAgentTaskFieldUnification:
         assert "task queued" not in res.output
 
     def test_spawn_task_queues(self, tmp_path, monkeypatch):
-        from agent_cli.subagent.agents_live import tool_agent
+        from agent_cli.subagent.agent_modes import tool_agent
 
         reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
         res = tool_agent(
@@ -3998,7 +3998,7 @@ class TestAgentTaskFieldUnification:
     def test_ack_texts_teach_task_vocabulary(self, tmp_path, monkeypatch):
         """ACK/안내문구가 `agent` 의 ``message`` 필드를 가르치면 통일이 자멸한다. v10.141.0:
         일은 `message` **도구**로 보낸다 — 안내는 그 도구와 인자(`to`·`text`)를 말한다."""
-        from agent_cli.subagent.agents_live import tool_agent
+        from agent_cli.subagent.agent_modes import tool_agent
 
         reg, _sent = self._registry_with_request_capture(tmp_path, monkeypatch)
         res = tool_agent(

@@ -441,7 +441,7 @@ class TestOneHarnessRecord:
     def test_main_resident_and_private_share_the_function(self):
         """하니스 통지의 레코드는 `wake.harness_record` 하나 — main 의 `build_reply_record`,
         private 의 `mail_record` 가 같은 사전을 돌려준다(상주의 `absorb_pending` 도 같은 함수)."""
-        from agent_cli.subagent.agents_live import build_reply_record
+        from agent_cli.subagent.agent_mail import build_reply_record
         from agent_cli.wake import harness_record, mail_record
 
         mail = {"kind": "monitor", "success": True, "output": "👁 monitor m-1 fired"}

@@ -165,7 +165,7 @@ class TestInjectedNotices:
     """프롬프트에 직접 주입되는 안내문."""
 
     def test_wake_text(self):
-        from agent_cli.subagent.agents_live import MailWaker
+        from agent_cli.subagent.mail_waker import MailWaker
 
         _assert_ascii_ish(MailWaker.WAKE_TEXT, "wake 마커")
 
