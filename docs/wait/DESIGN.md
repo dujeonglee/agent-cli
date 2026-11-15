@@ -289,6 +289,9 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
 | 회신을 빚진 채 스스로 잠듦 | `agent:m (coder) · owes you a reply · itself waiting on job #3 (`pytest -x tests/`)` |
 | 사람 질문에 막힘 | `agent:n (reviewer) · owes you a reply · itself waiting on job #1 (`…`) · blocked on question q-3 to the user, unanswered for 9m` |
 
+"내 요청을 처리 중"·"대기열" 은 그 런·받은편지함이 내 요청 중 아직 회신이 가지 않은 것을 들고 있을 때만이다
+(v10.143.0) — 회신한 뒤 마무리 중인 런·통지로 도는 런·대기열의 통지는 줄도 깨울 근거도 아니다(docs/agent-engine/DESIGN.md §2.2).
+
 선택지는 다시 기다리기 / kill 둘뿐이다. "메시지로 물어보라" 는 넣지 않는다 — `agent` 요청 결과에
 이미 "progress checks or re-sends … queue MORE work" 경고가 있고, 중간 깨우기가 재촉을 유발하면
 역효과다. 사람 질문 줄이 있을 때만 "A question to the user is answered by the user, not by you."

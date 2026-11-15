@@ -638,13 +638,33 @@ class AgentRegistry:
             me = f"agent:{tm.key}"
             if me == addr or me in exclude:
                 continue
-            if self.state_is_active(tm.state) and tm.current_author == addr:
+            with self._cv:
+                in_flight = list(tm.in_flight)
+            if self.state_is_active(tm.state) and self._holds_unpaid_request_from(
+                in_flight, addr
+            ):
                 out.append(("working", me))
-            elif any(str(i.get("author") or "") == addr for i in self._queued(tm)):
+            elif self._holds_unpaid_request_from(self._queued(tm), addr):
                 # 받은편지함 미러(`inbox_items`)로 본다 — `SimpleQueue` 엔 `queue`
                 # 속성이 없어 종전 `getattr(tm.inbox, "queue", [])` 는 늘 비었다.
                 out.append(("queued", me))
         return out
+
+    def _holds_unpaid_request_from(self, items: list[dict], addr: str) -> bool:
+        """``items``(런이 집은 항목 또는 받은편지함 미러) 가운데 ``addr`` 가 보낸 요청으로 아직 회신이 가지 않은
+        것이 있는가 — 읽기만 한다. ``addr`` 의 `wait` 를 깨울 근거는 이것뿐이다(v10.143.0, 사용자 결정): 이미
+        회신한 요청·통지로는 그 에이전트가 무엇을 해도 ``addr`` 에게 돌아올 것이 없다.
+
+        보낸 쪽 기록(``_sent`` — 회신을 기대하는 요청이 받은편지함에 들 때 적히고 회신·폴백·버림이 배달된 뒤
+        지워진다)에 남은 항목만 센다. 빚으로 적히기 전 틈도 들어가고 통지는 처음부터 없다. 빚 장부로 보지 않는
+        이유: 런 끝 정리가 빚을 비운 뒤 런이 닫히기까지 갚은 빚과 아직 안 적힌 빚이 구별되지 않는다."""
+        with self._cv:
+            awaited = self._sent.get(addr, {})
+            return any(
+                str(it.get("author") or "") == addr
+                and str(it.get("id") or "") in awaited
+                for it in items
+            )
 
     def checkin_agent_lines(
         self, addr: str, step_marks: dict[str, int]

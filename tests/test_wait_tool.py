@@ -287,9 +287,12 @@ class TestAlreadyArrived:
         reg._agents["k"] = SimpleNamespace(
             key="k",
             state="idle",
-            inbox_items=[{"author": "main", "text": "x"}],
+            inbox_items=[{"id": "r-1", "author": "main", "text": "x"}],
+            in_flight=[],
             ends_after_task=False,
         )
+        with reg._cv:  # 받은편지함에 들 때 적히는 보낸 쪽 기록 (v10.143.0)
+            reg._note_sent("main", "r-1", "agent:k", "x")
         assert reg.arrived_for("agent:k") == 1
         assert reg.arrived_for("main") == 0
         assert reg.pending_for("main") == ["agent:k has your request queued"]
@@ -500,6 +503,10 @@ class TestCircularWait:
         self._owes(r, a, b, "r-1")  # a 는 b 에게 빚진 채 잠들었고
         tc = r.get(c)  # c 가 a 의 요청을 처리 중이다 → a 는 깨어날 것이다
         tc.state, tc.current_author = "busy", f"agent:{a}"
+        # 그 요청은 아직 회신이 가지 않았다 — 런이 든 항목과 보낸 쪽 기록 (v10.143.0)
+        tc.in_flight = [{"id": "r-9", "author": f"agent:{a}", "text": "job"}]
+        with r._cv:
+            r._note_sent(f"agent:{a}", "r-9", f"agent:{c}", "job")
         got = wake_sources(f"agent:{b}", agents=get_agent_registry())
         assert got == [f"agent:{a} owes you a reply (it is waiting on others)"]
 

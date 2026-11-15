@@ -304,6 +304,18 @@ def _fake_agent(
     tm.state = state
     tm.current_author = current_author
     tm.inbox_items = list(inbox)
+    # 대기열의 요청 = 보낸 쪽이 회신을 기다리는 것(보낸 쪽 기록) — 받은편지함에 들 때 적힌다 (v10.143.0)
+    for n, it in enumerate(tm.inbox_items):
+        it.setdefault("id", f"r-{key}-q{n}")
+        with reg._cv:
+            reg._note_sent(it["author"], it["id"], f"agent:{key}", "job")
+    if state == "busy":
+        # 일하는 중 = 그 요청자의 아직 회신이 가지 않은 요청을 들고 있다 (v10.143.0 — 갚았거나 통지로 도는
+        # 런은 요청자의 깨울 근거가 아니다): 런이 집은 항목과 보낸 쪽 기록
+        rid = f"r-{key}"
+        tm.in_flight = [{"id": rid, "author": current_author, "text": "job"}]
+        with reg._cv:
+            reg._note_sent(current_author, rid, f"agent:{key}", "job")
     tm.ctx = SimpleNamespace(last_ordinal=ordinal, last_added_at=last_at)
     reg._agents[key] = tm
     return tm
