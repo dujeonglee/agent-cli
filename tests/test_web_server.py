@@ -3912,3 +3912,117 @@ class TestChangesEndpoints:
             "_changes_payload",
         ):
             assert f"_in_executor({call}" in body, call
+
+    # ── 하위 git 저장소 (v10.139.0, docs/snapshot/DESIGN.md §8) ──
+
+    @pytest.fixture
+    def nested(self, tmp_path, server_and_client):
+        """워크스페이스 안에 하위 저장소 ``git-proj`` 가 있는 방 — 저장소는 그 뒤에 선다."""
+        from agent_cli.snapshot import get_snapshot, git_available, reset_snapshot
+        from tests.test_snapshot_nested import make_repo
+
+        if not git_available()[0]:
+            pytest.skip("git not installed")
+        server, _, client = server_and_client
+        w = tmp_path / "ws"
+        w.mkdir()
+        (w / "README.md").write_text("Run make.\n")
+        make_repo(w / "git-proj", {"src/a.py": "one\ntwo\n", "util.py": "u\n"})
+        server.workspace = w.resolve()
+        reset_snapshot()
+        store = get_snapshot(w, create=True, session_id="sess-n")
+        assert store.enabled, store.reason
+        yield w, client, store
+        reset_snapshot()
+
+    def test_nested_files_carry_their_repo(self, nested):
+        w, client, _ = nested
+        q = "?token=testtoken"
+        first = client.get("/api/changes" + q).json()
+        assert first["files"] == [] and first["notices"] == []
+        assert [r["path"] for r in first["repos"]] == ["git-proj"]
+        assert set(first["repos"][0]) == {
+            "path",
+            "state",
+            "head_from",
+            "head_to",
+            "commits",
+            "since",
+        }
+        (w / "README.md").write_text("Run make build.\n")
+        (w / "git-proj/src/a.py").write_text("one\nTWO\n")
+        got = client.get("/api/changes" + q).json()
+        assert [(f["path"], f["status"], f["repo"]) for f in got["files"]] == [
+            ("README.md", "M", None),
+            ("git-proj/src/a.py", "M", "git-proj"),
+        ]
+        assert all("summary" not in f for f in got["files"])
+        d = client.get(
+            "/api/changes/diff?path=git-proj/src/a.py&token=testtoken"
+        ).json()
+        assert "+++ b/git-proj/src/a.py" in d["diff"] and "+TWO" in d["diff"]
+        bad = client.get("/api/changes/diff?path=../git-proj/x&token=testtoken")
+        assert bad.status_code == 400
+
+    def test_summary_line_and_its_text(self, nested):
+        import shutil
+
+        w, client, _ = nested
+        shutil.rmtree(w / "git-proj")
+        got = client.get("/api/changes?token=testtoken").json()
+        assert got["files"] == [
+            {
+                "path": "git-proj",
+                "status": "D",
+                "added": None,
+                "deleted": None,
+                "repo": "git-proj",
+                "summary": True,
+            }
+        ]
+        assert got["repos"][0]["state"] == "removed"
+        d = client.get("/api/changes/diff?path=git-proj&token=testtoken").json()
+        assert d["diff"].startswith("git-proj/ was removed from disk.")
+
+    def test_notice_dismiss(self, nested):
+        import shutil
+
+        w, client, _ = nested
+        q = "?token=testtoken"
+        shutil.rmtree(w / "git-proj/.git")
+        got = client.get("/api/changes" + q).json()
+        (n,) = got["notices"]
+        assert set(n) == {"repo", "cause", "text", "when"} and n["cause"] == "degit"
+        url = "/api/changes/notices/dismiss"
+        assert client.post(url + q, json={}).status_code == 400
+        assert client.post(url + q, json={"repo": "nope"}).status_code == 404
+        after = client.post(url + q, json={"repo": "git-proj"}).json()
+        assert after["notices"] == [] and after["enabled"] is True
+        assert client.get("/api/changes" + q).json()["notices"] == []
+        assert client.post(url + q, json={"repo": "git-proj"}).status_code == 404
+
+    def test_dismiss_needs_a_store(self, server_and_client):
+        from agent_cli.snapshot import reset_snapshot
+
+        reset_snapshot()
+        _, _, client = server_and_client
+        url = "/api/changes/notices/dismiss"
+        assert (
+            client.post(url, json={"repo": "x"}).status_code == 401
+        )  # 인증은 기존 미들웨어
+        r = client.post(url + "?token=testtoken", json={"repo": "x"})
+        assert r.status_code == 409
+
+    def test_dismiss_runs_off_the_event_loop(self):
+        import inspect
+
+        from agent_cli.web import server as srv
+
+        src = inspect.getsource(srv.create_app)
+        assert "_in_executor(store.dismiss_notice" in src
+        payload = src[
+            src.index("def _changes_payload") : src.index("async def _in_executor")
+        ]
+        assert payload.index("store.sync_nested_records()") < payload.index(
+            "store.report()"
+        )

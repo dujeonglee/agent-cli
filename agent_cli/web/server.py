@@ -13,8 +13,9 @@ Endpoints:
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn
   - ``POST /api/jobs/stop`` — a viewer stops one background job (v10.121.0)
   - ``GET  /api/changes`` · ``GET /api/changes/diff?path=`` · ``POST /api/changes/clear``
-    · ``POST /api/changes/undo`` — the Changes panel: files changed on disk since the
-    snapshot baseline (v10.137.0, ``snapshot.GitSnapshot.baseline``)
+    · ``POST /api/changes/undo`` · ``POST /api/changes/notices/dismiss`` — the Changes
+    panel: files changed on disk since the snapshot baseline (v10.137.0,
+    ``snapshot.GitSnapshot.baseline``), nested git repositories included (v10.139.0)
 
 Auth: the ``_AuthMiddleware`` is the SOLE enforcer, default-deny. Every
 ``/api/*`` path except ``/api/health`` requires authentication; ``/``, ``/static``
@@ -1309,16 +1310,22 @@ def create_app(server: WebServer) -> FastAPI:
         return store if store is not None and store.enabled else None
 
     def _changes_payload(store) -> dict:
+        """다시 셀 때 하위 저장소 기록을 지금과 맞추고(``sync_nested_records`` — 기준 잃음·
+        새 저장소) 센다(``report`` — 읽기만). 목록을 돌려주는 경로는 모두 이것을 거친다."""
         if store is None:
             return {"enabled": False}
+        store.sync_nested_records()
         base = store.baseline()
-        files = store.changes() if base else None
-        if base is None or files is None:
+        rep = store.report() if base else None
+        if base is None or rep is None:
             return {"enabled": False}
         return {
             "enabled": True,
             "baseline": {"kind": base[1], "when": base[2], "commit": base[0][:8]},
-            "files": files,
+            # 하위 저장소 안의 항목만 `repo` 를 싣는다 — 워크스페이스 것은 null 로 채운다
+            "files": [{"repo": None, **f} for f in rep.files],
+            "repos": rep.repos,
+            "notices": rep.notices,
         }
 
     async def _in_executor(fn, *args):
@@ -1326,8 +1333,11 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.get("/api/changes")
     async def changes_list():
-        """바뀐 파일 목록과 기준점 — ``{enabled, baseline:{kind, when, commit}, files}``.
-        스냅샷이 꺼진 방은 ``{enabled: false}``."""
+        """바뀐 파일 목록과 기준점 — ``{enabled, baseline:{kind, when, commit}, files,
+        repos, notices}``. ``files`` 의 하위 저장소 항목은 ``repo``(그 경로)·요약 줄은
+        ``summary``, ``repos`` 는 하위 저장소 그룹 머리, ``notices`` 는 기준을 잃은 저장소의
+        안내 줄(docs/snapshot/DESIGN.md §8). 스냅샷이 꺼진 방은 ``{enabled: false}``.
+        다시 셀 때 하위 저장소 기록을 지금과 맞춘다(기준 잃음·새 저장소)."""
         return await _in_executor(_changes_payload, _changes_store())
 
     @app.get("/api/changes/diff")
@@ -1343,7 +1353,8 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.post("/api/changes/clear")
     async def changes_clear():
-        """지금 디스크를 새 기준점으로 — 목록만 비운다(파일은 그대로). 새 목록을 준다."""
+        """지금 디스크를 새 기준점으로 — 목록만 비운다(파일은 그대로). 새 목록을 준다.
+        다시 셀 때 하위 저장소 기록을 지금과 맞춘다(기준 잃음·새 저장소)."""
         store = _changes_store()
         if store is None:
             raise HTTPException(status_code=409, detail="snapshots are off")
@@ -1351,9 +1362,27 @@ def create_app(server: WebServer) -> FastAPI:
             raise HTTPException(status_code=500, detail="clear failed")
         return await _in_executor(_changes_payload, store)
 
+    @app.post("/api/changes/notices/dismiss")
+    async def changes_dismiss(request: Request):
+        """안내 줄 닫기(✕) — 본문 ``{repo}``. 그 안내가 없으면 404. 새 목록을 준다.
+        다시 셀 때 하위 저장소 기록을 지금과 맞춘다(기준 잃음·새 저장소)."""
+        store = _changes_store()
+        if store is None:
+            raise HTTPException(status_code=409, detail="snapshots are off")
+        body = await _json_object(request)
+        repo = body.get("repo")
+        if not isinstance(repo, str) or not repo:
+            raise HTTPException(
+                status_code=400, detail="`repo` must be a non-empty string"
+            )
+        if not await _in_executor(store.dismiss_notice, repo):
+            raise HTTPException(status_code=404, detail="no such notice")
+        return await _in_executor(_changes_payload, store)
+
     @app.post("/api/changes/undo")
     async def changes_undo():
-        """마지막 Clear 를 되돌린다(한 단계) — ``{undone, …목록}``."""
+        """마지막 Clear 를 되돌린다(한 단계) — ``{undone, …목록}``.
+        다시 셀 때 하위 저장소 기록을 지금과 맞춘다(기준 잃음·새 저장소)."""
         store = _changes_store()
         if store is None:
             raise HTTPException(status_code=409, detail="snapshots are off")

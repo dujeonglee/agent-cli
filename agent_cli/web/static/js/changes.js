@@ -33,6 +33,15 @@
 // 하위 git 저장소(gitlink — 커밋이 바뀌면 그 폴더 한 줄로 오른다)거나 안을 가리키는 폴더
 // 링크라 그 행에도 점 ●, 누르면 그 경로 diff.
 //
+// 하위 git 저장소(v10.139.0, docs/snapshot/DESIGN.md §8): 서버가 그 저장소의 git 으로 센
+// 항목은 `repo`(저장소 경로)를 싣고 경로는 워크스페이스 기준이라(`git-proj/src/a.py`) 행·diff·
+// 트리 표시는 그대로다. 보이는 하위 저장소 그룹이 하나라도 있으면 목록을 그룹으로 나눈다 —
+// `Workspace` 와 `P/`(머리 태그: HEAD 이동·기준 다시 잡음·새 저장소·지워짐). 없으면 지금처럼
+// 한 목록이다. 요약 줄(`summary` — 지워진 저장소 `D P/`·기준점 뒤에 생긴 저장소 `A P/`)은
+// 줄 수 없이 서고 diff 자리에 서버의 요약 문장이 온다. 기준을 잃은 저장소의 안내 줄
+// (`notices`)은 목록 맨 위에 ⚠ 문장 ✕ — ✕ 는 서버 기록에서 닫는다(재접속에도 닫힌 채).
+// 📁 트리의 하위 저장소 폴더 행에는 작은 `git` 배지를 단다(`data-rel` 로, 표시와 같은 길).
+//
 // 다시 세는 때: 페이지 로드(스냅샷 재생 끝), 패널을 열 때, ↻, 런 끝. 런 끝은 기존 SSE 로
 // 안다 — main 런은 `worker_state` 가 바쁨 → 한가로 바뀔 때(main 런은 `scope_end` 를 내지
 // 않는다), 에이전트·스킬·상주 런은 `scope_end`. 도구 호출마다 세지 않는다. 재생이
@@ -151,6 +160,16 @@ if ($badge && $drawer) {
       return b;
     }
     if (type !== "dir") return null;
+    // 기준점 뒤에 생긴 하위 저장소의 요약 줄 — 누르면 그 요약
+    if (f && f.summary) {
+      const b = el("button", ["chg-mark", "chg-dot"], "●");
+      b.title = "New repository " + since;
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        open(rel);
+      });
+      return b;
+    }
     // 폴더 행 자체가 목록에 있으면 하위 git 저장소(gitlink)거나 안을 가리키는 폴더 링크의
     // 대상이 바뀐 것(서버는 그런 링크를 대상 종류 dir 로 보인다 — 프런트는 둘을 못 가른다).
     // 그 경로 diff 를 연다
@@ -174,9 +193,20 @@ if ($badge && $drawer) {
     }
     return null;
   }
+  // 지금 디스크에 있는 하위 저장소 폴더(지워진 것은 트리에 없다)
+  function isRepoDir(row) {
+    if (row.dataset.type !== "dir" || !data || !data.enabled) return false;
+    return (data.repos || []).some(function (r) {
+      return r.path === row.dataset.rel && r.state !== "removed";
+    });
+  }
   function decorateRow(row) {
-    const old = row.querySelector(":scope > .chg-mark");
-    if (old) old.remove();
+    row.querySelectorAll(":scope > .chg-mark, :scope > .chg-git").forEach(function (n) { n.remove(); });
+    if (isRepoDir(row)) {
+      const g = el("span", ["chg-git"], "git");
+      g.title = "Nested git repository — changes inside are counted with its own git";
+      row.appendChild(g);
+    }
     const m = count() ? treeMark(row) : null;
     if (m) {
       m.type = "button";
@@ -188,6 +218,7 @@ if ($badge && $drawer) {
   }
 
   function countsHtml(f) {
+    if (f.summary) return "";
     if (f.added == null && f.deleted == null) return '<span class="chg-bin">binary</span>';
     let s = "";
     if (f.added) s += '<span class="chg-add">+' + f.added + "</span>";
@@ -207,7 +238,9 @@ if ($badge && $drawer) {
       return;
     }
     $since.textContent = sinceText(data.baseline);
-    if (!data.files.length) {
+    renderNotices();
+    const groups = shownRepos();
+    if (!data.files.length && !groups.length) {
       const box = el("div", ["chg-empty"]);
       box.appendChild(el("b", [], "No changes " + sinceText(data.baseline).replace(/ · cleared$/, "")));
       if (data.baseline.kind === "cleared") {
@@ -219,22 +252,96 @@ if ($badge && $drawer) {
       return;
     }
     if (selected && !data.files.some(function (f) { return f.path === selected; })) selected = null;
-    data.files.forEach(function (f) {
-      const row = el("button", ["chg-row"]);
-      row.type = "button";
-      row.dataset.path = f.path;
-      row.appendChild(el("span", ["chg-caret"]));
-      markSel(row, f.path === selected);
-      row.appendChild(el("span", ["chg-st", "chg-st-" + f.status], f.status));
-      const p = el("span", ["chg-path"], f.path);
-      p.title = f.path;
-      row.appendChild(p);
-      row.appendChild(elHtml("span", ["chg-n"], countsHtml(f)));
-      row.addEventListener("click", function () { pick(f.path); });
-      $list.appendChild(row);
-    });
+    if (!groups.length) {
+      data.files.forEach(addRow);
+    } else {
+      const ws = data.files.filter(function (f) { return !f.repo; });
+      if (ws.length) {
+        $list.appendChild(el("div", ["chg-grp"], "Workspace"));
+        ws.forEach(addRow);
+      }
+      groups.forEach(function (r) {
+        const head = el("div", ["chg-grp"], r.path + "/");
+        head.dataset.repo = r.path;
+        head.appendChild(el("span", ["chg-grp-tag"], repoTag(r)));
+        $list.appendChild(head);
+        const rows = data.files.filter(function (f) { return f.repo === r.path; });
+        if (!rows.length) {
+          $list.appendChild(el("div", ["chg-grp-empty"], "No changes in " + r.path + " since " + hhmm(r.since) + "."));
+        }
+        rows.forEach(addRow);
+      });
+    }
     if (selected) loadDiff(selected);
     else showDiff(null);
+  }
+
+  function addRow(f) {
+    const row = el("button", ["chg-row"]);
+    row.type = "button";
+    row.dataset.path = f.path;
+    if (f.summary) row.classList.add("chg-summary");
+    row.appendChild(el("span", ["chg-caret"]));
+    markSel(row, f.path === selected);
+    row.appendChild(el("span", ["chg-st", "chg-st-" + f.status], f.status));
+    const shown = f.summary ? f.path + "/" : f.path;
+    const p = el("span", ["chg-path"], shown);
+    p.title = shown;
+    row.appendChild(p);
+    row.appendChild(elHtml("span", ["chg-n"], countsHtml(f)));
+    row.addEventListener("click", function () { pick(f.path); });
+    $list.appendChild(row);
+  }
+
+  // 그룹으로 보일 하위 저장소 — 항목이 있거나, 기준을 다시 잡아 "지금부터" 를 말해야 하는 것
+  function shownRepos() {
+    return (data.repos || []).filter(function (r) {
+      return r.state === "reset" || data.files.some(function (f) { return f.repo === r.path; });
+    });
+  }
+  function repoTag(r) {
+    if (r.state === "removed") return "repository removed";
+    if (r.state === "new") return "new repository · since " + hhmm(r.since);
+    if (r.state === "reset") return "since " + hhmm(r.since) + " · baseline reset";
+    const from = r.head_from || "none";
+    if (!r.head_to || r.head_to === r.head_from) return "HEAD " + from;
+    let t = "HEAD " + from + " → " + r.head_to;
+    if (r.commits) t += " (+" + r.commits + (r.commits === 1 ? " commit)" : " commits)");
+    return t;
+  }
+  // 안내 줄 — 기준을 잃은 하위 저장소. 문장이 저장소 이름으로 시작하면 그 이름을 굵게
+  function renderNotices() {
+    (data.notices || []).forEach(function (n) {
+      const box = el("div", ["chg-notice"]);
+      box.setAttribute("role", "status");
+      box.dataset.repo = n.repo;
+      box.appendChild(el("span", [], "⚠"));
+      const text = el("span", []);
+      if (n.text.indexOf(n.repo) === 0) {
+        text.appendChild(el("b", [], n.repo));
+        text.appendChild(document.createTextNode(n.text.slice(n.repo.length)));
+      } else {
+        text.textContent = n.text;
+      }
+      box.appendChild(text);
+      const x = el("button", ["chg-notice-x"], "✕");
+      x.type = "button";
+      x.title = "Dismiss";
+      x.setAttribute("aria-label", "Dismiss");
+      x.addEventListener("click", function () { dismiss(n.repo); });
+      box.appendChild(x);
+      $list.appendChild(box);
+    });
+  }
+  function dismiss(repo) {
+    fetch("api/changes/notices/dismiss", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: repo }),
+    })
+      .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+      .then(apply)
+      .catch(recount);
   }
 
   function showDiff(text) {

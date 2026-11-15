@@ -34,13 +34,25 @@ git 의 두 가지 성질이 설계를 정한다(실측):
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import shutil
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from agent_cli.snapshot_nested import (
+    Manifest,
+    NestedRepos,
+    Verdict,
+    entries,
+    notice_text,
+    parse_numstat,
+    parse_raw,
+)
 
 #: 제외 디렉터리 — 어느 깊이든. ``.git`` 은 git 이 알아서 안 담는다(하위 저장소는 gitlink).
 EXCLUDE_DIRS: tuple[str, ...] = (".agent-cli", "node_modules", "__pycache__", ".venv")
@@ -58,10 +70,26 @@ LABEL_SUMMARY_CHARS = 60
 BASELINE_REF = "refs/agent-cli/baseline"
 BASELINE_PREV_REF = "refs/agent-cli/baseline-prev"
 BASELINE_LABEL = "baseline (cleared)"
+#: 하위 git 저장소의 기록(docs/snapshot/DESIGN.md §8) — 기준점마다 하나, 기준점 ref 와 짝으로
+#: 움직인다: 세션 시작 기준은 ``start/<sid>``(그 세션의 첫 시작에만 남긴다), Clear 기준은
+#: ``baseline``(Undo 한 단계 ``baseline-prev``). HEAD 로그에 섞이지 않는 부모 없는 커밋이다.
+NESTED_REFS = "refs/agent-cli/nested/"
+NESTED_START_PREFIX = NESTED_REFS + "start/"
+NESTED_BASELINE_REF = NESTED_REFS + "baseline"
+NESTED_BASELINE_PREV_REF = NESTED_REFS + "baseline-prev"
 #: 패널의 파일 diff 상한(줄). 사람이 읽는 화면이라 모델 관찰(`tools/_diff.py` 100줄)보다
 #: 넉넉하다. 그 모듈의 상수는 못 쓴다 — `tools` 패키지는 import 하면 도구 레지스트리를
 #: 통째로 싣고, 이 모듈은 0층이다.
 CHANGE_DIFF_MAX_LINES = 1000
+
+
+def _ref_key(session_id: str) -> str:
+    """세션 id 를 ref 이름 한 칸으로 — 안전한 글자만이면 그대로, 아니면 그 해시."""
+    if re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9._-]*", session_id) and not (
+        session_id.endswith(".lock") or ".." in session_id
+    ):
+        return session_id
+    return hashlib.sha1(session_id.encode("utf-8")).hexdigest()
 
 
 def checkpoint_label(tool: str, turn: int, summary: str = "") -> str:
@@ -81,6 +109,17 @@ class NestedRepo:
     path: str  # 워크스페이스 기준 상대 경로
     head: str
     dirty: list[str] = field(default_factory=list)  # 수정·untracked (상대 경로)
+
+
+@dataclass
+class ChangeReport:
+    """Changes 패널 한 번의 셈 — ``files`` 는 :meth:`GitSnapshot.changes` 의 항목(하위
+    저장소 안의 것은 ``repo``, 요약 줄은 ``summary`` 가 더 붙는다), ``repos`` 는 하위 저장소
+    그룹의 머리, ``notices`` 는 안내 줄."""
+
+    files: list[dict]
+    repos: list[dict] = field(default_factory=list)
+    notices: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -135,6 +174,14 @@ class GitSnapshot:
         self._last_checkpoint = 0.0
         self._big_files: list[str] = []
         self.session_id: str | None = None  # 기준점(세션 시작 커밋)을 찾는 열쇠
+        self._nested = NestedRepos(
+            self.workspace,
+            ours=self._git,
+            base_env=self._env,
+            tmp_dir=self.git_dir,
+            exclude_dirs=self.exclude_dirs,
+            file_max_bytes=file_max_bytes,
+        )
 
     # ── git plumbing ─────────────────────────────────────────
 
@@ -152,18 +199,27 @@ class GitSnapshot:
                 "GIT_COMMITTER_NAME": _AUTHOR[0],
                 "GIT_COMMITTER_EMAIL": _AUTHOR[1],
                 "GIT_TERMINAL_PROMPT": "0",
+                # 하위 저장소의 색인을 쓰지 않는다 — gitlink 를 담는 `add` 는 그 저장소에
+                # `status` 를 띄우고, 그 status 는 stat 이 바뀐 파일을 보면 그쪽 색인을 고쳐
+                # 쓴다(실측, docs/snapshot/DESIGN.md §8). 우리 저장소의 필수 잠금은 그대로다
+                "GIT_OPTIONAL_LOCKS": "0",
             }
         )
         return env
 
     def _git(
-        self, *args: str, timeout: float = 300, env: dict[str, str] | None = None
+        self,
+        *args: str,
+        timeout: float = 300,
+        env: dict[str, str] | None = None,
+        input: str | None = None,
     ) -> subprocess.CompletedProcess:
-        """``env`` 는 덧붙일 변수(임시 색인 ``GIT_INDEX_FILE`` 등)."""
+        """``env`` 는 덧붙일 변수(임시 색인 ``GIT_INDEX_FILE`` 등), ``input`` 은 표준 입력."""
         return subprocess.run(
             ["git", "-c", "safe.directory=*", "-c", "core.hooksPath=/dev/null", *args],
             cwd=str(self.workspace),
             env={**self._env(), **(env or {})},
+            input=input,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -220,7 +276,8 @@ class GitSnapshot:
             self.enabled = True
             self._apply_caps()
             label = "session start" + (f" ({session_id})" if session_id else "")
-            self.checkpoint(label, force=True, allow_empty=True)
+            start = self.checkpoint(label, force=True, allow_empty=True)
+            self._record_session_start(start)
             self.stats.seconds = time.monotonic() - t0
             self.reason = "ok"
             return True
@@ -264,26 +321,9 @@ class GitSnapshot:
         return found
 
     def _describe_nested(self, abs_dir: str, rel: str) -> NestedRepo:
-        env = {
-            k: v
-            for k, v in self._env().items()
-            if k not in ("GIT_DIR", "GIT_WORK_TREE")
-        }
-
-        def run(*a):
-            return subprocess.run(
-                ["git", "-c", "safe.directory=*", "-C", abs_dir, *a],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-
-        head = run("rev-parse", "HEAD").stdout.strip() or "(no commits)"
-        st = run("status", "--porcelain", "--untracked-files=all").stdout
-        dirty = [ln[3:].strip() for ln in st.splitlines() if ln.strip()]
-        return NestedRepo(path=rel, head=head, dirty=dirty)
+        """하위 git 으로 읽기만(``snapshot_nested`` — 잠금 없는 읽기)."""
+        head = self._nested.head(rel) or "(no commits)"
+        return NestedRepo(path=rel, head=head, dirty=self._nested.dirty(rel))
 
     def checkpoint(
         self, label: str, *, force: bool = False, allow_empty: bool = False
@@ -462,47 +502,116 @@ class GitSnapshot:
         out = self._git("log", "-1", "--format=%ct", commit).stdout.strip()
         return int(out) if out.isdigit() else 0
 
+    def _session_start(self) -> tuple[str, int] | None:
+        """이 세션 id 로 찍힌 **가장 이른** 시작 커밋 ``(sha, 시각)`` — resume 은 프로세스마다
+        시작 커밋을 새로 찍으므로 가장 최근이 아니다."""
+        if not self.session_id:
+            return None
+        label = f"session start ({self.session_id})"
+        r = self._git(
+            "log", "--format=%H%x09%ct%x09%s", "--fixed-strings", f"--grep={label}"
+        )
+        hits = [
+            ln.split("\t", 2)
+            for ln in r.stdout.splitlines()
+            if ln.count("\t") >= 2 and ln.split("\t", 2)[2] == label
+        ]
+        if not hits:
+            return None
+        sha, ct, _ = hits[-1]  # log 는 최근 것부터 — 끝이 가장 이른 것
+        return sha, int(ct) if ct.isdigit() else 0
+
     def baseline(self) -> tuple[str, str, int] | None:
         """``(commit, kind, when)`` — 목록의 기준점. Clear 한 적이 있으면 그 커밋(kind
-        ``"cleared"``), 없으면 **이 세션 id 로 찍힌 가장 이른** 시작 커밋(``"session"`` —
-        resume 은 프로세스마다 시작 커밋을 새로 찍으므로 가장 최근이 아니다), 그것도
-        없으면 HEAD(``"head"``). ``when`` 은 커밋 시각(epoch 초). 커밋이 없으면 None."""
+        ``"cleared"``), 없으면 **이 세션 id 로 찍힌 가장 이른** 시작 커밋(``"session"``),
+        그것도 없으면 HEAD(``"head"``). ``when`` 은 커밋 시각(epoch 초). 커밋이 없으면 None."""
         if not self.enabled:
             return None
         c = self._rev(BASELINE_REF)
         if c:
             return c, "cleared", self._commit_time(c)
-        if self.session_id:
-            label = f"session start ({self.session_id})"
-            r = self._git(
-                "log", "--format=%H%x09%ct%x09%s", "--fixed-strings", f"--grep={label}"
-            )
-            hits = [
-                ln.split("\t", 2)
-                for ln in r.stdout.splitlines()
-                if ln.count("\t") >= 2 and ln.split("\t", 2)[2] == label
-            ]
-            if hits:
-                sha, ct, _ = hits[-1]  # log 는 최근 것부터 — 끝이 가장 이른 것
-                return sha, "session", int(ct) if ct.isdigit() else 0
+        start = self._session_start()
+        if start:
+            return start[0], "session", start[1]
         head = self.head()
         if head:
             return head, "head", self._commit_time(head)
         return None
 
-    def _disk_tree(self) -> str | None:
+    # ── 하위 저장소 기록 (docs/snapshot/DESIGN.md §8) ──
+    # 기록은 기준점과 짝이다: 세션 시작 기준이면 ``start/<sid>``, Clear 기준이면 ``baseline``.
+    # 짝이 없는 기준(HEAD 기준·기록 이전의 옛 세션·옛 Clear)이면 기록 없이 지금 동작 —
+    # 하위 저장소는 gitlink 한 줄. 기록을 고치는 셈(기준 잃음·새 저장소·안내 닫기)은 잠금
+    # 대신 ``update-ref <ref> <new> <old>`` 로 겨룬다 — 지면 다시 읽고 다시 센다.
+
+    def _record_ref(self, base: tuple[str, str, int] | None) -> str | None:
+        if base is None:
+            return None
+        if base[1] == "cleared":
+            return NESTED_BASELINE_REF
+        if base[1] == "session" and self.session_id:
+            return NESTED_START_PREFIX + _ref_key(self.session_id)
+        return None
+
+    def _active_record(
+        self, base: tuple[str, str, int] | None
+    ) -> tuple[str | None, str | None, Manifest | None]:
+        """(기록 ref, 그 커밋, 기록) — 짝이 없으면 셋 다 None 일 수 있다."""
+        ref = self._record_ref(base)
+        if ref is None:
+            return None, None, None
+        c = self._rev(ref)
+        return ref, c, self._nested.load(c)
+
+    def _record_session_start(self, start: str | None) -> None:
+        """세션의 첫 시작에만 기록을 남긴다 — 방금 찍은 시작 커밋이 이 세션의 가장 이른
+        시작이고 기록이 아직 없을 때. resume(같은 세션 id)은 덮어쓰지 않고, 기록 없이 시작
+        커밋만 있는 옛 세션의 resume 도 남기지 않는다(그 기준점과 짝이 아니게 된다)."""
+        if not start or not self.session_id:
+            return
+        ref = NESTED_START_PREFIX + _ref_key(self.session_id)
+        if self._rev(ref):
+            return
+        first = self._session_start()
+        if not first or first[0] != start:
+            return
+        m = self._nested.snapshot([(n.path, n.dirty) for n in self.nested], first[1])
+        c = self._nested.save(m)
+        if c:
+            self._git("update-ref", ref, c, "")  # 빈 old — 없을 때만
+
+    def _update_refs(self, ops: list[tuple[str, str | None]]) -> bool:
+        """ref 여럿을 한 트랜잭션으로 — ``(ref, 새 커밋)``, 새 커밋 None 은 지운다(없으면 건너뜀)."""
+        lines = []
+        for ref, new in ops:
+            if new:
+                lines.append(f"update {ref} {new}")
+            elif self._rev(ref):
+                lines.append(f"delete {ref}")
+        if not lines:
+            return True
+        r = self._git("update-ref", "--stdin", input="\n".join(lines) + "\n")
+        return r.returncode == 0
+
+    def _disk_tree(self, drop: list[str] | tuple[str, ...] = ()) -> str | None:
         """지금 디스크의 트리 sha — 체크포인트와 같은 pathspec 으로, 임시 색인에서.
         실제 색인을 복사해 시작한다(stat 캐시라 바뀌지 않은 파일은 다시 해시하지 않는다;
         git 은 색인을 lock 파일 + rename 으로 쓰므로 복사는 늘 온전한 판을 읽는다).
         복사는 **mtime 까지**(``copy2``) — git 은 색인보다 늦지 않은 mtime 의 항목만 내용을
         다시 보므로(racy-git), 새 mtime 의 복사본은 같은 초·같은 크기로 바뀐 파일을
-        "그대로" 로 믿는다(실측: `one\ntwo` → `one\nTWO` 가 목록에서 빠졌다)."""
+        "그대로" 로 믿는다(실측: `one\ntwo` → `one\nTWO` 가 목록에서 빠졌다).
+
+        ``drop`` 은 임시 색인에서 먼저 지울 항목 — ``.git`` 이 지워진 하위 저장소 자리
+        (일반 폴더 기록). 색인에 gitlink 가 남아 있으면 ``add -A`` 가 그 아래 파일을 담지
+        않는다(실측). 실제 색인은 건드리지 않는다."""
         tmp = self.git_dir / f"index.changes-{os.getpid()}-{threading.get_ident()}"
         env = {"GIT_INDEX_FILE": str(tmp)}
         try:
             real = self.git_dir / "index"
             if real.is_file():
                 shutil.copy2(real, tmp)
+            if drop and tmp.is_file():
+                self._git("update-index", "--force-remove", "--", *drop, env=env)
             r = self._git("add", "-A", "--force", *self._pathspec(), env=env)
             if r.returncode != 0:
                 return None
@@ -514,56 +623,127 @@ class GitSnapshot:
                 except FileNotFoundError:
                     pass
 
+    def _workspace_diff(
+        self, base: str, tree: str, record: Manifest | None
+    ) -> tuple[dict, dict] | None:
+        """기준 커밋 ↔ 지금 트리 — 기록이 있는 하위 저장소 경로는 빼고(그쪽이 센다)."""
+        spec = ["--", "."]
+        if record is not None:
+            spec += [f":(exclude,literal){r.path}" for r in record.repos]
+        common = ("diff", "--no-renames", "-z")
+        st = self._git(*common, "--raw", base, tree, *spec)
+        ns = self._git(*common, "--numstat", base, tree, *spec)
+        if st.returncode != 0 or ns.returncode != 0:
+            return None
+        return parse_raw(st.stdout), parse_numstat(ns.stdout)
+
+    def sync_nested_records(self) -> bool:
+        """하위 저장소 기록을 지금과 맞춘다 — 기준을 잃은 저장소(rebase+gc·다시 clone)는 그
+        저장소만 지금으로 다시 기록하고 안내를 단다, ``.git`` 이 지워진 폴더는 일반 폴더
+        기록으로, 기록에 없는 새 저장소(지금 트리의 새 gitlink)는 그 순간으로 기록한다
+        (:meth:`NestedRepos.reconcile`). **기록 ref 를 쓰는 셈은 이것뿐** — :meth:`report`·
+        :meth:`changes`·:meth:`change_diff` 는 읽기만 한다. 웹은 목록을 세기 전에 이것을
+        부른다("발견한 순간" 이 곧 패널을 센 순간). 기록이 바뀌었으면 True."""
+        base = self.baseline()
+        for _ in range(3):
+            ref, rc, record = self._active_record(base)
+            if ref is None or record is None:
+                return False
+            verdicts = {r.path: self._nested.observe(r, r.path) for r in record.repos}
+            drop = [
+                p for p, v in verdicts.items() if v in (Verdict.PLAIN, Verdict.DEGIT)
+            ]
+            tree = self._disk_tree(drop)
+            ws = self._workspace_diff(base[0], tree, record) if tree else None
+            if tree is None or ws is None:
+                return False
+            found = sorted(
+                p
+                for p, (_, mode) in ws[0].items()
+                if mode == "160000" and not record.find(p)
+            )
+            now = int(time.time())
+            new, changed = self._nested.reconcile(record, tree, found, now, verdicts)
+            if not changed:
+                return False
+            c = self._nested.save(new)
+            if c and self._git("update-ref", ref, c, rc or "").returncode == 0:
+                return True
+            base = (
+                self.baseline() or base
+            )  # 그 사이 다른 셈·Clear 가 기록을 옮겼다 — 다시
+        return False
+
+    def report(self) -> ChangeReport | None:
+        """기준점 ↔ 지금 디스크 — 워크스페이스 파일 + 기록이 있는 하위 저장소 안의 파일,
+        하위 저장소 그룹 머리와 안내 줄. 읽기만 한다(기록·ref·실제 색인 불변) — 기록을
+        지금과 맞추는 것은 :meth:`sync_nested_records`. 비교할 수 없으면 None."""
+        base = self.baseline()
+        if not base:
+            return None
+        _, _, record = self._active_record(base)
+        drop = [r.path for r in record.repos if r.kind == "plain"] if record else []
+        tree = self._disk_tree(drop)
+        ws = self._workspace_diff(base[0], tree, record) if tree else None
+        if tree is None or ws is None:
+            return None
+        files = entries(*ws)
+        if record is None:
+            return ChangeReport(files)
+        for r in record.repos:
+            files += self._nested.listing(r, tree)
+        return ChangeReport(
+            files=sorted(files, key=lambda f: f["path"]),
+            repos=[self._nested.group(r) for r in record.repos if r.kind == "repo"],
+            notices=[
+                {
+                    "repo": n.repo,
+                    "cause": n.cause,
+                    "text": notice_text(n),
+                    "when": n.when,
+                }
+                for n in record.notices
+            ],
+        )
+
     def changes(self) -> list[dict] | None:
         """기준점 ↔ 지금 디스크의 바뀐 파일 — ``{path, status, added, deleted}``.
         ``status`` 는 ``A``·``M``·``D``(이름 바뀜은 D+A, ``--no-renames``)·``T`` 등 git 의
-        글자, 바이너리는 ``added``·``deleted`` 가 None. 비교할 수 없으면 None."""
-        base = self.baseline()
-        tree = self._disk_tree() if base else None
-        if not base or not tree:
-            return None
-        common = ("diff", "--no-renames", "-z")
-        st = self._git(*common, "--name-status", base[0], tree)
-        ns = self._git(*common, "--numstat", base[0], tree)
-        if st.returncode != 0 or ns.returncode != 0:
-            return None
-        parts = st.stdout.split("\0")
-        status = {parts[i + 1]: parts[i] for i in range(0, len(parts) - 1, 2)}
-        counts: dict[str, tuple[int | None, int | None]] = {}
-        for rec in ns.stdout.split("\0"):
-            f = rec.split("\t", 2)
-            if len(f) == 3:
-                counts[f[2]] = (
-                    int(f[0]) if f[0].isdigit() else None,
-                    int(f[1]) if f[1].isdigit() else None,
-                )
-        return [
-            {
-                "path": path,
-                "status": code[:1],
-                "added": counts.get(path, (None, None))[0],
-                "deleted": counts.get(path, (None, None))[1],
-            }
-            for path, code in sorted(status.items())
-        ]
+        글자, 바이너리는 ``added``·``deleted`` 가 None. 하위 저장소 안의 것은 ``repo``(그
+        저장소 경로)가, 요약 줄은 ``summary: True`` 가 더 붙는다. 비교할 수 없으면 None."""
+        rep = self.report()
+        return rep.files if rep is not None else None
 
     def change_diff(
         self, path: str, *, max_lines: int = CHANGE_DIFF_MAX_LINES
     ) -> tuple[str | None, str]:
         """기준점 ↔ 지금 디스크의 그 경로 unified diff. 반환 ``(diff, 오류)`` 중 하나만
-        채워진다 — 경로는 ``relative`` 로 검사한다(워크스페이스 밖은 거절). ``max_lines``
-        를 넘으면 앞부분과 ``… truncated, N more lines`` 한 줄."""
+        채워진다 — 경로는 ``relative`` 로 검사한다(워크스페이스 밖은 거절). 하위 저장소
+        안이면 그 저장소의 기록과(같은 git unified 형식, 경로는 워크스페이스 기준), 요약
+        줄이면 요약 문장. ``max_lines`` 를 넘으면 앞부분과 ``… truncated, N more lines``."""
         rel, err = self.relative(path)
         if rel is None:
             return None, err
         base = self.baseline()
-        tree = self._disk_tree() if base else None
-        if not base or not tree:
+        if not base:
             return None, self.reason if not self.enabled else "nothing to compare"
-        r = self._git("diff", "--no-renames", base[0], tree, "--", rel)
-        if r.returncode != 0:
-            return None, r.stderr.strip() or "git diff failed"
-        lines = r.stdout.rstrip("\n").split("\n") if r.stdout else []
+        _, _, record = self._active_record(base)
+        hit = record.find(rel) if record else None
+        drop = [r.path for r in record.repos if r.kind == "plain"] if record else []
+        if hit is not None and hit.kind == "repo":
+            text, err = self._nested.diff(hit, rel, None)
+        else:
+            tree = self._disk_tree(drop)
+            if not tree:
+                return None, "nothing to compare"
+            if hit is not None:
+                text, err = self._nested.diff(hit, rel, tree)
+            else:
+                r = self._git("diff", "--no-renames", base[0], tree, "--", rel)
+                text, err = (r.stdout, "") if r.returncode == 0 else (None, r.stderr)
+        if text is None:
+            return None, err.strip() or "git diff failed"
+        lines = text.rstrip("\n").split("\n") if text else []
         if len(lines) > max_lines:
             more = len(lines) - max_lines
             lines = lines[:max_lines] + [f"… truncated, {more} more lines"]
@@ -572,13 +752,20 @@ class GitSnapshot:
     def clear(self) -> tuple[str, str, int] | None:
         """지금 디스크를 새 기준점으로 — 그 트리를 커밋(부모 HEAD, 라벨
         ``BASELINE_LABEL``)하고 ``BASELINE_REF`` 를 옮긴다. 옮기기 전 기준점 커밋은
-        ``BASELINE_PREV_REF`` 에(Undo 한 단계). HEAD·색인·파일은 건드리지 않는다.
-        새 기준점을 돌려준다(실패 None)."""
+        ``BASELINE_PREV_REF`` 에(Undo 한 단계). 하위 저장소도 지금 상태로 다시 기록해
+        ``NESTED_BASELINE_REF`` 로(이전 기록은 ``NESTED_BASELINE_PREV_REF``) — ref 넷을 한
+        트랜잭션으로. HEAD·색인·파일은 건드리지 않는다. 새 기준점을 돌려준다(실패 None)."""
         if not self.enabled:
             return None
-        with self._lock:  # Clear·Undo 끼리의 순서 — ref 두 개를 함께 옮긴다
+        with self._lock:  # Clear·Undo 끼리의 순서 — ref 들을 함께 옮긴다
             prev = self.baseline()
-            tree = self._disk_tree()
+            _, _, record = self._active_record(prev)
+            plain = [
+                r.path
+                for r in (record.repos if record else [])
+                if r.kind == "plain" and not self._nested.is_repo(r.path)
+            ]
+            tree = self._disk_tree(plain)
             if not tree:
                 return None
             head = self.head()
@@ -588,18 +775,35 @@ class GitSnapshot:
             new = self._git(*args).stdout.strip()
             if not new:
                 return None
-            if prev:
-                self._git("update-ref", BASELINE_PREV_REF, prev[0])
-            else:
-                self._git("update-ref", "-d", BASELINE_PREV_REF)
-            if self._git("update-ref", BASELINE_REF, new).returncode != 0:
+            when = self._commit_time(new)
+            m = self._nested.snapshot(
+                [(n.path, n.dirty) for n in self._scan_nested()], when
+            )
+            # 일반 폴더가 된 자리는 그 아래를 이 기준점으로 — 실제 색인의 gitlink 가 남아
+            # 있어 기록 없이는 그 아래가 다시 안 보인다(_disk_tree 의 drop)
+            for p in plain:
+                if (self.workspace / p).is_dir():
+                    m.repos.append(self._nested.record_plain(p, when, tree))
+            m.repos.sort(key=lambda r: r.path)
+            rec = self._nested.save(m)
+            keep_prev = prev is not None and prev[1] == "cleared"
+            ops = [
+                (BASELINE_REF, new),
+                (BASELINE_PREV_REF, prev[0] if prev else None),
+                (NESTED_BASELINE_REF, rec),
+                (
+                    NESTED_BASELINE_PREV_REF,
+                    self._rev(NESTED_BASELINE_REF) if keep_prev else None,
+                ),
+            ]
+            if not self._update_refs(ops):
                 return None
-            return new, "cleared", self._commit_time(new)
+            return new, "cleared", when
 
     def undo_clear(self) -> bool:
         """마지막 Clear 를 되돌린다 — 한 단계만(두 번째는 무동작, False). 이전 기준점이
-        Clear 커밋이면 그리로, 세션 시작(또는 HEAD)이었으면 ``BASELINE_REF`` 를 지워
-        다시 그것을 기준으로 삼는다."""
+        Clear 커밋이면 그리로(하위 저장소 기록도 이전 것으로), 세션 시작(또는 HEAD)이었으면
+        ``BASELINE_REF``·``NESTED_BASELINE_REF`` 를 지워 다시 그것을 기준으로 삼는다."""
         if not self.enabled:
             return False
         with self._lock:
@@ -607,11 +811,32 @@ class GitSnapshot:
             if not prev:
                 return False
             if self.label(prev) == BASELINE_LABEL:
-                self._git("update-ref", BASELINE_REF, prev)
+                ops = [
+                    (BASELINE_REF, prev),
+                    (NESTED_BASELINE_REF, self._rev(NESTED_BASELINE_PREV_REF)),
+                ]
             else:
-                self._git("update-ref", "-d", BASELINE_REF)
-            self._git("update-ref", "-d", BASELINE_PREV_REF)
-            return True
+                ops = [(BASELINE_REF, None), (NESTED_BASELINE_REF, None)]
+            ops += [(BASELINE_PREV_REF, None), (NESTED_BASELINE_PREV_REF, None)]
+            return self._update_refs(ops)
+
+    def dismiss_notice(self, repo: str) -> bool:
+        """안내 줄을 닫는다(사람의 ✕) — 지금 기록에서 그 저장소의 안내를 뺀다. 없으면 False."""
+        if not self.enabled:
+            return False
+        for _ in range(3):
+            ref, rc, record = self._active_record(self.baseline())
+            if record is None or not any(n.repo == repo for n in record.notices):
+                return False
+            new = Manifest(
+                when=record.when,
+                repos=record.repos,
+                notices=[n for n in record.notices if n.repo != repo],
+            )
+            c = self._nested.save(new)
+            if c and self._git("update-ref", ref, c, rc or "").returncode == 0:
+                return True
+        return False
 
     # ── model-facing ─────────────────────────────────────────
 
