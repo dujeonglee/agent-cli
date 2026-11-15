@@ -5,8 +5,8 @@
 
 1. 부른 자리(main)에 한 줄 카드 `→ Run … working · open channel` — 끝나면 `done`.
 2. `open channel` 이 그 run 의 채널로 — 채널엔 런 블록(머리 = 과제), 그 안에 단계.
-3. 일하는 run 채널은 열려 있다(✕ 있음, 사람이 직접 쓴다 — 시안 C). 끝난 run 은 회색 칩
-   (`.ov-ch.run.done`, ✕/↻ 없음)이고 입력창이 닫힌다.
+3. 일하는 run 채널은 열려 있다(✕ 있음, 사람이 직접 쓴다 — 시안 C). 끝난 run 은 줄 끝 `Done N ▾` 로
+   접히고(v10.143.0), 그 채널을 보는 동안은 회색 칩(`.ov-ch.run.done`, ✕/↻ 없음)이며 입력창이 닫힌다.
 4. 깊이 2 — run 안의 run 도 자기 채널이고, 한 줄 카드는 부른 run 의 런 블록에 놓인다.
 5. resume 재생 — 사이드카(`scopes.jsonl`)와 그 에이전트의 history 로 같은 카드·채널이 선다.
 """
@@ -149,13 +149,16 @@ class TestRunChannel:
         t.join(10)
         assert out["r"].success
         assert _wait(lambda: "done" in link.first.inner_text())
-        assert _wait(lambda: "done" in (chip.get_attribute("class") or ""))
-        assert "dead" not in chip.get_attribute("class")  # 지운 줄이 아니라 회색
-        assert chip.locator(".ov-ch-ctl").count() == 0  # 끝난 run — ✕/↻ 없음
+        # 끝난 run 은 줄 끝 `Done N ▾` 로 접힌다 (v10.143.0, 시안 A — 보고 있지 않은 채널)
+        assert _wait(lambda: chip.count() == 0)
+        assert page.locator("#ov-done").inner_text() == "Done 1 ▾"
 
         # open channel → 그 채널의 런 블록(머리 = 과제, 몸통 = 단계)
         link.first.locator(".run-link-open").click()
         assert _wait(lambda: "on" in (chip.get_attribute("class") or ""))
+        assert "done" in chip.get_attribute("class")  # 보는 동안은 회색 칩으로 보인다
+        assert "dead" not in chip.get_attribute("class")  # 지운 줄이 아니라 회색
+        assert chip.locator(".ov-ch-ctl").count() == 0  # 끝난 run — ✕/↻ 없음
         block = page.locator(_block(stack.server.agent_registry, key))
         assert block.count() == 1 and block.is_visible()
         assert "find every caller" in block.locator(".run-head").inner_text()
@@ -237,9 +240,11 @@ class TestRunChannelResume:
         assert _wait(lambda: link.count() == 1)
         assert "done" in link.first.inner_text()
         chip = page.locator(f'.ov-ch[data-key="{key}"]')
+        assert _wait(lambda: page.locator("#ov-done").count() == 1)
+        assert chip.count() == 0  # 끝난 run 은 `Done N ▾` 로 접혀 있다 (v10.143.0)
+        link.first.locator(".run-link-open").click()
         assert _wait(lambda: chip.count() == 1)
         assert "done" in chip.get_attribute("class")
-        link.first.locator(".run-link-open").click()
         block = page.locator(_block(restored, key))
         assert _wait(lambda: block.count() == 1 and block.is_visible())
         assert "find every caller" in block.locator(".run-head").inner_text()

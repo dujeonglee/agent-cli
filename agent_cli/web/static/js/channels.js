@@ -17,7 +17,13 @@ import {
   ovSubmitMainConfirm,
   ovSubmitMainPrompt,
 } from "./input.js";
-import { ovApplyChannelInput, ovSyncChannels } from "./runs.js";
+import {
+  ovApplyChannelInput,
+  ovCloseDoneMenu,
+  ovShowAllDone,
+  ovSyncChannels,
+  ovToggleDoneMenu,
+} from "./runs.js";
 
 // ── 채널·트레이 상태 (구 개요의 잔존분) ─────────────────
 // ② 가 개요 렌더를 지웠을 때 그 **데이터**(ovEntries/ovTopScopes/ovScopeSrc/
@@ -355,6 +361,11 @@ export function ovJump(key) {
       postStop("agents"); // ■ all — 모든 에이전트의 런 (main 은 계속)
       return;
     }
+    if (e.target.closest && e.target.closest("#ov-done")) {
+      e.stopPropagation(); // 바깥 클릭 닫기가 같은 클릭으로 다시 닫지 않게
+      ovToggleDoneMenu(); // 끝난 run 목록 (v10.143.0)
+      return;
+    }
     var chip = e.target.closest ? e.target.closest(".ov-ch") : null;
     if (!chip) return;
     var key = chip.getAttribute("data-key");
@@ -367,6 +378,22 @@ export function ovJump(key) {
     }
     ovSetChannel(key);
   });
+  // 끝난 run 목록(`Done N ▾`, v10.143.0) — 항목은 칩처럼 그 채널을 연다. 바깥을 누르거나 Esc 면 닫힌다.
+  var menu = document.getElementById("ov-done-menu");
+  if (menu) {
+    menu.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (e.target.closest(".ov-done-more")) return ovShowAllDone();
+      var row = e.target.closest(".ov-done-row");
+      if (!row) return;
+      ovCloseDoneMenu();
+      ovSetChannel(row.getAttribute("data-key"));
+    });
+    document.addEventListener("click", function () { ovCloseDoneMenu(); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") ovCloseDoneMenu();
+    });
+  }
   ovSyncChannels(); // 로드 시 최소 main 칩 렌더(roster 오면 갱신)
   frameShowChannel(ovActiveChannel); // main 의 맨 위 카드·꼬리 띠
 })();

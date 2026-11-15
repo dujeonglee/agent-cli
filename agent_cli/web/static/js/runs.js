@@ -119,6 +119,98 @@ export function ensureRunBlock(d) {
 // 같은 `scope_start`/`scope_end` 가 사이드카에서 재생되므로 resume 도 같은 카드다.
 const runLinks = {}; // run 블록의 task_id → {card, state}
 
+// ── 끝난 run 접기 (v10.143.0, 시안 A) ─────────────────────
+// 채널 줄의 칩은 main·일하는 에이전트·상주(죽은 상주의 ↻ 포함)뿐이다. 끝난 run 은 줄 끝 `Done N ▾` 하나로
+// 접고, 누르면 최근 순 목록(이름·키·과제 앞부분·끝난 시각, 멈췄으면 stopped)에서 그 채널을 연다. 규칙은
+// 하나 — 끝나면 접힌다(시간·개수 문턱 없음). 단 지금 보고 있는 채널은 접지 않는다: 보던 화면의 칩이 줄에서
+// 사라지지 않게(다른 채널로 가면 접힌다). 목록의 과제·시각·정지는 그 run 의 스코프(과제 런 scope_start 의
+// 원문, 마지막 scope_end 의 ts·stopped)에서 온다 — resume 은 사이드카가 같은 스코프를 재생해 같은 목록이 선다.
+// 부른 쪽 대화의 한 줄 카드 "open channel" 은 그대로다. 화면 전용 — 모델 바이트와 무관.
+const runTask = {}; // run 의 key → 과제 첫 줄
+const runEnd = {}; // run 의 key → {ts, stopped}
+const DONE_SHOWN = 8; // 목록이 처음 보이는 줄 수 — 나머지는 "+N more…"
+const $doneMenu = document.getElementById("ov-done-menu");
+var doneShowAll = false;
+
+function doneMenuOpen() {
+  return !!$doneMenu && $doneMenu.hidden === false;
+}
+function ovRunFolded(t) {
+  return !!t.ends_after_task && t.state === "dead" && t.key !== ovActiveChannel;
+}
+function endSecs(ts) {
+  if (typeof ts === "number") return ts;
+  var ms = Date.parse(ts || "");
+  return isNaN(ms) ? 0 : ms / 1000;
+}
+function agoText(ts) {
+  var s = endSecs(ts);
+  if (!s) return "";
+  var d = Math.max(0, Math.floor(Date.now() / 1000 - s));
+  if (d < 60) return "just now";
+  if (d < 3600) return Math.floor(d / 60) + "m ago";
+  if (d < 86400) return Math.floor(d / 3600) + "h ago";
+  return Math.floor(d / 86400) + "d ago";
+}
+function doneRow(t) {
+  var end = runEnd[t.key] || {};
+  var task = runTask[t.key] || "";
+  if (task.length > 80) task = task.slice(0, 79) + "…";
+  return (
+    '<button type="button" role="menuitem" class="ov-done-row" data-key="' + escapeHtml(t.key) + '">' +
+    '<span class="ov-dot x"></span><span class="ov-done-lb">' + ovAgentLabelHtml(t.key) + "</span>" +
+    (task ? '<span class="ov-done-task">· ' + escapeHtml(task) + "</span>" : "") +
+    (end.stopped ? '<span class="ov-done-tag">stopped</span>' : "") +
+    '<span class="ov-done-when">' + escapeHtml(agoText(end.ts)) + "</span></button>"
+  );
+}
+/** 접힌 run 의 목록을 다시 그린다 — 열려 있을 때만. 최근에 끝난 것부터(끝난 시각을 모르면 명단의 뒤부터). */
+function ovRenderDoneMenu(folded) {
+  if (!doneMenuOpen()) return;
+  var btn = document.getElementById("ov-done");
+  if (!folded.length || !btn) {
+    ovCloseDoneMenu();
+    return;
+  }
+  var rows = folded
+    .map(function (t, i) { return { t: t, at: endSecs((runEnd[t.key] || {}).ts), i: i }; })
+    .sort(function (a, b) { return b.at - a.at || b.i - a.i; });
+  var shown = doneShowAll ? rows : rows.slice(0, DONE_SHOWN);
+  var html = '<div class="ov-done-h">Finished runs — newest first</div>';
+  shown.forEach(function (r) { html += doneRow(r.t); });
+  if (shown.length < rows.length) {
+    html += '<button type="button" class="ov-done-more">+' + (rows.length - shown.length) + " more…</button>";
+  }
+  $doneMenu.innerHTML = html;
+  // 버튼 위로 연다(채널 줄은 입력창 바로 위) — 화면 밖으로 나가지 않게 왼쪽을 당긴다
+  var r = btn.getBoundingClientRect();
+  $doneMenu.style.bottom = Math.round(window.innerHeight - r.top + 6) + "px";
+  var w = $doneMenu.offsetWidth;
+  $doneMenu.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - w - 8))) + "px";
+}
+/** `Done N ▾` 를 눌렀다 — 목록을 열거나 닫는다. */
+export function ovToggleDoneMenu() {
+  if (!$doneMenu) return;
+  if (doneMenuOpen()) return ovCloseDoneMenu();
+  doneShowAll = false;
+  $doneMenu.hidden = false;
+  var btn = document.getElementById("ov-done");
+  if (btn) btn.setAttribute("aria-expanded", "true");
+  ovRenderDoneMenu(ovRoster.filter(ovRunFolded));
+}
+/** 목록의 나머지("+N more…")를 편다. */
+export function ovShowAllDone() {
+  doneShowAll = true;
+  ovRenderDoneMenu(ovRoster.filter(ovRunFolded));
+}
+export function ovCloseDoneMenu() {
+  if (!doneMenuOpen()) return;
+  $doneMenu.hidden = true;
+  $doneMenu.innerHTML = "";
+  var btn = document.getElementById("ov-done");
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
 export function ensureRunLink(d) {
   if (runLinks[d.task_id]) return runLinks[d.task_id];
   var key = scopeChannel[d.task_id] || "";
@@ -140,6 +232,7 @@ export function ensureRunLink(d) {
   card.appendChild(makeRow("→", "Run", summary, null, null, tail));
   var link = { card: card, state: state };
   runLinks[d.task_id] = link;
+  runTask[key] = task; // 끝난 run 목록의 과제 앞부분
   finishCard(card, { task_id: d.caller_task || "", ts: d.ts });
   return link;
 }
@@ -159,6 +252,7 @@ export function closeRunBlock(d) {
   var blk = runBlocks[d.task_id];
   if (!blk || blk.closed) return;
   blk.closed = true;
+  runEnd[blk.key] = { ts: d.ts, stopped: !!d.stopped }; // 끝난 run 목록의 시각·정지 — 그 채널의 마지막 런
   var ok = !!d.success;
   blk.card.classList.add(ok ? "run-ok" : "run-fail");
   var dur = d.duration_s != null ? " (" + Number(d.duration_s).toFixed(1) + "s)" : "";
@@ -289,7 +383,7 @@ export function ovOnAgentCleared(key) {
   ovRenderAskTray();
   ovSyncChannels();
 }
-// 채널 바(칩) 렌더 — main + roster 전 agent(dead 포함). 칩마다 **상태 dot**
+// 채널 바(칩) 렌더 — main + roster 의 agent(죽은 상주 포함, 끝난 run 은 `Done N ▾` 로 접힘). 칩마다 **상태 dot**
 // (idle/busy/dead) + ✕(kill)/↻(resume). 에이전트 상태를
 // 이 "agent 탭"에 직접 표시(v8.33.0 — 구 흐름-탭 dots 통합).
 export function ovSyncChannels() {
@@ -311,17 +405,27 @@ export function ovSyncChannels() {
   var html = ovChanChip(
     "main", escapeHtml("💬 main"), "", ovActiveChannel === "main"
   );
+  var folded = []; // 끝난 run — 칩 대신 `Done N ▾` 로 (보고 있는 채널은 빼고)
   ovRoster.forEach(function (t) {
+    if (ovRunFolded(t)) {
+      folded.push(t);
+      return;
+    }
     html += ovChanChip(
       t.key, ovAgentLabelHtml(t.key), t.state, ovActiveChannel === t.key,
       !!t.ends_after_task
     );
   });
+  if (folded.length) {
+    html += '<button type="button" id="ov-done" aria-haspopup="menu" aria-expanded="' +
+      doneMenuOpen() + '" title="Finished runs">Done ' + folded.length + " ▾</button>";
+  }
   // ■ all (v10.142.0) — main 이 한가하고(입력창 옆은 Send 그대로) 일하는 에이전트가 있을 때만
   if (!session.workerBusy && ovRoster.some(ovAgentWorking)) {
     html += '<button type="button" id="ov-stop-all" class="btn-danger" title="Stop all agents">■ all</button>';
   }
   bar.innerHTML = html;
+  ovRenderDoneMenu(folded); // 열려 있으면 새 명단으로 (방금 끝난 run 이 들어온다)
   // 에이전트가 없으면 바 전체를 숨긴다 — "탭 1개짜리 탭바"는 고를 것이
   // 없다. `#ov-channels:empty` 규칙은 main 칩을 항상 그리므로 **절대
   // 발동하지 않았다**(감사 발견). 🔌 칩의 판례와 같은 판단:
