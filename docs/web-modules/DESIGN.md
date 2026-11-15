@@ -163,7 +163,7 @@ v10.116.0 의 `test_app_markdown` 은 `js_text("main")` 을 `(function(){ … })
 | 모듈 | 옛 절 | 줄 | 내용 |
 |---|---|---|---|
 | `boot.js` | [1] | 30 | 주소창 `?token=` 걷기·`showSetupHelp`. 첫 import |
-| `dom.js` | [2]+[5] | 33 | 공유 DOM 참조 + `el`·`elHtml` |
+| `dom.js` | [2]+[5] | 33 | 공유 DOM 참조 + `el`·`elHtml` (+ v10.143.0 `foldOnClick`) |
 | `state.js` | [3] 의 상태 넷 | 33 | `export const session = { mainAsk, connId, workerBusy, stopRequested }` |
 | `markdown.js` | [4] + `imageUrl` | 309 | 이스케이프·마크다운·diff 색칠·그림 주소. 순수 모듈 |
 | `scroll.js` | [7] | 156 | 따라가기 |

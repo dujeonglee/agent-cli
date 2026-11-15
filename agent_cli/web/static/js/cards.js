@@ -1,7 +1,7 @@
 // cards.js — 한 줄 리듬(makeRow) + 발신 도구 칩 + 스텝 카드(사고·행동·관찰).
 // (v10.117.0, docs/web-modules/DESIGN.md §8 — 옛 main.js 의 절 [15]·[16]·[17])
 
-import { el, elHtml } from "./dom.js";
+import { el, elHtml, foldOnClick } from "./dom.js";
 import { colorizeDiffBody, escapeAndFormat, escapeHtml } from "./markdown.js";
 import { scheduleScroll } from "./scroll.js";
 import { fence } from "./copy.js";
@@ -33,9 +33,8 @@ export function makeRow(icon, kind, summary, bodyNode, extraCls, tailNode) {
     mark.textContent = "▸";
     bodyNode.classList.add("row-body", "hide");
     row.appendChild(bodyNode);
-    row.addEventListener("click", function (e) {
-      // 본문 안의 선택·클릭(복사 등)은 접기를 유발하지 않는다.
-      if (e.target.closest(".row-body")) return;
+    // 머리든 본문이든 — 본문 안의 글 고르기·링크·복사는 토글하지 않는다(`foldOnClick`).
+    foldOnClick(row, function () {
       const open = !bodyNode.classList.toggle("hide");
       row.classList.toggle("open", open);
       mark.textContent = open ? "▾" : "▸";
@@ -342,8 +341,8 @@ export function renderAssistantTurn(d) {
       body.appendChild(detail);
     }
   }
-  head.addEventListener("click", function (e) {
-    if (e.target.closest(".step-body") || e.target.closest("a, button")) return;
+  // 카드 어디를 눌러도(머리·본문) — 본문 안의 접히는 줄은 그 줄의 몫이다(`foldOnClick`).
+  foldOnClick(card, function () {
     const open = body.hidden;
     body.hidden = !open;
     head.classList.toggle("open", open);
@@ -582,7 +581,7 @@ export function renderObservation(d) {
       why.appendChild(el("span", ["why-ic"], "✗"));
       why.appendChild(el("span", ["why-tool"], tool || "result"));
       why.appendChild(el("span", ["why-text"], obsSummary(content, true)));
-      why.addEventListener("click", function () { step.head.click(); });
+      // 누르면 카드가 펴진다 — 카드의 접기 규칙(`foldOnClick`)이 맡는다
       step.card.insertBefore(why, step.body);
     }
     scheduleScroll();

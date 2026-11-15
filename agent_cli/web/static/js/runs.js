@@ -1,7 +1,17 @@
 // runs.js — 런 블록: 에이전트 런의 접힌 블록, 채널 칩 동기화·채널 입력 라우팅.
 // (v10.117.0, docs/web-modules/DESIGN.md §8 — 옛 main.js 의 절 [29])
 
-import { $chatStop, $chatStopMore, $input, $messages, $send, $stopMenu, el, elHtml } from "./dom.js";
+import {
+  $chatStop,
+  $chatStopMore,
+  $input,
+  $messages,
+  $send,
+  $stopMenu,
+  el,
+  elHtml,
+  foldOnClick,
+} from "./dom.js";
 import { session } from "./state.js";
 import { escapeAndFormat, escapeHtml } from "./markdown.js";
 import { scheduleScroll } from "./scroll.js";
@@ -65,7 +75,7 @@ function runItem(d) {
     body.hidden = true;
     it.appendChild(body);
     it.classList.add("can");
-    it.addEventListener("click", function () {
+    foldOnClick(it, function () {
       body.hidden = !body.hidden;
       it.classList.toggle("open", !body.hidden);
     });

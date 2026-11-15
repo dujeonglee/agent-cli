@@ -303,7 +303,7 @@ agent_cli/
         ├── fonts/           Jetendard 웹폰트(woff2)와 `OFL.txt`
         └── js/
             ├── boot.js          주소창 `?token=` 걷기, 인증 없을 때 안내
-            ├── dom.js           공유 DOM 참조와 `el`·`elHtml`
+            ├── dom.js           공유 DOM 참조와 `el`·`elHtml`, 접히는 요소의 클릭 규칙 `foldOnClick`
             ├── state.js         여러 모듈이 대입하는 세션 전역 상태 `session`
             ├── markdown.js      HTML 이스케이프·최소 마크다운·diff 색칠·`imageUrl` (순수 모듈)
             ├── scroll.js        따라가기 — 자동 스크롤·새 줄 점프 버튼
