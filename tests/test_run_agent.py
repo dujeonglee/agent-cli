@@ -359,7 +359,7 @@ class TestNoHiddenSideEffects:
         reg.agent_limit_refusal()
         reg.pending_for("main")
         reg.awaited_replies("main")
-        reg._task_delivered(run_tm)
+        reg._run_ended_by_wait((ToolResult(True, output="x"), 0.0))
         assert writes == []
         assert not tm.stop_event.is_set() and tm.state == "idle"
 
