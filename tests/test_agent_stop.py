@@ -206,7 +206,10 @@ class TestResidentStopRun:
             in text
         )
         assert "Partial notes: found callers so far: lexer.py:42, cli.py:118" in text
-        assert "\nDo not redo this work unless the user asks." in text
+        assert (
+            "\nDecide whether to continue another way or report back to the user."
+            in text
+        )
         (r31,) = peer_replies(p6)
         assert r31["re"] == "r-31" and r31["mark"] == "stopped by user"
         assert "your request [r-31]" in r31["text"]
@@ -274,7 +277,7 @@ class TestRemove:
         assert "re [r-32] · removed by user ──" in text
         assert (
             f'The user removed {tm.key} before it started your request [r-32] ("NEXT parser"). '
-            "Nothing was done for it.\nDo not redo this work unless the user asks."
+            "Nothing was done for it.\nDecide whether to continue another way or report back to the user."
         ) in text
         (r31,) = peer_replies(p6)
         assert r31["re"] == "r-31" and r31["mark"] == "stopped by user"
@@ -505,7 +508,7 @@ class TestNoHiddenSideEffects:
         assert out == (
             'The user stopped agt-1 while it was working on your request [r-1] ("do it").\n'
             "Last activity: shell ls ✓\n"
-            "Do not redo this work unless the user asks."
+            "Decide whether to continue another way or report back to the user."
         )
 
 
