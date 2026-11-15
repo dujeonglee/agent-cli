@@ -259,3 +259,24 @@ class TestMainWaitWakesOnAStoppedReply:
         assert s["reg"].awaited_replies("main") == []
         (tm,) = s["reg"]._agents.values()
         assert wait_until(lambda: tm.state == "dead")
+
+
+class TestCliStopLine:
+    def test_stop_summary_groups_by_recipient_and_counts_kept(self):
+        from agent_cli.render.minimal import stop_summary
+
+        assert (
+            stop_summary("stopped by user", [("main", "r-21")], 0)
+            == "stopped by user — reply sent to main (r-21)"
+        )
+        assert stop_summary(
+            "stopped by user",
+            [("main", "r-30"), ("agt-6", "r-31"), ("main", "r-33")],
+            1,
+        ) == (
+            "stopped by user — replies sent to main (r-30, r-33), agt-6 (r-31); "
+            "1 queued request kept"
+        )
+        assert stop_summary("removed by main", [], 2) == (
+            "removed by main — nobody was waiting on it; 2 queued requests kept"
+        )
