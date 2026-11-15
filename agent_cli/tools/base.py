@@ -352,25 +352,6 @@ class Tool(ABC):
     description: str
     parameters: dict
 
-    #: Whether a turn's consecutive ops of THIS tool may run concurrently.
-    #: Default False — ops dispatch sequentially, which is the correctness
-    #: guarantee for side-effecting / order-dependent tools (write_file,
-    #: edit_file, shell: e.g. write-then-edit the same file, or mkdir-then-
-    #: touch, must run in order). Only side-effect-free / independent tools
-    #: set this True. The loop reads it to batch a run of same-tool ops into
-    #: one concurrent dispatch (see ``AgentLoop._dispatch_parallel_batch``).
-    #: Today only ``delegate`` opts in (independent subagents = the case where
-    #: concurrency is both safe and worth the wall-clock win).
-    parallel_safe: bool = False
-
-    def parallel_batchable(self, action_input: dict) -> bool:
-        """이 op 이 병렬 배치에 합류 가능한가 (5.0.0 mode-aware 배칭).
-
-        기본 = ``parallel_safe`` 그대로. AgentTool 이 override —
-        ``mode:"run"`` op 만 배치 가능(상주 모드는 즉시-반환이라 배칭
-        불필요·혼합 턴은 순차가 정확성 보장)."""
-        return self.parallel_safe
-
     #: Whether the oversized-observation cap applies to THIS tool's
     #: observation. Default True → the cap (context_window/10) is enforced
     #: consistently for every tool: an observation over the cap is replaced
@@ -384,9 +365,9 @@ class Tool(ABC):
     # tools_list 구성, dispatch.py 의 턴-종결 분기)에 산재했다 — 새 도구가
     # 루프 여러 파일을 동기 수정해야 했고, 누락은 조용한 오동작. 이제 도구
     # 클래스가 자기 정책을 선언하고 루프는 속성만 읽는다 (단일 소스).
-    # 엔진 바인딩(edit_file 같은-path 배치, agent 병렬 엔진)은 정책이 아니라
-    # 루프 쪽 엔진 코드와 함께 산다 — 속성만 세우고 배선이 없으면 v8.37.0
-    # 이전 parallel_safe 크래시 트랩의 재판이 되기 때문에 여기 두지 않는다.
+    # 엔진 바인딩(edit_file 같은-path 배치)은 정책이 아니라 루프 쪽 엔진 코드와
+    # 함께 산다 — 속성만 세우고 배선이 없으면 v8.37.0 이전 parallel_safe 크래시
+    # 트랩의 재판이 되기 때문에 여기 두지 않는다.
 
     #: 이 도구의 op 은 턴을 종결한다 (complete/run_skill) — 멀티-op 턴에서
     #: 누적 결과를 먼저 flush 한 뒤 이 op 을 디스패치하고 턴을 끝낸다.

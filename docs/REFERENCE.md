@@ -1380,7 +1380,7 @@ playwright 가 없거나 `AGENT_CLI_BROWSER_TOOL=0` 이면 **도구가 프롬프
 
 도구 관찰(observation)이 **컨텍스트 윈도우의 1/10** 을 넘으면 그 출력은 컨텍스트에 들어가지 않습니다(도구 호출 자체는 성공). 거대 출력은 추론 공간을 잠식해 응답 품질을 떨어뜨리기 때문입니다. 대신 **모든 도구가 정확히 같은 모양의 관찰**을 받습니다:
 
-1. **전문은 항상 파일로** — 도구가 이미 파일에 썼으면 그 파일(`read_file` 의 원본 경로, `agent` run 의 `<run_dir>/result.md`), 아니면 `<session_dir>/oversized/<tool>-<hash>.txt` 에 **lazy 저장**(캡에 걸릴 때만 — 일반 호출엔 디스크 쓰기 0). 세션 디렉터리가 없는 headless 실행은 임시 디렉터리로 폴백하므로 "넘치면 파일에 남는다"가 예외 없이 성립합니다.
+1. **전문은 항상 파일로** — 도구가 이미 파일에 썼으면 그 파일(`read_file` 의 원본 경로), 아니면 `<session_dir>/oversized/<tool>-<hash>.txt` 에 **lazy 저장**(캡에 걸릴 때만 — 일반 호출엔 디스크 쓰기 0). 세션 디렉터리가 없는 headless 실행은 임시 디렉터리로 폴백하므로 "넘치면 파일에 남는다"가 예외 없이 성립합니다.
 2. **head/tail 발췌 동봉** — 앞뒤 일부(캡의 15% 이내로 클램프)를 그대로 보여줍니다. 빌드/테스트 로그처럼 **답이 꼬리에 있는** 경우가 많아, 상당수는 추가 왕복 없이 그 자리에서 끝납니다.
 3. **회수 경로 3종** — ① read_file 에 `search`(정규식) 매칭, ② read_file 에 `line_start`·`line_end` 범위 읽기(v10.77.0 부터 넛지는 호출 모양 대신 문장으로 말하고, read_file 이 없는 루프엔 ①②를 싣지 않습니다; read_file 자신의 과대 결과는 저장본이 아니라 원본 파일을 "The file is …" 로 가리킵니다), ③ **분할 정복**: 파일을 캡에 맞는 `k` 섹션으로 쪼개 **한 턴에 `agent(mode="run")` op 를 k 개**(agent-cli 가 동시 실행) 내고 각자 요약만 반환 → 부모는 distilled 만 병합. ③ 은 `agent` 가 실제 호출 가능할 때만 표시됩니다(depth 한계 서브에이전트에선 자동 생략).
 4. **다음 번 한 줄 (`Next time —`, v10.77.0 전엔 `Root cause —`)** — 애초에 벌크를 만들지 않는 법. 도구별로 유일하게 다른 부분입니다: `shell` → 명령에 `grep`/`head`/`tail`, `read_file` → `search`/범위, `fetch` → 더 좁은 URL·얕은 `depth`, `agent` → 더 좁은 task, `code_index` → 단일 심볼 fetch·`search` 필터·`max_bytes`, `history` → `LIMIT`/projection/`substr`.
@@ -1617,17 +1617,17 @@ shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `g
 
 | mode | 수명 | 용도 |
 |------|------|------|
-| `run` | 과제 하나 — 회신을 보내면 내려온다(채널은 회색으로 남음) | 독립적인 일회성 작업, 병렬 팬아웃 |
-| `spawn` / `request` / `status` / `resume` / `kill` | **상주** — 답변 후에도 컨텍스트 유지 | 반복 협업, 역할별 장기 작업 |
+| `run` | 과제 하나 — 바로 돌아오고 결과는 회신으로, 회신을 보내면 내려온다(채널은 회색으로 남음) | 독립적인 일회성 작업 |
+| `spawn` / `status` / `resume` / `kill` | **상주** — 답변 후에도 컨텍스트 유지, 일은 `message` 로 보낸다 | 반복 협업, 역할별 장기 작업 |
 
-모델이 받는 **선택 기준은 비용 우선**입니다 (v10.26.0): 위임하면 요약만 돌아오고(읽은 것은 그 창에 남고, 틀린 것도 같은 어조로 돌아온다), 여러 파일을 읽어야 결론이 나올 때 위임하고 몇 번의 호출이면 직접 하며 **의심스러우면 직접** 합니다. spawn 은 같은 영역에 여러 라운드의 질문이 이어질 때만, 영역당 하나. 넘긴 일은 다시 하지 않고 제 몫을 끝낸 뒤 `complete` — 회신이 오면 main 이 깨어납니다.
+모델이 받는 **선택 기준은 비용 우선**입니다 (v10.26.0): 위임하면 요약만 돌아오고(읽은 것은 그 창에 남고, 틀린 것도 같은 어조로 돌아온다), 여러 파일을 읽어야 결론이 나올 때 위임하고 몇 번의 호출이면 직접 하며 **의심스러우면 직접** 합니다. spawn 은 같은 영역에 여러 라운드의 질문이 이어질 때만, 영역당 하나. 넘긴 일은 다시 하지 않고 제 몫을 끝낸 뒤 `wait` — 회신이 오면 깨어납니다(기다리는 회신이 남은 `complete` 는 되돌아옵니다).
 
 ```json
 {"action": "agent", "action_input": {"mode": "run", "task": "Read /tmp/data.csv and count rows"}}
 {"action": "agent", "action_input": {"mode": "run", "task": "Fix the bug we found", "context": "fork"}}
 {"action": "agent", "action_input": {"mode": "run", "task": "Review this code", "profile": "code-reviewer"}}
 {"action": "agent", "action_input": {"mode": "spawn", "profile": "researcher", "task": "레포 구조를 파악해줘"}}
-{"action": "agent", "action_input": {"mode": "request", "key": "agt-3f2a1b9c", "message": "그래서 진입점이 어디야?"}}
+{"action": "message", "action_input": {"to": "agt-3f2a1b9c", "text": "그래서 진입점이 어디야?"}}
 {"action": "agent", "action_input": {"mode": "status"}}
 {"action": "agent", "action_input": {"mode": "resume", "key": "agt-3f2a1b9c", "task": "이어서 진행해"}}
 {"action": "agent", "action_input": {"mode": "kill", "key": "agt-3f2a1b9c"}}
@@ -1659,42 +1659,25 @@ run 과 spawn 이 **같은 프로파일 파일**을 씁니다. YAML frontmatter(
 | `none` (기본) | 독립 실행. task에 모든 정보 포함 필요 |
 | `fork` | 부모 컨텍스트를 복사하여 실행. 맥락 인지 + 독립 |
 
-- **run 도 레지스트리 에이전트입니다 (v10.140.0, docs/agent-engine/DESIGN.md)**: run op 하나가 상주와 같은 레지스트리에 에이전트(`agt-…`)를 올리고, 그 에이전트는 자기 스레드에서 과제 하나를 돈 뒤 회신을 보내고 내려옵니다. 부른 쪽은 그 회신을 기다렸다가 아래의 결과로 받습니다 — **모델이 보는 결과·프롬프트는 전과 바이트가 같습니다**(`tests/equivalence/test_run_result_parity.py`). 상주와 나눠 쓰는 것: 에이전트 상한(run 도 센다 — 넘으면 spawn 과 같은 `agent limit reached …` 거부, 병렬이면 그 과제의 `ERROR`), `agents.json`(run 은 `ends_after_task` — resume 이 되살리지 않습니다), 깊이·순환 검사, 화면. 모델의 `## Live Agents`·`status`·`message` 주소에는 run 에이전트가 나오지 않습니다. 정지는 호출자를 따릅니다 — 방 ■·Ctrl+C 가 run 을 멈춥니다.
-  - **웹**: run 은 상주와 같은 **채널**입니다(칩에 `run` 표시). 부른 자리(main, 또는 부른 에이전트의 런 블록)에는 한 줄 카드 `→ Run 🦊 explorer (agt-…) · <과제> — working · open channel` 이 남고, `open channel` 이 그 채널로 엿보기 점프합니다. 끝난 run 채널은 **회색 칩**이며 입력창은 닫혀 있습니다(run 은 과제 하나만 받습니다). 에이전트 안의 run(깊이 2)도 자기 채널이고 한 줄 카드는 부른 에이전트의 런 블록에 놓입니다. resume 해도 같은 카드·채널이 그려집니다(`scopes.jsonl` + run 디렉터리의 history).
-  - **CLI**: 모든 에이전트(run·상주)의 진행이 오는 순서대로 섞여 한 줄씩 찍힙니다 — `  agt-3a1b2c4d │ ▶ explorer · find every caller…` (시작), `  agt-3a1b2c4d │ shell  rg -n parse_tokens src/  ✓` (도구 호출마다), `  agt-3a1b2c4d │ ✓ done (2.1s)` (끝). 에이전트의 생각·최종답 본문은 터미널에 찍지 않습니다(그 에이전트의 세션 디렉터리에 전문).
-- **병렬 실행**: 한 턴에 run op 을 **여러 개** 내면 독립 서브에이전트가 **동시에**(에이전트마다 자기 스레드) 실행됩니다 — 루프가 연속된 run op 들을 모아 병렬 디스패치합니다 (**mode-aware 배칭**: 상주 모드 op 이 섞인 턴은 순차). 독립 작업일 때만 여러 개를 내고, task B가 task A의 결과에 의존하면 A만 먼저 낸 뒤 다음 턴에 그 결과로 B를 호출하세요.
+- **결과는 회신입니다 (v10.141.0, docs/agent-engine/DESIGN.md)**: run op 하나가 레지스트리에 에이전트(`agt-…`, 값 `ends_after_task`)를 띄우고 과제를 요청으로 보낸 뒤 **바로 돌아옵니다** — 도구 결과는 `started agent "agt-…" on request "r-21" — its reply comes back marked [r-21] and wakes you …` 한 줄입니다. 에이전트는 자기 스레드에서 과제를 돌고 `reply`(요청 id `r-21`)로 답합니다 — 잊고 끝나면 런 요약이 `(no explicit reply — this is the agent's run summary)` 라벨로 대신 갑니다. 회신이 나가면 그 에이전트는 내려옵니다(채널은 회색). 상주와 같은 것: 에이전트 상한(넘으면 `agent limit reached …` 거부), `agents.json`, 깊이·순환 검사, 화면, `## Live Agents`·`status`·`message` 주소(일하는 동안 `(… · run)` 표지로 나오고 `message` 로 지시를 바꿀 수 있습니다; 끝난 run 은 꼬리에서 빠집니다). 정지는 부른 런을 따릅니다 — 방 ■·Ctrl+C 가 run 을 멈춥니다.
+  - **기다리는 회신**: 보낸 요청(run 의 과제·`message` 요청)은 회신이 올 때까지 꼬리 `## Open Items` 의 둘째 절 `2. by arrival — `wait`; each reply closes its item when it comes` 에 `[r-21] (agt-3) reply awaited: "…"` 로 남습니다. 남아 있으면 `complete` 가 되돌아옵니다(장부 예산 8 그대로). 예산이 다하면 결과 끝에 `⏳ N repl(y|ies) you asked for had not arrived when this run closed (they still come as mail):` 와 목록이 붙습니다. 에이전트도 같은 규칙입니다 — 그래서 `wait` 는 프로파일 `allowed-tools` 와 무관하게 깨울 길이 있는 모든 루프에 붙습니다.
+  - **main 의 제자리 대기**: 기다리는 회신이 있는 main 이 `wait` 하면 **런을 끝내지 않고** 그 자리에서 기다립니다 — 회신 도착·체크인(5분부터 두 배씩)·**사람의 입력**이 깨웁니다. 사람 입력에 깨면 모델은 `Observation: the wait was interrupted — the user wrote to you; their message is right below — r-21 still awaited, so `wait` again when you are done.` 를 보고, 그 말대로 `message` 로 에이전트의 지시를 바꾸거나 새 일을 한 뒤 다시 기다립니다. 같은 런이라 감사(🔎)도 회신까지 한 구간으로 봅니다. 기다리는 회신 없이 작업·모니터만 기다리면 지금처럼 런을 끝냅니다.
+  - **웹**: run 은 다른 에이전트와 같은 **채널**입니다(칩에 `run` 표시). 부른 자리(main, 또는 부른 에이전트의 런 블록)에 한 줄 카드 `→ Run 🦊 explorer (agt-…) · <과제> — working · open channel` 이 남고, `open channel` 이 그 채널로 엿보기 점프합니다. 일하는 run 의 칩엔 ✕ 가 있고 **채널 입력창이 열려 있습니다** — 사람이 그 에이전트에게 직접 씁니다. 끝난 run 은 **회색 칩**(✕/↻ 없음)이고 입력창이 닫힙니다(`This run agent finished its task — pick another channel`). 📋 띠는 `📋 Waiting for 1 reply · r-21 from agt-3` 를 머리로 보이고, main 이 제자리에서 기다리는 동안 띠 끝에 `main is waiting for agt-3 — type to steer it or give new work` 가 섭니다. 에이전트 안의 run(깊이 2)도 자기 채널이고 한 줄 카드는 부른 에이전트의 런 블록에 놓입니다. resume 해도 같은 카드·채널이 그려집니다.
+  - **CLI**: 모든 에이전트(run·상주)의 진행이 오는 순서대로 섞여 한 줄씩 찍힙니다 — `  agt-3a1b2c4d │ ▶ explorer · find every caller…` (시작), `  agt-3a1b2c4d │ shell  rg -n parse_tokens src/  ✓` (도구 호출마다), `  agt-3a1b2c4d │ ✓ done (2.1s)` (끝). main 이 제자리에서 기다리면 `⏳ waiting for 1 reply (r-21) — type to steer or give new work, Enter to send` 한 줄 — 그때 터미널에 친 줄이 main 을 깨우는 입력이 됩니다. main 의 `message` 는 `✉ message → agt-3 (notice) Scope change: …`, 바쁜 동안 도착한 회신은 `↩ reply r-21 ← agt-3  …` 로 찍힙니다.
+  - **resume**: 끝나기 전에 프로세스가 죽은 run 은 되살아나 과제를 다시 받고(새 요청 id) 회신을 마칩니다. 그 run 을 부른 에이전트가 돌아오지 않았으면 회신은 main 메일로 갑니다.
+- **한 턴의 run 여럿**: 각 run 이 바로 돌아오고 에이전트가 각자 돕니다 — 회신이 오는 대로 main 을 깨웁니다. 독립 작업일 때만 여러 개를 내고, task B가 task A의 결과에 의존하면 A만 먼저 낸 뒤 그 회신을 읽고 B를 부르세요.
 - `tools` 파라미터로 서브에이전트가 사용할 수 있는 도구를 제한할 수 있습니다. 프로파일에 `allowed-tools` 가 있으면 그것이 **상한**입니다 (v10.14.0) — `tools` 는 그 안에서 좁히기만 하고, 겹치는 도구가 하나도 없으면 호출이 거절됩니다.
-- **서브루프에서도 사용 가능**: run 은 main 뿐 아니라 서브에이전트(run/spawn/skill) 안에서도 쓸 수 있습니다 — 서브에이전트가 자기 작업을 다시 병렬 팬아웃하는 경로 (`--max-depth` 로 중첩 제한, 상주 모드는 main 전용). 서브루프의 도구 설명은 run 만 문서화된 축소판으로 렌더됩니다.
-- **산출물 포맷**: run 결과는 구조화된 형식으로 반환됩니다:
+- **모든 루프가 같은 표면**: `agent` 는 main 뿐 아니라 에이전트(run·spawn)·스킬 안에서도 같은 모드(run·spawn·status·resume·kill)로 보입니다 — 에이전트가 띄운 에이전트는 한 단계 깊고, `--max-depth` 의 상한에 닿은 루프에서는 도구째 빠집니다.
 
-```
-STATUS: success
-RESULT:
-(서브에이전트 출력)
+#### 상주 모드 — spawn / status / resume / kill, 일은 `message` 로
 
-[Subagent activity]
-- iter 1: read_file auth.py
-- iter 2: shell pytest
-- iter 3: edit_file auth.py
+spawn 하면 key 를 돌려받고, 그 key(또는 이름)로 `message` 를 보내 몇 번이고 이어서 요청할 수 있습니다(v10.141.0 — 종전 `agent` 의 `request` 모드가 `message` 로 왔고, main 도 `message` 를 갖습니다: 요청·통지). 상주 에이전트는 자기 컨텍스트(이전 문답 전부)를 유지한 채 살아 있습니다.
 
-[Files touched]
-- Read: auth.py, config.py
-- Modified: auth.py
-
-[Duration: 12.3s] [Subagent used 3 iterations]
-```
-
-실패 시에는 `[Last actions before failure]` 섹션이 추가되어 디버깅에 필요한 마지막 액션과 에러 메시지를 확인할 수 있습니다. 결과는 세션의 `run_{name}_{hash}_{ts}/` subdir 의 `result.md`에 자동 저장됩니다.
-
-#### 상주 모드 — spawn / request / status / resume / kill
-
-spawn 하면 key 를 돌려받고, 그 key 로 몇 번이고 이어서 요청할 수 있습니다. 상주 에이전트는 자기 컨텍스트(이전 문답 전부)를 유지한 채 살아 있습니다.
-
-- **비동기 + 자동 배달**: `request` 는 즉시 반환되고, 에이전트는 자기 스레드에서 작업합니다. 회신이 준비되면 **harness 가 다음 턴 경계에서 관찰로 자동 배달**합니다 — 모델이 status 를 폴링하거나 블록할 필요가 없습니다 (main 이 idle 이어도 자동 재기동으로 배달).
+- **비동기 + 자동 배달**: `message` 는 즉시 반환되고(`delivered as request "r-…"`), 에이전트는 자기 스레드에서 작업합니다. 회신이 준비되면 **harness 가 다음 턴 경계에서 관찰로 자동 배달**합니다 — 모델이 status 를 폴링하거나 블록할 필요가 없습니다 (main 이 idle 이어도 자동 재기동으로 배달).
 - **양방향 문답 (ask 라우팅)**: 상주 에이전트가 작업 중 막혀서 `ask` 를 부르면 질문이 **main 의 mailbox 로** 옵니다 (사용자가 아니라 main LLM 이 그 에이전트의 "사용자"). main 은 같은 `request` 로 답하고, 에이전트는 답을 받을 때까지 `waiting_ask` 상태로 대기합니다. run 서브에이전트의 `ask` 는 사용자에게 갑니다.
 - **에이전트↔에이전트 메시징 (5.11.0)**: 모든 상주 에이전트는 `message` 도구(커널 기본 탑재)로 **다른 상주 에이전트나 `main` 에게 직접** 메시지를 보낼 수 있습니다 — `{"to":"<key>","text":"..."}` (또는 `"to":"main"`). **비동기**입니다: 발신자는 블록하지 않고 계속 일하며, 대상의 회신은 **새 메시지로 발신자의 inbox 에 도착**합니다(도착하면 idle 이어도 깨어나 이어서 처리 — main 의 자동 배달과 동형). 배달된 회신은 **terminal**(되받아치지 않음)이라 핑퐁이 없고(안전망 hop 상한), 데드락은 비동기라 구조적으로 불가합니다. 회신을 받은 에이전트는 그걸로 자기 작업을 계속하고, 마무리되어 요청자(예: main)에게 보고할 결과가 있으면 다시 `message` 로 보내며, 없으면 그냥 `complete` 합니다. spawn/kill 같은 생명주기는 여전히 main 전용 — 서브에이전트는 **메시지만**. 요청은 언제나 명시적·directed 이라 상시 관찰 채널(구독)이 필요 없습니다.
 - **`complete` 은 국소, 배달은 `message`/`reply` 뿐 (v9.21.0)**: 상주 에이전트의 `complete` 출력은 **아무에게도 자동 배달되지 않습니다** — 창과 history 에만 남습니다. 요청(`expects_reply=True`)으로 시작한 런은 요청자에게 **회신 하나를 빚집니다**. `reply(text)` 가 갚습니다(돌려받을 것 없음, `to` 불필요). `message(to, text)` 는 상대에게 회신을 요구하는 새 요청이되, 내 요청자에게 보내면 내 빚도 갚습니다 — "내 수, 이제 네 차례". 빚진 게 없는 런(받은 회신·질문·독촉으로 시작)에서 `reply` 를 부르면 거부됩니다 — 그 자리가 "확인했습니다" 류 ack 가 새던 곳입니다. 갚지 않고 `complete` 하면 **최대 3회** 독촉합니다 — 거부 관찰이 그 `complete` 의 원문을 인용하며 "이게 답이었다면 `reply` 로 보내고, 남은 일이 없으면 `complete`" 로 안내하고, 물린 `complete` 자체는 컨텍스트에 남지 않습니다(v9.21.1). 그래도 없으면 하네스가 런 요약을 `(no explicit reply — …)` 라벨로 대신 보냅니다 — 요청자가 침묵을 받지는 않습니다. 실측(3인 끝말잇기 2라운드): 한 수 = 항목 1개, 독촉은 에이전트당 첫 런 1회 뒤 0. **v9.25.0**: `reply` 는 `id`(요청 번호, 꼬리의 `## Owed Replies` 에 표시)가 필수입니다. 요청마다 빚이 따로 적히고 회신도 따로 갚습니다. `id` 가 없거나 모르는 번호면 거부하고 번호 목록을 보여 줍니다(`complete` 의 `answers`, `answer` 의 `id` 와 같은 원칙). `to` 는 선택이며 번호의 상대와 어긋나면 거부합니다.
-- **빚 없는 통지 · 이름 주소 · 매 턴 로스터 (v10.1.0)**: 끝말잇기 실측(cnr60g — 단어 셋에 LLM 턴 61, 메시지 39)에서 드러난 세 가지를 고쳤습니다. ① `message` 에 `expects_reply: false` 를 주면 **통지**입니다 — 상태 공유·인수인계·작별 인사처럼 답이 필요 없는 말. 받는 쪽은 빚지지 않고 꼬리표가 "ack 하지 말고 할 일 없으면 `complete`" 라고 말합니다(main 에게 보내면 main 관찰도 `notice` 로 갈림). 내 요청자에게 보낸 통지는 내 빚을 갚습니다. 배달된 회신의 꼬리표도 "되받아칠 것 없음, 감사 인사 금지" 로 바꿨습니다. ② `message.to`·`reply.to`·main 의 `agent request` 의 `key` 가 **키·`agent:<key>` 접두·인스턴스 이름**을 모두 받습니다(`resolve_key`; 이름은 대소문자 무시, 산 것 우선, 유일할 때만). ③ 상주 에이전트의 `## Live Agents` 명단이 **매 턴 꼬리**에 실립니다(`peer_roster` 포트). 런 도중 spawn 된 동료도 바로 보입니다. 시스템 프롬프트의 섹션은 "이 프롬프트의 마지막 `## Live Agents` 가 지금 명단이다" 는 안내만 남깁니다(main 의 v8.46.0 이동과 같은 구조; v10.1.1 — 모델은 턴 경계를 못 보므로 "턴 끝" 대신 "마지막 섹션" 으로). ④ main 의 spawn 관찰이 "peer 는 `message` 로 이름이나 키로 부른다, 명단은 그들의 꼬리에 있다" 고 알려 주고, 상주 루프에서 `agent(mode=request)` 를 부르면 거절 문구가 `message` 를 가리킵니다 — 재실행에서 main 이 플레이어들에게 `agent request` 로 서로 부르라고 가르쳐 한 턴씩 낭비된 것.
+- **빚 없는 통지 · 이름 주소 · 매 턴 로스터 (v10.1.0)**: 끝말잇기 실측(cnr60g — 단어 셋에 LLM 턴 61, 메시지 39)에서 드러난 세 가지를 고쳤습니다. ① `message` 에 `expects_reply: false` 를 주면 **통지**입니다 — 상태 공유·인수인계·작별 인사처럼 답이 필요 없는 말. 받는 쪽은 빚지지 않고 꼬리표가 "ack 하지 말고 할 일 없으면 `complete`" 라고 말합니다(main 에게 보내면 main 관찰도 `notice` 로 갈림). 내 요청자에게 보낸 통지는 내 빚을 갚습니다. 배달된 회신의 꼬리표도 "되받아칠 것 없음, 감사 인사 금지" 로 바꿨습니다. ② `message.to`(v10.141.0 부터 main 도)가 **키·`agent:<key>` 접두·인스턴스 이름**을 모두 받습니다(`resolve_key`; 이름은 대소문자 무시, 산 것 우선, 유일할 때만). ③ 상주 에이전트의 `## Live Agents` 명단이 **매 턴 꼬리**에 실립니다(`peer_roster` 포트). 런 도중 spawn 된 동료도 바로 보입니다. 시스템 프롬프트의 섹션은 "이 프롬프트의 마지막 `## Live Agents` 가 지금 명단이다" 는 안내만 남깁니다(main 의 v8.46.0 이동과 같은 구조; v10.1.1 — 모델은 턴 경계를 못 보므로 "턴 끝" 대신 "마지막 섹션" 으로). ④ main 의 spawn 관찰이 "peer 는 `message` 로 이름이나 키로 부른다, 명단은 그들의 꼬리에 있다" 고 알려 주고, 상주 루프에서 `agent(mode=request)` 를 부르면 거절 문구가 `message` 를 가리킵니다 — 재실행에서 main 이 플레이어들에게 `agent request` 로 서로 부르라고 가르쳐 한 턴씩 낭비된 것.
 - **재시작한 방에서도 "컨텍스트 밖 대화" 가 보인다 (v10.24.1)**: 압축으로 컨텍스트에서 빠진 카드는 화면에 남아 한 묶음으로 접히는데, `--resume` 으로 다시 뜬 세션은 **남은 기록만** 다시 그려 그 묶음이 통째로 없었습니다 — 처음 요청까지 화면에서 사라졌습니다(기록 1,234건 중 680건이 안 보이던 방에서 확인). 이제 재시작도 빠진 구간을 다시 그려 같은 묶음으로 접습니다. 함께, **에이전트·스킬 카드**가 자기를 부른 기록의 번호를 실어, 그 호출이 컨텍스트에서 빠지면 카드째 묶음에 들어갑니다. 이 버전 전에 기록된 세션의 에이전트 카드에는 번호가 없어 그대로 보입니다.
 - **호출이 두 군데에 있으면 고르지 않고 되묻는다 (v10.24.0)**: json_fc 계열에서 op 배열이 산문으로 나뉜 두 군데 이상에 있으면(산문 속 예시 뒤의 진짜 호출, 또는 진짜 호출 뒤에 결과를 상상하고 이어 쓴 호출) 앞에서부터 고르면 산문 속 **예시를 실행**하고, 뒤에서부터 고르면 반대로 상상한 결과 위의 호출을 실행합니다. 글자만으로는 가릴 수 없으므로 어느 것도 실행하지 않고 다른 형식 거부와 **같은 규칙**(저장 안 함·직전 출력 인용·마지막 안내 하나·성공 시 접힘)으로 되묻습니다: "tool calls in more than one place … NOTHING was executed. Re-send ONLY the calls you want executed now, together at the very end". 공백으로만 이어진 배열(op 마다 배열을 다시 연 모양)은 지금처럼 합쳐 전부 실행하고, 문자열 값 안의 배열·산문의 `[1, 2]` 는 세지 않습니다. **실측**(Qwen3.8-Flash-Next, json_fc, 문법 없이, 직전 출력을 만들어 넣고 되묻기 뒤의 답 70회씩): 예시 뒤 진짜 호출 → 진짜만 다시 보냄 69/70(1 은 호출 없음); 진짜 뒤 상상한 호출 → 앞의 진짜(또는 같은 일을 하는 다른 호출) 68/70, 여전히 두 군데 1, 상상한 내용을 쓴 호출 1. 같은 입력에서 "첫 것" 은 첫 경우를 70/70 틀리고 "마지막" 은 둘째 경우를 70/70 틀립니다. 등가성 코퍼스(json_fc 619·xml_fc 230)에서 달라진 것은 합성 사례 2건뿐입니다. xml_fc 는 산문과 `<tool_call>` 블록을 번갈아 쓰는 것이 정상 모양이라 그대로 전부 실행합니다. 문법 강제가 켜진 서버는 json_fc 문법이 "산문 + 배열 하나" 만 허용해 배열-산문-배열이 생성되지 않으므로, 거기서는 산문 속 예시의 경우에만 해당합니다.
 - **편집 배치는 호출마다 자기 결과, `complete` 의 결과는 하니스의 회계 (v10.23.0)**: 두 가지 모두 사용자 제안입니다. ① 같은 파일 `edit_file` 여러 개를 한 턴에 보내면 한 번에 적용하고 결과도 하나였습니다(v10.20.0 은 native 에서 나머지 호출에 "함께 처리됨" 만 채움). 하니스는 각 편집의 원본 줄 범위와 바꾼 내용을 알고 있으므로 **호출마다 자기 결과**를 줍니다 — `replace 1#WT: replaced original lines 1–1 (1 → 1 line(s))` 와 그 자리의 `-`/`+`(한쪽당 6줄까지), 마지막 호출에 파일 요약과 새 해시라인 에코. 거부될 때도 호출마다 제 사정(깨진 ref 의 이유 / "valid as sent — not applied")과 마지막에 다시 보내는 방법. 텍스트 방언에서는 `[1/3] [2/3] [3/3]` 머리로 나뉩니다. **실측**(20줄 파일의 짝수 줄 10개를 한 턴에 고치는 과제, 12런씩): 파일 정확 12/12 → 12/12, 호출 55 → 39(후보는 전부 3호출), 실패 5(ACTION_LOOP 3·NO_ACTION 2) → 0. ② native_fc 에서 `complete` 에 `answers` 가 있으면 결과 메시지가 하니스가 실제로 한 회계를 말합니다 — `completed task. Requests [17][18] removed from the user request queue. Still pending: [19].` / `… No request pending.` 정산 뒤 남은 요청 id 를 종결 레코드에 `open_requests` 로 함께 남기고(추가 필드, 옛 세션 호환) 렌더가 읽습니다. `answers` 가 없는 단일 요청 실행은 측정으로 고른 `completed task: <요청>` 그대로입니다. 이 문구는 요청 id 가 웹·상주 실행에서만 생겨 CLI 하니스로는 따로 재지 못했습니다.
@@ -1866,7 +1849,7 @@ keeps it verbatim, … Pace and scope stay the same.
 
 **같은 말은 한 자리에 (v10.76.0)**: 프롬프트 지도 리뷰에서 같은 지시가 두세 곳에 있던 것을 정리했습니다. 도구 결과 뒤에 붙는 넛지는 이제 "(If nothing remains to do, call `complete`.)" 한 문장입니다. `wait` 안내는 꼬리 `## Open Items` 꼬리말과 Task Guidelines 의 긴 명령 불릿이 맡습니다. 넛지는 무조건 붙어서, `wait` 가 없는 서브·스킬 루프에도 없는 도구를 가리키고 있었습니다. "추론을 짧게" 는 꼬리 Task Guidelines 한 곳에만 남겼고(머리 Context Discipline 에서 삭제), "결과를 정직하게 보고하라" 는 `complete` 의 `Checked:`/`Not checked:` 틀이 맡습니다(Task Guidelines 에서 삭제).
 
-**갚을 회신 (`## Owed Replies`, v9.24.5)**: 다른 에이전트가 `message`/`ask` 로 보낸 요청·질문 중 아직 회신·답하지 않은 것을, 그것을 갚는 도구와 함께 매 턴 보여 줍니다(상주 에이전트는 `reply`/`answer`, main 은 `agent request`/`answer`). **v9.25.0**: 빚은 요청마다 하나이고 번호가 붙습니다. 상주 에이전트는 `reply(id="번호", text="…")` 로, main 은 `agent(mode="request", key=…)` 로 갚습니다(그 상대에게 진 가장 오래된 빚부터).
+**갚을 회신 (`## Owed Replies`, v9.24.5)**: 다른 에이전트가 `message`/`ask` 로 보낸 요청·질문 중 아직 회신·답하지 않은 것을, 그것을 갚는 도구와 함께 매 턴 보여 줍니다(main·에이전트 모두 `reply`, v10.141.0). **v9.25.0**: 빚은 요청마다 하나이고 번호가 붙습니다 — `reply(id="번호", text="…")` 로 갚고, 요청자에게 보낸 `message` 도 그 상대에게 진 가장 오래된 빚을 갚습니다.
 
 **`answer` 는 에이전트 질문 전용 (v10.30.0)**: 사용자 메시지는 꼬리 `## Open Requests` 에 `[1] (닉) "하이"` 처럼 번호로 실리고, `answer` 도구 설명은 "나한테 온 질문에 답하라, id 는 질문과 함께 왔다" 였습니다. 모델(Qwen3.6-35B, 방 dj72nx)이 그 둘을 이어 `answer(id="1", text="안녕하세요!")` 를 불렀고, 인사말은 질문 포트에서 거부돼 사용자에게 가지 않았으며 다음 턴은 영어 메타 문장("Greeted the user back…")으로 끝났습니다. 두 군데를 고쳤습니다 — ① 설명이 "다른 에이전트가 `[question q-… from …]` 봉투로 보낸 질문에만; Open Requests 의 번호 요청은 사용자 메시지라 `complete` 의 `result` 로 답하고 `answers` 에 번호를 적는다" 고 못 박고, `id` 설명도 "봉투의 q-… id, Open Requests 번호가 아님". ② 그래도 요청 번호로 `answer` 를 부르면 관찰이 `'1' is user request [1], not an agent question — reply to it in complete's result and set answers: ["1"]` 로 길을 알려 줍니다. 실측(Qwen3.6-35B-A3B-8bit, 웹 세션에 "하이" 8회씩): main 은 8런 중 5런이 `answer(id="1")` 을 불러(총 10회 거부, 1런은 세 번 거부되고 답을 못 냄) 첫 턴에 사용자에게 답이 간 런이 1/8 이었고, 후보는 8/8 첫 턴 `complete` 로 한국어 인사, 오용 0.
 
@@ -1988,9 +1971,8 @@ python -m agent_cli.prompts.inventory --html inventory.html   # 훑어보는 페
     {session_id}/
       session.jsonl                     # 메타데이터 (1줄: id, workspace, updated_at, query)
       history.jsonl                     # 전체 대화 기록 (JSON Lines, append-only)
-      run_{name}_{hash}_{ts}/         # agent run subdir
-        history.jsonl                   #   run 내부 대화
-        result.md                       #   run 최종 결과
+      agents/{key}/                     # 에이전트(run·spawn) — history.jsonl·conversation.jsonl·replies/
+                                        #   (v10.140.0 까지의 세션은 run 을 run_{name}_{hash}_{ts}/ 에 두었다)
       skill_{name}_{hash}_{ts}/         # skill subdir
         history.jsonl                   #   skill 내부 대화
         result.md                       #   skill 최종 결과

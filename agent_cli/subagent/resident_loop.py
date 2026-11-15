@@ -1,8 +1,11 @@
-"""상주 에이전트의 루프 종류 — `ResidentLoop` (`LoopKind`, v10.87.0).
+"""에이전트의 루프 종류 — `ResidentLoop` (`LoopKind`, v10.87.0). run·spawn 에이전트 전부의 것이다
+(v10.141.0, docs/agent-engine/DESIGN.md — 차이는 에이전트 값 ``ends_after_task`` 하나이고 그건
+레지스트리의 워커가 본다).
 
 에이전트에 하나(워커 스레드가 만든다), ``run(start)`` 은 받은편지함 묶음마다. 주소
-``agent:<key>``, 깊이는 spawn 시점 호출자 +1(종전엔 런마다 "가장 최근 spawner 의 깊이 +1"
-을 다시 읽어 흔들렸다), 바인딩은 프로파일이 모델을 고정하면 그 복사본(한 번만 계산),
+``agent:<key>``, 깊이는 띄운 호출자 +1(`AgentInstance.caller_runtime`; 종전엔 런마다 "가장 최근
+spawner 의 깊이 +1" 을 다시 읽어 흔들렸다), 스택은 호출자의 것(엔진이 자기 프로파일을 얹는다),
+바인딩은 프로파일이 모델을 고정하면 그 복사본(한 번만 계산),
 도구는 프로파일 allowlist(엔진이 `message`·`reply` 를 강제 탑재), 포트는 `make_ports`
 (종전 `runtime.ports_for_resident`). ctx 는 워커 스레드에서 `open()` 으로 한 번 만든다 —
 `create_subagent_ctx` 의 `note_scope_ctx` 가 그 스레드의 스코프(에이전트 키)에 등록되게.
@@ -46,7 +49,7 @@ class ResidentLoop(LoopKind):
         self.tm = tm
         self.registry = registry
         self.disp = disp
-        rt = registry.runtime
+        rt = tm.caller_runtime or registry.runtime
         self.owner = f"agent:{tm.key}"
         self.depth = rt.get("depth", 0) + 1
         self.max_depth = rt.get("max_depth", 2)
@@ -59,28 +62,29 @@ class ResidentLoop(LoopKind):
         self.tools = tm.allowed_tools
         self.hooks_config = tm.hooks_config
         self.stop_event = tm.stop_event
+        self.agent_stack = list(tm.agent_stack)
         self.agent_name = tm.profile_name
         self.agent_role = tm.role_prompt
         # 시스템 프롬프트에는 **안내만**(정적, 캐시 친화); 실제 로스터는 매 턴 꼬리(`peer_roster`).
         self.peer_agents_section = build_peer_roster_intro()
         self.ports = self.make_ports(
             key=tm.key,
-            message_handler=registry._make_message_handler(tm),
+            message_handler=registry.message_handler(f"agent:{tm.key}"),
             questions=registry.question_port(tm.key),
             inbox=lambda: registry.absorb_pending(tm),
             peer_roster=self.peer_roster,
+            agent_registry=registry,
         )
         self._items: list[dict] = []
 
     @staticmethod
     def make_ports(
-        *, key: str, message_handler, questions, inbox, peer_roster
+        *, key: str, message_handler, questions, inbox, peer_roster, agent_registry
     ) -> LoopPorts:
         """상주 런의 포트. ``inbox`` (v9.25.0, 메일함 포트의 ``take``) 가 턴 경계마다 받은편지함을 이 런으로
         흡수하고, ``peer_roster`` (v10.1.0) 가 매 턴 꼬리에 실을 동료 로스터를 돌려준다."""
         from agent_cli.loop.ports import (
             _AS_BEFORE,
-            _NO_REGISTRY_IN_SUBLOOP,
             _WEB_ONLY,
             LoopPorts,
             _hook_runner_port,
@@ -93,14 +97,15 @@ class ResidentLoop(LoopKind):
             questions=questions,
             peer_roster=peer_roster,
             mailbox=Mailbox(get_agent_registry(), f"agent:{key}", take=inbox),
-            agent_registry=None,
+            # `agent` 도구의 권한 — run·spawn 이 모든 에이전트의 표면이다 (v10.141.0, 설계 §1).
+            # 메일함·꼬리 로스터는 이 종류가 따로 정한다(`intake`·`tail_roster`).
+            agent_registry=agent_registry,
             mcp_manager=None,
             hook_runner=_hook_runner_port(),
             route_message=None,
             dequeue_user_message=None,
             enqueue_user_message=None,
             unwired={
-                "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
                 "mcp_manager": _AS_BEFORE,
                 **_hook_unwired(),
                 "route_message": _WEB_ONLY,
@@ -128,7 +133,6 @@ class ResidentLoop(LoopKind):
         return PromptProfile(
             role=self.tm.role_prompt,
             peer_section=self.peer_agents_section,
-            agent_registry=None,  # 상주 안 상주 금지 — run-only 축소 스키마
             ask_blocking=False,  # 질문 포트로 비차단
             reports_to_caller=True,
             peer_channel=True,  # 상주 모드 거절은 `message` 동료 채널을 가리킨다
@@ -262,6 +266,12 @@ class ResidentLoop(LoopKind):
             # 요청 발신 시각을 scope_start(nav_ts)로 실어 스윔레인 화살표가 이 카드로 오게
             req_ts=first.get("ts"),
             items=[it["id"] for it in items] if len(items) > 1 else None,
+            # run 의 과제 런: 부른 자리에 한 줄 카드 (docs/agent-engine/DESIGN.md §2.5)
+            caller_task=(
+                self.tm.caller_task
+                if self.tm.ends_after_task and first["id"] == self.tm.task_id
+                else None
+            ),
         )
         return renderer
 

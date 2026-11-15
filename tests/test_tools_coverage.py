@@ -6,11 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.subagent.report import (
-    DelegateResult,
-    _format_delegate_output,
-    _format_parallel_results,
-)
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools import _execute_tool as execute_tool
 from agent_cli.tools.edit_file import (
@@ -858,52 +853,6 @@ class TestEditFile:
         )
         assert not res.success and LINES_NOT_ARRAY in res.error
         assert "op 2" in res.error and f.read_text() == "a\nb\nc\n"
-
-
-class TestDelegateResult:
-    def test_format_no_output(self):
-        result = DelegateResult()
-        formatted = _format_delegate_output(result)
-        assert "no result" in formatted
-
-    def test_format_no_files(self):
-        result = DelegateResult(output="Done")
-        formatted = _format_delegate_output(result)
-        assert "Files touched" not in formatted
-
-
-class TestParallelResultFormat:
-    def test_all_success(self):
-        from agent_cli.tools.result import ToolResult
-
-        specs = [{"task": "A"}, {"task": "B"}]
-        results = [
-            ToolResult(True, output="STATUS: success\nRESULT:\nDone A"),
-            ToolResult(True, output="STATUS: success\nRESULT:\nDone B"),
-        ]
-        combined = _format_parallel_results(specs, results)
-        assert combined.success
-        assert "all succeeded" in combined.output
-
-    def test_partial_failure(self):
-        from agent_cli.tools.result import ToolResult
-
-        specs = [{"task": "A"}, {"task": "B"}]
-        results = [
-            ToolResult(True, output="ok"),
-            ToolResult(False, error="failed"),
-        ]
-        combined = _format_parallel_results(specs, results)
-        assert not combined.success
-        assert "1 succeeded" in combined.error
-        assert "1 failed" in combined.error
-
-    def test_timeout_none_result(self):
-        specs = [{"task": "A"}]
-        results = [None]
-        combined = _format_parallel_results(specs, results)
-        assert not combined.success
-        assert "timed out" in combined.error.lower()
 
 
 class TestSignalHandlerThreadSafety:

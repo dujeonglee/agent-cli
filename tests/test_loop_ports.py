@@ -28,7 +28,7 @@ from agent_cli.subagent.resident_loop import ResidentLoop
 
 #: 조립 지점 — 종류마다 `make_ports` (v10.87.0; 종전 `runtime.ports_for_*`). 각 입력은
 #: **None 이 아닌 센티넬**이다. 빌더가 자기 입력을 흘리는지를 봐야지, 호출자가 None 을
-#: 준 결과를 보면 안 된다. 하니스 작업은 one-shot 과 같은 `PrivateLoop.make_ports`.
+#: 준 결과를 보면 안 된다. 하니스 작업은 `PrivateLoop.make_ports`(private 주소).
 _S = object()
 BUILDERS = {
     "main": lambda: MainLoop.make_ports(
@@ -39,9 +39,14 @@ BUILDERS = {
         route_message=_S,
     ),
     "skill": lambda: SkillLoop.make_ports(agent_registry=_Reg(), owner="agent:parent"),
-    "oneshot": lambda: PrivateLoop.make_ports("run:task_1"),
+    "private": lambda: PrivateLoop.make_ports("harness:auditor:1-2"),
     "resident": lambda: ResidentLoop.make_ports(
-        key="k1", message_handler=_S, questions=_S, inbox=_S, peer_roster=_S
+        key="k1",
+        message_handler=_S,
+        questions=_S,
+        inbox=_S,
+        peer_roster=_S,
+        agent_registry=_Reg(),
     ),
 }
 
@@ -50,6 +55,9 @@ class _Reg:
     """`question_port` 만 있는 최소 레지스트리 대역."""
 
     def question_port(self, key):
+        return _S
+
+    def message_handler(self, sender):  # main 의 `message` (v10.141.0)
         return _S
 
 
@@ -73,7 +81,7 @@ class TestNoDefaults:
         assert optional == [], f"기본값이 붙은 포트: {optional}"
 
     def test_frozen(self):
-        p = BUILDERS["oneshot"]()
+        p = BUILDERS["private"]()
         with pytest.raises(dataclasses.FrozenInstanceError):
             p.owner = "agent:x"  # type: ignore[misc]
 
@@ -130,11 +138,12 @@ class TestOwner:
         기본값을 두면 조용히 main 으로 간다."""
         assert BUILDERS["skill"]().owner == "agent:parent"
 
-    def test_oneshot_has_its_own_address(self):
-        """one-shot 은 부모 주소를 빌리지 않는다 (v10.84.0) — `run:<run_dir>`."""
-        assert BUILDERS["oneshot"]().owner == "run:task_1"
+    def test_private_has_its_own_address(self):
+        """하니스 작업은 부모 주소를 빌리지 않는다 (v10.84.0) — `harness:<job>:<label>`.
+        run 에이전트는 v10.141.0 부터 ``agent:<key>`` 다(상주 빌더)."""
+        assert BUILDERS["private"]().owner == "harness:auditor:1-2"
 
-    @pytest.mark.parametrize("builder", ["skill", "oneshot"])
+    @pytest.mark.parametrize("builder", ["skill", "private"])
     def test_nested_builders_require_an_owner(self, builder):
         """기본값이 없어야 상속 누락이 TypeError 가 된다."""
         with pytest.raises(TypeError):
@@ -149,11 +158,11 @@ class TestHandlerResources:
     """`Tool.requires_handler` 가 보는 뷰 — 손-유지 dict 를 대체한다."""
 
     def test_excludes_non_resources(self):
-        keys = BUILDERS["oneshot"]().handler_resources()
+        keys = BUILDERS["private"]().handler_resources()
         assert "owner" not in keys and "unwired" not in keys
 
     def test_covers_every_port(self):
-        p = BUILDERS["oneshot"]()
+        p = BUILDERS["private"]()
         expected = {f.name for f in fields(LoopPorts)} - {"owner", "unwired"}
         assert set(p.handler_resources()) == expected
 
@@ -166,7 +175,7 @@ class TestHandlerResources:
         # 아닌 세션 자원 — core 가 얹는다(``vision`` 은 바인딩의 능력, ``skills`` 는
         # 모델이 부를 수 있는 스킬 유무). ``deferred``(v10.109.0)는 게이트가 끝난
         # 도구 목록에서 core 가 판정한다(지연 도구가 남았나).
-        available = set(BUILDERS["oneshot"]().handler_resources()) | {
+        available = set(BUILDERS["private"]().handler_resources()) | {
             "ctx",
             "snapshot",
             "browser",

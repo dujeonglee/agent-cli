@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -644,14 +645,8 @@ class _ConsoleDispatchOutput(DispatchOutput):
             console.print(
                 f"\n{result}", style=C["final"], markup=False, highlight=False
             )
-        # 결과 파일엔 관찰 래퍼(STATUS/RESULT/[activity])를 벗긴 원문 — 메인
-        # 경로(loop_result.output=원문)와 계약 일치. 쓸지는 표면이 ok 로 정한다.
-        answer = None
-        if ok and result is not None:
-            from agent_cli.subagent.report import extract_result_body
-
-            answer = extract_result_body(str(result))
-        self._report(answer, ok)
+        # 결과 파일엔 회신 본문 그대로(v10.141.0 — 결과 = 회신). 쓸지는 표면이 ok 로 정한다.
+        self._report(str(result) if ok and result is not None else None, ok)
 
     def skill_not_found(self, name: str) -> None:
         console.print(
@@ -763,8 +758,9 @@ def try_dispatch_agent_or_skill(
     ``stop_event`` is threaded into BOTH paths so the web Stop button can
     halt either at a turn boundary, same as a plain conversation turn:
       - ``/skill`` → ``_dispatch_skill`` → ``SkillLoop.run`` → ``run_loop``
-      - ``@agent`` → ``_dispatch_agent`` → ``run_agents`` → the run agent's
-        ``run_loop`` on its own thread (the caller's Event is the run's stop).
+      - ``@agent`` → ``_dispatch_agent`` → a run agent (``agent`` ``mode`` "run")
+        on its own thread, and the command waits for its reply (the caller's
+        Event is the run's stop).
 
     Returns ``True`` when the message was handled (caller skips its
     LLM path); ``False`` when nothing matched and the caller should
@@ -803,6 +799,7 @@ def try_dispatch_agent_or_skill(
             session=session,
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
+            agent_registry=agent_registry,
         )
         if result is _AGENT_NOT_FOUND:
             output.agent_not_found(name)
@@ -882,14 +879,19 @@ def _dispatch_agent(
     session=None,
     graceful_interrupt: bool = False,
     stop_event=None,
+    agent_registry=None,
 ):
     """Dispatch @agent-name query → ``(answer, success)``.
 
-    미발견 프로파일은 ``(_AGENT_NOT_FOUND, False)`` — 호출자가 sentinel 로
-    분기. success 는 run 엔진의 실제 성공 여부 (``--result-file`` 이 실패
-    텍스트를 성공 답변처럼 기록하지 않기 위한 신호, 5.6.0).
+    run 에이전트 하나를 띄우고(`agent` ``mode`` "run" 과 같은 핸들러 — 호출자는 루프 밖의
+    main 세션) 그 **회신**을 기다려 답으로 돌려준다 (v10.141.0 — 결과 = 회신). 회신은 이
+    명령의 답이라 main 메일함에서 꺼낸다(`AgentRegistry.take_reply`) — main 의 다음 턴
+    관찰로 또 배달되지 않는다. 미발견 프로파일은 ``(_AGENT_NOT_FOUND, False)`` — 호출자가
+    sentinel 로 분기. success 는 그 런의 실제 성공 여부(``--result-file`` 이 실패 텍스트를
+    성공 답변처럼 기록하지 않기 위한 신호, 5.6.0).
     """
-    from agent_cli.subagent.run_agent import run_agents
+    from agent_cli.subagent.agents_live import _NO_REPLY_LABEL, NO_REGISTRY
+    from agent_cli.subagent.run_agent import launch_run
 
     parts = query.split(maxsplit=1)
     # ``-run`` 접미사 허용 (기본 모드의 명시 표기) — 실존 프로파일 우선.
@@ -906,29 +908,61 @@ def _dispatch_agent(
     from agent_cli.hooks import load_hooks as _load_hooks
     from agent_cli.loop.kind import Caller
     from agent_cli.render import render_status
+    from agent_cli.runtime import AgentRuntime
 
     _parent_hooks = _load_hooks() or None
     render_status("running", f"Running agent: {agent_name}...")
-    result = run_agents(
-        {"tasks": [{"task": task, "agent": agent_name, "context": "fork"}]},
-        # 루프 **밖**의 디스패치 — 감싸는 루프가 없으니 main 세션이 호출자다.
-        Caller.main_session(
-            binding=binding,
-            ctx=ctx,
-            session=session,
-            max_turns=max_turns,
-            max_depth=max_depth,
-            hooks_config=_parent_hooks,
-            stop_event=stop_event,
-        ),
+    # 루프 **밖**의 디스패치 — 감싸는 루프가 없으니 main 세션이 호출자다.
+    caller = Caller.main_session(
+        binding=binding,
+        ctx=ctx,
+        session=session,
+        max_turns=max_turns,
+        max_depth=max_depth,
+        hooks_config=_parent_hooks,
+        stop_event=stop_event,
     )
+    runtime = AgentRuntime(
+        binding=binding,
+        max_turns=max_turns,
+        depth=0,
+        max_depth=max_depth,
+        session=session,
+        hooks_config=_parent_hooks,
+    ).as_dict()
+    launched = (
+        launch_run(
+            agent_registry,
+            {"task": task, "profile": agent_name, "context": "fork"},
+            caller=caller,
+            runtime=runtime,
+        )
+        if agent_registry is not None
+        else None
+    )
+    if launched is None:
+        answer, ok = NO_REGISTRY, False
+    elif launched.error:
+        if "not found" in launched.error:
+            return _AGENT_NOT_FOUND, False
+        answer, ok = launched.error, False
+    else:
+        try:
+            mail = agent_registry.take_reply(launched.rid, stop_event=stop_event)
+        except BaseException:
+            # 기다리던 이 스레드가 끊겼다(CLI Ctrl+C) — 묶인 run 이 같이 멈추게 정지를 세운다
+            if stop_event is not None:
+                stop_event.set()
+            raise
+        if mail is None:
+            answer, ok = f"agent {agent_name} ended without a reply", False
+        else:
+            body = str(mail.get("output") or "")
+            # 폴백 회신(명시 `reply` 없이 끝남)의 머리 라벨은 답이 아니다
+            answer = body.removeprefix(f"{_NO_REPLY_LABEL}\n")
+            ok = bool(mail.get("success", True))
 
-    if not result.success and "not found" in (result.error or ""):
-        return _AGENT_NOT_FOUND, False
-
-    answer = result.output if result.success else result.error
-
-    # Record result in context with artifact path
+    # Record result in context
     if ctx and answer:
         ctx.add(
             {
@@ -936,11 +970,10 @@ def _dispatch_agent(
                 "tool": "agent",
                 "args": {"agent": agent_name, "task": task[:60]},
                 "content": answer,
-                "artifact": result.artifact,
             }
         )
 
-    return answer, result.success
+    return answer, ok
 
 
 def _dispatch_skill(
@@ -1866,6 +1899,7 @@ def run(
             surface=surface,
             policy=policy,
             on_mail_notice=_agent_mail_notice,
+            on_wait_input=_terminal_steer_input(input_queue),
         )
 
         agent_registry = owners.agent_registry
@@ -2071,6 +2105,35 @@ def _announce_agent_boot(
         renderer.status("running", _auditor_boot_line(auditor))
 
 
+def _terminal_steer_input(queue):
+    """run: 제자리 대기를 깨울 사람 입력 (v10.141.0, docs/agent-engine/DESIGN.md §6) —
+    ``(timeout) -> bool``. 입력 큐에 이미 온 것(예약 발화 등)이 있으면 참, 터미널이면 그 사이
+    친 한 줄을 입력 큐에 넣고 참(꺼내는 것은 다음 턴 경계의 흡수다). 터미널이 아니면 큐만 본다.
+
+    터미널 줄은 main 이 제자리에서 기다리는 동안에만 읽는다 — 그 밖의 시간엔 `ask`·확인
+    프롬프트가 같은 표준입력을 쓴다."""
+    import select
+
+    def wait(timeout: float) -> bool:
+        if not sys.stdin.isatty():
+            return queue.wait_for_arrival(timeout)
+        if queue.wait_for_arrival(0):
+            return True
+        try:
+            ready, _, _ = select.select([sys.stdin], [], [], timeout)
+        except (OSError, ValueError):
+            return queue.wait_for_arrival(timeout)
+        if not ready:
+            return False
+        text = sys.stdin.readline().strip()
+        if not text:
+            return False
+        queue.enqueue(None, text)
+        return True
+
+    return wait
+
+
 def _agent_mail_notice(reply: dict, busy: bool) -> None:
     """CLI: main 앞으로 메일이 왔다 (v10.51.0).
 
@@ -2086,8 +2149,14 @@ def _agent_mail_notice(reply: dict, busy: bool) -> None:
     if not busy:
         return
     kind = reply.get("kind", "reply")
-    it = mail_queue_item(reply)
-    line = f"⏳ Queued · [{it['nickname']}] {it['text']} — delivered to main when this turn ends"
+    re_id = str(reply.get("re") or "")
+    if re_id:
+        # main 이 보낸 요청의 회신 (v10.141.0, 설계 §6) — 제자리 대기 중이면 곧바로 깬다
+        body = " ".join(str(reply.get("output") or "").split())[:100]
+        line = f"↩ reply {re_id} ← {reply.get('key', '')}  {body}"
+    else:
+        it = mail_queue_item(reply)
+        line = f"⏳ Queued · [{it['nickname']}] {it['text']} — delivered to main when this turn ends"
     try:
         get_renderer().agent_mail_hint(key=reply.get("key", ""), kind=kind, text=line)
     except Exception:

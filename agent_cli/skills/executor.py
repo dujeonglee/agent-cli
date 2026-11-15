@@ -255,9 +255,6 @@ class SkillLoop(LoopKind):
         return PromptProfile(
             role=self.agent_role,  # 호출자의 역할 (D3)
             peer_section="",
-            # 스킬은 main 의 일 — main 아래면 레지스트리를 상속해 `agent` 전부(spawn 가능),
-            # 서브에이전트 아래면 None(run-only).
-            agent_registry=self.caller.agent_registry,
             ask_blocking=True,
             reports_to_caller=True,
             peer_channel=False,

@@ -194,12 +194,13 @@ class TestIsolationFromTheRegistry:
     def test_main_tool_schema_cannot_spawn_a_harness_profile(self, tmp_path):
         """`agent` 도구의 spawn 은 사용자 카탈로그 프로파일만 안다."""
         from agent_cli.subagent.agents_live import _agent_spawn
+        from tests.loop_kinds import make_caller
 
         reg = make_registry(tmp_path)
         res = _agent_spawn(
             reg,
             {"profile": "auditor"},
-            parent_ctx=_ctx(tmp_path),
+            caller=make_caller(ctx=_ctx(tmp_path)),
             runtime={"model": "m"},
         )
         assert not res.success and "not found" in (res.error or "")

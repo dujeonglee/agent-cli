@@ -104,7 +104,7 @@ main 이 빈 wake 턴을 돌고, `on_run_end` 가 다시 무장 — 무한 루�
 | `remind_owed` `:900` | `"main"`/`"agent:k"` | 첫 asker 파생 `:971` | False | question_id 없음 |
 | `_deliver_peer_reply` `:1293` | 맨 키 | — | False | `hop+1`, hop 상한, 사망 시 조용히 드롭 |
 | `message_to_main` `:1326` | main 전용 | — | — | 메일박스만 |
-| `_make_message_handler` `:1381` | 맨 키 | — | **True** | `_log_outbound` |
+| `message` 라우팅 훅 `:1381` | 맨 키 | — | **True** | `_log_outbound` |
 
 main 측 페이로드도 kind 마다 다르다(`id` 는 question/answer 만, `profile`/`name` 은
 question 만). **주소 어휘조차 통일돼 있지 않다** — `_deliver_answer` 는 맨 키를 쓴다.

@@ -133,7 +133,7 @@ class ToolBridge:
         each stage owns.
         """
         # Wire keys are namespaced ``{tool}_{param}``. Strip to standard
-        # keys once here so the run host (``run_agents``) and
+        # keys once here so the agent host (``tool_agent``) and
         # the hooks all see standard keys; ``_execute_tool``'s own strip is
         # then a no-op on the already-stripped result.
         if tool_name in TOOLS and isinstance(tool_input, dict):
@@ -338,80 +338,24 @@ class ToolBridge:
         return None, tool_input, input_dict
 
     # ── 2. Agent dispatch (5.0.0 통합) ──────────────────────────────
-    @staticmethod
-    def _run_spec(args: dict) -> dict:
-        """agent run op → 일회성 실행 spec (exec 의 task 스펙 shape)."""
-        return {
-            "task": args.get("task", ""),
-            "context": args.get("context", "none"),
-            "tools": args.get("tools"),
-            "agent": args.get("profile", ""),
-            "instructions": args.get("instructions", ""),
-        }
-
     def _invoke_agent(self, tool_input, input_dict: dict) -> ToolResult:
-        """agent 인터셉트 — 제네릭 execute 경로에 없는 provider/identity
-        배선이 필요해 여기서 가로챈다.
+        """agent 인터셉트 — 제네릭 execute 경로에 없는 호출자·배선이 필요해 여기서 가로챈다.
 
-        - ``{"tasks":[...]}`` : 배치 디스패처가 조립한 run fan-out →
-          run 에이전트 여럿(`subagent.run_agent.run_agents`). OnAgentStart/End
-          훅이 그 실행을 감싼다 (구 delegate 훅 승계 — run 에만 발화;
-          상주 모드는 일반 PreToolUse/PostToolUse 로 충분).
-        - ``engine="run"`` 모드 단건 : 같은 호스트의 단건.
-        - 그 외(상주 모드) : tool_agent(레지스트리) — 레지스트리 없는
-          루프에서는 tool_agent 가 "main 전용" 에러로 거부 (모드 축소).
-
-        라우팅은 ``AGENT_MODES`` 테이블의 ``engine`` 필드에서 파생 (모드
-        테이블화 — 종전 ``mode == "run"`` 문자열 분기). 미지의 모드는
-        registry 경로로 흘러 tool_agent 의 unknown-mode 에러가 처리
-        (루프 경로에서는 validate 가 A5 로 먼저 거른다 — 여기 도달은
-        직접 호출자/테스트뿐).
+        모든 모드(run·spawn·status·resume·kill)가 한 길이다(docs/agent-engine/DESIGN.md §1):
+        `tool_agent` 의 모드 표가 정하고, 돌고 있는 이 루프가 호출자다(`Caller` — 주소·깊이·
+        스택·정지·ctx·훅). 레지스트리는 어느 루프에서 부르든 같은 세션의 명단이다.
+        깊이 상한은 엔진이 상한의 루프에서 `agent` 도구를 빼는 것으로 막는다.
         """
-        # 함수-로컬 import — 호출 시점에 run_agent 모듈 attr 을 읽는 테스트
-        # DI seam (모듈-레벨 바인딩이면 monkeypatch 가 안 닿는다).
+        # 함수-로컬 import — 호출 시점에 agents_live 모듈 attr 을 읽는 테스트 DI seam.
         from agent_cli.loop.kind import Caller
+        from agent_cli.runtime import AgentRuntime
         from agent_cli.subagent.agents_live import tool_agent
-        from agent_cli.subagent.run_agent import run_agents
-        from agent_cli.tools.agent_tool import AGENT_MODES
 
         args = tool_input if isinstance(tool_input, dict) else {"mode": str(tool_input)}
-
-        spec = AGENT_MODES.get(args.get("mode"))
-        if "tasks" in args or (spec is not None and spec.engine == "run"):
-            raw = (
-                {"tasks": args["tasks"]}
-                if "tasks" in args
-                else {"tasks": [self._run_spec(args)]}
-            )
-            if self.cfg.kind.ports.hook_runner:
-                self.cfg.kind.ports.hook_runner.fire(
-                    "OnAgentStart",
-                    tool_name="agent",
-                    tool_input=input_dict,
-                    turn=self.state.turn,
-                    mcp_manager=self.cfg.kind.ports.mcp_manager,
-                )
-            # 돌고 있는 이 루프가 호출자다 (v10.87.0 `Caller`) — 깊이·스택·훅·중단·ctx 전부
-            result = run_agents(raw, Caller.from_loop(self.cfg, self.state, self.ctx))
-            if self.cfg.kind.ports.hook_runner:
-                self.cfg.kind.ports.hook_runner.fire(
-                    "OnAgentEnd",
-                    tool_name="agent",
-                    tool_input=input_dict,
-                    delegate_result=result,
-                    turn=self.state.turn,
-                    mcp_manager=self.cfg.kind.ports.mcp_manager,
-                )
-            return result
-
-        from agent_cli.runtime import AgentRuntime
-
         return tool_agent(
             args,
             registry=self.cfg.kind.ports.agent_registry,
-            parent_ctx=self.ctx,
-            # 상주 루프 = message 핸들러가 꽂힌 루프 (v10.1.0 거절 문구용)
-            resident=self.cfg.kind.prompt_profile().peer_channel,
+            caller=Caller.from_loop(self.cfg, self.state, self.ctx),
             # 단일 정의 (v8.39.0 조립기) — 종전 13키 dict 리터럴 3벌 중 하나.
             runtime=AgentRuntime.from_loop_config(self.cfg).as_dict(),
         )
@@ -427,7 +371,6 @@ class ToolBridge:
             name,
             self.cfg.tools_list,
             self.cfg.dialect,
-            has_agent_registry=profile.agent_registry is not None,
             nonblocking_ask=not profile.ask_blocking,
         )
 

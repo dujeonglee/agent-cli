@@ -245,15 +245,12 @@ class TestMainRepliesById:
         err = reg.question_port(None).reply("답")
         assert err.startswith("reply needs `id`") and "[r-1]" in err
 
-    def test_nothing_owed_points_to_agent_request(self, tmp_path):
+    def test_nothing_owed_points_to_message(self, tmp_path):
         from tests.test_agents_live import make_registry
 
         reg = make_registry(tmp_path)
         err = reg.question_port(None).reply("답", id="r-1")
-        assert (
-            err.startswith("nothing to reply to")
-            and '`agent` with mode "request"' in err
-        )
+        assert err.startswith("nothing to reply to") and "use `message`" in err
 
 
 class TestLedgerUnit:

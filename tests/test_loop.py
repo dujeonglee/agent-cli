@@ -2020,7 +2020,9 @@ class TestToolPolicyDeclarations:
 
         expected = {
             "complete": {"terminal": True},
-            "wait": {"terminal": True, "requires_handler": "wake"},
+            # v10.141.0: 깨울 길이 있는 루프면 강제 탑재 — 기다리는 회신이 `complete` 를
+            # 되돌리는 자리의 대안이 프로파일 목록 때문에 빠지면 안 된다
+            "wait": {"terminal": True, "requires_handler": "wake", "force_mount": True},
             # 모델이 부를 수 있는 스킬이 없으면 광고하지 않는다 (v10.100.0).
             "run_skill": {
                 "terminal": True,

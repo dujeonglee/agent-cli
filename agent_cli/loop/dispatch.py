@@ -68,14 +68,6 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 from agent_cli.wake import harness_work_running
 
-# parallel_safe 배치 디스패치 엔진이 실제로 배선된 도구들.
-# ``_dispatch_parallel_batch`` 는 도구별 병렬 엔진 호출을 알아야 하므로,
-# 여기 없는 parallel_safe 도구는 배치로 묶지 않고 순차 per-op 경로를 탄다
-# (종전엔 수집은 parallel_safe 플래그만 보고 묶은 뒤 디스패치에서
-# NotImplementedError 로 런이 죽는 크래시 트랩 — 리뷰 §4.1). 새 도구를
-# 병렬 배치에 태우려면 엔진을 배선하고 이 집합에 추가한다.
-_PARALLEL_BATCH_ENGINES = frozenset({"agent"})
-
 #: 제자리 고리 확인에서 Continue 의 코멘트를 보낸 사람을 모를 때의 작성자 (v10.120.0)
 STALE_HINT_AUTHOR = "Hint"
 #: 확인 프롬프트에 싣는 반복 호출 줄 수 — 대표 두세 개
@@ -748,13 +740,10 @@ class TurnDispatcher:
                 self._flush_op_results(turn.record, results)
                 results = []
                 return self._dispatch_op(llm_text, turn, op, outcome)
-            # Parallel batch: a run of ≥2 consecutive ops of the SAME
-            # parallel_safe tool dispatches concurrently into one combined
-            # observation (delegate: independent subagents). A lone
-            # parallel_safe op falls through to the normal per-op path so it
-            # keeps its B1/A4/A5 guards. Mutating tools (parallel_safe=False)
-            # always take the sequential per-op path — order is their
-            # correctness guarantee (write→edit same file, mkdir→touch).
+            # Ops run sequentially, in order — the correctness guarantee for
+            # side-effecting tools (write→edit same file, mkdir→touch). (The
+            # concurrent `agent` run batch went with v10.141.0: a run returns at
+            # once and its agent works on its own thread.)
             # Same-file edit batch: a run of ≥2 consecutive edit_file ops on the
             # SAME path is applied together against ONE original read (all refs
             # resolved before any write, bottom-up, all-or-nothing) so a later
@@ -782,28 +771,6 @@ class TurnDispatcher:
                     j += 1
                 if j - i > 1:
                     self._dispatch_edit_batch(
-                        llm_text, turn, ops[i:j], outcome, accumulate=results
-                    )
-                    i = j
-                    continue
-            if (
-                tool is not None
-                and tool.parallel_safe
-                and op.action in _PARALLEL_BATCH_ENGINES
-                and tool.parallel_batchable(op.action_input or {})
-            ):
-                # mode-aware 수집 (5.0.0): 같은 도구라도 배치 가능한 op
-                # (agent 는 mode:"run")만 묶는다 — 상주 모드가 섞이면 거기서
-                # 끊고 순차로.
-                j = i
-                while (
-                    j < len(ops)
-                    and ops[j].action == op.action
-                    and tool.parallel_batchable(ops[j].action_input or {})
-                ):
-                    j += 1
-                if j - i > 1:
-                    self._dispatch_parallel_batch(
                         llm_text, turn, ops[i:j], outcome, accumulate=results
                     )
                     i = j
@@ -976,66 +943,6 @@ class TurnDispatcher:
             ],
         )
 
-    def _dispatch_parallel_batch(
-        self, llm_text, turn, batch_ops, outcome, *, accumulate
-    ):
-        """Dispatch a run of ≥2 consecutive parallel_safe ops concurrently,
-        appending ONE combined result to *accumulate*.
-
-        Only ``agent`` run is wired today (the sole ``parallel_safe`` tool): each
-        op's flat input becomes one task spec → ``run_agents({tasks:[...]})``
-        → one run agent per task, each on its own thread. This is what makes
-        the prompt's "several run ops in one turn run in parallel" actually
-        true (the N-op loop is otherwise sequential).
-
-        A future read-only ``parallel_safe`` tool with no internal concurrent
-        engine would fan its ops over a thread-pool of per-op ``run()`` calls
-        in the extension slot below — not wired (no other tool opts in).
-        """
-        tool_name = batch_ops[0].action
-        # Render one action card per op (the model's flat emission, pre-wrap),
-        # matching the single-op render so the UI shows every delegate op.
-        for op in batch_ops:
-            disp = op.action_input if op.action_input is not None else {}
-            render_step(
-                "action",
-                "",
-                self.state.turn,
-                hidx=self._next_hidx(),
-                tool_name=tool_name,
-                tool_input=json.dumps(disp, ensure_ascii=False)
-                if isinstance(disp, dict)
-                else str(disp),
-            )
-
-        if tool_name == "agent":
-            # 5.0.0: agent run fan-out — 각 run op 을 일회성 task 스펙으로
-            # 조립해 병렬 엔진으로 (수집 단계가 mode:"run" 만 묶었음을 전제).
-            from agent_cli.loop.tool_bridge import ToolBridge
-
-            specs = [
-                ToolBridge._run_spec(TOOLS["agent"].strip_prefix(op.action_input or {}))
-                for op in batch_ops
-            ]
-        else:
-            # Unreachable in practice: 수집 단계가 ``_PARALLEL_BATCH_ENGINES``
-            # 로 게이트하므로 엔진 미배선 도구는 여기 오기 전에 순차 per-op
-            # 경로로 빠진다. 방어적 불변식 단언으로만 유지 — a future
-            # parallel_safe tool with no internal concurrent engine would fan
-            # its ops out over a thread-pool of per-op run() calls here, then
-            # register itself in _PARALLEL_BATCH_ENGINES.
-            raise NotImplementedError(
-                f"parallel_safe batch dispatch not wired for {tool_name!r}; "
-                "register an engine in _PARALLEL_BATCH_ENGINES after wiring."
-            )
-
-        result = self.tools._dispatch_tool_with_hooks(tool_name, {"tasks": specs})
-        # Rendered from storage by _flush_op_results' _append_observation
-        # (combined card), matching ctx + resume — no separate pre-render.
-        self.tools.accumulate_observation(
-            accumulate, tool_name, result, {"tasks": specs}
-        )
-
     def _dispatch_edit_batch(self, llm_text, turn, batch_ops, outcome, *, accumulate):
         """Apply a run of ≥2 consecutive same-path edit_file ops as ONE batch,
         appending ONE combined result to *accumulate*.
@@ -1191,19 +1098,22 @@ class TurnDispatcher:
         answered = ledger.claimed_requests(claimed)
         still_open = ledger.settle(claimed)
         debts = ledger.debts()
+        # 기다리는 회신 (v10.141.0) — 보낸 요청의 회신이 아직 안 왔다: 같은 예산으로 되돌린다
+        awaited = ledger.awaited()
         render_step(
             "final", answer, self.state.turn, requests=answered, hidx=self._next_hidx()
         )
-        nag = bool(still_open or debts) and ledger.spend()
+        nag = bool(still_open or debts or awaited) and ledger.spend()
         show_open_items(self.cfg, self.state)  # 정산·예산 소진이 띠에 바로 선다
         if nag:
             # 기록은 `_intervene` 이 한다 — 이 턴의 assistant 레코드(종결 모양)를
             # 관찰과 함께 저장한다. 따로 넣으면 같은 final 이 두 번 들어간다.
             turn.record = self._terminal_record(turn, answer, claimed, still_open)
             return self._nag_open_items(
-                llm_text, turn, claimed, still_open, debts, outcome
+                llm_text, turn, claimed, still_open, debts, outcome, awaited
             )
         answer = self._with_unanswered_notice(claimed, still_open, debts, answer)
+        answer = self._with_awaited_notice(awaited, answer)
         if self.ctx:
             self.ctx.add(self._terminal_record(turn, answer, claimed, still_open))
         return ToolResult(True, output=answer)
@@ -1220,9 +1130,9 @@ class TurnDispatcher:
 
         v10.84.0 (docs/wait/DESIGN.md §7): 깨울 길이 없는 루프(스킬 — 호출자의 턴 안
         인라인)는 첫 판정에서 거부한다 — 종전엔 광고만 안 하고 받아서 스킬 런을
-        "⏸ waiting" 결과로 끝냈다. private 주소(one-shot·하니스 작업)는 런이 곧 함수
-        호출이라 끝내지 않는다: 자기 메일함에 통지가 올 때까지 **여기서 막고**
-        런을 잇는다 — 다음 턴 경계의 흡수(`kind.intake`)가 통지를 넣는다. 장부는
+        "⏸ waiting" 결과로 끝냈다. 제자리 정책(`WAIT_BLOCK` — 하니스 작업, 기다리는 회신을
+        둔 main)은 런을 끝내지 않는다: 메일(또는 main 이면 사람 입력)이 올 때까지 **여기서
+        막고** 런을 잇는다 — 다음 턴 경계의 흡수(`kind.intake`)가 그것을 넣는다. 장부는
         넘기지 않는다(같은 런)."""
         from agent_cli.loop.kind import WAIT_BLOCK, WAIT_REFUSE
 
@@ -1287,9 +1197,9 @@ class TurnDispatcher:
             return _CONTINUE
         from agent_cli.constants import format_duration
 
-        private = policy == WAIT_BLOCK
+        in_place = policy == WAIT_BLOCK
         kept = ""
-        if not private:
+        if not in_place:
             ledger = self.state.ledger
             open_ids = ledger.request_ids()
             if self.ctx is not None:
@@ -1317,7 +1227,7 @@ class TurnDispatcher:
             success=True,
             turn=self.state.turn,
         )
-        if private:
+        if in_place:
             return self._wait_in_place(turn, mailbox)
         summary = f"⏸ waiting on {'; '.join(sources)}" + (
             f" — {reason}" if reason else ""
@@ -1325,17 +1235,52 @@ class TurnDispatcher:
         return ToolResult(True, output=summary, waiting=True)
 
     def _wait_in_place(self, turn, mailbox):
-        """private 주소의 `wait` (v10.84.0): 런을 끝내지 않고 자기 메일함에 통지가
-        올 때까지 막는다 — one-shot 의 부모는 이미 결과를 기다리며 블록돼 있으니
-        여기서 기다려도 아무도 손해가 없다. 체크인 타이머는 상주·main 처럼 걸고(메일로
-        온다), 깨면 푼다. 레지스트리가 없으면 기다릴 메일함이 없다 — 깨울 것이
-        사라진 것과 같이 다룬다."""
+        """제자리 `wait` (v10.84.0 private, v10.141.0 main): 런을 끝내지 않고 메일(회신·작업
+        통지·체크인)이 오거나, main 이면 사람 입력이 도착할 때까지 막는다 — 같은 런이라 감사
+        범위도 그 런 하나다. 체크인 타이머는 걸고(메일로 온다), 깨면 푼다. 레지스트리가
+        없으면 기다릴 메일함이 없다 — 깨울 것이 사라진 것과 같이 다룬다.
+
+        기다리는 동안 이 스레드가 끊기면(CLI Ctrl+C) 런의 정지를 세우고 그대로 던진다 — 이
+        런에 묶인 run 에이전트(`LinkedStop`)가 같이 멈춘다(v10.140.0 의 막힌 기다림과 같다)."""
+        from agent_cli.render import get_renderer
+
+        renderer = get_renderer()
+        awaited = mailbox.awaited()
+        if awaited:
+            renderer.wait_in_place(True, awaited)
         mailbox.arm_checkin()
-        why = mailbox.wait(
-            stop_event=self.state.stop_event,
-            still_waiting=lambda: bool(mailbox.wake_sources()),
-        )
-        mailbox.run_started()  # 체크인 해제 — 다음 wait 가 다시 건다
+        try:
+            why = mailbox.wait(
+                stop_event=self.state.stop_event,
+                still_waiting=lambda: bool(mailbox.wake_sources()),
+            )
+        except BaseException:
+            if self.state.stop_event is not None:
+                self.state.stop_event.set()
+            raise
+        finally:
+            mailbox.run_started()  # 체크인 해제 — 다음 wait 가 다시 건다
+            if awaited:
+                renderer.wait_in_place(False, [])
+        if why == "input":
+            left = mailbox.awaited()
+            ids = ", ".join(str(r.get("id")) for r in left)
+            still = (
+                f" — {ids} still awaited, so `wait` again when you are done"
+                if left
+                else ""
+            )
+            _append_observation(
+                self.state.messages,
+                self.ctx,
+                self.cfg.dialect,
+                turn.record,
+                "Observation: the wait was interrupted — the user wrote to you; their "
+                f"message is right below{still}.",
+                tool_name="wait",
+                success=True,
+                turn=self.state.turn,
+            )
         if why == "nothing":
             _append_observation(
                 self.state.messages,
@@ -1361,14 +1306,16 @@ class TurnDispatcher:
             else [str(r.get("id")) for r in still_open],
         )
 
-    def _nag_open_items(self, llm_text: str, turn, claimed, requests, debts, outcome):
+    def _nag_open_items(
+        self, llm_text: str, turn, claimed, requests, debts, outcome, awaited=()
+    ):
         """결과는 이미 나갔다 — 남은 항목을 닫는 순서대로 보여 주고 런을 잇는다.
 
         **붙잡기가 아니다.** 결과를 인질로 잡지 않는다(agent-ask 3판에서 틀린 자리)
         — 답은 이미 렌더되고 기록에 들어갔다. 아직 닫히지 않은 항목이 있어 런을
         닫지 않을 뿐이다. 남은 예산을 적는다: 다 쓰면 하니스가 닫는다."""
         ledger = self.state.ledger
-        n = len(requests) + len(debts)
+        n = len(requests) + len(debts) + len(awaited)
         if claimed is None and requests:
             why = (
                 "your `complete` did not say which items it closes (`answers` is "
@@ -1395,7 +1342,7 @@ class TurnDispatcher:
             llm_text,
             (
                 f"Observation: your result was delivered, but {why}:\n"
-                f"{ledger.items_lines(requests, debts)}\n"
+                f"{ledger.items_lines(requests, debts, awaited)}\n"
                 "Close them in that order — by action first, then `complete` again "
                 "with `answers` for the items it covers." + waiting_hint + " " + budget
             ),
@@ -1403,6 +1350,18 @@ class TurnDispatcher:
             outcome,
             record=turn.record,
             tool_name="complete",
+        )
+
+    def _with_awaited_notice(self, awaited, answer: str) -> str:
+        """예산이 끝난 자리 — 보낸 요청 중 회신이 아직 안 온 것을 최종 답 말미에 (v10.141.0).
+        하니스가 닫는다: 회신은 그래도 오고(받은 쪽은 계속 일한다), 오면 새 메일로 깨운다."""
+        if not awaited:
+            return answer
+        n = len(awaited)
+        return (
+            f"{answer}\n\n⏳ {n} repl{'ies' if n != 1 else 'y'} you asked for had not "
+            f"arrived when this run closed (they still come as mail):\n"
+            f"{self.state.ledger.awaited_for_notice(awaited)}"
         )
 
     def _with_unanswered_notice(self, claimed, requests, debts, answer: str) -> str:

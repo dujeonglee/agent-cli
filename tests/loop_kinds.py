@@ -36,6 +36,7 @@ def make_caller(**overrides: Any) -> Caller:
         "agent_stack": [],
         "ctx": None,
         "stop_event": None,
+        "turn": 0,
     }
     base.update(overrides)
     return Caller(**base)
@@ -52,23 +53,76 @@ def make_kind(*, ports=None, **attrs) -> LoopKind:
     return k
 
 
-def run_tasks(args: dict, caller: Caller):
-    """`agent` ``mode`` "run" 을 호스트(`run_agents`)로 돌린다 — ``args`` 는 ``{"tasks": [...]}``.
-    run 에이전트는 레지스트리의 것이라 세션 슬롯이 비어 있으면 이 호출 동안만 세션 디렉터리
-    없는 레지스트리를 둔다(실제 세션은 늘 슬롯에 레지스트리가 있다)."""
-    from agent_cli.session_slots import get_agent_registry, set_agent_registry
-    from agent_cli.subagent.agents_live import AgentRegistry
-    from agent_cli.subagent.run_agent import run_agents
+def runtime_of(caller: Caller) -> dict:
+    """호출자 → 그 실행 배선(`AgentRuntime` 사전) — tool_bridge 가 루프에서 만드는 것과 같은 키."""
+    return {
+        "binding": caller.binding,
+        "max_turns": caller.max_turns,
+        "depth": caller.depth,
+        "max_depth": caller.max_depth,
+        "session": caller.session,
+        "hooks_config": caller.hooks_config,
+        "compaction_enabled": caller.compaction_enabled,
+    }
 
-    if get_agent_registry() is not None:
-        return run_agents(args, caller)
-    set_agent_registry(AgentRegistry(None))
+
+def _spec_args(spec: dict) -> dict:
+    """옛 과제 사전(``agent`` 키) → `agent` 도구 인자(``profile`` 키)."""
+    args = {k: v for k, v in spec.items() if k != "agent"}
+    if spec.get("agent"):
+        args["profile"] = spec["agent"]
+    return args
+
+
+def run_tasks(args: dict, caller: Caller) -> list:
+    """`agent` ``mode`` "run" 여럿을 띄우고 각자의 **회신**을 기다린다 — 과제마다 `ToolResult`
+    (거부면 그 거부문, 아니면 회신 본문 — 폴백 라벨은 뗀다). 호출자는 main 이어야 한다(회신이
+    main 메일함으로 온다). 세션 슬롯에 레지스트리가 없으면 이 호출 동안만 임시 세션 디렉터리의
+    레지스트리를 둔다."""
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from agent_cli.session_slots import get_agent_registry, set_agent_registry
+    from agent_cli.subagent.agents_live import _NO_REPLY_LABEL, AgentRegistry
+    from agent_cli.subagent.run_agent import launch_run
+    from agent_cli.tools.result import ToolResult
+
+    registry = get_agent_registry()
+    tmp = None
+    if registry is None:
+        tmp = tempfile.mkdtemp(prefix="run-task-")
+        registry = AgentRegistry(Path(tmp))
+        set_agent_registry(registry)
     try:
-        return run_agents(args, caller)
+        launched = [
+            launch_run(
+                registry, _spec_args(spec), caller=caller, runtime=runtime_of(caller)
+            )
+            for spec in args["tasks"]
+        ]
+        out = []
+        for one in launched:
+            if one.error:
+                out.append(ToolResult(False, error=one.error))
+                continue
+            mail = registry.take_reply(one.rid, stop_event=caller.stop_event)
+            tm = registry.get(one.key)
+            if tm is not None and tm.worker is not None:
+                tm.worker.join(timeout=10)
+            if mail is None:
+                out.append(ToolResult(False, error="ended without a reply"))
+                continue
+            body = str(mail.get("output") or "").removeprefix(f"{_NO_REPLY_LABEL}\n")
+            out.append(ToolResult(bool(mail.get("success", True)), output=body))
+        return out
     finally:
-        set_agent_registry(None)
+        if tmp is not None:
+            registry.shutdown_all()
+            set_agent_registry(None)
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def run_task(spec: dict, caller: Caller):
-    """과제 하나 — 종전 테스트가 `OneShotLoop(spec, caller).run()` 을 부르던 자리."""
-    return run_tasks({"tasks": [spec]}, caller)
+    """과제 하나 — 그 회신(`run_tasks` 의 한 줄)."""
+    return run_tasks({"tasks": [spec]}, caller)[0]

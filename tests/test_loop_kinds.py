@@ -208,10 +208,10 @@ class TestPrivateLoop:
         reg = AgentRegistry(None)
         set_agent_registry(reg)
         try:
-            k = PrivateLoop("run:t9")
-            assert k.ports.owner == "run:t9" and k.ports.wakeable()
+            k = PrivateLoop("harness:t9")
+            assert k.ports.owner == "harness:t9" and k.ports.wakeable()
             reg.deliver(
-                "run:t9",
+                "harness:t9",
                 mail={"kind": "job", "output": "job #1 finished", "success": True},
                 text="job #1 finished",
                 author="harness",
@@ -219,14 +219,14 @@ class TestPrivateLoop:
             )
             assert [m["record"]["tool"] for m in k.ports.mailbox.take()] == ["job"]
             reg.deliver(
-                "run:t9",
+                "harness:t9",
                 mail={"kind": "job", "output": "late", "success": True},
                 text="late",
                 author="harness",
                 expects_reply=False,
             )
             k.release()
-            assert reg.take_mail("run:t9") == []  # 메일함이 버려졌다
+            assert reg.take_mail("harness:t9") == []  # 메일함이 버려졌다
         finally:
             set_agent_registry(None)
 
@@ -239,14 +239,14 @@ class TestKindsStateTheirPolicy:
     같은 답을 유도한다(종전 엔진의 플래그 추측과 같은 규칙, 한 곳에)."""
 
     def _kinds(self, tmp_path):
-        from types import SimpleNamespace
 
         from agent_cli.context.manager import ContextManager
         from agent_cli.harness.jobs import HarnessLoop
         from agent_cli.runtime import MainLoop
         from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
-        from agent_cli.subagent.run_agent import RunAgentLoop
+        from agent_cli.subagent.agents_live import AgentInstance, AgentRegistry
+        from agent_cli.subagent.resident_loop import ResidentLoop
         from tests.binding_support import make_binding
 
         reg = object()
@@ -270,12 +270,21 @@ class TestKindsStateTheirPolicy:
         skill = SkillLoop(
             Skill(name="s", description="", prompt_template="x"), "", caller
         )
-        one = RunAgentLoop(
-            {"task": "t"},
-            caller,
-            tm=SimpleNamespace(key="agt-t"),
-            run_dir=tmp_path / "run_task_x",
-            caller_task="",
+        # run 에이전트 — v10.141.0 부터 상주와 같은 종류(`ResidentLoop`), 값 ends_after_task
+        one = ResidentLoop(
+            AgentInstance(
+                "agt-t",
+                profile_name="",
+                role_prompt="",
+                allowed_tools=None,
+                model="",
+                hooks_config=None,
+                context_mode="none",
+                home_dir=tmp_path / "agents" / "agt-t",
+                ends_after_task=True,
+            ),
+            AgentRegistry(tmp_path),
+            disp="anon",
         )
         harness = HarnessLoop(
             "auditor",
@@ -295,7 +304,8 @@ class TestKindsStateTheirPolicy:
         main, skill, one, harness, _ = self._kinds(tmp_path)
         assert main.wait_policy() == WAIT_END_RUN
         assert skill.wait_policy() == WAIT_REFUSE  # 호출자의 턴 안 인라인
-        assert one.wait_policy() == WAIT_BLOCK and harness.wait_policy() == WAIT_BLOCK
+        # run 에이전트는 상주와 같다 — 런을 끝내고 받은편지함이 깨운다 (v10.141.0)
+        assert one.wait_policy() == WAIT_END_RUN and harness.wait_policy() == WAIT_BLOCK
         # 맨 종류: 깨울 길 없음 → 거부, private 주소 → 제자리, 그 외 → 런 종료
         assert make_kind().wait_policy() == WAIT_REFUSE
         assert (
@@ -303,7 +313,7 @@ class TestKindsStateTheirPolicy:
             == WAIT_END_RUN
         )
         assert (
-            make_kind(ports=make_ports(owner="run:x", inbox=list)).wait_policy()
+            make_kind(ports=make_ports(owner="harness:x", inbox=list)).wait_policy()
             == WAIT_BLOCK
         )
 
@@ -328,15 +338,15 @@ class TestKindsStateTheirPolicy:
         assert [i["mail"]["output"] for i in bare.intake()] == ["late reply"]
 
     def test_prompt_profile(self, tmp_path):
-        main, skill, one, harness, reg = self._kinds(tmp_path)
+        main, skill, one, harness, _ = self._kinds(tmp_path)
         p = main.prompt_profile()
         assert p.role == "" and p.ask_blocking and not p.reports_to_caller
         s = skill.prompt_profile()
-        assert (
-            s.agent_registry is reg and s.reports_to_caller
-        )  # main 의 일 — `agent` 전부
-        o = one.prompt_profile()
-        assert o.agent_registry is None and o.ask_blocking and not o.peer_channel
+        assert s.reports_to_caller
+        o = (
+            one.prompt_profile()
+        )  # run 에이전트 = 에이전트: 비차단 ask, `message` 동료 채널
+        assert not o.ask_blocking and o.peer_channel and o.reports_to_caller
         assert harness.prompt_profile().role == "body"
         assert skill.renders() is False and one.renders() and main.renders()
         assert main.tracks_run_authors and not skill.tracks_run_authors

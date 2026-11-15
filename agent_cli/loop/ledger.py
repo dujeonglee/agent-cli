@@ -5,6 +5,10 @@
 - P3 (v10.56.0): **장부 하나 · 정책 하나 · 순서 하나.**
 - P4 (v10.119.0): 사람에게도 보인다 — :meth:`Ledger.snapshot` 이 화면용 사본을
   만든다(웹 📋 띠·status.json·CLI 한 줄). 꼬리는 그대로다(모델 입력 불변, §15).
+- v10.141.0 (docs/agent-engine/DESIGN.md §3): **기다리는 회신** — 이 루프가 보낸 요청
+  (`agent` run 의 과제·`message` 요청) 중 회신이 아직 오지 않은 것. 모델이 닫지 않는다
+  (회신이 오면 닫힌다) — 남아 있으면 ``complete`` 를 되돌리고(같은 예산), 예산이 다하면
+  결과 말미에 "아직 안 온 회신" 으로 적힌다.
 
   - 꼬리 블록 하나 ``## Open Items`` — 행동으로 닫는 것(회신 빚 ``reply``) 먼저,
     ``complete`` 의 ``answers`` 로 닫는 것(사람 요청·메일) 마지막. (v10.77.0:
@@ -14,8 +18,9 @@
     런당 1회(결과 미배달)·요청 독촉 요청당 1회·빚 독촉 런 공유 3회(비사용자 런은
     결과 미배달 거부)로 셋이 달랐다.
 
-출처: 사람 요청과 메일은 이 런이 소유한다(``{"id", "author", "text"}``). 빚은
-레지스트리가 소유하고 여기서는 질문 포트로 읽는 뷰다(`constants.open_debts`).
+출처: 사람 요청과 메일은 이 런이 소유한다(``{"id", "author", "text"}``). 빚과 기다리는
+회신은 레지스트리가 소유하고 여기서는 질문 포트로 읽는 뷰다(`constants.open_debts`·
+:meth:`Ledger.awaited`).
 id 는 전부 ``<접두>-<토큰>``(`item_ids`) — 접두가 닫는 법을 말한다.
 """
 
@@ -78,6 +83,16 @@ def _debt_line(d: dict) -> str:
     return f'     [{did}] ({who}) reply owed: "{text}"  → `reply` with `id` "{did}"'
 
 
+def _awaited_line(r: dict) -> str:
+    """기다리는 회신 한 줄 — 닫는 것은 모델의 행동이 아니라 그 회신의 도착이다."""
+    who = str(r.get("from") or "").split(":", 1)[-1]
+    return f'     [{r.get("id")}] ({who}) reply awaited: "{_head(r.get("text"))}"'
+
+
+#: 기다리는 회신 절의 머리 — 닫는 길이 도착이라 할 수 있는 일은 `wait` 하나다.
+_AWAITED_HEAD = "by arrival — `wait`; each reply closes its item when it comes"
+
+
 def _request_line(r: dict) -> str:
     who = f" ({r['author']})" if r.get("author") else ""
     return f'     [{r.get("id")}]{who} "{_head(r.get("text"))}"'
@@ -135,6 +150,15 @@ class Ledger:
 
         return open_debts(self._port)
 
+    def awaited(self) -> list[dict]:
+        """보내 놓고 아직 받지 못한 회신 ``[{"id", "from", "text"}]`` — 빚과 같은 질문 포트로
+        읽는다. 포트가 없거나 깨지면 빈 목록."""
+        fn = getattr(self._port, "awaited", None) if self._port is not None else None
+        try:
+            return list(fn()) if callable(fn) else []
+        except Exception:
+            return []
+
     # ── 정산 ──────────────────────────────────────────────
 
     def settle(self, claimed: set[str] | None) -> list[dict]:
@@ -164,9 +188,22 @@ class Ledger:
         같은 머리말**, 모양만 다르다. ``hidx`` 는 언제나 ``None`` 으로 둔다: 장부는
         history 를 모르고, 원문 레코드의 서수를 아는 렌더러가 채운다.
 
-        항목 순서는 꼬리와 같다 — 행동으로 닫는 빚 먼저, `complete` 로 닫는 요청
-        마지막. 빚의 ``turns`` 는 포트가 연 때를 모르므로 ``None``."""
+        항목 순서: 기다리는 회신(v10.141.0 — 띠의 머리가 "Waiting for N reply" 로 말한다),
+        행동으로 닫는 빚, `complete` 로 닫는 요청 마지막. 빚의 ``turns`` 는 포트가 연 때를
+        모르므로 ``None``."""
         items: list[dict] = []
+        for r in self.awaited():
+            items.append(
+                {
+                    "id": str(r.get("id") or ""),
+                    "source": "awaiting",
+                    "who": str(r.get("from") or "").split(":", 1)[-1],
+                    "head": _head(r.get("text")),
+                    "closer": "",  # 회신의 도착이 닫는다
+                    "turns": None,
+                    "hidx": None,
+                }
+            )
         for d in self.debts():
             did = str(d.get("id") or "")
             if not did:
@@ -203,14 +240,20 @@ class Ledger:
 
     # ── 꼬리 ──────────────────────────────────────────────
 
-    def items_lines(self, requests: list[dict], debts: list[dict]) -> str:
-        """열린 항목을 닫는 순서대로 — 꼬리와 되돌림 관찰이 같은 줄을 쓴다."""
+    def items_lines(
+        self, requests: list[dict], debts: list[dict], awaited: list[dict] = ()
+    ) -> str:
+        """열린 항목을 닫는 순서대로 — 꼬리와 되돌림 관찰이 같은 줄을 쓴다. 기다리는 회신이
+        있으면 행동(1) 다음 둘째 자리이고 `complete` 가 셋째로 밀린다."""
         out: list[str] = []
         if debts:
             out.append("  1. by action")
             out += [_debt_line(d) for d in debts]
+        if awaited:
+            out.append(f"  2. {_AWAITED_HEAD}")
+            out += [_awaited_line(r) for r in awaited]
         if requests:
-            out.append("  2. by `complete` (last)")
+            out.append(f"  {3 if awaited else 2}. by `complete` (last)")
             out += [_request_line(r) for r in requests]
             out.append(complete_line([str(r.get("id")) for r in requests]))
             out.append(RESULT_SHAPE_LINE)
@@ -222,10 +265,20 @@ class Ledger:
         요구가 된다). ``can_wait`` (v10.67.1): 이 루프에 `wait` 도구가 있으면 꼬리말에
         "못 닫는다면 wait" 한 줄."""
         debts = self.debts()
-        if not self.requests and not debts:
+        awaited = self.awaited()
+        if not self.requests and not debts and not awaited:
             return ""
         tail = f"{_TAIL}\n{_TAIL_WAIT}" if can_wait else _TAIL
-        return f"{_HEAD}\n{self.items_lines(self.requests, debts)}\n{tail}"
+        lines = self.items_lines(self.requests, debts, awaited)
+        return f"{_HEAD}\n{lines}\n{tail}"
+
+    def awaited_for_notice(self, awaited: list[dict]) -> str:
+        """최종 답 말미의 "아직 안 온 회신" 목록 — 사람이 읽는 줄."""
+        return "\n".join(
+            f"   [{r.get('id')}] ({str(r.get('from') or '').split(':', 1)[-1]})"
+            f' "{_head(r.get("text"))}"'
+            for r in awaited
+        )
 
     def lines_for_notice(self, requests: list[dict]) -> str:
         """최종 답 말미의 미답 목록 — 사람이 읽는 줄."""

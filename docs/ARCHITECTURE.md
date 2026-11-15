@@ -196,16 +196,15 @@ agent_cli/
 │   ├── cron.py              5필드 cron 식 엔진(의존성 0)
 │   ├── registry.py          `ScheduleRegistry` — 예약 소유·발화 스레드, `schedules.json`, 놓친 발화는 질문으로
 │   └── view.py              예약의 화면용 뷰(web API·SSE 공용)
-├── subagent/                서브에이전트 — run·상주 에이전트, 레지스트리 하나 (docs/agent-engine/DESIGN.md · docs/teammate/DESIGN.md)
+├── subagent/                에이전트 — run·spawn 이 한 루프·한 레지스트리 (docs/agent-engine/DESIGN.md · docs/teammate/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── runner.py            종류들이 공유하는 두 단계 — 역할 오버레이(`apply_role_overrides`)·ctx 생성
 │   ├── profiles.py          에이전트 프로파일 카탈로그 로더(`agents/` 하나)
-│   ├── run_agent.py         run 에이전트 — 호스트 `run_agents`(레지스트리에 올리고 회신을 막힌 채 받음)·루프 종류 `RunAgentLoop`
-│   ├── run_result.py        P1 결과 어댑터 — run 의 회신을 `STATUS: …`·`[Task i]`·result.md 로 (P2 에서 지운다)
+│   ├── run_agent.py         `agent` run 의 진입 — 거부 판정 → `spawn(ends_after_task)` → 과제 요청(`launch_run`·`start_run`), 묶인 정지 `LinkedStop`, run 의 훅
 │   ├── delegation_checks.py 에이전트를 띄우기 전 거부 판정(빈 과제·provider·순환·깊이) — run·spawn 공통
-│   ├── resident_loop.py     상주 에이전트의 루프 종류 `ResidentLoop`
-│   ├── agents_live.py       `AgentRegistry`·`AgentInstance` — run·상주 에이전트의 명단·상한·스레드·agents.json, spawn·메일함·질문 포트·회신 배달
-│   └── report.py            서브에이전트 결과 포장 `DelegateResult`·런 디렉터리 이름·본문 역추출
+│   ├── resident_loop.py     에이전트(run·spawn)의 루프 종류 `ResidentLoop`
+│   ├── agents_live.py       `AgentRegistry`·`AgentInstance` — 명단·상한·스레드·agents.json, spawn·`message` 라우팅·메일함·질문 포트·회신 배달·보낸 쪽 기록(기다리는 회신)
+│   └── report.py            세션 하위 디렉터리 이름(`generate_subdir_name` — 스킬 런)
 ├── harness/                 하니스가 자기 몫으로 돌리는 일회성 작업 — 팀원이 아니다 (docs/auditor/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── jobs.py              `HarnessJobs` 실행기와 `HarnessLoop`(private 종류), 프로파일은 `agents/harness/`
@@ -487,8 +486,7 @@ class ParsedAction:            # 단수 투영 — thought·action·action_input
 | 종류 | 자리 | 무엇 |
 |------|------|------|
 | `MainLoop` | `runtime.py` | 세션의 main — 펌프가 요청마다 `run(start)` |
-| `ResidentLoop` | `subagent/resident_loop.py` | 상주 에이전트 — 받은편지함 묶음마다 |
-| `RunAgentLoop` | `subagent/run_agent.py` | `agent` `run` 의 run 에이전트 — 과제 하나 (`PrivateLoop`) |
+| `ResidentLoop` | `subagent/resident_loop.py` | 에이전트(run·spawn) — 받은편지함 묶음마다. run 은 값 `ends_after_task` 로 과제 회신 뒤 내려온다 |
 | `SkillLoop` | `skills/executor.py` | `run_skill`·`/skill` |
 | `HarnessLoop` | `harness/jobs.py` | 하니스 작업(감사자) (`PrivateLoop`) |
 
@@ -627,13 +625,13 @@ assistant 턴 하나는 세 형태를 지난다 — (A) 모델이 낸 원문 · 
 ├── compaction.json          ← 압축 상태(요약·파일 목록·dynamic_start_index)
 ├── turns.jsonl · failures.jsonl · verbose.jsonl   ← §7.6·§7.7
 ├── memory.jsonl             ← 세션 메모리
-├── agents/<key>/            ← 상주 에이전트
-├── run_<name>_<hash>_<ts>/  ← run 에이전트의 집 (history.jsonl + result.md, 중첩 가능)
+├── agents/<key>/            ← 에이전트(run·spawn) — history.jsonl·conversation.jsonl·replies/
 ├── skill_<name>_<hash>_<ts>/← 스킬 런
 └── harness/<job>/<label>/   ← 하니스 작업 (세션 대화가 아니다)
 ```
 
 fork 모드 서브에이전트는 부모 history.jsonl 을 복사해 이어 쓴다(`ContextManager.fork_history_to`).
+옛 세션에는 run 에이전트의 `run_<name>_<hash>_<ts>/` 도 있다(읽기는 같다 — agents.json 의 `home`).
 
 ---
 
@@ -659,11 +657,11 @@ fork 모드 서브에이전트는 부모 history.jsonl 을 복사해 이어 쓴�
 | `history` | `tools/history.py` | 지연 설명 — 세션 기록을 SQL 로 |
 | `memory` | `tools/memory_tool.py` | 지연 설명 |
 | `ask` | `tools/virtual.py` | 가상 · `ctx` |
-| `message` | `tools/virtual.py` | 가상 · 지연 설명 · `message_handler` |
+| `message` | `tools/virtual.py` | 가상 · 지연 설명 · `message_handler` — main·에이전트 모두(요청·통지) |
 | `reply` | `tools/virtual.py` | 가상 · 지연 설명 · `questions` |
-| `agent` | `tools/agent_tool.py` | 지연 설명 — 실행은 `subagent/agents_live.py`(상주)·`subagent/run_agent.py`(`run`) |
+| `agent` | `tools/agent_tool.py` | 지연 설명 — 모드 run·spawn·status·resume·kill, 실행은 `subagent/agents_live.py::tool_agent`(run 은 `subagent/run_agent.py`) |
 | `run_skill` | `tools/virtual.py` | 가상 · `skills` — 실행은 `loop/skill_invoke.py` |
-| `wait` | `tools/virtual.py` | 가상 · `wake` — 깨울 것이 있을 때만 끝내지 않고 기다린다 |
+| `wait` | `tools/virtual.py` | 가상 · `wake` · 강제 탑재 — 깨울 것이 있을 때만. 기다리는 회신이 있는 main 은 제자리에서 |
 | `tool_help` | `tools/tool_help.py` | `deferred` — 지연 도구가 남은 루프에만 |
 | `complete` | `tools/virtual.py` | 가상 · 항상 포함(`_ALWAYS_INCLUDE`) |
 
@@ -685,20 +683,16 @@ frontmatter: description · allowed-tools · model · hooks · disable-model-inv
 하니스 작업 프로파일(`agents/harness/`)은 이 카탈로그 밖이다(`harness/jobs.py`).
 op 에 준 `tools`·`model` 이 프로파일 값보다 우선한다(`subagent/runner.apply_role_overrides`).
 
-run 의 결과(`subagent/report.py::_format_delegate_output`, 어댑터 `subagent/run_result.py` 가 `STATUS: success|error` 로 감싼다):
-1. 서브에이전트 출력(없으면 `(subagent returned no result)`)
-2. `[Subagent activity]` — 턴별 액션 요약
-3. `[Last actions before failure]` — 실패 시
-4. `[Duration: Ns] [Subagent used N iterations]`
+run 은 레지스트리의 에이전트다(값 `ends_after_task`, docs/agent-engine/DESIGN.md). `agent` 의 모든 모드가 `tool_agent`
+(`subagent/agents_live.py`)의 모드 표로 가고, run 은 `subagent/run_agent.py` 가 거부 판정(`subagent/delegation_checks.py`) →
+`AgentRegistry.spawn(ends_after_task=True)` → 과제 요청(`request`, 요청자 = 부른 루프의 주소) 순으로 띄우고 **바로 돌아온다**.
+결과는 그 에이전트의 회신이다 — 명시 `reply`, 없으면 런 끝 폴백(라벨 붙은 런 요약). 회신이 나가면 워커가 내려온다(dead, 채널은 회색).
+깊이·순환은 호출자(`loop.kind.Caller`)의 것으로 센다 — 에이전트가 띄운 에이전트는 한 단계 깊다(`AgentInstance.caller_runtime`).
+run 의 정지는 부른 런의 정지에 묶인다(`LinkedStop`); spawn 의 정지는 평생 것(kill·세션 종료)이다.
 
-`DelegateResult` 필드: `output`, `iterations`(루프가 실제로 돈 턴 수), `duration_secs`, `activity_log`, `last_actions`.
-run 디렉터리(`run_<name>_<hash>_<ts>/`)에 history.jsonl 과 result.md 가 남는다.
-
-run 은 레지스트리에 오르는 에이전트다(`ends_after_task`, docs/agent-engine/DESIGN.md). `run_agents`(`subagent/run_agent.py`)가 과제마다
-거부 판정(`subagent/delegation_checks.py`) → `AgentRegistry.start_run_agent`(명단·상한·agents.json·로스터, 자기 스레드 `agent-<key>`) →
-회신을 막힌 채 기다림 → 결과 어댑터(`subagent/run_result.py`) 순으로 돈다. 런은 호출자의 stop Event 를 따른다. 레지스트리는 세션 슬롯에서 얻는다
-(서브루프 포트의 `agent_registry=None` 은 상주 모드 권한의 경계라 별개다). 모델 대면 명단(`## Live Agents`·`status`·주소 해석·중복 이름)에는
-run 에이전트가 없고 상한 계산에만 든다. 화면은 상주와 같은 채널(웹)·에이전트 줄(CLI)이며, resume 은 run 에이전트를 되살리지 않는다(회색 채널만 남는다).
+보낸 쪽 기록(`AgentRegistry._sent`)이 장부의 "기다리는 회신"(`Ledger.awaited`)이다 — 요청이 받은편지함에 들어갈 때 적히고 받는 쪽의
+빚이 끝날 때(갚음·폴백·버림) 지워진다. 남아 있으면 `complete` 가 되돌아오고, main 의 `wait` 는 런을 끝내지 않고 제자리에서
+회신·사람 입력(`InputQueue.wait_for_arrival`, run 은 터미널 줄도)·체크인을 기다린다(`MainLoop.wait_policy`, `dispatch._wait_in_place`).
 
 ### 6.3 run_skill 결과
 

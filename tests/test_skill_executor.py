@@ -272,41 +272,19 @@ class TestSkillRegistryInheritance:
             # ops in the skill body hit no registry and no-op).
             assert mock_loop.call_args.args[0].ports.agent_registry is reg
 
-    def test_skill_subloop_exposes_spawn_but_subagent_does_not(self, caps):
-        """Parity: the agent tool advertises spawn when a registry is present
-        (skill / main) and stays run-only when it is absent (sub-agent)."""
+    def test_skill_and_subagent_see_the_same_agent_surface(self, caps):
+        """v10.141.0: 축소판이 없다 — 레지스트리 유무와 무관하게 agent 도구는 같은 표면
+        (spawn 값이 보인다). 깊이 상한만 도구를 뺀다."""
         from agent_cli.prompts.system_prompt import build_system_prompt_sections
 
-        def _txt(secs):
-            return "\n".join(b for _n, b in secs)
-
-        with_reg = _txt(
-            build_system_prompt_sections(
-                caps, active_tools=["read_file", "agent"], agent_registry=MagicMock()
+        text = "\n".join(
+            b
+            for _n, b in build_system_prompt_sections(
+                caps, active_tools=["read_file", "agent"]
             )
         )
-        without = _txt(
-            build_system_prompt_sections(
-                caps, active_tools=["read_file", "agent"], agent_registry=None
-            )
-        )
-        # registry present → full agent tool (spawn enum value visible)
-        assert "spawn" in with_reg
-        # v10.110.0: agent 는 지연 도구 — 프롬프트에는 뼈대만이라 축소는 `mode` 값으로
-        # 보이고("run" 하나), SUBLOOP 설명("run ... only here")은 `tool_help` 전문에 있다.
-        from agent_cli.dialects import get as get_dialect
-        from agent_cli.prompts.system_prompt import tool_guide_text
-
-        tools = without.split("## Available Tools", 1)[1].split("- complete:")[0]
-        assert '"mode": "string, required — \\"run\\""' in tools
-        assert "spawn" not in tools
-        full = tool_guide_text(
-            "agent",
-            ["read_file", "agent"],
-            get_dialect("json_fc"),
-            has_agent_registry=False,
-        )
-        assert "only here" in full.lower()
+        tools = text.split("## Available Tools", 1)[1].split("- complete:")[0]
+        assert "spawn" in tools and '\\"run\\"' in tools
 
 
 class TestSkillSpawnExecution:

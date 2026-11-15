@@ -355,7 +355,7 @@ waiting on job #1` 로 받았다(v10.73 벤치 4건). 원인은 one-shot 에 자
 
 **설계 (사용자 결정, 2026-10-30).** 루프는 `complete` 로만 반환하고, `wait` 는 메시지 큐를 기다린다.
 
-- **소유자 주소 넷** (`constants.RUN_OWNER_PREFIX`·`HARNESS_OWNER_PREFIX`·`is_private_owner`): `main`(메일함, 펌프가 읽음) ·
+- **소유자 주소 넷** (`constants` 의 주소 접두·`HARNESS_OWNER_PREFIX`·`is_private_owner`): `main`(메일함, 펌프가 읽음) ·
   `agent:<key>`(상주 받은편지함, 워커가 읽음) · **private** `run:<run_dir>`(one-shot)·`harness:<job>`(하니스 작업) — 프로세스
   수명의 메일함을 그 루프 자신이 턴 경계(`absorb_inbox`)와 `wait` 에서 읽는다. 하니스 작업은 종전에도 자기 주소를 썼으나
   `deliver` 가 "unroutable" 로 떨궜다 — 같은 메일함으로 라우팅된다.

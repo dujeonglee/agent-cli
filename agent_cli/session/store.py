@@ -8,9 +8,9 @@ import these names instead of spelling them):
   {project}/.agent-cli/sessions/{session_id}/
     session.jsonl          # single-line metadata (id, workspace, updated_at, title?)
     history.jsonl          # main conversation (managed by ContextManager)
-    agents/<key>/          # resident teammates (AGENTS_DIR)
-    run_*/  skill_*/       # one-shot delegates / skill runs, nestable
-                           #   (RUN_PREFIX, SKILL_PREFIX)
+    agents/<key>/          # every agent, run and spawn (AGENTS_DIR)
+    skill_*/               # skill runs, nestable (SKILL_PREFIX); sessions from
+                           #   v10.140.0 and before also hold run_*/ dirs
     harness/<job>/<label>/ # harness jobs (HARNESS_DIR) — NOT the session's
                            #   conversation: the harness ran them, the model
                            #   did not, so ``conversation_history_files``
@@ -31,10 +31,8 @@ from agent_cli.paths import sessions_dir
 _SESSIONS_DIR = sessions_dir()
 
 # ── 세션 디렉토리 배치 (v10.42.0) ──────────────────────────────────────
-#: 상주 팀원의 자리 ``agents/<key>/`` (subagent/agents_live 가 만든다).
+#: 에이전트(run·spawn)의 자리 ``agents/<key>/`` (subagent/agents_live 가 만든다).
 AGENTS_DIR = "agents"
-#: 일회성 delegate 런 ``run_<name>_<hash>_<ts>/`` (subagent/report 가 이름 짓는다).
-RUN_PREFIX = "run"
 #: 스킬 런 ``skill_<name>_<hash>_<ts>/`` (loop/skill_invoke 가 이름 짓는다).
 SKILL_PREFIX = "skill"
 #: 하니스 작업 ``harness/<job>/<label>/`` (harness/jobs 가 만든다).

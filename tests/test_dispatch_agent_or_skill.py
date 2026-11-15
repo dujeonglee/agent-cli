@@ -423,9 +423,8 @@ class TestConsoleDispatchOutput:
         assert seen == [(None, False)]
 
     def test_every_branch_reports_to_the_surface(self):
-        """종료 코드는 표면이 정한다 — 어댑터는 분기마다 결과를 한 번 알린다."""
-        from agent_cli.subagent.report import extract_result_body
-
+        """종료 코드는 표면이 정한다 — 어댑터는 분기마다 결과를 한 번 알린다. `@agent` 의
+        답은 회신 본문 그대로다(v10.141.0 — 결과 = 회신)."""
         seen = []
         out = _ConsoleDispatchOutput(
             report=lambda answer, ok: seen.append((answer, ok))
@@ -445,7 +444,7 @@ class TestConsoleDispatchOutput:
             (None, True),
             (None, False),
             (None, False),
-            (extract_result_body("body"), True),
+            ("body", True),
             (None, False),
             ("done", True),
             (None, False),

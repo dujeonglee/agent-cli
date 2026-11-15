@@ -149,27 +149,33 @@ class TestOwnerIsDecidedByTheKind:
         with pytest.raises(TypeError):
             Caller(owner="agent:p")  # type: ignore[call-arg]
 
-    def test_skill_inherits_and_oneshot_owns_and_harness_is_labelled(self, tmp_path):
-        from types import SimpleNamespace
-
+    def test_skill_inherits_and_run_agent_owns_and_harness_is_labelled(self, tmp_path):
         from agent_cli.harness.jobs import HarnessLoop
         from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
-        from agent_cli.subagent.run_agent import RunAgentLoop
+        from agent_cli.subagent.agents_live import AgentInstance, AgentRegistry
+        from agent_cli.subagent.resident_loop import ResidentLoop
         from tests.binding_support import make_binding
         from tests.loop_kinds import make_caller
 
         caller = make_caller(owner="agent:p", binding=make_binding(model="m"))
         skill = Skill(name="s", description="", prompt_template="x")
         assert SkillLoop(skill, "", caller).owner == "agent:p"
-        one = RunAgentLoop(
-            {"task": "t", "agent": "w"},
-            caller,
-            tm=SimpleNamespace(key="agt-w"),
-            run_dir=tmp_path / "run_w_x",
-            caller_task="",
+        # run 에이전트 (v10.141.0): 다른 에이전트와 같은 `agent:<key>`, 깊이는 띄운 쪽 +1
+        tm = AgentInstance(
+            "agt-w",
+            profile_name="w",
+            role_prompt="",
+            allowed_tools=None,
+            model="",
+            hooks_config=None,
+            context_mode="none",
+            home_dir=tmp_path / "agents" / "agt-w",
+            ends_after_task=True,
+            caller_runtime={"depth": 1, "max_depth": 3},
         )
-        assert one.owner == "run:run_w_x" and one.depth == 1
+        one = ResidentLoop(tm, AgentRegistry(tmp_path), disp="w")
+        assert one.owner == "agent:agt-w" and one.depth == 2
         from agent_cli.context.manager import ContextManager
 
         harness = HarnessLoop(

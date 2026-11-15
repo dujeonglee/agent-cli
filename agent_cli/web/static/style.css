@@ -1033,6 +1033,7 @@ footer {
 .oi-closer { flex: none; color: var(--muted); font: 11px "Jetendard", ui-monospace, monospace; white-space: nowrap; }
 .oi-turns { flex: none; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .oi-item.oi-closed { background: var(--ok-soft-bg); color: var(--ok); }
+.oi-wait { padding: 3px 8px; color: var(--muted); font-size: 12px; font-style: italic; }
 .oi-state { flex: none; margin-left: auto; font-size: 11px; font-weight: 700; white-space: nowrap; }
 @media (max-width: 560px) { .oi-closer, .oi-turns { display: none; } }
 /* 접기 (v10.122.0, §15.7) — 접힌 목록은 3행이라 상한이 필요 없고, 펼친 목록만 화면의 35%

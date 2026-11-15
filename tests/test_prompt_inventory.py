@@ -52,10 +52,11 @@ class TestScenariosDiffer:
         full = inv["dialects"]["json_fc"]["scenarios"]["main"]
         assert narrowed["system_tokens"] < full["system_tokens"]
 
-    def test_subagent_is_told_run_only(self, inv):
+    def test_subagent_has_the_same_agent_surface(self, inv):
+        """v10.141.0: 서브루프 축소판(run 만)은 없다 — 서브에이전트도 run·spawn 을 본다."""
         sub = inv["dialects"]["json_fc"]["scenarios"]["subagent"]
         text = "\n".join(s["text"] for s in sub["sections"])
-        assert '"mode": "spawn"' not in text
+        assert '"mode": "spawn"' in text and '"mode": "run"' in text
 
     def test_server_parsed_dialect_carries_function_schemas(self, inv):
         native = inv["dialects"]["native_fc"]
@@ -178,12 +179,12 @@ class TestAgentSamples:
             "live_agents_tail",
             "live_agents_peer_roster",
             "agent_spawn_result",
-            "agent_request_result",
+            "agent_run_result",
             "agent_resume_result",
             "agent_kill_result",
             "agent_status_extras",
             "agent_spawn_refused_duplicate",
-            "agent_modes_refused_in_subloop",
+            "agent_refused_no_registry",
         } <= ids
 
     def test_tail_sample_carries_every_sentence(self, inv):

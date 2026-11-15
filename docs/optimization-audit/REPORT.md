@@ -8,7 +8,7 @@
 
 | # | 발견 | 위치 | 검증 | 상태 |
 |---|---|---|---|---|
-| **A1** | **delegate activity-log 조용한 기능 상실** — `_extract_activity_log`/`_extract_last_actions` 가 `json.loads(msg["content"])` 로 파싱하나, wire-format 리팩터(423608e) 이후 assistant 레코드는 `action`/`ops` 최상위 필드 + `content` 키 부재 → 매번 skip. `[Subagent activity]`·`iterations`·`[Last actions before failure]` 항상 빈 값 | delegate.py:111-221, 486-494 | ✅ | ✅ v4.35.1 |
+| **A1** | **delegate activity-log 조용한 기능 상실** — 활동 로그·마지막 동작 추출기가 `json.loads(msg["content"])` 로 파싱하나, wire-format 리팩터(423608e) 이후 assistant 레코드는 `action`/`ops` 최상위 필드 + `content` 키 부재 → 매번 skip. `[Subagent activity]`·`iterations`·`[Last actions before failure]` 항상 빈 값 | delegate.py:111-221, 486-494 | ✅ | ✅ v4.35.1 |
 | **A2** | **fetch 가 flat-native 아님** — `fetch_url`/`fetch_depth` prefix 잔존. "모든 builtin flat-native"(base.py:240, registry.py:94, 로드맵 ★완료) 문서와 모순. `claims`/`infer_action` 이 fetch 에만 live | fetch.py:250-263 | ✅ | ✅ v4.38.0 |
 | A3 | `_build_review_observation` 프로덕션 dead (테스트만 호출) | loop.py:2472-2520 | ✅ | ✅ v4.35.1 |
 | A4 | *(A1 파생, 분석 중 추가 발견)* `_format_tool_calls_for_review` 도 top-level `action` 만 읽어 멀티-op `ops` 레코드 누락 — 현 기본 포맷에서 review "YOUR TOOL CALLS" 섹션 항상 빈 값 | loop.py:2453 | ✅ | ✅ v4.35.1 |

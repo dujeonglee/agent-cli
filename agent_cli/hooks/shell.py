@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 
@@ -55,11 +55,17 @@ _cached_hooks: dict[str, list[HookMatcher]] | None = None
 
 def _parse_hooks_file(hooks_path: Path) -> dict[str, list[HookMatcher]]:
     """hooks.json 한 파일 → {event: [HookMatcher]} (파싱 관용은 종전 동일)."""
-    result: dict[str, list[HookMatcher]] = {}
     try:
         data = json.loads(hooks_path.read_text(encoding="utf-8"))
     except Exception:
-        return result
+        return {}
+    return hooks_from_json(data)
+
+
+def hooks_from_json(data) -> dict[str, list[HookMatcher]]:
+    """hooks.json 모양의 사전 → {event: [HookMatcher]} — 모양이 깨진 항목은 건너뛴다.
+    `hooks_to_json` 의 역이기도 하다(agents.json 에 남긴 에이전트의 훅, v10.141.0)."""
+    result: dict[str, list[HookMatcher]] = {}
     if not isinstance(data, dict):
         return result
 
@@ -88,6 +94,20 @@ def _parse_hooks_file(hooks_path: Path) -> dict[str, list[HookMatcher]]:
         if matchers:
             result[event_name] = matchers
     return result
+
+
+def hooks_to_json(config: dict[str, list[HookMatcher]] | None) -> dict | None:
+    """{event: [HookMatcher]} → hooks.json 모양의 사전(JSON 에 쓸 수 있다) — 에이전트의 훅을
+    agents.json 에 남길 때 (v10.141.0; 종전엔 객체를 그대로 넘겨 그 저장이 `TypeError` 로 깨졌다).
+    이미 사전 모양인 항목은 그대로 둔다."""
+    if not config:
+        return None
+    out: dict = {}
+    for event, matchers in config.items():
+        out[event] = [
+            asdict(m) if isinstance(m, HookMatcher) else m for m in (matchers or [])
+        ]
+    return out
 
 
 def load_hooks(use_cache: bool = True) -> dict[str, list[HookMatcher]]:

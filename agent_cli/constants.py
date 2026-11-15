@@ -353,13 +353,11 @@ AUDITOR_NAME = "auditor"
 
 # ── 소유자 주소 (v10.84.0, docs/wait/DESIGN.md §7) ─────────────────────────
 # 잡·모니터·체크인·깨우기 판정은 전부 소유자 주소로 돈다. "main" 은 메일함(펌프가
-# 읽음), "agent:<key>" 는 상주의 받은편지함(워커가 읽음). 그 밖의 둘은 **private
-# 주소** — 프로세스 수명의 메일함을 그 루프 자신이 턴 경계와 `wait` 에서 읽는다:
-# one-shot 서브에이전트(종전엔 부모 주소를 빌려 써서 자기 잡의 통지가 부모에게
-# 갔다)와 하니스 작업(주소만 있고 메일함이 없어 통지가 버려졌다).
-RUN_OWNER_PREFIX = "run:"
+# 읽음), "agent:<key>" 는 에이전트(run·spawn)의 받은편지함(워커가 읽음). 그 밖의 하나는
+# **private 주소** — 하니스 작업이 프로세스 수명의 메일함을 자기 턴 경계와 `wait` 에서
+# 읽는다(종전엔 주소만 있고 메일함이 없어 통지가 버려졌다).
 HARNESS_OWNER_PREFIX = "harness:"
-_PRIVATE_OWNER_PREFIXES = (RUN_OWNER_PREFIX, HARNESS_OWNER_PREFIX)
+_PRIVATE_OWNER_PREFIXES = (HARNESS_OWNER_PREFIX,)
 
 
 #: 하니스 통지(잡·모니터·체크인)의 레코드 계약 — 한 표 (v10.84.0, 사용자 결정 C):

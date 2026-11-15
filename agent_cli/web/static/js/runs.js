@@ -325,8 +325,9 @@ export function ovSyncChannels() {
 }
 // `labelHtml` 은 **이스케이프된 HTML** — 흐린 key 병기(`ovAgentLabelHtml`)를
 // 담기 위해 평문이 아니다. 호출부가 이스케이프 책임을 진다.
-// `run` — run 에이전트(과제 하나): 끝나면 지운 줄이 아니라 회색 칩이고, ✕/↻ 가 없다
-// (에이전트별 정지는 P3). 채널은 읽기 전용이다(`ovApplyChannelInput`).
+// `run` — run 에이전트(과제 하나): 끝나면 지운 줄이 아니라 회색 칩이고 ↻ 가 없다(끝난 일은
+// 되살릴 기억이 아니다). 일하는 동안은 ✕ 가 있고 채널에 사람이 직접 쓸 수 있다 — 상주와 같은
+// 길(v10.141.0, 설계 §5 시안 C). 채널 머리의 ■ 런 정지는 P3.
 function ovChanChip(key, labelHtml, state, active, run) {
   var dead = state === "dead";
   // main 은 상태 dot 없음(항상 LLM). agent 는 상태색 dot.
@@ -340,10 +341,13 @@ function ovChanChip(key, labelHtml, state, active, run) {
   // 알린다 (비동기라 질문 중에도 에이전트는 busy 거나 idle 이다).
   var badges = "";
   var ctrl = "";
-  if (key !== "main" && !run) {
-    ctrl = dead
-      ? '<button type="button" class="ov-ch-ctl" data-act="resume" title="Revive">↻</button>'
-      : '<button type="button" class="ov-ch-ctl" data-act="kill" title="Kill">✕</button>';
+  if (key !== "main") {
+    if (!dead) {
+      ctrl = '<button type="button" class="ov-ch-ctl" data-act="kill" title="Kill">✕</button>';
+    } else if (!run) {
+      // 끝난 run 은 되살릴 기억이 아니라 끝난 일이다 — ↻ 는 상주에게만
+      ctrl = '<button type="button" class="ov-ch-ctl" data-act="resume" title="Revive">↻</button>';
+    }
   }
   if (run) badges = '<span class="ov-ch-run">run</span>';
   var cls = run ? (dead ? " run done" : " run") : dead ? " dead" : "";
@@ -354,26 +358,23 @@ function ovChanChip(key, labelHtml, state, active, run) {
     labelHtml + "</span>" + badges + ctrl + "</span>"
   );
 }
+function ovActiveAgent() {
+  if (ovActiveChannel === "main") return null;
+  return ovRoster.filter(function (x) { return x.key === ovActiveChannel; })[0] || null;
+}
 function ovActiveDead() {
-  if (ovActiveChannel === "main") return false;
-  var t = ovRoster.filter(function (x) { return x.key === ovActiveChannel; })[0];
+  var t = ovActiveAgent();
   return !!(t && t.state === "dead");
 }
-// run 에이전트 채널은 읽기 전용이다 — 과제 하나만 받는다(살아 있어도).
-function ovActiveRun() {
-  if (ovActiveChannel === "main") return false;
-  var t = ovRoster.filter(function (x) { return x.key === ovActiveChannel; })[0];
-  return !!(t && t.ends_after_task);
-}
-// 입력창 placeholder/disabled 를 현재 채널(+busy·dead·run)에 맞게. 입력창은 chat 전용.
+// 입력창 placeholder/disabled 를 현재 채널(+busy·dead)에 맞게. 입력창은 chat 전용.
+// run 채널도 일하는 동안은 열려 있다 — 사람이 직접 지시를 바꾼다(설계 §5 시안 C).
 export function ovApplyChannelInput() {
   if (!$input) return;
   var dead = ovActiveDead();
-  var run = ovActiveRun();
-  $input.disabled = dead || run;
-  if ($send) $send.disabled = dead || run;
-  if (run) {
-    $input.placeholder = "This run agent takes no messages — it ends with its task";
+  $input.disabled = dead;
+  if ($send) $send.disabled = dead;
+  if (dead && ovActiveAgent().ends_after_task) {
+    $input.placeholder = "This run agent finished its task — pick another channel";
   } else if (dead) {
     $input.placeholder = "✕ This agent has exited — pick another channel or revive it with ↻";
   } else if (ovActiveChannel !== "main") {

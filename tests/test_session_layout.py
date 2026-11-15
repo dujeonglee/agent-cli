@@ -18,7 +18,6 @@ from agent_cli.session.store import (
     AGENTS_DIR,
     HARNESS_DIR,
     HISTORY_NAME,
-    RUN_PREFIX,
     SKILL_PREFIX,
     conversation_history_files,
     harness_run_dir,
@@ -37,16 +36,17 @@ def _history(path: Path, text: str) -> Path:
 
 
 def _session(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
-    """실제 모양의 세션: main, 팀원, delegate(중첩 포함), 스킬, 하니스 작업."""
+    """실제 모양의 세션: main, 에이전트, 옛 세션의 run 디렉터리(중첩 포함 — v10.140.0 까지),
+    스킬, 하니스 작업."""
     root = tmp_path / "1700000000"
     files = {
         "main": _history(root, "main q"),
         "agent": _history(root / AGENTS_DIR / "agt-1", "agent q"),
-        "run": _history(root / f"{RUN_PREFIX}_task_ab12_20260101T000000000", "run q"),
+        "run": _history(root / "run_task_ab12_20260101T000000000", "run q"),
         "nested": _history(
             root
-            / f"{RUN_PREFIX}_task_ab12_20260101T000000000"
-            / f"{RUN_PREFIX}_inner_cd34_20260101T000001000",
+            / "run_task_ab12_20260101T000000000"
+            / "run_inner_cd34_20260101T000001000",
             "nested q",
         ),
         "skill": _history(root / f"{SKILL_PREFIX}_plan_ef56_20260101T000002000", "s"),
@@ -57,12 +57,11 @@ def _session(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
 
 class TestLayoutIsDeclaredOnce:
     def test_makers_use_the_declared_names(self, tmp_path):
-        """팀원 자리·delegate/스킬 접두·하니스 자리 — 만드는 쪽 넷이 같은 상수를 쓴다."""
+        """에이전트 자리·스킬 접두·하니스 자리 — 만드는 쪽이 같은 상수를 쓴다."""
         from agent_cli.skills import executor as skill_executor
-        from agent_cli.subagent import agents_live, report
+        from agent_cli.subagent import agents_live
 
         assert agents_live.AGENTS_DIR is AGENTS_DIR
-        assert report._generate_run_dir_name("x").startswith(f"{RUN_PREFIX}_x_")
         assert "SKILL_PREFIX" in Path(skill_executor.__file__).read_text(
             encoding="utf-8"
         )

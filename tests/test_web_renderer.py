@@ -3120,12 +3120,12 @@ class TestCtxDirWiring:
     def test_run_agent_scope_is_its_channel_and_names_its_dir(
         self, tmp_path, monkeypatch
     ):
-        """run 에이전트의 스코프는 그 키의 채널이고(``channel``), ``ctx_dir`` 은 실제로
-        쓴 ``run_…`` 디렉터리다(결과 파일 자리) — 사이드카의 이름과 디스크가 어긋나면
-        resume 재생이 빈 채널을 그린다. 부른 자리는 ``caller_task`` (main = "")."""
+        """run 에이전트의 스코프는 그 키의 채널이고(``channel``), ``ctx_dir`` 은 다른 에이전트와
+        같은 ``agents/<key>`` 다(v10.141.0 — 결과 파일 자리가 따로 없다). 부른 자리는
+        ``caller_task`` (main = "")."""
         from agent_cli.context.manager import ContextManager
         from agent_cli.tools.result import ToolResult
-        from tests.loop_kinds import run_tasks
+        from tests.loop_kinds import run_task
 
         r = WebRenderer()
         monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
@@ -3134,21 +3134,21 @@ class TestCtxDirWiring:
             lambda kind, start, ctx: ToolResult(True, output="done"),
         )
         parent = ContextManager(tmp_path, max_context_tokens=10000)
-        out = run_tasks(
-            {"tasks": [{"task": "t", "agent": "code-analyst"}]},
+        out = run_task(
+            {"task": "t", "agent": "code-analyst"},
             make_caller(
                 ctx=parent,
                 binding=make_binding(provider=object(), capabilities=self._caps()),
             ),
         )
+        assert out.success and out.output == "done"
         start = next(dict(d) for e, d in r.hub.events if e == "scope_start")
-        assert start["ctx_dir"].startswith("run_code-analyst_")
-        assert out.artifact == start["ctx_dir"] + "/"
-        assert (tmp_path / start["ctx_dir"] / "result.md").exists()
-        assert start["channel"] == start["task_id"].split("#")[0]
+        key = start["task_id"].split("#")[0]
+        assert start["channel"] == key
+        assert start["ctx_dir"] == f"agents/{key}"
         assert start["run"] is True and start["caller_task"] == ""
 
-    def test_parallel_run_agents_each_have_their_own_dir(self, tmp_path, monkeypatch):
+    def test_parallel_runs_each_have_their_own_channel(self, tmp_path, monkeypatch):
         from agent_cli.context.manager import ContextManager
         from agent_cli.tools.result import ToolResult
         from tests.loop_kinds import run_tasks
@@ -3168,9 +3168,7 @@ class TestCtxDirWiring:
             ),
         )
         starts = [dict(d) for e, d in r.hub.events if e == "scope_start"]
-        dirs = {s["ctx_dir"] for s in starts}
-        assert len(dirs) == 2  # 에이전트마다 고유 dir
-        assert {p.name for p in tmp_path.glob("run_task_*")} == dirs
+        assert len({s["ctx_dir"] for s in starts}) == 2  # 에이전트마다 고유 집
         assert len({s["channel"] for s in starts}) == 2
 
 

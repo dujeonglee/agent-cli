@@ -101,7 +101,7 @@ def test_run_agent_runs_no_tool_after_the_callers_stop(tmp_path):
     stop = threading.Event()
     target = tmp_path / "run.txt"
     p = _StopThenCall(stop.set, _write(target))
-    out = run_tasks(
+    (out,) = run_tasks(
         {"tasks": [{"task": "go"}]},
         make_caller(
             ctx=ContextManager(tmp_path / "s", max_context_tokens=20_000),
@@ -110,7 +110,8 @@ def test_run_agent_runs_no_tool_after_the_callers_stop(tmp_path):
         ),
     )
     assert not target.exists()
-    assert not out.success and "[Subagent activity]" not in out.error
+    # 정지된 run 은 회신하지 않는다(빚진 상대 알림은 P3) — 호출자도 같은 정지로 멈췄다
+    assert not out.success
     assert p.calls == 1
 
 

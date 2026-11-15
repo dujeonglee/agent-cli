@@ -425,7 +425,6 @@ def tool_view(
     name: str,
     *,
     description_overrides: dict[str, str] | None = None,
-    parameter_overrides: dict[str, dict] | None = None,
     inline_guides: dict[str, str] | None = None,
     full: bool = False,
 ) -> tuple[str, dict, str]:
@@ -439,7 +438,7 @@ def tool_view(
     ``full=True`` 는 지연을 무시한 전문(`tool_help` 의 결과)."""
     tool = TOOL_SCHEMAS[name]
     description = (description_overrides or {}).get(name, tool.description)
-    params = (parameter_overrides or {}).get(name, tool.parameters)
+    params = tool.parameters
     guide = (inline_guides or {}).get(name, "")
     if tool.deferred and not full:
         description, guide = tool.summary, ""
@@ -452,7 +451,6 @@ def render_tool_block(
     *,
     dialect=None,
     description_overrides: dict[str, str] | None = None,
-    parameter_overrides: dict[str, dict] | None = None,
     inline_guides: dict[str, str] | None = None,
     full: bool = False,
 ) -> tuple[str, str]:
@@ -462,7 +460,6 @@ def render_tool_block(
     description, params_schema, guide = tool_view(
         name,
         description_overrides=description_overrides,
-        parameter_overrides=parameter_overrides,
         inline_guides=inline_guides,
         full=full,
     )
@@ -486,7 +483,6 @@ def get_tool_descriptions(
     inline_guides: dict[str, str] | None = None,
     dialect=None,
     description_overrides: dict[str, str] | None = None,
-    parameter_overrides: dict[str, dict] | None = None,
 ) -> str:
     """Generate tool description text for system prompt.
 
@@ -520,7 +516,6 @@ def get_tool_descriptions(
             name,
             dialect=dialect,
             description_overrides=description_overrides,
-            parameter_overrides=parameter_overrides,
             inline_guides=inline_guides,
         )
         roster.append(line)

@@ -262,14 +262,22 @@ class Mailbox:
     ``registry`` 는 None 일 수 있다(레지스트리 없는 세션) — 그때 각 메서드는 레지스트리가 없을
     때 엔진이 하던 값을 돌려준다(0·[]·None·"nothing"·아무것도 안 함). 그래서 포트 값은 언제나
     Mailbox 다: 미연결이 아니라 "연결됐고 저쪽에 아무도 없음". 종류가 포트를 만들 때 한 번
-    정해진다. ``take`` 는 턴 경계에 흡수할 받은편지함 — 있는 루프(상주·private)만 준다."""
+    정해진다. ``take`` 는 턴 경계에 흡수할 받은편지함 — 있는 루프(에이전트·private)만 준다.
+    ``wait_input`` 은 ``(timeout) -> bool`` — 사람 입력이 도착했는가(꺼내지 않는다). main 만
+    준다: 기다리는 회신을 둔 제자리 대기(`wait`)를 사람의 말이 깨운다 (v10.141.0)."""
 
     def __init__(
-        self, registry: AgentRegistry | None, owner: str, *, take=None
+        self,
+        registry: AgentRegistry | None,
+        owner: str,
+        *,
+        take=None,
+        wait_input=None,
     ) -> None:
         self._registry = registry
         self.owner = owner
         self._take = take
+        self._wait_input = wait_input
 
     @property
     def has_inbox(self) -> bool:
@@ -295,12 +303,22 @@ class Mailbox:
             self._registry.arm_checkin(self.owner)
 
     def wait(self, *, stop_event, still_waiting) -> str:
-        """메일함에 통지가 올 때까지 막는다 — 레지스트리가 없으면 기다릴 메일함이 없다."""
+        """메일함에 통지가 오거나 사람 입력이 도착할 때까지 막는다 — 깬 이유를 돌려준다
+        (`AgentRegistry.wait_mail`). 레지스트리가 없으면 기다릴 메일함이 없다."""
         if self._registry is None:
             return "nothing"
         return self._registry.wait_mail(
-            self.owner, stop_event=stop_event, still_waiting=still_waiting
+            self.owner,
+            stop_event=stop_event,
+            still_waiting=still_waiting,
+            wait_input=self._wait_input,
         )
+
+    def awaited(self) -> list[dict]:
+        """이 주소가 보내 놓고 아직 받지 못한 회신 (v10.141.0) — `AgentRegistry.awaited_replies`."""
+        if self._registry is None:
+            return []
+        return self._registry.awaited_replies(self.owner)
 
     def next_checkin_s(self) -> int | None:
         if self._registry is None:
