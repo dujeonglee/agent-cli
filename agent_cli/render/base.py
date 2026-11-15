@@ -850,7 +850,16 @@ class Renderer(ABC):
         performing the actual blocking read; its return value is passed
         through, its exceptions (EOF/abort) propagate to the caller."""
         with interactive_lock, self._prompt_display_guard():
-            return read()
+            self._reads_waiting = getattr(self, "_reads_waiting", 0) + 1
+            try:
+                return read()
+            finally:
+                self._reads_waiting -= 1
+
+    def is_awaiting_input(self) -> bool:
+        """`ask`·확인 프롬프트가 사람의 입력을 기다리는 중인가 — `_guarded_read` 안 (v10.142.0). CLI 의 Ctrl+C
+        처리기(`ctrl_c.stop_for_ctrl_c`)가 그때는 종전대로 입력을 끊는다. 읽기만 한다. web 은 자기 것(sticky)."""
+        return getattr(self, "_reads_waiting", 0) > 0
 
     @abstractmethod
     def confirm(

@@ -543,6 +543,9 @@ class AgentInstance:
         #: 키) — 빚진 상대에게 갈 회신을 정한다. 비면 사람의 정지가 아니다(세션 종료 — 빚은 버린다).
         self.stop_cause = ""
         self.stop_by = ""
+        #: 이 정지의 회신이 main 을 깨우는가 — "Stop everything" 만 거짓(사용자 결정, v10.142.0): 그 회신은
+        #: main 메일함에 쌓였다가 사람의 다음 입력 런에 함께 배달된다(`_send_stop_reply` 의 ``wakes_main``).
+        self.stop_reply_wakes_main = True
         #: 이 정지로 회신을 보낸 상대 ``[(받는 이, 요청 id)]`` — 화면 한 줄이 모아 말한다.
         self.stop_notified: list[tuple[str, str]] = []
         #: 띄운 쪽 주소(``"main"``·``"agent:<key>"``) — ✕ 가 그 에이전트가 띄운 run 을 함께 멈춘다.
@@ -1232,13 +1235,20 @@ class AgentRegistry:
         with self._cv:
             return bool(self._pending)
 
+    def has_mail_that_wakes_main(self) -> bool:
+        """main 메일함에 main 을 깨울 메일이 있는가 — ``wakes_main`` 이 거짓인 메일("Stop everything" 의 정지
+        회신, v10.142.0)은 빼고. 깨우기(`MailWaker`)와 `run` 의 정지 판정이 본다. 읽기만 한다."""
+        with self._cv:
+            return any(m.get("wakes_main", True) for m in self._pending)
+
     def has_active_work(self) -> bool:
         """P5: CLI run 큐 펌프의 정지 판정 — 미배달 회신·처리 중(busy)·
         큐잉된 요청이 하나라도 있으면 True.
 
         비동기 질문은 아무도 막지 않으므로(§3) 여기서 뺄 상태가 없다 —
-        질문을 건 에이전트도 계속 돌고, 답은 새 항목으로 온다."""
-        if self.has_pending_replies():
+        질문을 건 에이전트도 계속 돌고, 답은 새 항목으로 온다. main 을 깨우지 않는 메일("Stop everything"
+        의 정지 회신)은 일이 아니다 — 남아 있어도 `run` 은 끝나고 그 메일은 agents.json 미러에 남는다."""
+        if self.has_mail_that_wakes_main():
             return True
         # 죽은 에이전트의 받은편지함은 세지 않는다 — 런 도중 끝난(■·✕) 워커는 끝내라는 표식(`_SHUTDOWN`)을
         # 꺼내지 않고 나간다; 세면 `run` 이 끝나지 않는다 (v10.142.0)
@@ -2691,6 +2701,7 @@ class AgentRegistry:
             return f'unknown agent "{key}"'
         if by and tm.state != "dead" and not tm.stop_event.is_set():
             tm.stop_cause, tm.stop_by = agent_stop.REMOVED, by
+            tm.stop_reply_wakes_main = True
         self._end_agent(tm, join=True)
         # 5.13: kill=창 정리 — 표면(replay 버퍼+라이브 창)만 비우고
         # conversation.jsonl 은 남긴다(mode:"resume" 시 _replay_conversation
@@ -2725,16 +2736,18 @@ class AgentRegistry:
 
     # ── 사람의 정지 (v10.142.0, docs/agent-engine/DESIGN.md §2.3 — 규칙은 `agent_stop`) ──
 
-    def stop_run(self, key: str, *, by: str = "user") -> str:
+    def stop_run(self, key: str, *, by: str = "user", wakes_main: bool = True) -> str:
         """■ 런 정지 — 지금 런만 끝내고 상주 에이전트는 남는다(대기 요청은 다음 차례). run 에이전트는
         맡은 일 하나가 수명이라 내려온다(채널은 회색으로 남는다 — ✕ 와 달리 창을 비우지 않는다).
         런은 도구 실행 직전 검사(v10.140.0)에서 멈추고, 런의 정리가 빚진 상대에게 회신한다.
+        ``wakes_main`` 이 거짓이면("Stop everything") main 앞 회신이 main 을 깨우지 않는다.
         성공 시 빈 문자열, 아니면 사유."""
         tm = self._agents.get(key)
         if tm is None:
             return f'unknown agent "{key}"'
         if tm.state == "dead" or tm.stop_event.is_set():
             return f'agent "{key}" has already ended'
+        tm.stop_reply_wakes_main = wakes_main
         if tm.ends_after_task:
             tm.stop_cause, tm.stop_by = agent_stop.STOPPED, by
             self._end_agent(tm, join=False)
@@ -2761,10 +2774,15 @@ class AgentRegistry:
             and (tm.state == "busy" or tm.ends_after_task)
         ]
 
-    def stop_all_runs(self, *, by: str = "user") -> list[str]:
+    def stop_all_runs(self, *, by: str = "user", wakes_main: bool = True) -> list[str]:
         """모든 에이전트의 지금 런을 멈춘다(`working_agents` 마다 ■) — 멈춘 키 목록. main 은 건드리지
-        않는다(웹 "Stop all agents"·``/stop all``·Ctrl+C 두 번의 에이전트 몫)."""
-        return [k for k in self.working_agents() if not self.stop_run(k, by=by)]
+        않는다(웹 "Stop all agents"·``/stop all``·Ctrl+C 두 번의 에이전트 몫). "Stop everything" 은
+        ``wakes_main=False`` — 그 회신들이 main 을 다시 깨우지 않는다(사용자 결정)."""
+        return [
+            k
+            for k in self.working_agents()
+            if not self.stop_run(k, by=by, wakes_main=wakes_main)
+        ]
 
     def answer_debts_as_stopped(
         self, tm: AgentInstance, *, activity: list[str], notes: str
@@ -2835,6 +2853,8 @@ class AgentRegistry:
                     "expects_reply": False,
                     "re": rid,
                     "mark": mark,
+                    # "Stop everything" 의 회신은 main 을 깨우지 않는다 — 다음 사람 입력 런에 함께 배달된다
+                    **({} if tm.stop_reply_wakes_main else {"wakes_main": False}),
                 }
             )
             self._log_outbound(tm.key, text, to="main")
@@ -2859,7 +2879,11 @@ class AgentRegistry:
             me = f"agent:{tm.key}"
             for sub in list(self._agents.values()):
                 if sub.parent == me and sub.ends_after_task:
-                    self.stop_run(sub.key, by=tm.stop_by or "user")
+                    self.stop_run(
+                        sub.key,
+                        by=tm.stop_by or "user",
+                        wakes_main=tm.stop_reply_wakes_main,
+                    )
         self.report_stop(tm, kept=kept)
 
     def report_stop(self, tm: AgentInstance, *, kept: int) -> None:

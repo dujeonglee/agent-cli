@@ -2173,6 +2173,7 @@ def _install_ctrl_c(surface, agent_registry):
             main_stop=surface.bound_stop(),
             registry=agent_registry,
             say=say,
+            awaiting_input=get_renderer().is_awaiting_input(),
         )
 
     return signal.signal(signal.SIGINT, on_sigint)

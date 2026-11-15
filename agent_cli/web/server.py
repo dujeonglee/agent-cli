@@ -39,6 +39,7 @@ learns its ``conn_id`` from the ``identity`` event for the viewer-roster
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -1631,10 +1632,15 @@ def create_app(server: WebServer) -> FastAPI:
             )
         agents: list[str] = []
         registry = server.agent_registry
+        # main 을 먼저 — "all"(Stop everything)의 정지 회신은 main 을 깨우지 않는다(사용자 결정): 쌓였다가
+        # 사람의 다음 입력 런에 함께 배달된다. "agents" 의 회신은 계속 도는 main 을 깨운다.
+        stopped = server.trigger_stop() if scope != "agents" else False
         if scope != "main" and registry is not None:
             loop = asyncio.get_running_loop()
-            agents = await loop.run_in_executor(None, registry.stop_all_runs)
-        stopped = server.trigger_stop() if scope != "agents" else False
+            agents = await loop.run_in_executor(
+                None,
+                functools.partial(registry.stop_all_runs, wakes_main=scope != "all"),
+            )
         return JSONResponse({"stopped": stopped, "agents": agents})
 
     return app

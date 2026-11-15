@@ -122,6 +122,8 @@ class TestStopButton:
         more.click()
         page.locator('#stop-menu [data-scope="all"]').click()
         assert _wait(lambda: stop.is_set() and tm.state == "dead")
+        # Stop everything 의 정지 회신은 main 을 깨우지 않는다 — 다음 입력 런에 함께 (사용자 결정)
+        assert _wait(lambda: [m.get("wakes_main") for m in live._pending] == [False])
         stack.server.set_stop_handle(None)
 
     def test_main_idle_agents_working_is_send_and_stop_all(self, stack, page, live):

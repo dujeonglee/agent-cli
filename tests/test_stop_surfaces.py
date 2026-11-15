@@ -52,8 +52,8 @@ class FakeRegistry:
     def working_agents(self):
         return list(self.working)
 
-    def stop_all_runs(self, by="user"):
-        self.calls.append(("all", by))
+    def stop_all_runs(self, by="user", wakes_main=True):
+        self.calls.append(("all", by, wakes_main))
         out, self.working = self.working, []
         return out
 
@@ -91,7 +91,8 @@ class TestStopForCtrlC:
     def test_double_press_stops_main_and_every_agent(self):
         said, reg, stop = [], FakeRegistry(["agt-3", "agt-5"]), threading.Event()
         stop_for_ctrl_c(ALL, main_stop=stop, registry=reg, say=said.append)
-        assert stop.is_set() and reg.calls == [("all", "user")]
+        # "전부" — 그 정지 회신은 main 을 깨우지 않는다 (사용자 결정)
+        assert stop.is_set() and reg.calls == [("all", "user", False)]
         assert said == ["■ stopping everything — main and 2 working agents"]
 
     def test_main_idle_agents_working(self):
@@ -99,13 +100,39 @@ class TestStopForCtrlC:
         stop_for_ctrl_c(MAIN, main_stop=None, registry=reg, say=said.append)
         assert said == [MAIN_IDLE] and reg.calls == []
         stop_for_ctrl_c(ALL, main_stop=None, registry=reg, say=said.append)
-        assert reg.calls == [("all", "user")]
+        assert reg.calls == [("all", "user", False)]
 
     def test_nothing_to_stop_exits_as_before(self):
         with pytest.raises(KeyboardInterrupt):
             stop_for_ctrl_c(MAIN, main_stop=None, registry=FakeRegistry(), say=print)
         with pytest.raises(KeyboardInterrupt):
             stop_for_ctrl_c(MAIN, main_stop=None, registry=None, say=print)
+
+    def test_a_waiting_prompt_is_interrupted_as_before(self):
+        """`ask`·확인 프롬프트가 입력을 기다리는 중이면 종전대로 KeyboardInterrupt — 아무것도 멈추지 않는다."""
+        reg, stop = FakeRegistry(["agt-3"]), threading.Event()
+        for scope in (MAIN, ALL):
+            with pytest.raises(KeyboardInterrupt):
+                stop_for_ctrl_c(
+                    scope, main_stop=stop, registry=reg, say=print, awaiting_input=True
+                )
+        assert not stop.is_set() and reg.calls == []
+
+    def test_renderer_reports_a_waiting_prompt_only_during_the_read(self):
+        import io
+
+        from rich.console import Console
+
+        from agent_cli.render.minimal import MinimalRenderer
+
+        r = MinimalRenderer(Console(file=io.StringIO()))
+        seen = []
+        assert not r.is_awaiting_input()
+        r._guarded_read(lambda: seen.append(r.is_awaiting_input()))
+        assert seen == [True] and not r.is_awaiting_input()
+        with pytest.raises(EOFError):
+            r._guarded_read(lambda: (_ for _ in ()).throw(EOFError()))
+        assert not r.is_awaiting_input()
 
     def test_press_while_main_is_already_stopping_is_the_escape(self):
         stop = threading.Event()
@@ -182,6 +209,8 @@ class TestWebStop:
         reg.working = ["agt-5"]
         r = client.post("/api/stop?token=t", json={"scope": "all"})
         assert r.json() == {"stopped": True, "agents": ["agt-5"]} and ev.is_set()
+        # Stop all agents 의 회신은 main 을 깨우고, Stop everything 의 것은 깨우지 않는다
+        assert reg.calls == [("all", "user", True), ("all", "user", False)]
 
     def test_default_scope_is_main_and_bad_scope_is_400(self, web):
         server, client = web
@@ -280,3 +309,92 @@ class TestCliStopLine:
         assert stop_summary("removed by main", [], 2) == (
             "removed by main — nobody was waiting on it; 2 queued requests kept"
         )
+
+
+class TestStopEverythingDoesNotWakeMain:
+    """사용자 결정(2026-11-15): "Stop everything" 의 정지 회신은 main 을 깨우지 않고 쌓였다가 사람의 다음 입력
+    런에 함께 배달된다. "Stop all agents"·채널 ■/✕ 의 회신은 지금처럼 깨운다."""
+
+    def _registry_with_waker(self, s):
+        from agent_cli.runtime import wire_agent_mail
+
+        wakes: list = []
+        waker, _r, _a = wire_agent_mail(
+            s["reg"], enqueue_wake=lambda conn, text: wakes.append(text)
+        )
+        return waker, wakes
+
+    def test_everything_leaves_main_asleep_and_the_next_input_run_reads_the_replies(
+        self,
+        session,  # noqa: F811
+    ):
+        stop = threading.Event()
+        box: dict = {}
+
+        def stop_everything():
+            reg = box["s"]["reg"]
+            stop.set()  # main 먼저 (서버·Ctrl+C 와 같은 순서)
+            assert reg.stop_all_runs(wakes_main=False)
+
+        p = Provider(
+            {
+                "MAIN": [
+                    call("agent", mode="run", task="TASK-E find callers"),
+                    call("wait"),
+                    complete_all("read the stopped reply"),
+                ],
+                "TASK-E": [slow_step(i) for i in range(400)],
+            }
+        )
+        s = session(p)
+        box["s"] = s
+        waker, wakes = self._registry_with_waker(s)
+        threading.Thread(
+            target=lambda: (
+                wait_until(lambda: main_waits_in_place(s["reg"])),
+                stop_everything(),
+            ),
+            daemon=True,
+        ).start()
+        result = s["run"](stop_event=stop)
+        assert not result.success  # main 의 런은 interrupt
+        (tm,) = s["reg"]._agents.values()
+        assert wait_until(lambda: tm.state == "dead")
+        assert wait_until(lambda: len(s["reg"]._pending) == 1)
+        (mail,) = s["reg"]._pending
+        assert mail["wakes_main"] is False and mail["mark"] == "stopped by user"
+        # main 런 0회 — 깨우기가 하나도 서지 않는다
+        waker.mark_idle()
+        waker.on_run_end()
+        assert wakes == []
+        assert not s["reg"].has_mail_that_wakes_main()
+        assert not s["reg"].has_active_work()  # `run` 은 조용해지면 끝난다
+        # 끝나도 회신은 agents.json 미러에 남는다
+        import json as _json
+
+        saved = _json.loads((s["reg"].session_dir / "agents.json").read_text())
+        assert [m.get("wakes_main") for m in saved["pending"]] == [False]
+        assert s["reg"].awaited_replies("main") == []  # 기다리던 r- 는 닫혔다
+        # 사람의 다음 입력 런이 함께 읽는다
+        calls_before = len(p.calls["MAIN"])
+        assert s["run"](text="MAIN what happened?").success
+        first = p.calls["MAIN"][calls_before]
+        text = "\n".join(str(m.get("content") or "") for m in first)
+        assert "· stopped by user ──" in text and "Do not redo this work" in text
+
+    def test_stop_all_agents_wakes_main(self, session):  # noqa: F811
+        p = Provider(
+            {
+                "MAIN": [call("agent", mode="run", task="TASK-W find callers")],
+                "TASK-W": [slow_step(i) for i in range(400)],
+            }
+        )
+        s = session(p)
+        waker, wakes = self._registry_with_waker(s)
+        assert s["run"]().success is not None
+        (tm,) = s["reg"]._agents.values()
+        waker.mark_idle()  # main 은 한가하다
+        assert wait_until(lambda: tm.state == "busy")
+        assert s["reg"].stop_all_runs() == [tm.key]
+        assert wait_until(lambda: wakes == [waker.WAKE_TEXT])
+        assert s["reg"].has_mail_that_wakes_main()
