@@ -21,6 +21,8 @@ _WEB_HELP_BEFORE = (
     "  /sh <command>            Run a shell command directly (LLM bypass)\n"
     "  /skills                  List available skills\n"
     "  /<skill> <args>          Invoke a skill directly\n"
+    # v10.142.0: /stop 이 더해졌다 — 그 한 줄 말고는 표로 옮기기 전과 같다
+    "  /stop <agent>|all        Stop an agent's run (all: every working agent)\n"
     "  @agents                  List available agents\n"
     "  @<agent> <task>          Delegate a task to an agent\n"
     "\n"

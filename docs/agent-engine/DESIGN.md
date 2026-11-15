@@ -6,16 +6,19 @@
 참이면 런이 `complete` 로 끝날 때 내려온다(채널은 회색으로 남는다), 거짓이면 다음 메시지를 기다린다.
 결과는 요청자에게 가는 **회신**(`reply`)이고, 요청은 누구든 `message` 로 보낸다.
 
-이 문서는 지금 구조(P1·P2)와 남은 단계(P3)를 적는다.
+이 문서는 지금 구조(P1·P2·P3)를 적는다.
 
 ## 1. 결정 (사용자)
 
 - 엔진은 하나로 합친다 — 주소만 통일하는 안은 접었다.
 - 결과는 요청자에게 가는 회신이다. 기다리는 회신이 남으면 `complete` 할 수 없다.
-- 정지는 명시적 UI 로, run·spawn 공통이다. 멈추면 빚진 상대 모두에게 알린다(P3).
+- 정지는 명시적 UI 로, run·spawn 공통이다. 멈추면 빚진 상대 모두에게 알린다 — 조용히 버리지 않는다.
 - 상한은 run 도 똑같이 센다. 화면은 모두 채널이다.
 - main 은 기다리는 회신이 있는 동안 제자리에서 기다리되, 사용자 입력에 깨어 그 일을 하고 회신은 계속 기다린다.
-- 방 ■ 는 main 만 멈춘다. 자식은 채널 ■ 또는 "모두 정지"(P3).
+- 방 ■ 는 main 만 멈춘다. 자식은 채널 ■ 또는 "모두 정지". 정지 버튼은 입력창 옆 하나다 — main·에이전트가 함께
+  일하면 Stop ▾ 로 범위를 고르고, main 이 한가하고 에이전트만 일하면 채널 줄 끝의 ■ all.
+- ✕ 제거는 그 에이전트가 띄운 run 을 함께 멈추고(회신 받을 곳이 없다), 하위 상주는 남긴다.
+- CLI Ctrl+C 한 번은 main 만, 2초 안에 두 번은 전부.
 - P1 의 결과 어댑터는 회귀 방지로 두었다가 P2 에서 가드 테스트와 함께 지웠다 — 최종 디자인은 단일 모듈이다.
 - 에이전트 사이의 말은 `message` / `reply` 한 쌍이다.
 
@@ -82,17 +85,66 @@ tool_bridge._invoke_agent ─▶ agents_live.tool_agent(args, registry, caller=C
   동사이고, run 에이전트에게는 그게 곧 수명 끝이다(`_run_ended_by_wait` 가 아니면 `_come_down`; 턴 상한·오류로 끝난 런도
   끝이다). `wait` 로 끝난 런(자기 하위 run 을 기다림)은 내려오지 않고 깨어 계속하다 `complete` 때 내려온다. 런 중간에
   `reply` 를 먼저 보내도 내려오지 않는다. 회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도
-  남으면 런 끝 폴백이 런 요약으로 회신한다. 정지(■·kill)로 끊긴 run 의 수명은 P1 그대로(내려온다) — 정리는 P3.
+  남으면 런 끝 폴백이 런 요약으로 회신한다. 정지(■·✕)로 끊긴 run 도 내려온다 — 요청자에게는 stopped 회신(§2.3).
 
 ### 2.3 정지
 
-run 에이전트의 정지는 `LinkedStop` — 자기 정지(kill·세션 종료)와 부른 런의 정지 중 어느 쪽이 서도 참이다(방 ■·Ctrl+C
-가 run 을 멈춘다). 제자리 대기 중 Ctrl+C 로 스레드가 끊기면 런의 정지를 세우고 던진다. 상주의 평생 stop 은 run 과 무관하다.
-멈춘 run 의 빚은 지금처럼 조용히 버려진다(요청자의 기다림도 닫힌다) — 빚진 상대 알림은 P3.
+정지는 둘이다. **■ 런 정지**(`AgentRegistry.stop_run`)는 지금 런만 끝내고 상주 에이전트는 남는다. **✕ 제거**
+(`AgentRegistry.kill` — 모델의 `agent` `kill` 도 같은 장치)는 에이전트를 없앤다. run 에이전트(`ends_after_task`)는 맡은
+일 하나가 수명이라 ■ 도 ✕ 와 같다 — 내려온다(■ 는 채널을 비우지 않는다 — 회색 칩, 읽기 가능).
+
+에이전트마다 정지가 둘이다: 런의 정지(`ResidentLoop.start` 가 런마다 세우는 `agent_stop.LinkedStop`)와 평생 정지
+(`AgentInstance.stop_event` — ✕·세션 종료). 런의 정지는 평생 정지에 묶여 있어 ✕ 도 런을 멈춘다. 어느 쪽이든 런은
+도구 실행 직전 검사(v10.140.0, `dispatch._stopped_before`)에서 멈춘다 — 멈춘 뒤 도구 0회. 부른 런의 정지에는 묶이지
+않는다 — 방 ■·Ctrl+C 한 번은 main 만 멈추고, main 이 기다리던 회신은 다음 런에 메일로 온다.
+
+**규칙 한 장** — 그 에이전트가 들고 있던 것마다 무엇이 가는가 (`agent_stop.STOP_RULES`):
+
+| 들고 있던 것 | ■ 런 정지 (상주) | ✕ 제거 | run 에이전트 (■·✕) |
+|------|------|------|------|
+| 지금 하던 일의 요청자 | stopped 회신 | 같음 | ✕ 와 같다 — 내려온다 |
+| 그 밖의 빚(다른 에이전트·main 이 `message` 로 맡긴 것) | 같은 회신 | 같음 | 〃 |
+| 아직 시작 안 한 대기 요청 | 남김 — 다음 차례에 처리 | removed 회신 | 〃 |
+| 그 에이전트가 기다리던 회신(자기가 맡긴 하위 일) | 그대로 — 하위 에이전트는 계속 | 하위 run 은 함께 멈춤 · 하위 상주는 남음 | 〃 |
+
+사람 주소의 빚(채널에 사람이 직접 쓴 요청)은 회신하지 않는다 — 창이 곧 배달이다. 세션 종료(`shutdown_all`)는 사람의
+정지가 아니다: 원인(`stop_cause`)이 비고, 빚은 종전처럼 버려 재시작이 끊긴 요청을 되넣는다.
+
+**회신.** 회신이므로(P2 규칙) 요청자의 기다리는 회신을 닫고 새 장부 항목을 만들지 않는다. 봉투는 회신 모양 그대로에
+머리 끝 표지(`mark`)만 더한다:
+
+```
+── reply [n-7] from agt-3 re [r-21] · stopped by user ──
+The user stopped agt-3 while it was working on your request [r-21] ("find every caller of parse_tokens, incl. tests/").
+Last activity: `shell` "rg -n parse_tokens" ✓ · `read_file` "src/lexer.py" ✓
+Partial notes: lexer.py:42, cli.py:118
+Do not redo this work unless the user asks.
+
+── reply [n-9] from agt-5 re [r-32] · removed by user ──
+The user removed agt-5 before it started your request [r-32] ("review the parser next"). Nothing was done for it.
+Do not redo this work unless the user asks.
+```
+
+"Last activity" 는 그 런이 기록한 호출 중 실행된 마지막 셋(`agent_stop.run_activity` — ctx 의 그 런 구간), "Partial notes"
+는 그 런의 마지막 생각 앞부분(`partial_notes`) — 없으면 줄이 빠진다. 모델의 `agent` `kill` 이면 주어와 표지가 지운 쪽이다
+(`main stopped agt-3 …` · `stopped by main`). 런 도중 정지는 그 런의 정리(`ResidentLoop.finish` →
+`answer_debts_as_stopped`)가, 런 없이 남은 빚·대기 요청·하위 run 은 워커가 죽을 때(`_answer_after_stop`) 보낸다.
+
+**표면.**
+
+- 웹: 채널 머리(`#ov-chhead`)의 `■ Stop run` · `✕ Remove`(끝난 run 은 머리 없음). 입력창 옆 정지 버튼은 하나 — main 만 바쁘면
+  `Stop`, 에이전트도 일하면 `Stop ▾`(본체 = main, ▾ = Stop main · Stop all agents · Stop everything), main 이 한가하고
+  에이전트만 일하면 `Send` 그대로 + 채널 줄 끝 `■ all`. API: `POST /api/agent/<key>/stop`, `POST /api/stop` 의 `scope`
+  (`main`·`agents`·`all`), ✕ 는 종전 `POST /api/agent/<key>/kill`.
+- CLI: `/stop <key|name>`·`/stop all`(main 은 멈추지 않는다), Ctrl+C 한 번 = main 의 런, 2초 안에 두 번 = 전부(`ctrl_c.py`,
+  주입 시계). 멈출 것이 없으면 종전처럼 중단(130), main 이 멈추는 중에 창 밖에서 또 누르면 강제 종료(긴 도구의 탈출구).
+  정지마다 한 줄: `■ agt-3 │ stopped by user — reply sent to main (r-21)`.
+- `@agent` 명령을 기다리다 main 이 멈추면 run 은 계속하고 명령의 답은 "stopped waiting — agent … keeps working; its reply
+  [r-…] arrives as mail" 이다.
 
 ### 2.4 저장·resume
 
-agents.json 에 run 에이전트는 `ends_after_task: true`·`task_id` 로, 모든 에이전트는 띄운 쪽의 `depth`·`agent_stack` 으로 남는다
+agents.json 에 run 에이전트는 `ends_after_task: true`·`task_id` 로, 모든 에이전트는 띄운 쪽의 `depth`·`agent_stack`·주소 `parent`(✕ 가 띄운 run 을 함께 멈춘다) 로 남는다
 (더해진 키 — 옛 파일도 읽는다; v10.140.0 의 run 에이전트는 `home` 이 `run_…` 이고 dead 라 회색 개체로 선다). 끝나기 전에
 프로세스가 죽은 run 은 되살아나 회신을 마친다 — 끊긴 과제를 새 id 로 다시 넣고(`_requeue`, `task_id` 를 잇는다), 요청자가
 돌아오지 않았으면 그 회신은 main 메일로 간다. 에이전트의 훅 설정은 hooks.json 모양으로 저장·복원된다(`hooks_to_json`·`hooks_from_json`).
@@ -118,8 +170,8 @@ agents.json 에 run 에이전트는 `ends_after_task: true`·`task_id` 로, 모�
 | 단계 | 무엇 | 모델 바이트 |
 |------|------|-------------|
 | P1 | 엔진 하나 — run = 레지스트리 에이전트, 상한·저장·채널·훅·깊이 검사 공통. 화면: run 카드 → 채널 + 한 줄 카드, CLI 에이전트 줄. 결과 어댑터 | 불변 — 코퍼스 바이트 비교 |
-| P2 (지금) | 결과 = 회신, `message`/`reply` 한 쌍(`agent` 의 요청 모드 → `message`, main 에도 `message`). 장부의 기다리는 회신, main 제자리 `wait`(회신·사용자 입력·체크인), 남으면 `complete` 되돌림. run 에이전트 되살리기. 모든 루프가 같은 `agent` 표면 | 바뀜 — 35B·GLM A/B(짝 기준, 교차 순서)로 판정 |
-| P3 | 에이전트 런 단위 stop, 채널 머리 ■/✕, ■ 메뉴(main · 모든 에이전트 · 전부), `/stop` 슬래시. 빚진 상대 모두에게 `stopped by user` 회신 — kill 의 조용한 빚 버리기도 고친다 | 바뀜 — 회신 문구 실측 |
+| P2 | 결과 = 회신, `message`/`reply` 한 쌍(`agent` 의 요청 모드 → `message`, main 에도 `message`). 장부의 기다리는 회신, main 제자리 `wait`(회신·사용자 입력·체크인), 남으면 `complete` 되돌림. run 에이전트 되살리기. 모든 루프가 같은 `agent` 표면 | 바뀜 — 35B·GLM A/B(짝 기준, 교차 순서)로 판정 |
+| P3 (지금) | 에이전트 런 단위 stop, 채널 머리 ■/✕, 입력창 옆 Stop ▾(main · 모든 에이전트 · 전부)·■ all, `/stop`, Ctrl+C 두 번. 빚진 상대 모두에게 `stopped by user` 회신 — kill 의 조용한 빚 버리기도 고쳤다(§2.3) | 바뀜 — 회신 문구 실측 |
 
 ## 4. P2 완료 — P1 임시물은 없다
 

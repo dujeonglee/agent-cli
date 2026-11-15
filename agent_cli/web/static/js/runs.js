@@ -1,7 +1,7 @@
 // runs.js — 런 블록: 에이전트 런의 접힌 블록, 채널 칩 동기화·채널 입력 라우팅.
 // (v10.117.0, docs/web-modules/DESIGN.md §8 — 옛 main.js 의 절 [29])
 
-import { $input, $messages, $send, el, elHtml } from "./dom.js";
+import { $chatStop, $chatStopMore, $input, $messages, $send, $stopMenu, el, elHtml } from "./dom.js";
 import { session } from "./state.js";
 import { escapeAndFormat, escapeHtml } from "./markdown.js";
 import { scheduleScroll } from "./scroll.js";
@@ -11,6 +11,7 @@ import {
   ovJump,
   ovAgentLabel,
   ovAgentLabelHtml,
+  ovAgentWorking,
   ovBack,
   ovRenderAskTray,
   ovRenderBack,
@@ -147,8 +148,9 @@ export function closeRunLink(d) {
   var link = runLinks[d.task_id];
   if (!link) return;
   var ok = !!d.success;
-  link.state.textContent = ok ? "done" : "failed";
-  link.card.classList.add(ok ? "run-ok" : "run-fail");
+  // 사람이 멈춘 run 은 실패가 아니라 정지다 (v10.142.0)
+  link.state.textContent = ok ? "done" : d.stopped ? "stopped" : "failed";
+  link.card.classList.add(ok ? "run-ok" : d.stopped ? "run-stopped" : "run-fail");
 }
 
 /** 꼬리 — 최종답이 있으면 **그 카드가 꼬리**(같은 말을 두 번 하지 않는다),
@@ -315,6 +317,10 @@ export function ovSyncChannels() {
       !!t.ends_after_task
     );
   });
+  // ■ all (v10.142.0) — main 이 한가하고(입력창 옆은 Send 그대로) 일하는 에이전트가 있을 때만
+  if (!session.workerBusy && ovRoster.some(ovAgentWorking)) {
+    html += '<button type="button" id="ov-stop-all" class="btn-danger" title="Stop all agents">■ all</button>';
+  }
   bar.innerHTML = html;
   // 에이전트가 없으면 바 전체를 숨긴다 — "탭 1개짜리 탭바"는 고를 것이
   // 없다. `#ov-channels:empty` 규칙은 main 칩을 항상 그리므로 **절대
@@ -322,12 +328,68 @@ export function ovSyncChannels() {
   // "0/0 은 정보가 아니라 소음".
   bar.hidden = ovRoster.length === 0;
   ovApplyChannelInput();
+  ovRenderChannelHead();
+  ovSyncStopMore();
 }
+// 입력창 옆 Stop ▾ (v10.142.0) — 정지 버튼은 하나: main 만 바쁘면 Stop(종전 그대로), 에이전트도 일하면 ▾ 가
+// 붙어 범위를 고른다. Stop 의 보임·Stopping… 은 input.js 의 updateSendEnabled 가 정하고 여기는 ▾ 만 본다.
+function ovSyncStopMore() {
+  if (!$chatStopMore) return;
+  var show = !$chatStop.hidden && !$chatStop.disabled && ovRoster.some(ovAgentWorking);
+  $chatStopMore.hidden = !show;
+  if (!show && $stopMenu && $stopMenu.hidden === false) {
+    $stopMenu.hidden = true; // ▾ 가 사라지면 열린 메뉴도 닫는다
+    $chatStopMore.setAttribute("aria-expanded", "false");
+  }
+}
+// 채널 머리 (v10.142.0, docs/agent-engine/DESIGN.md §2.3) — 고른 에이전트의 이름·종류와 ■ Stop run · ✕ Remove.
+// 끝난 에이전트는 머리가 없다(회색 칩 — 둘 다 없음). ■ 는 일하는 동안만 누를 수 있다.
+function ovRenderChannelHead() {
+  var head = document.getElementById("ov-chhead");
+  if (!head) return;
+  var t = ovActiveAgent();
+  if (!t || t.state === "dead") {
+    head.hidden = true;
+    head.innerHTML = "";
+    return;
+  }
+  var sub = [t.ends_after_task ? "run" : "spawn"];
+  if (t.parent) sub.push("from " + String(t.parent).replace(/^agent:/, ""));
+  sub.push(t.state);
+  var item = t.ends_after_task ? t.task_id : t.item;
+  if (item) sub.push(item);
+  var working = ovAgentWorking(t);
+  var stopTitle = t.ends_after_task
+    ? "Stop this run — the agent ends and whoever was waiting is told"
+    : "Stop this agent's current run — it stays and takes the next request";
+  head.setAttribute("data-key", t.key);
+  head.innerHTML =
+    '<span class="chh-ttl">' + ovAgentLabelHtml(t.key) + "</span>" +
+    '<span class="chh-sub">' + escapeHtml(sub.join(" · ")) + "</span>" +
+    '<span class="chh-sp"></span>' +
+    '<button type="button" class="btn-danger chh-btn" data-act="stop"' +
+    (working ? "" : " disabled") + ' title="' + stopTitle + '">■ Stop run</button>' +
+    '<button type="button" class="btn-ghost chh-btn" data-act="kill" ' +
+    'title="Remove this agent — whoever was waiting on it is told">✕ Remove</button>';
+  head.hidden = false;
+}
+(function () {
+  var head = document.getElementById("ov-chhead");
+  if (!head) return;
+  head.addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest(".chh-btn") : null;
+    if (!b || b.disabled) return;
+    b.disabled = true; // 눌렀다 — 명단(SSE)이 다시 그린다
+    fetch("api/agent/" + encodeURIComponent(head.getAttribute("data-key")) + "/" +
+      b.getAttribute("data-act"), { method: "POST" });
+  });
+})();
 // `labelHtml` 은 **이스케이프된 HTML** — 흐린 key 병기(`ovAgentLabelHtml`)를
 // 담기 위해 평문이 아니다. 호출부가 이스케이프 책임을 진다.
 // `run` — run 에이전트(과제 하나): 끝나면 지운 줄이 아니라 회색 칩이고 ↻ 가 없다(끝난 일은
-// 되살릴 기억이 아니다). 일하는 동안은 ✕ 가 있고 채널에 사람이 직접 쓸 수 있다 — 상주와 같은
-// 길(v10.141.0, 설계 §5 시안 C). 채널 머리의 ■ 런 정지는 P3.
+// 되살릴 기억이 아니다). 일하는 동안은 채널에 사람이 직접 쓸 수 있다 — 상주와 같은 길(v10.141.0,
+// 설계 §5 시안 C). ■ Stop run · ✕ Remove 는 칩이 아니라 채널 머리에 있다(v10.142.0 — `ovRenderChannelHead`).
+// 칩에 남는 조작은 죽은 상주의 ↻ 하나.
 function ovChanChip(key, labelHtml, state, active, run) {
   var dead = state === "dead";
   // main 은 상태 dot 없음(항상 LLM). agent 는 상태색 dot.
@@ -342,9 +404,7 @@ function ovChanChip(key, labelHtml, state, active, run) {
   var badges = "";
   var ctrl = "";
   if (key !== "main") {
-    if (!dead) {
-      ctrl = '<button type="button" class="ov-ch-ctl" data-act="kill" title="Kill">✕</button>';
-    } else if (!run) {
+    if (dead && !run) {
       // 끝난 run 은 되살릴 기억이 아니라 끝난 일이다 — ↻ 는 상주에게만
       ctrl = '<button type="button" class="ov-ch-ctl" data-act="resume" title="Revive">↻</button>';
     }

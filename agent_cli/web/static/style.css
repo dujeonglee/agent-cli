@@ -672,6 +672,7 @@ body.multi-viewer .card-user .who {
 .card-run-link .run-link-tail { display: inline-flex; align-items: center; gap: 2px; color: var(--text-2); font-size: 12px; white-space: nowrap; }
 .card-run-link.run-ok .run-link-state { color: var(--ok); }
 .card-run-link.run-fail .run-link-state { color: var(--fail); }
+.card-run-link.run-stopped .run-link-state { color: var(--muted); }
 .run-link-open { font: inherit; font-size: 12px; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
 /* 하니스 작업(🔎 감사) — main 의 일이 아니라 하니스의 일: 차분한 회색 레일 */
 .card-task-group.scope-harness { border-left: 2px solid var(--muted); }
@@ -898,7 +899,7 @@ footer {
 .ask-in { display: flex; gap: 7px; }
 .ask-answer { flex: 1; font-size: 13px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: 6px; background: var(--bg); color: var(--text); }
 .ask-send { padding: 6px 14px; font-size: 13px; }
-#input-area { display: flex; gap: 8px; align-items: stretch; }
+#input-area { display: flex; gap: 8px; align-items: stretch; position: relative; }
 /* agent-channels: 대화 채널 칩 바 (4단계) + 발신 대상 배지 */
 #input {
   flex: 1;
@@ -917,6 +918,13 @@ footer {
 
 /* 채팅 입력줄 — primary/danger 클래스에 크기만 가산 */
 #send, #abort, #chat-stop { padding: 8px 16px; font-size: 14px; }
+/* Stop ▾ (v10.142.0) — 본체(#chat-stop)는 main 만, ▾ 는 범위 메뉴. 메뉴는 입력줄 오른쪽 위로 뜬다. */
+#chat-stop-more { padding: 8px 10px; font-size: 13px; margin-left: -6px; }
+#stop-menu { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 20; display: flex; flex-direction: column; min-width: 260px; padding: 4px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--surface); box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+#stop-menu[hidden] { display: none; }
+#stop-menu button { text-align: left; padding: 7px 10px; border: none; border-radius: 6px; background: transparent; color: var(--text); font-size: 13px; cursor: pointer; }
+#stop-menu button:hover { background: var(--fail-soft-bg); color: var(--fail); }
+#stop-menu small { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); }
 
 /* ── 이미지 첨부 (v10.60.0, docs/vision/DESIGN.md §5·§7) ─────────────
    입력창 왼쪽 📎, 그 위 대기 칩 줄. 끌어다 놓는 동안 입력줄 테두리가 켜진다. */
@@ -1708,6 +1716,16 @@ footer {
   opacity: 0.45;
   user-select: all; /* 클릭 한 번에 통째로 잡혀 복사된다 */
 }
+/* 채널 줄 끝 ■ all (v10.142.0) — main 이 한가하고 일하는 에이전트가 있을 때만 */
+#ov-stop-all { margin-left: auto; font-size: 12px; padding: 3px 10px; border-radius: 999px; }
+/* 채널 머리 (v10.142.0) — 고른 에이전트의 이름·종류 · ■ Stop run · ✕ Remove */
+#ov-chhead { display: flex; align-items: center; gap: 8px; margin: -2px 0 8px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--surface-2); font-size: 12px; }
+#ov-chhead[hidden] { display: none; }
+#ov-chhead .chh-ttl { font-weight: 600; color: var(--text); }
+#ov-chhead .chh-sub { color: var(--muted); }
+#ov-chhead .chh-sp { flex: 1; }
+#ov-chhead .chh-btn { font-size: 12px; padding: 3px 10px; }
+#ov-chhead .chh-btn:disabled { opacity: 0.45; cursor: default; }
 .ov-ch-ctl { font-size: 11px; line-height: 1; padding: 1px 4px; border-radius: 5px; border: none; background: transparent; color: inherit; opacity: 0.7; cursor: pointer; }
 .ov-ch-ctl:hover { opacity: 1; background: rgba(128,128,128,.25); }
 .ov-ch .ov-dot { flex: none; }

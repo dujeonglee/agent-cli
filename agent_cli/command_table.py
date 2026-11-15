@@ -32,6 +32,11 @@ COMMANDS: tuple[Command, ...] = (
     ),
     Command("/skills", "List available skills", frozenset({WEB, RUN})),
     Command("/<skill> <args>", "Invoke a skill directly", frozenset({WEB, RUN})),
+    Command(
+        "/stop <agent>|all",
+        "Stop an agent's run (all: every working agent)",
+        frozenset({WEB, RUN}),
+    ),
     Command("@agents", "List available agents", frozenset({WEB, RUN})),
     Command("@<agent> <task>", "Delegate a task to an agent", frozenset({WEB, RUN})),
 )

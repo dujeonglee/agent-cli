@@ -1127,12 +1127,16 @@ class MinimalRenderer(Renderer):
         success: bool,
         duration_s: float,
         error: str = "",
+        stopped: bool = False,
     ) -> None:
         self.stop_capture()  # 캡처 폐기 — 전문은 에이전트 세션 디렉토리에
         self.set_thread_agent("")
         with self._agent_lock:
             self._agent_lines.pop(threading.get_ident(), None)
         dur = f" ({duration_s:.1f}s)" if duration_s > 0 else ""
+        if stopped:
+            self._print_agent_line(key, f"■ stopped{dur}")
+            return
         tail = "done" if success else (_one_line(error) or "failed")
         self._print_agent_line(key, f"{'✓' if success else '✗'} {tail}{dur}")
 

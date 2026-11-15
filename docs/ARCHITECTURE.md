@@ -86,6 +86,7 @@ agent_cli/
 ├── thinking_tags.py         content 안 사고 태그를 걷어내는 `strip_think_blocks` 단일 소스
 ├── agent_icon.py            상주 에이전트 key → 아이콘·별명(표시 전용) — 프런트와 같은 풀·해시
 ├── session_slots.py         세션 슬롯 다섯 — 잡·모니터·예약 레지스트리, 훅 러너, 에이전트 레지스트리의 프로세스 전역 자리(세션 끝에 비운다)
+├── ctrl_c.py                `run` 의 Ctrl+C — 한 번은 main 의 런만, 2초 안에 두 번은 전부(main + 모든 에이전트), 주입 시계
 ├── terminate.py             SIGTERM 을 받으면 정상 정리 경로로 — 표시·정리 기한(`TEARDOWN_BUDGET_S`)·정리 뒤 신호 15 로 죽기
 ├── verbose.py               `--verbose` 기록기 — 모든 루프의 LLM 호출을 `<session>/verbose.jsonl` 에
 ├── default_models.json      패키지 기본 모델 정의 (models.json 검색 경로의 마지막)
@@ -995,7 +996,7 @@ hypothesis 는 예제 DB 를 끄고 홈을 수트 임시 디렉터리로 옮긴�
 명령과 옵션의 사용법은 docs/REFERENCE.md 가 주인이다. 여기는 구조만 적는다. 명령은 `main.py` 의 typer 앱 하나다:
 `run` · `web` · `setup` · `mcp`(`add`·`test`·`remove`) · `knobs` · `sessions` · `stats` · `update`.
 세션 노브(`knobs.py::KNOBS`)는 `@knob_options` 가 `run`·`web` 의 플래그로 합성한다 — 표 하나에서 env·플래그·web 칩이 나온다.
-사용자 명령 표(`/help` 등)는 `command_table.py` 하나다.
+사용자 명령 표(`/help`·`/stop` 등)는 `command_table.py` 하나다.
 
 ### 11.1 `run` — 단발 실행
 
@@ -1003,6 +1004,7 @@ hypothesis 는 예제 DB 를 끄고 홈을 수트 임시 디렉터리로 옮긴�
 다른 것은 펌프 표면과 수명 정책뿐이다 — `run` 은 큐·에이전트·모니터·예약이 전부 조용하면 끝나고(`QuietPolicy`), `web` 은 종료 요청까지 산다(`ForeverPolicy`).
 세션은 `web --resume <id>` 로 이어 갈 수 있다.
 
+Ctrl+C 는 `ctrl_c.py` 의 처리기다 — 한 번은 main 의 런만(웹 Stop 과 같은 stop Event), 2초 안에 두 번은 전부, 멈출 것이 없으면 종전처럼 중단(130).
 종료 코드: 0 성공 · 1 실패(LLM 오류·턴 상한·실패한 스킬·모르는 명령) · 2 설정·사용 오류 · 130 중단. `/sh <cmd>` 는 그 명령의 종료 코드(시간 초과 124).
 SIGTERM(보드가 방을 끌 때)은 `run`·`web` 모두 같은 정리(`close_session`)를 돈 뒤 신호 15 로 죽는다 — 대기는 `terminate.TEARDOWN_BUDGET_S` 안으로(`terminate.py`).
 

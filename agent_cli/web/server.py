@@ -10,7 +10,9 @@ Endpoints:
   - ``GET  /api/images/support`` — ``{supported: true|false|null}`` without probing
   - ``GET  /api/workspace/file?path=`` — serve one workspace **image** (thumbnails)
   - ``POST /api/abort``  — interrupt the current ``prompt_user`` / ``confirm``
-  - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn
+  - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn; body ``{"scope"}`` (v10.142.0):
+    ``"main"`` (default) · ``"agents"`` (every working agent's run) · ``"all"`` (both)
+  - ``POST /api/agent/{key}/stop`` — ■ stop that agent's run (a run agent comes down, v10.142.0)
   - ``POST /api/jobs/stop`` — a viewer stops one background job (v10.121.0)
   - ``GET  /api/changes`` · ``GET /api/changes/diff?path=`` · ``POST /api/changes/clear``
     · ``POST /api/changes/undo`` · ``POST /api/changes/notices/dismiss`` — the Changes
@@ -1454,6 +1456,20 @@ def create_app(server: WebServer) -> FastAPI:
             raise HTTPException(status_code=code, detail=error)
         return JSONResponse({"ok": True})
 
+    @app.post("/api/agent/{key}/stop")
+    async def agent_stop(key: str):
+        """채널 머리의 ■ (v10.142.0) — 그 에이전트의 지금 런만 멈춘다(run 에이전트는 내려온다). 빚진 상대에게
+        stopped 회신이 간다. run 은 워커 join(≤2s)을 포함하므로 executor 로."""
+        registry = server.agent_registry
+        if registry is None:
+            raise HTTPException(status_code=503, detail="agent registry not ready")
+        loop = asyncio.get_running_loop()
+        error = await loop.run_in_executor(None, registry.stop_run, key)
+        if error:
+            code = 404 if error.startswith("unknown agent") else 409
+            raise HTTPException(status_code=code, detail=error)
+        return JSONResponse({"ok": True})
+
     @app.post("/api/agent/{key}/kill")
     async def agent_kill(key: str):
         """teammate 종료 (P4 창의 ✕) — kill 은 worker join(≤2s)을 포함하므로
@@ -1597,14 +1613,29 @@ def create_app(server: WebServer) -> FastAPI:
         return {"stopped": True, "id": job_id, "rc": job.rc, "jobs": reg.view()}
 
     @app.post("/api/stop")
-    async def stop():
+    async def stop(request: Request):
         """Stop the in-flight chat turn at the next turn boundary.
 
         Sets the worker's ``stop_event`` (same mechanism as Ctrl+C in
         the CLI). ``stopped`` is ``False`` when no turn was active.
+
+        ``scope`` (v10.142.0, 입력창 옆 Stop ▾): ``"main"`` 은 종전 그대로, ``"agents"`` 는 일하는 에이전트
+        모두의 런(`AgentRegistry.stop_all_runs` — main 은 계속), ``"all"`` 은 둘 다. 본문이 없으면 ``"main"``.
+        ``agents`` 는 멈춘 에이전트 키.
         """
-        stopped = server.trigger_stop()
-        return JSONResponse({"stopped": stopped})
+        raw = await request.body()
+        scope = (await _json_object(request)).get("scope", "main") if raw else "main"
+        if scope not in ("main", "agents", "all"):
+            raise HTTPException(
+                status_code=400, detail='scope must be "main", "agents" or "all"'
+            )
+        agents: list[str] = []
+        registry = server.agent_registry
+        if scope != "main" and registry is not None:
+            loop = asyncio.get_running_loop()
+            agents = await loop.run_in_executor(None, registry.stop_all_runs)
+        stopped = server.trigger_stop() if scope != "agents" else False
+        return JSONResponse({"stopped": stopped, "agents": agents})
 
     return app
 

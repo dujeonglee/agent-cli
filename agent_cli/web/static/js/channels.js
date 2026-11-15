@@ -24,6 +24,11 @@ import { ovApplyChannelInput, ovSyncChannels } from "./runs.js";
 // ovSkills)는 선언만 남아 아무도 읽지 않았다 — ⑥ 에서 함께 걷어낸다. 남는
 // 것은 실제로 읽히는 둘: roster(채널 칩·점프 가능 판정의 진실원)와 활성 채널.
 export var ovRoster = []; // agent_roster
+// 일하는 에이전트인가 — 런 중이거나 일을 끝내지 않은 run (서버 `AgentRegistry.working_agents` 와 같은 판정).
+// 입력창 옆 Stop ▾ 와 채널 줄 끝 ■ all 이 이것을 본다 (v10.142.0).
+export function ovAgentWorking(t) {
+  return t.state === "busy" || (!!t.ends_after_task && t.state !== "dead");
+}
 // 대화 채널. "main" = 메인, 그 외 = 상주 agent key. 채널은 **타임라인의
 // 필터**다(v9.4.0 ⑥) — 별도 스트림을 들고 있지 않으므로 리로드하면
 // replay 버퍼가 그대로 복원한다.
@@ -346,6 +351,10 @@ export function ovJump(key) {
   var bar = document.getElementById("ov-channels");
   if (!bar) return;
   bar.addEventListener("click", function (e) {
+    if (e.target.closest && e.target.closest("#ov-stop-all")) {
+      postStop("agents"); // ■ all — 모든 에이전트의 런 (main 은 계속)
+      return;
+    }
     var chip = e.target.closest ? e.target.closest(".ov-ch") : null;
     if (!chip) return;
     var key = chip.getAttribute("data-key");
@@ -361,6 +370,18 @@ export function ovJump(key) {
   ovSyncChannels(); // 로드 시 최소 main 칩 렌더(roster 오면 갱신)
   frameShowChannel(ovActiveChannel); // main 의 맨 위 카드·꼬리 띠
 })();
+
+// 정지 요청 하나 (v10.142.0) — ``/api/stop`` 의 범위: "main" · "agents" · "all". 결과는 SSE(worker_state·
+// 명단)가 그린다.
+export function postStop(scope) {
+  return fetch("api/stop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scope: scope }),
+  }).catch(function () {
+    /* network blip — the run ends on its own anyway */
+  });
+}
 
 /** Scroll the TIMELINE CONTAINER to a card — never scrollIntoView, which
  * also scrolls every scrollable ancestor (incl. horizontally) and shoved
