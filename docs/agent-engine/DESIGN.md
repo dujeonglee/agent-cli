@@ -174,7 +174,8 @@ agents.json 에 run 에이전트는 `ends_after_task: true`·`task_id` 로, 모�
 
 - 웹: run 은 다른 에이전트와 같은 채널(`agents/<key>`)이다. 과제 런의 `scope_start` 가 `run`·`caller_task`(부른 자리)를 실어
   부른 자리에 한 줄 카드 `→ agt-… <profile> · working/done · open channel` 을 놓는다(resume 재생도 같은 사이드카로).
-  일하는 run 칩엔 ✕ 가 있고 채널 입력창이 열려 있다. 끝난 run 은 회색 칩(✕/↻ 없음)이고 입력창이 닫힌다.
+  일하는 run 칩엔 ✕ 가 있고 채널 입력창이 열려 있다. 끝난 run 은 회색 칩(✕/↻ 없음)이고 입력창이 닫힌다 — 칩 줄에서는
+  줄 끝 `Done N ▾` 하나로 접힌다(v10.143.0, 시안 A — 보고 있는 채널만 칩으로 남는다, 목록은 최근 순·항목이 채널을 연다).
   📋 띠는 기다리는 회신이 있으면 "📋 Waiting for N reply · r-21 from agt-3", main 이 제자리에서 기다리는 동안엔 띠 끝에
   "main is waiting for agt-3 — type to steer it or give new work"(스티키 `waiting_in_place`). main 의 `message` 는 발신 카드(→).
 - CLI: 모든 에이전트의 진행 줄이 오는 순서대로 `  agt-3 │ shell  rg -n parse_tokens src/  ✓`. main 의 제자리 대기는
@@ -205,7 +206,7 @@ P1 이 둔 임시 종류·결과 어댑터·결과 포장·`run:` 주소·축소
 | `agent` 스키마 | 모든 루프가 같다 — run·spawn·status·resume·kill. 깊이 상한만 도구를 뺀다 |
 | run 의 수명 | `AgentRegistry.spawn(ends_after_task=True)` 한 길 · resume 은 못 끝낸 run 을 되살린다 |
 | 모델 대면 명단 | run 에이전트도 일하는 동안은 `## Live Agents`·`status`·주소에 있다(`message` 상대). 끝난 run 은 꼬리에서 빠진다 |
-| run 채널 | 일하는 동안 사람이 직접 쓴다 · 끝나면 회색 칩 |
+| run 채널 | 일하는 동안 사람이 직접 쓴다 · 끝나면 `Done N ▾` 로 접힘(보는 동안은 회색 칩) |
 | 한 턴의 run 여럿 | 병렬 배치는 없다 — 각 run 이 바로 돌아오고 에이전트가 각자 돈다 |
 
 ### 4.1 P2 에서 함께 고친 것
