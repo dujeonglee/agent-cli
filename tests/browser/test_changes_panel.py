@@ -4,12 +4,15 @@
 main 채널의 가장 최근 `complete` 카드 안의 한 줄. 패널 → 파일 diff → Clear(빈 상태·Undo
 토스트, 파일 그대로) → Undo → 복귀, 런 끝(main 은 `worker_state` 바쁨→한가, 그 밖은
 `scope_end`) 뒤 갱신, 긴 diff 가 목록을 누르지 않음. v10.138.0: 고른 행을 다시 누르면 접힘(▸/▾),
-📁 Workspace files 트리의 변경 표시(파일 M·A, 폴더 ●) — 글자를 누르면 그 파일 diff. 저장소는 실제 git 스냅샷(runtime 이
+📁 Workspace files 트리의 변경 표시(파일 M·A, 폴더 ●) — 글자를 누르면 그 파일 diff.
+v10.138.2: 🔗 링크 행 글자·하위 저장소 폴더 점. 저장소는 실제 git 스냅샷(runtime 이
 세우는 것과 같은 `get_snapshot(create=True)`)이다.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
 import threading
 
 import pytest
@@ -554,5 +557,103 @@ def test_snapshots_off_no_tree_marks(stack, page, tmp_path):
     page.click("#files-btn", position={"x": 6, "y": 14})
     page.wait_for_selector('#dl-tree .dl-row[data-rel="src"]', timeout=8000)
     page.wait_for_timeout(400)
+    assert page.locator("#dl-tree .chg-mark").count() == 0
+    assert errors == []
+
+
+def _git(repo, *args):
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.fixture
+def link_ws(tmp_path, stack):
+    """v10.138.2 — symlink 행·하위 저장소 폴더 행. 기준점 뒤: 밖을 가리키는 🔗 링크의 대상,
+    안을 가리키는 파일 링크의 대상을 바꾸고, 하위 저장소 sub/ 에서 커밋한다."""
+    w = tmp_path / "lws"
+    (w / "ext").mkdir(parents=True)
+    (w / "keep.txt").write_text("k\n")
+    (w / "ext" / "real.txt").write_text("r\n")
+    (tmp_path / "out1.txt").write_text("1\n")
+    (tmp_path / "out2.txt").write_text("2\n")
+    os.symlink("keep.txt", w / "link_file")
+    os.symlink(str(tmp_path / "out1.txt"), w / "link_out")
+    sub = w / "sub"
+    sub.mkdir()
+    (sub / "s.txt").write_text("s\n")
+    _git(sub, "init", "-q")
+    _git(sub, "add", "-A")
+    _git(sub, "commit", "-qm", "one")
+    reset_snapshot()
+    store = get_snapshot(w, create=True, session_id="sess-link")
+    assert store.enabled, store.reason
+    stack.server.workspace = w.resolve()
+    (w / "link_out").unlink()
+    os.symlink(str(tmp_path / "out2.txt"), w / "link_out")
+    (w / "link_file").unlink()
+    os.symlink("ext/real.txt", w / "link_file")
+    (sub / "s.txt").write_text("s2\n")
+    _git(sub, "commit", "-qam", "two")
+    yield w
+    reset_snapshot()
+
+
+def test_tree_marks_symlinks_and_nested_repo(stack, page, link_ws):
+    errors = _open(page, stack)
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '3'", timeout=8000)
+    page.click("#files-btn", position={"x": 6, "y": 14})
+    page.wait_for_selector('#dl-tree .dl-row[data-rel="sub"]', timeout=8000)
+    types = page.evaluate(
+        "() => Object.fromEntries([...document.querySelectorAll('#dl-tree .dl-row')]"
+        ".map(r => [r.dataset.rel, r.dataset.type]))"
+    )
+    # 밖을 가리키는 링크는 🔗 행, 안을 가리키는 링크는 대상 종류, 하위 저장소는 폴더
+    assert types["link_out"] == "link" and types["link_file"] == "file"
+    assert types["sub"] == "dir"
+    t = _tree(page)
+    assert t["link_out"][0] == "M"
+    assert t["link_out"][1].startswith("Modified since session start · ")
+    assert t["link_file"][0] == "M"
+    assert t["sub"][0] == "●"
+    assert t["sub"][1].startswith(
+        "Nested repository or symlink changed since session start · "
+    )
+    assert t[""] == ("●", "Contains changed files")
+    marked = sorted(rel for rel, (m, _) in t.items() if m)
+    assert marked == ["", "link_file", "link_out", "sub"]
+
+    # 🔗 행 글자 → 그 링크의 diff(대상 문자열)
+    page.click('.dl-row[data-rel="link_out"] > .chg-mark')
+    page.wait_for_selector("#changes-drawer.open", timeout=8000)
+    page.wait_for_function(
+        "() => /\\+\\+\\+ b\\/link_out/.test(document.querySelector('#changes-diff').textContent)",
+        timeout=8000,
+    )
+    st = _rows_state(page)
+    assert [r[0] for r in st["rows"] if r[2]] == ["link_out"]
+    assert "out2.txt" in st["diff"] and "out1.txt" in st["diff"]
+
+    # 하위 저장소 점 → 그 경로 diff (gitlink 두 줄)
+    page.click("#changes-close")
+    page.wait_for_function(
+        "() => !document.querySelector('#changes-drawer').classList.contains('open')"
+    )
+    page.wait_for_timeout(300)
+    page.click('.dl-row[data-rel="sub"] > .chg-mark')
+    page.wait_for_selector("#changes-drawer.open", timeout=8000)
+    page.wait_for_function(
+        "() => /Subproject commit/.test(document.querySelector('#changes-diff').textContent)",
+        timeout=8000,
+    )
+    st = _rows_state(page)
+    assert [r[0] for r in st["rows"] if r[2]] == ["sub"]
+    assert st["diff"].count("Subproject commit") == 2
+
+    # Clear → 둘 다(그리고 루트 점도) 사라짐
+    page.click("#changes-clear")
+    page.wait_for_selector("#changes-toast:not([hidden])", timeout=8000)
     assert page.locator("#dl-tree .chg-mark").count() == 0
     assert errors == []
