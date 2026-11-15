@@ -398,3 +398,68 @@ class TestStopEverythingDoesNotWakeMain:
         assert s["reg"].stop_all_runs() == [tm.key]
         assert wait_until(lambda: wakes == [waker.WAKE_TEXT])
         assert s["reg"].has_mail_that_wakes_main()
+
+
+class TestCtrlCDuringAPrompt:
+    def test_both_presses_interrupt_the_prompt_and_stop_nothing(self):
+        """주입 시계로 두 번 누름(창 안) — 프롬프트 입력 대기 중이면 둘 다 종전대로 KeyboardInterrupt."""
+        clock = Clock()
+        presses = CtrlCPresses(clock=clock)
+        reg, stop = FakeRegistry(["agt-3"]), threading.Event()
+        for _ in range(2):
+            scope = presses.press()
+            clock.now += 0.5
+            with pytest.raises(KeyboardInterrupt):
+                stop_for_ctrl_c(
+                    scope, main_stop=stop, registry=reg, say=print, awaiting_input=True
+                )
+        assert not stop.is_set() and reg.calls == []
+        # 프롬프트가 끝나면 같은 누름이 다시 main 을 멈춘다
+        clock.now += 5
+        stop_for_ctrl_c(
+            presses.press(), main_stop=stop, registry=reg, say=lambda _t: None
+        )
+        assert stop.is_set() and reg.calls == []
+
+
+class TestCommandsTypedDuringTheWait:
+    """제자리 대기 중 친 명령은 그 자리에서 라우팅되고 main 을 깨우지 않는다(web 기본 — `wait_for_human_words`)."""
+
+    def _setup(self, handled=("/stop agt-5",)):
+        from agent_cli.input_queue import InputQueue
+        from agent_cli.runtime import wait_for_human_words
+
+        q = InputQueue()
+        routed: list = []
+
+        def route(text):
+            routed.append(text)
+            return text in handled
+
+        return q, routed, wait_for_human_words(q, route)
+
+    def test_a_command_is_routed_in_place_and_does_not_wake(self):
+        q, routed, wait = self._setup()
+        q.enqueue("c", "/stop agt-5")
+        assert wait(0) is False
+        assert routed == ["/stop agt-5"] and q.pending_count() == 0
+
+    def test_plain_words_wake_and_stay_queued(self):
+        q, routed, wait = self._setup()
+        q.enqueue("c", "Skip tests/")
+        assert wait(0) is True and routed == [] and q.pending_count() == 1
+
+    def test_a_command_route_refused_goes_back_first_and_wakes(self):
+        q, routed, wait = self._setup(handled=())
+        q.enqueue("c", "/Users/me/x — look at this")
+        q.enqueue("c", "second")
+        assert wait(0) is True and routed == ["/Users/me/x — look at this"]
+        assert [i["text"] for i in q.snapshot()] == [
+            "/Users/me/x — look at this",
+            "second",
+        ]
+
+    def test_wake_items_are_not_human_words(self):
+        q, routed, wait = self._setup()
+        q.enqueue(None, "wake", system=True)
+        assert wait(0) is False and routed == [] and q.pending_count() == 1
