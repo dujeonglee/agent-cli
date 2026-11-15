@@ -355,6 +355,12 @@ class TestWaitInPlaceWakes:
                 time.sleep(0.05)
                 # 매번 다른 파일 — 같은 호출 반복은 제자리 고리 확인(StaleGuard)이 멈춘다
                 return call("shell", command=f"ls -d . >/dev/null # step {len(msgs)}")
+            if steered.is_set():
+                return call("complete", result="replied")
+            # 회신은 main 이 **다시** 제자리 대기에 든 뒤에 — 그 전에 오면 main 의 다음 경계가 회신을 먼저
+            # 읽고, 아직 내려오지 않은 이 에이전트를 기다릴 근거로 삼아 `wait` 가 런을 끝낸다(느린 CI 에서
+            # 실제로 났다). 첫 대기의 체크인은 사람 입력에 깨며 풀렸으니 이 참은 둘째 대기의 것이다.
+            assert wait_until(lambda: main_waits_in_place(s["reg"]))
             steered.set()
             return call("reply", id=owed_id(msgs), text="only src/ callers: 2")
 
