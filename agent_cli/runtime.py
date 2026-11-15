@@ -222,6 +222,33 @@ def build_schedule_registry(session_dir=None):
     return registry
 
 
+def wait_for_human_words(queue, route):
+    """main 의 제자리 대기를 깨울 사람 입력 — ``(timeout) -> bool`` (v10.142.0, web 기본).
+
+    입력 큐에 사람 입력이 도착하면 깨우되, 맨 앞이 명령(``/``·``@`` 로 시작 — ``/stop agt-3`` 등)이면 그 자리에서
+    라우팅하고 깨우지 않는다: 큐에 둔 채 깨우면 main 이 "the user wrote to you" 관찰을 읽고 그 말은 다음 흡수의
+    라우팅이 삼켜, 말 없는 관찰만 남았다. 라우팅이 받지 않은 것(명령 모양의 평범한 말)은 맨 앞으로 되돌리고 깨운다.
+    CLI ``run`` 은 터미널 줄을 같은 규칙으로 읽는다(`main._terminal_steer_input`)."""
+
+    def is_command(text: str) -> bool:
+        return text[:1] in ("/", "@")
+
+    def wait(timeout: float) -> bool:
+        if not queue.wait_for_arrival(timeout):
+            return False
+        item = queue.take_first_human_if(is_command)
+        if item is None:
+            return True
+        if route(str(item.get("text") or "")):
+            return (
+                False  # 명령은 처리했다 — 기다림은 계속(멈춘 에이전트의 회신이 깨운다)
+            )
+        queue.put_back_first(item)
+        return True
+
+    return wait
+
+
 def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice=None, parent_ctx=None):
     """MailWaker + 회신 알림 훅 + restore/auto_spawn 조립 (run/web 공용).
 
@@ -572,7 +599,8 @@ def wire_session(
             None, text, nickname=nickname
         ),
         route_message=lambda text: pump.route(text),
-        wait_for_user_input=on_wait_input or queue.wait_for_arrival,
+        wait_for_user_input=on_wait_input
+        or wait_for_human_words(queue, lambda text: pump.route(text)),
         max_turns=spec.max_turns,
         max_depth=spec.max_depth,
         verbose=spec.verbose,

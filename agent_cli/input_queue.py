@@ -115,6 +115,24 @@ class InputQueue:
                 and not self._shutdown
             )
 
+    def take_first_human_if(self, pred: Callable[[str], bool]) -> dict | None:
+        """맨 앞의 사람 입력(합성 깨우기 제외)이 ``pred(text)`` 면 꺼내 돌려준다, 아니면 None (v10.142.0) —
+        main 이 제자리에서 기다리는 동안 친 명령(``/stop`` 등)을 그 자리에서 라우팅하려고."""
+        with self._cv:
+            item = next((it for it in self._items if not it.get("system")), None)
+            if item is None or not pred(str(item.get("text") or "")):
+                return None
+            self._items.remove(item)
+        self._changed()
+        return item
+
+    def put_back_first(self, item: dict) -> None:
+        """꺼낸 아이템을 맨 앞으로 되돌린다 — 명령인 줄 알고 꺼냈는데 라우팅이 받지 않았을 때(평범한 말)."""
+        with self._cv:
+            self._items.appendleft(item)
+            self._cv.notify_all()
+        self._changed()
+
     def dequeue_nowait(self) -> dict | None:
         """턴 경계 (running loop): 있으면 하나, 없으면 None (비블록)."""
         with self._cv:
