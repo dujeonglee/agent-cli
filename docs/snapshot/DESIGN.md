@@ -86,7 +86,7 @@ git 은 작업 트리 안의 `.git` 디렉터리를 gitlink(커밋 sha)로만 �
 하위 저장소마다 `HEAD` 와 `status --porcelain`(수정·untracked)을 기록하고:
 - 깨끗한 tracked 파일 → 그 저장소 자신이 복원(`git -C <sub> checkout -- <path>`)
 - dirty·untracked 파일 → 그림자 저장소에 **직접** 담는다(`add --force` 로 경로 지정)
-복구 안내는 매니페스트를 보고 경로별로 어느 쪽인지 말한다. 재귀는 없다 — 그림자는
+복구 안내는 매니페스트를 보고 경로별로 어느 쪽인지 말한다. (웹 Changes 패널이 하위 저장소 안을 세는 방식은 §8.) 재귀는 없다 — 그림자는
 워크스페이스당 하나, `.agent-cli` 는 제외라 자기 자신을 담지 않으며 bare 라 작업 트리가 없다.
 
 ### 3.4 훅 — 붙이는 자리
@@ -179,3 +179,44 @@ list→at 우회 시퀀스 수, db-wal·financial 통과(35B 가 민감). 테스
 는 페이지 로드·패널 열기·↻·런 끝(main 은 `worker_state` 바쁨→한가, 그 밖은 `scope_end`)에만 다시 센다.
 테스트 `tests/test_snapshot_baseline.py`, `tests/test_web_server.py::TestChangesEndpoints`,
 `tests/browser/test_changes_panel.py`.
+
+## 8. 하위 git 저장소 안의 변경 — 웹 Changes 패널 (v10.139.0, 2026-11-15)
+
+§3.3 대로 그림자 저장소는 하위 저장소를 gitlink 로만 담는다. 그래서 Changes 패널은 하위 저장소 안을 **그 저장소의 git 으로**
+센다 — 하위 저장소 전체를 복사하지 않고, 기준점마다 *기록* 하나를 남긴다(`agent_cli/snapshot_nested.py`, 0층, `snapshot.py`
+만 import 한다; 스냅샷 저장소 git 은 주입받는다). 모델이 받는 것은 바뀌지 않는다(`notice()`·`nested` 그대로).
+
+- **기록**: 부모 없는 커밋 하나 — 트리 `{manifest.json, t/<i>}`. manifest 는 저장소마다 `RepoRecord`(경로·종류 `repo`/`plain`·
+  HEAD·첫 커밋들 `rev-list --max-parents=0`·추적 파일 수·그때 dirty 였던 경로·담아 둔 트리·기준 시각·출처
+  `baseline`/`new`/`reset`)와 안내 `Notice`(저장소·원인·시각·잃은 HEAD). dirty 파일 내용(수정·untracked)은
+  `hash-object -w --no-filters` 로 우리 저장소에 담아 트리로 묶는다(`dirty` 에 있는데 트리에 없으면 "그때 없었음").
+  트리가 `t/` 아래 매달려 ref 하나가 전부를 gc 에서 붙잡는다.
+- **짝**: 세션 시작 기준 ↔ `refs/agent-cli/nested/start/<sid>`(그 세션 **첫** 시작에만 — 방금 찍은 시작 커밋이 가장 이른
+  시작일 때; resume 은 덮어쓰지 않는다), Clear 기준 ↔ `refs/agent-cli/nested/baseline`(Undo 한 단계 `…/baseline-prev`).
+  Clear·Undo 는 기준점 ref 와 함께 `update-ref --stdin` 한 트랜잭션. HEAD·실제 색인·`_last_checkpoint` 불변. 짝이 없는 기준
+  (HEAD 기준·기록 이전의 옛 세션·옛 Clear)이면 지금 동작 — gitlink 한 줄.
+- **셈**: 기록한 HEAD ↔ 작업 트리를 하위 git 으로(`diff --no-renames -z --raw/--numstat <head>` — 사이 커밋 + 커밋 안 한
+  수정이 한 번에), 새 파일은 `ls-files --others --exclude-standard`(그 저장소의 `.gitignore`). 기록 때 dirty 였던 경로·
+  untracked·추적에서 빠졌는데 남은 경로는 우리 저장소에서 "담아 둔 트리 ↔ 지금 내용 트리" 로 비교한다(같은 git 의
+  numstat·unified diff). 경로는 워크스페이스 기준(`--src-prefix=a/P/`). 워크스페이스 쪽 diff 는 기록이 있는 경로를
+  `:(exclude,literal)P` 로 뺀다. `EXCLUDE_DIRS`·`file_max_bytes` 는 같은 뜻(하위 pathspec·크기 거름). 하위 안의 또 다른
+  저장소는 그 저장소 쪽에서 gitlink 한 줄, `.git` 이 파일이면(worktree·submodule) 하위 git 이 처리한다.
+- **판정**(순수 함수 `judge` → `Verdict`, 처리는 `NestedRepos.reconcile` 의 작은 분기 — 판정이 일곱으로 닫혀 있어 상태
+  클래스 계층은 두지 않는다): HEAD 있음 → 평소 / HEAD 없고(`cat-file -e`) 첫 커밋 겹침 → 기준 잃음(그 저장소만 지금으로
+  다시 기록 + 안내) / 첫 커밋 다름 → 다시 clone(같은 처리, 원인만 다름) / 폴더 없음 → `D P/` 요약 한 줄 / 폴더 있는데
+  저장소 아님 → 일반 폴더 기록(그 순간의 그 폴더 트리가 기준, 워크스페이스 그룹으로; 안내) / 기록에 없는 저장소(지금
+  트리의 새 gitlink) → 그 순간으로 기록하고 `A P/` 요약 한 줄. 기록을 고치는 것은 **`GitSnapshot.sync_nested_records`
+  하나뿐**이다 — 목록(`report`·`changes`)과 diff(`change_diff`)는 읽기만 한다(우리 저장소에 내용 객체를 쓰는 것은 트리를
+  만드는 방법일 뿐, ref·색인·기록은 그대로). 웹은 `GET /api/changes`·Undo 에서 셈 앞에 그것을 부른다 — "발견한 순간" 이
+  곧 패널을 센 순간이다. 겨룸은 잠금 대신 `update-ref <ref> <new> <old>`, 지면 다시 읽는다.
+- **하위 저장소는 읽기만**: 하위 git 호출은 `GIT_OPTIONAL_LOCKS=0`·`core.fsmonitor=false`·`--no-ext-diff`·`--no-textconv`.
+  색인을 읽는 호출(`diff`·`status`·`ls-files`)은 하위 색인의 우리 쪽 사본(`GIT_INDEX_FILE`, 스냅샷 저장소 안
+  `index.sub-<key>`)을 읽는다 — porcelain `git diff <commit>` 은 `GIT_OPTIONAL_LOCKS=0` 이어도 stat 이 바뀐 파일을 보면
+  색인을 고쳐 쓴다(실측 40회 중 8회). 사본은 셈 사이에 남아 stat 캐시가 이어지고, 원본의 크기·mtime·inode 가 바뀌면
+  다시 복사한다(mtime 까지).
+  우리 쪽 env 에도 `GIT_OPTIONAL_LOCKS=0` — gitlink 를 담는 `add` 가 하위 저장소에 `status` 를 띄우고 그 status 가 하위
+  색인을 고쳐 쓰는 것을 실측으로 잡았다. 일반 폴더가 된 자리는 임시 색인에서만 남은 gitlink 를 지우고 담는다(`add -A` 는
+  남은 gitlink 아래를 담지 않는다 — 체크포인트의 실제 색인은 그대로; 별도 과제).
+- 웹: `/api/changes` 에 `files[].repo`·`summary`, `repos`(그룹 머리), `notices`(안내 줄), `POST /api/changes/notices/dismiss`.
+  테스트 `tests/test_snapshot_nested.py`(하위 `.git` 지문 불변 검사 포함), `TestChangesEndpoints`, `tests/browser/test_changes_panel.py`.
+

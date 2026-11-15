@@ -17,7 +17,12 @@ import threading
 
 import pytest
 
-from agent_cli.snapshot import get_snapshot, git_available, reset_snapshot
+from agent_cli.snapshot import (
+    NESTED_START_PREFIX,
+    get_snapshot,
+    git_available,
+    reset_snapshot,
+)
 
 pytestmark = pytest.mark.skipif(not git_available()[0], reason="git not installed")
 
@@ -590,6 +595,9 @@ def link_ws(tmp_path, stack):
     reset_snapshot()
     store = get_snapshot(w, create=True, session_id="sess-link")
     assert store.enabled, store.reason
+    # 기록 없는 옛 기준(v10.139.0 이전 세션의 resume 등)으로 — 하위 저장소는 gitlink 한 줄,
+    # 이 테스트는 그 동작을 지킨다. 기록이 있는 새 동작은 test_nested_repo_* 가 본다
+    store._git("update-ref", "-d", NESTED_START_PREFIX + "sess-link")
     stack.server.workspace = w.resolve()
     (w / "link_out").unlink()
     os.symlink(str(tmp_path / "out2.txt"), w / "link_out")
@@ -656,4 +664,217 @@ def test_tree_marks_symlinks_and_nested_repo(stack, page, link_ws):
     page.click("#changes-clear")
     page.wait_for_selector("#changes-toast:not([hidden])", timeout=8000)
     assert page.locator("#dl-tree .chg-mark").count() == 0
+    assert errors == []
+
+
+# 패널 머리 상자 — [left, top, right, bottom]
+_HEAD_BOXES = """() => Object.fromEntries(
+    ['.de-title', '#changes-since', '#changes-clear', '#changes-close'].map(s => {
+        const b = document.querySelector('#changes-drawer ' + s).getBoundingClientRect();
+        return [s, [b.left, b.top, b.right, b.bottom]];
+    }))"""
+
+
+@pytest.mark.parametrize("width", [390, 320, 1100])
+def test_close_stays_on_the_title_line(stack, page, ws, width):
+    """v10.139.0 — 좁은 폭에서도 닫기 ✕ 는 제목 줄 오른쪽 끝, Clear list 와 떨어져 있다."""
+    _edit(ws)
+    page.set_viewport_size({"width": width, "height": 844})
+    errors = _open(page, stack)
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '3'", timeout=8000)
+    page.click("#changes-badge")
+    page.wait_for_selector("#changes-drawer.open .chg-row", timeout=8000)
+    page.wait_for_timeout(350)  # 미끄러져 들어오는 전환이 끝나도록
+    b = page.evaluate(_HEAD_BOXES)
+    title, clear, close = b[".de-title"], b["#changes-clear"], b["#changes-close"]
+    mid = lambda r: (r[1] + r[3]) / 2
+    assert abs(mid(close) - mid(title)) < 4  # 같은 줄
+    assert abs(mid(clear) - mid(title)) < 4
+    assert close[0] - clear[2] >= 8  # 겹치지도 붙지도 않는다
+    drawer = page.evaluate(
+        "() => document.querySelector('#changes-drawer').getBoundingClientRect().right"
+    )
+    assert drawer - close[2] <= 20  # 오른쪽 끝
+    assert b["#changes-since"][2] <= clear[0]  # 기준 표시가 줄어든다(말줄임)
+    assert errors == []
+
+
+# ── 하위 git 저장소 안의 변경 (v10.139.0, docs/snapshot/DESIGN.md §8) ──
+
+
+def _nested_ws(tmp_path, stack, sid, *, second_commit=False):
+    from tests.test_snapshot_nested import git, make_repo
+
+    w = tmp_path / sid
+    w.mkdir()
+    (w / "README.md").write_text("Run make.\n")
+    sub = w / "git-proj"
+    make_repo(sub, {"src/a.py": "one\ntwo\n", "src/util.py": "u\n", "legacy.py": "x\n"})
+    if second_commit:
+        (sub / "src/util.py").write_text("u = 2\n")
+        git(sub, "commit", "-qam", "second")
+    reset_snapshot()
+    store = get_snapshot(w, create=True, session_id=sid)
+    assert store.enabled, store.reason
+    stack.server.workspace = w.resolve()
+    return w, sub, git
+
+
+# 목록의 그룹 머리와 행 — 순서대로 ["grp", 글] / ["row", 상태, 경로, 줄 수] / ["empty", 글]
+_LIST = """() => [...document.querySelectorAll('#changes-list > *')].map(n =>
+    n.classList.contains('chg-grp') ? ['grp', n.textContent]
+    : n.classList.contains('chg-row') ? ['row', n.querySelector('.chg-st').textContent,
+        n.querySelector('.chg-path').textContent, n.querySelector('.chg-n').textContent]
+    : n.classList.contains('chg-notice') ? ['notice', n.innerText]
+    : ['empty', n.textContent])"""
+
+
+def test_nested_repo_groups_diff_tree_and_clear(stack, page, tmp_path):
+    w, sub, git = _nested_ws(tmp_path, stack, "sess-nest")
+    (w / "README.md").write_text("Run make build.\n")
+    (sub / "src/a.py").write_text("one\nTWO\n")
+    git(sub, "commit", "-qam", "edit a")
+    (sub / "tests").mkdir()
+    (sub / "tests/t.py").write_text("x = 1\n")
+    errors = _open(page, stack)
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '3'", timeout=8000)
+    page.click("#changes-badge")
+    page.wait_for_selector("#changes-drawer.open .chg-row", timeout=8000)
+    rows = page.evaluate(_LIST)
+    assert rows[0] == ["grp", "Workspace"]
+    assert rows[1] == ["row", "M", "README.md", "+1 −1"]
+    assert rows[2][0] == "grp" and rows[2][1].startswith("git-proj/HEAD ")
+    assert rows[2][1].endswith(" (+1 commit)") and " → " in rows[2][1]
+    assert rows[3:] == [
+        ["row", "M", "git-proj/src/a.py", "+1 −1"],
+        ["row", "A", "git-proj/tests/t.py", "+1"],
+    ]
+    # 하위 파일 행 → 같은 git unified diff (워크스페이스 기준 경로)
+    page.click('.chg-row[data-path="git-proj/src/a.py"]')
+    page.wait_for_selector("#changes-diff:not([hidden]) .rich-green", timeout=8000)
+    diff = page.inner_text("#changes-diff")
+    assert "+++ b/git-proj/src/a.py" in diff and "+TWO" in diff
+
+    # 📁 트리 — 하위 저장소 폴더에 git 배지와 ●, 안의 파일에 M
+    page.click("#changes-close")
+    page.wait_for_function(
+        "() => !document.querySelector('#changes-drawer').classList.contains('open')"
+    )
+    page.wait_for_timeout(300)
+    page.click("#files-btn", position={"x": 6, "y": 14})
+    page.wait_for_selector('#dl-tree .dl-row[data-rel="git-proj"]', timeout=8000)
+    assert page.locator('.dl-row[data-rel="git-proj"] > .chg-git').count() == 1
+    assert page.locator('.dl-row[data-rel="README.md"] > .chg-git').count() == 0
+    assert _tree(page)["git-proj"] == ("●", "Contains changed files")
+    _expand(page, "git-proj")
+    page.wait_for_selector('#dl-tree .dl-row[data-rel="git-proj/src"] > .chg-mark')
+    _expand(page, "git-proj/src")
+    page.wait_for_selector('#dl-tree .dl-row[data-rel="git-proj/src/a.py"] > .chg-mark')
+    t = _tree(page)
+    assert t["git-proj/src/a.py"][0] == "M" and t["git-proj/src/util.py"] == ("", "")
+
+    # Clear → 목록·트리 표시가 비고, Undo → 돌아온다 (배지 git 은 그대로)
+    page.click('.dl-row[data-rel="git-proj/src/a.py"] > .chg-mark')
+    page.wait_for_selector("#changes-drawer.open .chg-row", timeout=8000)
+    page.click("#changes-clear")
+    page.wait_for_selector("#changes-toast:not([hidden])", timeout=8000)
+    assert page.locator("#changes-list .chg-row, #changes-list .chg-grp").count() == 0
+    assert page.locator("#dl-tree .chg-mark").count() == 0
+    assert page.locator('.dl-row[data-rel="git-proj"] > .chg-git').count() == 1
+    page.click("#changes-toast .chg-undo")
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '3'", timeout=8000)
+    assert page.evaluate(_LIST) == rows
+    assert errors == []
+
+
+def test_nested_repo_lost_baseline_notice(stack, page, tmp_path):
+    w, sub, git = _nested_ws(tmp_path, stack, "sess-lost", second_commit=True)
+    (w / "README.md").write_text("changed\n")
+    git(sub, "commit", "-q", "--amend", "-m", "rewritten")
+    git(sub, "reflog", "expire", "--expire=now", "--all")
+    git(sub, "gc", "-q", "--prune=now")
+    errors = _open(page, stack)
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '1'", timeout=8000)
+    page.click("#changes-badge")
+    page.wait_for_selector("#changes-drawer.open .chg-notice", timeout=8000)
+    rows = page.evaluate(_LIST)
+    assert rows[0][0] == "notice"
+    assert "git-proj: baseline commit " in rows[0][1]
+    assert "rebase or reset, then gc" in rows[0][1]
+    assert page.inner_text("#changes-list .chg-notice b") == "git-proj"
+    assert rows[1:3] == [["grp", "Workspace"], ["row", "M", "README.md", "+1 −1"]]
+    assert rows[3][0] == "grp" and rows[3][1].startswith("git-proj/since ")
+    assert rows[3][1].endswith(" · baseline reset")
+    assert rows[4][0] == "empty" and rows[4][1].startswith(
+        "No changes in git-proj since "
+    )
+
+    # Clear 하면 안내도 사라지고, Undo 면 돌아온다
+    page.click("#changes-clear")
+    page.wait_for_selector("#changes-toast:not([hidden])", timeout=8000)
+    assert page.locator("#changes-list .chg-notice").count() == 0
+    page.click("#changes-toast .chg-undo")
+    page.wait_for_selector("#changes-list .chg-notice", timeout=8000)
+    # ✕ 는 서버 기록에서 닫는다 — 다시 열어도 닫힌 채
+    page.click("#changes-list .chg-notice-x")
+    page.wait_for_function(
+        "() => !document.querySelector('#changes-list .chg-notice')", timeout=8000
+    )
+    page.reload()
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '1'", timeout=8000)
+    page.click("#changes-badge")
+    page.wait_for_selector("#changes-drawer.open .chg-row", timeout=8000)
+    page.wait_for_timeout(300)
+    assert page.locator("#changes-list .chg-notice").count() == 0
+    assert errors == []
+
+
+def test_nested_repo_summary_lines(stack, page, tmp_path):
+    import shutil
+
+    from tests.test_snapshot_nested import make_repo
+
+    w, sub, _ = _nested_ws(tmp_path, stack, "sess-sum")
+    shutil.rmtree(sub)  # 탭 5 — 지워진 저장소
+    make_repo(w / "lib-x", {"src/core.c": "int f;\n", "README": "x\n"})  # 탭 7
+    errors = _open(page, stack)
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '2'", timeout=8000)
+    (w / "lib-x/src/core.c").write_text("int g;\n")
+    page.click("#changes-badge")
+    page.wait_for_function(
+        "() => document.querySelectorAll('#changes-list .chg-row').length === 3",
+        timeout=8000,
+    )
+    rows = page.evaluate(_LIST)
+    assert rows[0][0] == "grp" and rows[0][1] == "git-proj/repository removed"
+    assert rows[1] == ["row", "D", "git-proj/", ""]
+    assert rows[2][0] == "grp" and rows[2][1].startswith(
+        "lib-x/new repository · since "
+    )
+    assert rows[3:] == [
+        ["row", "A", "lib-x/", ""],
+        ["row", "M", "lib-x/src/core.c", "+1 −1"],
+    ]
+    assert page.locator(".chg-row.chg-summary").count() == 2
+    page.click('.chg-row[data-path="git-proj"]')
+    page.wait_for_function(
+        "() => /was removed from disk/.test(document.querySelector('#changes-diff').textContent)",
+        timeout=8000,
+    )
+    assert "It had 3 tracked files at commit " in page.inner_text("#changes-diff")
+    page.click('.chg-row[data-path="lib-x"]')
+    page.wait_for_function(
+        "() => /appeared after the baseline/.test(document.querySelector('#changes-diff').textContent)",
+        timeout=8000,
+    )
+    # 트리 — 새 저장소 폴더 ● (요약), 지워진 것은 없음
+    page.click("#changes-close")
+    page.wait_for_timeout(350)
+    page.click("#files-btn", position={"x": 6, "y": 14})
+    page.wait_for_selector(
+        '#dl-tree .dl-row[data-rel="lib-x"] > .chg-mark', timeout=8000
+    )
+    mark, tip = _tree(page)["lib-x"]
+    assert mark == "●" and tip.startswith("New repository since session start · ")
+    assert "git-proj" not in _tree(page)
     assert errors == []

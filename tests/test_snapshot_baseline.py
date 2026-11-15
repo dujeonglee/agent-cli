@@ -227,8 +227,17 @@ def test_refs_hold_the_commits(ws):
     (ws / "inventory.py").write_text("x\n")
     s.clear()
     s.clear()
-    r = s._git("for-each-ref", "--format=%(refname)", "refs/agent-cli/")
-    assert r.stdout.split() == [BASELINE_REF, BASELINE_PREV_REF]
+    # 기준점 ref 두 개가 커밋을 붙잡는다 — 같은 이름공간의 하위 저장소 기록 ref
+    # (``refs/agent-cli/nested/``, docs/snapshot/DESIGN.md §8)는 여기서 보지 않는다
+    r = s._git("for-each-ref", "--format=%(refname) %(objecttype)", "refs/agent-cli/")
+    got = [ln.split() for ln in r.stdout.splitlines()]
+    assert [
+        ref for ref, kind in got if not ref.startswith("refs/agent-cli/nested/")
+    ] == [
+        BASELINE_REF,
+        BASELINE_PREV_REF,
+    ]
+    assert all(kind == "commit" for _, kind in got)
 
 
 def test_same_size_edit_in_the_same_second_is_seen(ws):
