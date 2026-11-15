@@ -54,6 +54,7 @@ from agent_cli.hooks.shell import hooks_from_json, hooks_to_json
 from agent_cli.loop.kind import LoopKindError
 from agent_cli.session.store import AGENTS_DIR
 from agent_cli.session_slots import get_job_registry
+from agent_cli.subagent import agent_stop
 from agent_cli.subagent.delegation_checks import depth_or_recursion_refusal
 from agent_cli.subagent.run_agent import start_run
 from agent_cli.terminate import wait_left
@@ -111,7 +112,14 @@ def _persists(mail: dict) -> bool:
 
 
 def envelope(
-    kind: str, item_id: str, who: str, body: str, *, re: str = "", todo: str = ""
+    kind: str,
+    item_id: str,
+    who: str,
+    body: str,
+    *,
+    re: str = "",
+    todo: str = "",
+    mark: str = "",
 ) -> str:
     """들어오는 배달의 봉투 — 모양 하나 (v10.77.0, D).
 
@@ -119,10 +127,12 @@ def envelope(
     있을 때만 끝에 괄호 한 줄. 종전엔 배달마다 머리줄이 제각각이었다(`agent X
     message`·`agent X reply (success)`·`[question q- from …]`·`[answer to your
     question: …]`). 회신·답은 무엇에 대한 것인지(``re``) 적는다 — 보낸 쪽과
-    받은 쪽이 같은 id 를 본다. ``who`` 가 비면 ``from`` 을 뺀다(죽음 통지)."""
+    받은 쪽이 같은 id 를 본다. ``who`` 가 비면 ``from`` 을 뺀다(죽음 통지). ``mark`` 는 머리줄 끝의
+    표지 — 사람이 멈춘 에이전트의 회신(``stopped by user``, `agent_stop`)."""
     src = f" from {who}" if who else ""
     ref = f" re [{re}]" if re else ""
-    out = f"── {kind} [{item_id}]{src}{ref} ──\n{body}"
+    tag = f" · {mark}" if mark else ""
+    out = f"── {kind} [{item_id}]{src}{ref}{tag} ──\n{body}"
     return f"{out}\n({todo})" if todo else out
 
 
@@ -391,7 +401,14 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             content = envelope("request", rid, label, msg, todo=owe_line("it", rid))
         else:
             # `reply` — main 이 보낸 요청의 답. 되받아칠 것 없음.
-            content = envelope("reply", mid, label, msg, re=str(reply.get("re") or ""))
+            content = envelope(
+                "reply",
+                mid,
+                label,
+                msg,
+                re=str(reply.get("re") or ""),
+                mark=str(reply.get("mark") or ""),
+            )
         return {
             "role": "user",
             "tool": "agent",
@@ -471,7 +488,7 @@ class AgentInstance:
         ends_after_task: bool = False,
         caller_runtime: dict | None = None,
         agent_stack: list[str] | None = None,
-        stop_event: threading.Event | None = None,
+        parent: str = "",
     ):
         self.key = key
         self.profile_name = profile_name
@@ -517,9 +534,19 @@ class AgentInstance:
         # 지금 처리 중인 항목 — 런이 정상 종료하면 비운다. 재시작 때 남아
         # 있으면 complete 전에 끊긴 런이다(계속하기 안내로 다시 넣는다).
         self.in_flight: list[dict] = []
-        #: 평생 정지 — kill·세션 종료가 세운다. run 에이전트는 부른 런의 정지에 묶인
-        #: Event(`LinkedStop`)를 받는다(방 ■·Ctrl+C 가 run 을 멈춘다).
-        self.stop_event = stop_event if stop_event is not None else threading.Event()
+        #: 평생 정지 — ✕(kill)·세션 종료가 세운다. 런마다의 정지(■)는 ``run_stop`` — 이것에 묶여
+        #: 있다(`agent_stop.LinkedStop`). 방 ■·Ctrl+C 한 번은 main 만 멈춘다 (P3, 사용자 결정).
+        self.stop_event = threading.Event()
+        #: 지금 런의 정지 — 런마다 새로(`ResidentLoop.start`). ``stop_run`` 이 세운다.
+        self.run_stop: threading.Event | None = None
+        #: 사람·모델이 멈췄다면 그 원인(`agent_stop.STOPPED`·`REMOVED`)과 누가(``"user"``·``"main"``·
+        #: 키) — 빚진 상대에게 갈 회신을 정한다. 비면 사람의 정지가 아니다(세션 종료 — 빚은 버린다).
+        self.stop_cause = ""
+        self.stop_by = ""
+        #: 이 정지로 회신을 보낸 상대 ``[(받는 이, 요청 id)]`` — 화면 한 줄이 모아 말한다.
+        self.stop_notified: list[tuple[str, str]] = []
+        #: 띄운 쪽 주소(``"main"``·``"agent:<key>"``) — ✕ 가 그 에이전트가 띄운 run 을 함께 멈춘다.
+        self.parent = parent
         self.worker: threading.Thread | None = None
         self.ctx: ContextManager | None = None
 
@@ -552,12 +579,18 @@ class AgentInstance:
             "key": self.key,
             "profile": self.profile_name,
             "name": self.instance_name,
-            "state": self.state,
+            # 끝나는 중(✕·run 의 ■·세션 종료 — 평생 정지가 섰다)은 더 받지 않는다: 워커가 지금 도구를 마치기
+            # 전에도 끝난 것으로 보인다 — 멈춘 회신을 읽는 요청자가 "busy · 1 queued" 를 보지 않게 (v10.142.0)
+            "state": "dead" if self.stop_event.is_set() else self.state,
             "handled": self.handled,
             "pending_requests": self.inbox.qsize(),
             "est_tokens": est_tokens,
             "error": self.error,
             "ends_after_task": self.ends_after_task,
+            # 채널 머리(v10.142.0) — "run · from main · r-21"
+            "parent": self.parent,
+            "task_id": self.task_id,
+            "item": self.current_item,
         }
 
 
@@ -1408,9 +1441,10 @@ class AgentRegistry:
         - ``waiting`` (`wait` 로 끝남): 아무것도 하지 않는다 — 갚을 차례가 아니다.
           빚은 열린 채 다음 런으로 가고 깨어난 런이 `reply` 로 갚는다. 폴백을
           지금 보내면 요청자가 "⏸ waiting" 을 답으로 받는다.
-        - ``stopped`` (kill·종료로 끊김): 빚을 버린다. 끊긴 요청은 재시작이 새
-          id 로 다시 넣으며 다시 적는다 — 남기면 같은 요청에 빚이 둘이 되고, 죽은
-          채무자의 빚이 요청자의 `wait` 를 영원히 붙잡는다.
+        - ``stopped`` (정지로 끊김): 남은 빚을 버린다. 사람·모델의 정지(■·✕)는 런의 정리가
+          먼저 빚진 상대 모두에게 회신했다(`answer_debts_as_stopped` — 여기 남는 것은 사람 주소의
+          빚뿐). 세션 종료의 빚은 재시작이 끊긴 요청을 새 id 로 다시 넣으며 다시 적는다 — 남기면
+          같은 요청에 빚이 둘이 되고, 죽은 채무자의 빚이 요청자의 `wait` 를 영원히 붙잡는다.
         - 그 밖(보통의 끝): :meth:`end_run` — 남은 빚을 라벨 붙은 런 요약으로.
 
         종전엔 이 판정(``not waiting``·``not stop_event``)이 호출부 셋에 흩어져
@@ -1724,14 +1758,14 @@ class AgentRegistry:
         agent_stack: list[str] | None = None,
         ends_after_task: bool = False,
         task_summary: str = "",
-        stop_event: threading.Event | None = None,
+        parent: str = "",
     ) -> tuple[str, str]:
         """에이전트 생성 — ``(key, error)``. 성공 시 error 는 빈 문자열. run·spawn 한 길
         (docs/agent-engine/DESIGN.md §2): ``ends_after_task`` 면 과제 하나의 회신 뒤 내려온다.
 
         ``runtime`` 은 띄우는 쪽(호출자 루프)의 실행 배선(`AgentRuntime` 사전) — 깊이·순환
         검사와 그 에이전트의 바인딩·턴 상한이 이것을 본다(없으면 레지스트리의 것 = main).
-        ``agent_stack`` 은 호출자의 스택, ``stop_event`` 는 run 이 받는 묶인 정지(`LinkedStop`),
+        ``agent_stack`` 은 호출자의 스택, ``parent`` 는 호출자 주소(✕ 가 띄운 run 을 함께 멈춘다),
         ``task_summary`` 는 설명이 없을 때 로스터에 보일 과제 첫 문장.
 
         역할 로드·fork 전제 검사는 여기서 동기로 (즉시 거부), ctx 생성은
@@ -1830,7 +1864,7 @@ class AgentRegistry:
             ends_after_task=ends_after_task,
             caller_runtime=rt,
             agent_stack=agent_stack,
-            stop_event=stop_event,
+            parent=parent,
         )
         self._agents[key] = tm
         tm.worker = threading.Thread(
@@ -1862,6 +1896,7 @@ class AgentRegistry:
         re: str = "",
         todo: str = "",
         ledger: str = "",
+        mark: str = "",
     ) -> str:
         """request 큐잉 — 에러 메시지 또는 빈 문자열.
 
@@ -1874,7 +1909,7 @@ class AgentRegistry:
         받는다: 사람 발신은 ``u-``, 회신을 기다리는 요청은 ``r-``, 그 밖(통지·
         회신 도착)은 ``n-``. 이 id 가 배달의 유일한 키다.
 
-        ``kind``·``re``·``todo`` (v10.77.0, D): 봉투의 재료 — ``"notice"``·
+        ``kind``·``re``·``todo``·``mark`` (v10.77.0, D · ``mark`` v10.142.0): 봉투의 재료 — ``"notice"``·
         ``"reply"``·``"answer"``. 봉투는 받는 런이 항목을 읽을 때 그린다
         (:meth:`_model_text`) — 창과 대화 로그에는 본문만 남는다.
 
@@ -1947,6 +1982,8 @@ class AgentRegistry:
                 item["re"] = re
             if todo:
                 item["todo"] = todo
+            if mark:
+                item["mark"] = mark
         if ledger:
             item["ledger"] = ledger
         if resumed:
@@ -2052,6 +2089,7 @@ class AgentRegistry:
                 text,
                 re=str(item.get("re") or ""),
                 todo=str(item.get("todo") or ""),
+                mark=str(item.get("mark") or ""),
             )
         if _is_human_addr(author):
             return text if bare else f"[{author}]: {text}"
@@ -2281,7 +2319,14 @@ class AgentRegistry:
         return [mail_queue_item(r) for r in items]
 
     def _deliver_peer_reply(
-        self, requester_key: str, from_key: str, output: str, hop: int, *, re: str = ""
+        self,
+        requester_key: str,
+        from_key: str,
+        output: str,
+        hop: int,
+        *,
+        re: str = "",
+        mark: str = "",
     ) -> str:
         """요청의 회신을 요청자 inbox 로 terminal 재주입 (v5.11) — 에러 또는 "".
 
@@ -2304,6 +2349,7 @@ class AgentRegistry:
             expects_reply=False,
             kind="reply",
             re=re,
+            **({"mark": mark} if mark else {}),  # 정지 회신만 표지를 단다
         )
 
     def message_to_main(
@@ -2628,23 +2674,19 @@ class AgentRegistry:
             lines.append(STATUS_WAIT_NUDGE)
         return "\n".join(lines)
 
-    def kill(self, key: str) -> str:
-        """종료 요청 — 성공 시 빈 문자열. 멱등 (이미 dead 여도 성공). run 에이전트도 같다
-        (과제 회신 전이면 그 빚은 조용히 버려진다 — 빚진 상대 알림은 P3)."""
+    def kill(self, key: str, *, by: str = "user") -> str:
+        """✕ 제거 — 성공 시 빈 문자열. 멱등 (이미 dead 여도 성공). run 에이전트도 같다.
+
+        살아 있던 에이전트면 그 빚진 상대 모두에게 회신이 간다(`agent_stop` 의 표 — 지금 일·그 밖의 빚은
+        stopped, 시작 안 한 대기 요청은 removed, 띄운 run 은 함께 멈춤). ``by`` 는 누가 지웠는가 —
+        ``"user"``(사람: 웹 ✕·``/stop`` 아님), ``"main"``·에이전트 키(모델의 `agent` `kill`). 빈 문자열은
+        사람의 정지가 아니다(과제를 못 넣은 run 의 뒷정리 — 알릴 빚이 없다)."""
         tm = self._agents.get(key)
         if tm is None:
             return f'unknown agent "{key}"'
-        tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
-        self._cancel_checkins(f"agent:{key}")  # 죽은 에이전트에게 알림이 가지 않게
-        # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
-        # 현재 턴을 마저 돌고(join 은 best-effort), 그 창에 발화하면 항목이
-        # `_SHUTDOWN` 뒤에 줄 서서 영영 안 읽힌다. 그 턴에서 새로 건 감시는
-        # 워커의 `finally` 가 잡는다 — 죽음이 확정되는 유일한 지점이다.
-        self._drop_monitors(tm.key)
-        tm.stop_event.set()
-        tm.inbox.put(_SHUTDOWN)
-        if tm.worker is not None:
-            tm.worker.join(timeout=2.0)  # busy 면 다음 턴 경계에서 멈춤
+        if by and tm.state != "dead" and not tm.stop_event.is_set():
+            tm.stop_cause, tm.stop_by = agent_stop.REMOVED, by
+        self._end_agent(tm, join=True)
         # 5.13: kill=창 정리 — 표면(replay 버퍼+라이브 창)만 비우고
         # conversation.jsonl 은 남긴다(mode:"resume" 시 _replay_conversation
         # 소스). shutdown_all(세션 종료)은 정리하지 않음 — 다음 세션 resume
@@ -2655,6 +2697,183 @@ class AgentRegistry:
         self._save_state()
         self._notify_roster()
         return ""
+
+    def _end_agent(self, tm: AgentInstance, *, join: bool) -> None:
+        """에이전트의 평생을 끝낸다 — 되살리지 않음·체크인·감시 정리·평생 정지·워커 깨우기(``join`` 이면
+        ≤2s 기다림 — ✕ 는 창을 비우기 전에 기다린다, ■ 는 기다리지 않는다). 빚 알림은 워커의 정리
+        (`_answer_after_stop`)가 원인(``stop_cause``)을 보고 한다."""
+        tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
+        self._cancel_checkins(f"agent:{tm.key}")  # 죽은 에이전트에게 알림이 가지 않게
+        # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
+        # 현재 턴을 마저 돌고(join 은 best-effort), 그 창에 발화하면 항목이
+        # `_SHUTDOWN` 뒤에 줄 서서 영영 안 읽힌다. 그 턴에서 새로 건 감시는
+        # 워커의 `finally` 가 잡는다 — 죽음이 확정되는 유일한 지점이다.
+        self._drop_monitors(tm.key)
+        tm.stop_event.set()
+        tm.inbox.put(_SHUTDOWN)
+        if (
+            join
+            and tm.worker is not None
+            and tm.worker is not threading.current_thread()
+        ):
+            tm.worker.join(timeout=2.0)  # busy 면 다음 턴 경계에서 멈춤
+
+    # ── 사람의 정지 (v10.142.0, docs/agent-engine/DESIGN.md §2.3 — 규칙은 `agent_stop`) ──
+
+    def stop_run(self, key: str, *, by: str = "user") -> str:
+        """■ 런 정지 — 지금 런만 끝내고 상주 에이전트는 남는다(대기 요청은 다음 차례). run 에이전트는
+        맡은 일 하나가 수명이라 내려온다(채널은 회색으로 남는다 — ✕ 와 달리 창을 비우지 않는다).
+        런은 도구 실행 직전 검사(v10.140.0)에서 멈추고, 런의 정리가 빚진 상대에게 회신한다.
+        성공 시 빈 문자열, 아니면 사유."""
+        tm = self._agents.get(key)
+        if tm is None:
+            return f'unknown agent "{key}"'
+        if tm.state == "dead" or tm.stop_event.is_set():
+            return f'agent "{key}" has already ended'
+        if tm.ends_after_task:
+            tm.stop_cause, tm.stop_by = agent_stop.STOPPED, by
+            self._end_agent(tm, join=False)
+            self._save_state()
+            self._notify_roster()
+            return ""
+        if tm.state != "busy":
+            return f'agent "{key}" is not working on a request'
+        # 원인을 먼저 — 꺼낸 뒤·시작 전이면 시작(`ResidentLoop.start`)이 원인을 보고 새 런을 멈춘다
+        tm.stop_cause, tm.stop_by = agent_stop.STOPPED, by
+        run = tm.run_stop
+        if run is not None:
+            run.set()
+        return ""
+
+    def working_agents(self) -> list[str]:
+        """일하는 에이전트의 키 — 런 중인 것과 일을 끝내지 않은 run 에이전트(``wait`` 로 잠든 것 포함).
+        "모두 정지"·웹 ``■ all``·Ctrl+C 가 본다. 읽기만 한다."""
+        return [
+            tm.key
+            for tm in list(self._agents.values())
+            if not tm.stop_event.is_set()
+            and tm.state != "dead"
+            and (tm.state == "busy" or tm.ends_after_task)
+        ]
+
+    def stop_all_runs(self, *, by: str = "user") -> list[str]:
+        """모든 에이전트의 지금 런을 멈춘다(`working_agents` 마다 ■) — 멈춘 키 목록. main 은 건드리지
+        않는다(웹 "Stop all agents"·``/stop all``·Ctrl+C 두 번의 에이전트 몫)."""
+        return [k for k in self.working_agents() if not self.stop_run(k, by=by)]
+
+    def answer_debts_as_stopped(
+        self, tm: AgentInstance, *, activity: list[str], notes: str
+    ) -> None:
+        """멈춘 에이전트의 갚지 않은 빚(지금 일·그 밖의 빚 — 사람 주소 제외) 모두에 stopped 회신을 보내고
+        빚을 갚음으로 적는다(요청자의 기다리는 회신이 닫힌다). 보낸 상대는 ``tm.stop_notified`` 에 쌓인다.
+        ``activity``·``notes`` 는 그 런의 마지막 호출·생각(`agent_stop.run_activity`·`partial_notes`)."""
+        me = f"agent:{tm.key}"
+        by = tm.stop_by or "user"
+        mark = agent_stop.STOPPED_MARK.format(by=by)
+        for d in self.reply_debts(me):
+            text = agent_stop.stopped_reply(
+                tm.key, d.id, d.text, activity, notes, by=by
+            )
+            self._send_stop_reply(
+                tm, d.to, d.id, text, mark, hop=d.hop, answers=d.answers
+            )
+            self.settle_id(me, d.id)
+
+    def _answer_queued_as_removed(self, tm: AgentInstance) -> None:
+        """시작 안 한 대기 요청(받은편지함 미러의 요청 항목)에 removed 회신을 보내고 미러를 비운다."""
+        by = tm.stop_by or "user"
+        mark = agent_stop.REMOVED_MARK.format(by=by)
+        with self._cv:
+            queued, tm.inbox_items = list(tm.inbox_items), []
+        for it in queued:
+            author = str(it.get("author") or "")
+            if it.get("kind") or not it.get("expects_reply", True):
+                continue  # 회신·통지 — 빚이 아니다
+            if _is_human_addr(author):
+                continue  # 사람의 창 입력 — 창이 곧 배달이다
+            text = agent_stop.removed_reply(
+                tm.key, str(it.get("id") or ""), str(it.get("text") or ""), by=by
+            )
+            self._send_stop_reply(
+                tm,
+                author,
+                str(it.get("id") or ""),
+                text,
+                mark,
+                hop=int(it.get("hop", 0) or 0),
+            )
+
+    def _send_stop_reply(
+        self,
+        tm: AgentInstance,
+        to: str,
+        rid: str,
+        text: str,
+        mark: str,
+        *,
+        hop: int = 0,
+        answers: list | None = None,
+    ) -> None:
+        """정지 회신 한 통 — 요청자가 main 이면 메일함, 에이전트면 그 받은편지함(회신 — 빚 아님). 배달한 뒤
+        보낸 쪽 기록을 닫는다(요청자의 `wait` 가 그 틈에 런을 끝내지 않게, `awaited_replies`)."""
+        if to == "main":
+            self._push_reply(
+                {
+                    "kind": "peer_message",
+                    "key": tm.key,
+                    "profile": tm.profile_name,
+                    "name": tm.instance_name,
+                    "success": False,
+                    "output": text,
+                    "answers": list(answers or []),
+                    "expects_reply": False,
+                    "re": rid,
+                    "mark": mark,
+                }
+            )
+            self._log_outbound(tm.key, text, to="main")
+        elif to.startswith("agent:"):
+            self._deliver_peer_reply(
+                to.split(":", 1)[1], tm.key, text, hop, re=rid, mark=mark
+            )
+        self._close_sent(to, rid)
+        tm.stop_notified.append((to.removeprefix("agent:"), rid))
+
+    def _answer_after_stop(self, tm: AgentInstance) -> None:
+        """사람(또는 모델)이 끝낸 에이전트의 남은 것을 표(`agent_stop.stop_rule`)대로 정리한다 — 워커가 죽을 때
+        한 번. 런 없이 남은 빚(스스로 잠든 빚)·대기 요청·띄운 run, 그리고 화면 한 줄."""
+        rule = agent_stop.stop_rule(tm.stop_cause, tm.ends_after_task)
+        self.answer_debts_as_stopped(tm, activity=[], notes="")
+        kept = 0
+        if rule.answers_queued:
+            self._answer_queued_as_removed(tm)
+        else:
+            kept = len(self._queued(tm))
+        if rule.stops_sub_runs:
+            me = f"agent:{tm.key}"
+            for sub in list(self._agents.values()):
+                if sub.parent == me and sub.ends_after_task:
+                    self.stop_run(sub.key, by=tm.stop_by or "user")
+        self.report_stop(tm, kept=kept)
+
+    def report_stop(self, tm: AgentInstance, *, kept: int) -> None:
+        """정지 한 번의 화면 한 줄(CLI ``■ agt-3 │ stopped by user — reply sent to main (r-21)``) — 보낸 상대를
+        비운다."""
+        from agent_cli.render import get_renderer
+
+        by = tm.stop_by or "user"
+        mark = (
+            agent_stop.REMOVED_MARK
+            if tm.stop_cause == agent_stop.REMOVED
+            else agent_stop.STOPPED_MARK
+        )
+        notified, tm.stop_notified = tm.stop_notified, []
+        try:
+            get_renderer().agent_stopped(
+                key=tm.key, how=mark.format(by=by), notified=notified, kept=kept
+            )
+        except Exception:
+            pass  # 화면은 best-effort — 정리를 막지 않는다
 
     def shutdown_all(self, *, deadline: float | None = None) -> None:
         """세션 종료 — 전원 kill. main 부트스트랩의 finally 에서 호출. ``deadline``
@@ -2707,6 +2926,7 @@ class AgentRegistry:
             ends_after_task=tm.ends_after_task,
             caller_runtime=tm.caller_runtime,
             agent_stack=tm.agent_stack,
+            parent=tm.parent,
         )
         fresh.handled = tm.handled
         fresh.created_at = tm.created_at
@@ -2809,6 +3029,8 @@ class AgentRegistry:
                     # 띄운 쪽의 깊이·스택 — 복원된 에이전트가 같은 자리에서 다시 선다
                     "depth": int((tm.caller_runtime or {}).get("depth", 0) or 0),
                     "agent_stack": list(tm.agent_stack),
+                    # 띄운 쪽 — ✕ 가 그 run 을 함께 멈춘다 (v10.142.0, 더해진 키)
+                    **({"parent": tm.parent} if tm.parent else {}),
                     # run 에이전트: 과제 하나 — 못 끝냈으면 resume 이 되살려 회신을 마친다
                     **(
                         {"ends_after_task": True, "task_id": tm.task_id}
@@ -2915,6 +3137,7 @@ class AgentRegistry:
                 # 띄운 쪽이 main 이 아니었으면 그 깊이로 (배선은 지금 세션의 것)
                 caller_runtime={**self.runtime, "depth": depth} if depth else None,
                 agent_stack=[str(x) for x in (e.get("agent_stack") or [])],
+                parent=str(e.get("parent") or ""),
             )
             tm.task_id = str(e.get("task_id") or "")
             tm.handled = int(e.get("handled", 0) or 0)
@@ -3175,6 +3398,10 @@ class AgentRegistry:
                         "output": crash,
                     }
                 )
+            if tm.stop_cause:
+                # 사람·모델이 끝냈다(✕·run 의 ■) — 빚진 상대 모두에게 알리고 띄운 run 을 멈춘다
+                # (`agent_stop` 의 표). 런 도중이었으면 그 런의 정리가 지금 일의 빚을 이미 갚았다.
+                self._answer_after_stop(tm)
             if not tm.revivable:
                 # **영구 사망(kill·crash)일 때만** 질문을 정리한다 (§3.8).
                 # 세션 종료(shutdown_all)는 revivable 을 유지하므로 여기
@@ -3193,8 +3420,8 @@ class AgentRegistry:
 
     @staticmethod
     def _next_inbox_item(tm: AgentInstance, poll_s: float = 0.5):
-        """받은편지함의 다음 항목 — 정지가 서면 ``_SHUTDOWN``. run 에이전트의 정지는 부른 런에
-        묶여(`LinkedStop`) 표식 없이도 설 수 있어, 막힌 채 기다리지 않고 짧게 다시 본다."""
+        """받은편지함의 다음 항목 — 정지가 서면 ``_SHUTDOWN``. 정지를 세우는 쪽은 표식도 넣지만
+        (`_end_agent`·`shutdown_all`), 막힌 채 기다리지 않고 짧게 다시 본다."""
         while True:
             try:
                 return tm.inbox.get(timeout=poll_s)
@@ -3429,6 +3656,7 @@ def _agent_spawn(registry, args: dict, *, caller, runtime) -> ToolResult:
         parent_ctx=caller.ctx,
         runtime=runtime,
         agent_stack=list(caller.agent_stack),
+        parent=caller.owner,
     )
     if error:
         return ToolResult(False, error=f"spawn rejected: {error}")
@@ -3498,7 +3726,8 @@ def _agent_kill(registry, args: dict, *, caller, runtime) -> ToolResult:
         # 같은 키에 kill 을 일곱 번 보내며 매번 같은 "terminated" 를 받았다.
         registry.kill(key)
         return ToolResult(True, output=KILL_ALREADY.format(key=key))
-    err = registry.kill(key)
+    # ✕ 와 같은 장치 — 빚진 상대 모두에게 회신이 간다. 지운 쪽은 모델(main 또는 그 에이전트)이다.
+    err = registry.kill(key, by=str(caller.owner).removeprefix("agent:"))
     if err:
         return ToolResult(False, error=f"kill rejected: {err}")
     return ToolResult(True, output=KILL_DONE.format(key=key))

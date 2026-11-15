@@ -447,6 +447,14 @@ class Renderer(ABC):
         """한 teammate 의 대화 기록을 표면에서 정리 (5.13, kill 시). web 은
         replay 버퍼 정리 + 라이브 창 비움, CLI 는 no-op."""
 
+    def agent_stopped(
+        self, *, key: str, how: str, notified: list[tuple[str, str]], kept: int
+    ) -> None:
+        """사람(또는 모델)이 에이전트를 멈췄다 (v10.142.0, docs/agent-engine/DESIGN.md §2.3) — ``how`` 는
+        ``"stopped by user"``·``"removed by main"``, ``notified`` 는 회신을 보낸 상대 ``[(받는 이, 요청 id)]``,
+        ``kept`` 는 남긴 대기 요청 수. 표시 전용. Default no-op — CLI 는 ``■ agt-3 │ …`` 한 줄, 웹은 채널
+        칩·회신 카드가 말한다."""
+
     def agent_mail_hint(self, *, key: str, kind: str, text: str) -> None:
         """main 앞 메일 도착 한 줄 — CLI 전용 (v10.51.0). ``text`` 는 이미
         조립된 사람용 한 줄(바쁠 때의 대기 줄, 질문 도착). 기본 구현은

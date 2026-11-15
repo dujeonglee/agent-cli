@@ -212,6 +212,7 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
     도구 결과는 inventory 의 다른 경로(설명·절)를 거치지 않아 여기서 등록한다;
     표기 가드가 이 표본을 본다."""
     from agent_cli.prompts.system_prompt import build_live_agents_section
+    from agent_cli.subagent import agent_stop
     from agent_cli.subagent import agents_live as al
     from agent_cli.subagent.run_agent import RUN_STARTED
 
@@ -265,6 +266,46 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             "`agent` kill — first time, then again on the same key",
             "\n".join(
                 [al.KILL_DONE.format(key="agt-1"), al.KILL_ALREADY.format(key="agt-1")]
+            ),
+        ),
+        (
+            "agent_stopped_reply",
+            (
+                "The reply the requester gets when the user stops (■) an agent working on its "
+                "request, then the one for a request it had not started when the user removed "
+                "it (✕) — each closes the requester's wait (v10.142.0)"
+            ),
+            "\n\n".join(
+                [
+                    al.envelope(
+                        "reply",
+                        "n-8",
+                        "agt-3",
+                        agent_stop.stopped_reply(
+                            "agt-3",
+                            "r-21",
+                            "find every caller of parse_tokens, incl. tests/",
+                            [
+                                '`shell` "rg -n parse_tokens" ✓',
+                                '`read_file` "src/lexer.py" ✓',
+                            ],
+                            "lexer.py:42, cli.py:118",
+                            by="user",
+                        ),
+                        re="r-21",
+                        mark=agent_stop.STOPPED_MARK.format(by="user"),
+                    ),
+                    al.envelope(
+                        "reply",
+                        "n-9",
+                        "agt-5",
+                        agent_stop.removed_reply(
+                            "agt-5", "r-32", "review the parser next", by="user"
+                        ),
+                        re="r-32",
+                        mark=agent_stop.REMOVED_MARK.format(by="user"),
+                    ),
+                ]
             ),
         ),
         (

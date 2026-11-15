@@ -200,7 +200,8 @@ agent_cli/
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── runner.py            종류들이 공유하는 두 단계 — 역할 오버레이(`apply_role_overrides`)·ctx 생성
 │   ├── profiles.py          에이전트 프로파일 카탈로그 로더(`agents/` 하나)
-│   ├── run_agent.py         `agent` run 의 진입 — 거부 판정 → `spawn(ends_after_task)` → 과제 요청(`launch_run`·`start_run`), 묶인 정지 `LinkedStop`, run 의 훅
+│   ├── run_agent.py         `agent` run 의 진입 — 거부 판정 → `spawn(ends_after_task)` → 과제 요청(`launch_run`·`start_run`), run 의 훅
+│   ├── agent_stop.py        사람의 정지(■ 런 정지·✕ 제거) 규칙 한 장 `STOP_RULES`·런의 정지 `LinkedStop`·stopped/removed 회신 문장
 │   ├── delegation_checks.py 에이전트를 띄우기 전 거부 판정(빈 과제·provider·순환·깊이) — run·spawn 공통
 │   ├── resident_loop.py     에이전트(run·spawn)의 루프 종류 `ResidentLoop`
 │   ├── agents_live.py       `AgentRegistry`·`AgentInstance` — 명단·상한·스레드·agents.json, spawn·`message` 라우팅·메일함·질문 포트·회신 배달·보낸 쪽 기록(기다리는 회신)
@@ -688,7 +689,10 @@ run 은 레지스트리의 에이전트다(값 `ends_after_task`, docs/agent-eng
 `AgentRegistry.spawn(ends_after_task=True)` → 과제 요청(`request`, 요청자 = 부른 루프의 주소) 순으로 띄우고 **바로 돌아온다**.
 결과는 그 에이전트의 회신이다 — 명시 `reply`, 없으면 런 끝 폴백(라벨 붙은 런 요약). 런이 `complete` 로 끝나면 워커가 내려온다(dead, 채널은 회색) — `wait` 로 끝난 런은 깨어 계속하고, 런 중간의 `reply` 는 끝이 아니다.
 깊이·순환은 호출자(`loop.kind.Caller`)의 것으로 센다 — 에이전트가 띄운 에이전트는 한 단계 깊다(`AgentInstance.caller_runtime`).
-run 의 정지는 부른 런의 정지에 묶인다(`LinkedStop`); spawn 의 정지는 평생 것(kill·세션 종료)이다.
+정지(docs/agent-engine/DESIGN.md §2.3): 에이전트마다 런의 정지(■ — `AgentRegistry.stop_run`, `ResidentLoop.start` 가 런마다
+`agent_stop.LinkedStop` 을 세운다)와 평생 정지(✕ — `kill`, 세션 종료)가 따로다. 부른 런의 정지에는 묶이지 않는다(방 ■·Ctrl+C 한 번은 main 만).
+사람·모델이 멈추면 그 에이전트가 빚진 상대 모두에게 stopped/removed 회신이 간다 — 무엇을 누구에게는 `agent_stop.STOP_RULES` 한 장,
+보내는 것은 레지스트리(`answer_debts_as_stopped` — 런의 정리에서, `_answer_after_stop` — 워커가 죽을 때).
 
 보낸 쪽 기록(`AgentRegistry._sent`)이 장부의 "기다리는 회신"(`Ledger.awaited`)이다 — 요청이 받은편지함에 들어갈 때 적히고 받는 쪽의
 빚이 끝날 때(갚음·폴백·버림) 지워진다. 남아 있으면 `complete` 가 되돌아오고, main 의 `wait` 는 런을 끝내지 않고 제자리에서

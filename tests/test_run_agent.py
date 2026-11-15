@@ -2,7 +2,7 @@
 
 run 은 `spawn(ends_after_task=True)` + 과제 요청이다: 바로 돌아오고 결과는 회신으로 온다. 여기는
 그 진입(`run_agent.start_run`·`launch_run`)의 단위 — 상한, 앞 거부 판정(올리기 전), 정지(부른 런에
-묶인 `LinkedStop`), 훅(띄울 때·내려올 때), ``@agent``, 명단·주소, 숨은 부작용, 화면 줄. 루프를
+묶이지 않음 — 자기 ■), 훅(띄울 때·내려올 때), ``@agent``, 명단·주소, 숨은 부작용, 화면 줄. 루프를
 통째로 도는 흐름(제자리 대기·회신·끼어들기·resume)은 tests/test_engine_p2.py.
 """
 
@@ -190,40 +190,49 @@ class TestChecks:
 
 
 class TestStop:
-    def test_run_stops_with_the_callers_stop_but_not_the_other_way(self, tmp_path, reg):
+    """v10.142.0: run 은 부른 런의 정지에 묶이지 않는다 — 방 ■·Ctrl+C 한 번은 main 만(사용자 결정).
+    run 은 자기 ■(`stop_run`)·✕·"모두 정지" 로 멈추고 요청자에게 stopped 회신이 간다(tests/test_agent_stop.py)."""
+
+    def test_callers_stop_does_not_stop_the_run(self, tmp_path, reg, monkeypatch):
         caller = _caller(tmp_path)
-        resident = _resident(reg)
-        tm_stop = run_agent.LinkedStop(caller.stop_event)
-        assert not tm_stop.is_set()
-        tm_stop.set()  # run 의 kill 은 부른 런을 멈추지 않는다
-        assert not caller.stop_event.is_set()
-        other = run_agent.LinkedStop(caller.stop_event)
-        caller.stop_event.set()  # 방 ■ — 부른 런이 멈추면 run 도
-        assert other.is_set()
-        assert not resident.stop_event.is_set()  # 상주의 평생 stop 은 무관
+        seen = threading.Event()
+        release = threading.Event()
 
-    def test_linked_stop_without_a_parent_is_a_plain_event(self):
-        ev = run_agent.LinkedStop(None)
-        assert not ev.is_set()
-        ev.set()
-        assert ev.is_set()
+        def engine(kind, start, ctx):
+            seen.set()
+            release.wait(5)
+            return ToolResult(True, output="ok")
 
-    def test_run_agent_comes_down_when_the_caller_stops(
+        _engine(monkeypatch, engine)
+        _run(reg, caller)
+        (tm,) = reg._agents.values()
+        assert seen.wait(5)
+        caller.stop_event.set()  # 방 ■ — main 만
+        assert not tm.stop_event.is_set() and not tm.run_stop.is_set()
+        release.set()
+        assert _wait(lambda: tm.state == "dead")
+
+    def test_run_agent_comes_down_when_its_own_stop_is_pressed(
         self, tmp_path, reg, monkeypatch
     ):
         caller = _caller(tmp_path)
+        seen = threading.Event()
 
         def engine(kind, start, ctx):
-            caller.stop_event.set()  # 방 ■ 이 런 도중에
+            seen.set()
+            while not start.stop_event.is_set():
+                time.sleep(0.002)
             return ToolResult(False, error="Interrupted by user")
 
         _engine(monkeypatch, engine)
         _run(reg, caller)
         (tm,) = reg._agents.values()
+        assert seen.wait(5)
+        assert reg.stop_run(tm.key) == ""
         assert _wait(lambda: tm.state == "dead") and tm.stop_event.is_set()
-        assert (
-            reg.awaited_replies("main") == []
-        )  # 버린 빚 — 요청자는 더 기다리지 않는다
+        # 요청자는 stopped 회신을 받았다 — 기다림이 닫혔다
+        assert reg.awaited_replies("main") == []
+        assert [m.get("mark") for m in reg._pending] == ["stopped by user"]
 
 
 class TestHooks:
