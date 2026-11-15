@@ -90,6 +90,11 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
   끝이다). `wait` 로 끝난 런(자기 하위 run 을 기다림)은 내려오지 않고 깨어 계속하다 `complete` 때 내려온다. 런 중간에
   `reply` 를 먼저 보내도 내려오지 않는다. 회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도
   남으면 런 끝 폴백이 런 요약으로 회신한다. 정지(■·✕)로 끊긴 run 도 내려온다 — 요청자에게는 stopped 회신(§2.3).
+- **실패한 런의 폴백 (v10.143.0).** 턴 상한·provider 오류로 끝난 런은 산출물이 비어 있다 — 폴백 회신의 머리에 엔진의
+  사유 한 줄이 선다: `(the run ended with an error: Max turns (40) reached)`(사유가 없으면 — 엔진 예외는 사유가 산출물에
+  있다 — `(the run ended with an error)`). 요청자가 main 이면 관찰 레코드(`agent_mail.build_reply_record`)가, 에이전트면
+  런 끝 폴백(`AgentRegistry.end_run`)이 단다 — 종전엔 사유가 버려졌고 에이전트 요청자는 실패 표시도 받지 못했다.
+  사유는 실패한 런의 메일에만 ``error`` 로 실린다(agents.json 미러의 더해진 키).
 
 ### 2.3 정지
 

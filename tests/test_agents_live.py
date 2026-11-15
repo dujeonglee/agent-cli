@@ -229,6 +229,28 @@ class TestBuildReplyRecord:
         assert rec["success"] is False
         assert "(the run ended with an error)\nboom" in rec["content"]
 
+    def test_failure_reply_names_the_engine_cause(self):
+        """v10.143.0: 실패한 런의 사유(``error`` — 턴 상한·provider 오류)가 머리 한 줄에 — 산출물이 비어
+        종전엔 요청자가 원인을 받지 못했다. 여러 줄 사유는 한 줄로 접고 길이를 자른다."""
+        rec = build_reply_record(
+            self._reply(success=False, output="", error="Max turns (40) reached")
+        )
+        assert (
+            "(the run ended with an error: Max turns (40) reached)\n" in rec["content"]
+        )
+        long = build_reply_record(
+            self._reply(success=False, output="", error="HTTP 500\n" + "x" * 1000)
+        )
+        (line,) = [
+            ln for ln in long["content"].splitlines() if ln.startswith("(the run")
+        ]
+        assert line.startswith("(the run ended with an error: HTTP 500 xxx")
+        assert len(line) < 340 and line.endswith("…)")
+
+    def test_success_reply_ignores_a_stray_error(self):
+        rec = build_reply_record(self._reply(error="ignored"))
+        assert "run ended with an error" not in rec["content"]
+
     def test_reply_envelope_names_its_id_and_request(self):
         """v10.77.0 (D): ``── reply [<메일 id>] from <이름표> re [<요청 id>] ──``."""
         rec = build_reply_record(self._reply(item_id="n-9"))

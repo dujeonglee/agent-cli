@@ -68,6 +68,7 @@ from agent_cli.subagent.agent_mail import (
     is_human_addr,
     mail_queue_item,
     owe_line,
+    run_error_line,
 )
 from agent_cli.subagent.delegation_checks import depth_or_recursion_refusal
 from agent_cli.subagent.question_port import QuestionPort
@@ -1257,10 +1258,18 @@ class AgentRegistry:
         독촉은 런 **안**에서 3회 있었다(dispatch 의 빚 목록). 배관만 갈린다:
         main → peer 는 `request`(inbox), 상주 → peer 는 `_deliver_peer_reply`
         (terminal 재주입), 상주 → main 은 mailbox `kind:"reply"`(``meta`` 가
-        run(그 런을 연 배달 id)/success/duration/reply_path 를 싣는다).
+        run(그 런을 연 배달 id)/success/duration/reply_path 를, 실패면 error(엔진의 사유)를 싣는다).
+        실패한 런의 회신은 머리에 원인 한 줄(`agent_mail.run_error_line`) — main 은 관찰 레코드가, 에이전트
+        요청자는 여기서 단다. main 의 런 끝(``meta`` 없음)은 성공으로 본다.
         """
         n = 0
         summary = f"{_NO_REPLY_LABEL}\n{output}"
+        # 에이전트 요청자의 회신에도 실패 머리 한 줄 — main 의 메일은 관찰 레코드(`build_reply_record`)가 단다
+        peer_summary = (
+            summary
+            if meta.get("success", True)
+            else f"{run_error_line(str(meta.get('error') or ''))}\n{summary}"
+        )
         for d in self.reply_debts(debtor):
             if debtor == "main":
                 if not self._deliver_peer_reply(
@@ -1284,7 +1293,7 @@ class AgentRegistry:
                 )
             else:
                 self._deliver_peer_reply(
-                    d.to.split(":", 1)[1], key, summary, d.hop, re=d.id
+                    d.to.split(":", 1)[1], key, peer_summary, d.hop, re=d.id
                 )
             n += 1
         with self._cv:
