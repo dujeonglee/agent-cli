@@ -660,9 +660,13 @@ class QuestionPort:
         if d is None:
             return f'no unpaid request "{id}" — you owe: {listing}.'
         self._reg.settle_id(self.me, id)
-        return self._reg._deliver_peer_reply(
+        err = self._reg._deliver_peer_reply(
             d.to.split(":", 1)[1], "main", text, 0, re=id
         )
+        self._reg._close_sent(
+            d.to, id
+        )  # 배달 **뒤** — 요청자가 그 틈에 기다림을 잃지 않게
+        return err
 
     def reply(self, text: str, *, id: str = "") -> str:
         """빚진 회신을 갚는다 (v9.21.0) — 에러 메시지 또는 빈 문자열.
@@ -743,9 +747,13 @@ class QuestionPort:
                 answers=d.answers,
                 re=id,
             )
+            self._reg._close_sent(
+                d.to, id
+            )  # 배달 **뒤** — 요청자가 그 틈에 기다림을 잃지 않게
             return ""
         requester = d.to.split(":", 1)[1]
         self._reg._deliver_peer_reply(requester, self.key, text, 0, re=id)
+        self._reg._close_sent(d.to, id)
         self._reg._log_outbound(self.key, text, to=requester)
         return ""
 
@@ -1130,6 +1138,8 @@ class AgentRegistry:
 
         보낸 쪽 기록(`_sent`)을 읽는다 — 요청이 받은편지함에 들어갈 때 적히고(`_enqueue`·
         `message_to_main`), 받는 쪽의 빚이 끝날 때 지워진다(`_close_sent` — 갚음·폴백·버림).
+        갚음·폴백은 회신을 **배달한 뒤** 지운다: 먼저 지우면 그 틈에 요청자의 `wait` 가 기다릴
+        회신도 도착한 메일도 없는 순간을 보고 제자리 대신 런을 끝낸다.
         받는 쪽에서 세면(빚 장부 + 받은편지함) 항목이 받은편지함을 떠나 빚으로 적히기까지의
         틈에 회신 기다림이 사라진다. 받는 쪽이 죽었으면 빼다 — 회신을 보낼 이가 없다(그 죽음은
         따로 메일로 온다). 읽기만 한다."""
@@ -1342,7 +1352,6 @@ class AgentRegistry:
             for d in self._reply_debts.get(debtor, []):
                 if d.to == to and not d.settled:
                     d.settled = True
-                    self._close_sent(d.to, d.id)
                     return d
             return None
 
@@ -1352,7 +1361,6 @@ class AgentRegistry:
             for d in self._reply_debts.get(debtor, []):
                 if d.id == str(id) and not d.settled:
                     d.settled = True
-                    self._close_sent(d.to, d.id)
                     return d
             return None
 
@@ -2443,6 +2451,8 @@ class AgentRegistry:
                     expects_reply=bool(expects_reply),
                     notice=not expects_reply,
                 )
+                if settled is not None:  # 배달 **뒤** 요청자의 기다림을 닫는다
+                    self._close_sent(settled.to, settled.id)
                 return delivered_line(rec_id, expects_reply=bool(expects_reply))
             # Capture the send time BEFORE request() enqueues — the target's
             # worker can start (scope_start) the instant it's queued, so a
@@ -2460,6 +2470,8 @@ class AgentRegistry:
                 item_id=rec_id,
                 kind="" if expects_reply else "notice",
             )
+            if settled is not None:  # 배달 **뒤** 요청자의 기다림을 닫는다
+                self._close_sent(settled.to, settled.id)
             if err:
                 return err
             if me_key:
