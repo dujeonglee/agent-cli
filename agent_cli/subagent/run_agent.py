@@ -2,8 +2,9 @@
 
 run 은 spawn 과 같은 에이전트다 — 레지스트리의 `spawn(ends_after_task=True)` 로 올라 같은 루프
 (`ResidentLoop`)·명단·상한·agents.json·채널을 쓰고, 과제를 부른 쪽 주소(``caller.owner`` —
-main 이든 에이전트든)의 요청으로 받아(`request`), 회신(명시 `reply` 또는 런 끝 폴백 = 런 요약)이
-나가면 내려온다. **결과는 그 회신이다**: 여기는 기다리지 않고 바로 돌아오고, 부른 쪽의 장부에
+main 이든 에이전트든)의 요청으로 받아(`request`), 런이 `complete` 로 끝나면 내려온다(사용자 결정 —
+`wait` 로 끝난 런은 깨어 계속하고, 런 중간의 `reply` 는 끝이 아니다). 회신은 장부가 보장한다: 갚을
+빚이 남으면 `complete` 가 되돌아오고, 그래도 남으면 런 끝 폴백이 런 요약으로 회신한다. **결과는 그 회신이다**: 여기는 기다리지 않고 바로 돌아오고, 부른 쪽의 장부에
 "기다리는 회신" 이 선다(레지스트리가 안다 — `AgentRegistry.awaited_replies`).
 
 이 모듈이 정하는 run 만의 것 셋:
@@ -29,7 +30,7 @@ from agent_cli.tools.result import ToolResult
 RUN_STARTED = (
     'started agent "{key}"{as_} on request "{rid}" — its `reply` comes back marked '
     "[{rid}] and wakes you (if it completes without one you get its run summary "
-    "instead); the agent ends after that reply."
+    "instead); the agent ends when it completes."
 )
 
 

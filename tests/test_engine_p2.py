@@ -515,7 +515,38 @@ class TestAgentToAgent:
 
 
 class TestComeDown:
-    def test_run_agent_that_waits_stays_until_its_reply_goes(self, session):
+    """run 에이전트는 런이 `complete` 로 끝날 때 내려온다 (사용자 결정 2026-11-15) — `wait` 로 끝난
+    런은 깨어 계속하고, 런 중간의 `reply` 는 끝이 아니다."""
+
+    def test_run_agent_stays_alive_after_its_reply_until_it_completes(self, session):
+        gate = threading.Event()
+        p = Provider(
+            {
+                "MAIN": [
+                    call("agent", mode="run", task="TASK-N reply early"),
+                    call("wait"),
+                    complete_all("ok"),
+                ],
+                "TASK-N": [
+                    lambda msgs: call("reply", id=owed_id(msgs), text="N early answer"),
+                    lambda msgs: (gate.wait(10), call("complete", result="n"))[1],
+                ],
+            }
+        )
+        s = session(p)
+        reg = s["reg"]
+        th = threading.Thread(target=s["run"], daemon=True)
+        th.start()
+        assert wait_until(lambda: len(reg._agents) == 1)
+        (n,) = reg._agents.values()
+        # 회신은 나갔다(main 이 받았다) — 그래도 complete 전이라 살아서 일하는 중
+        assert wait_until(lambda: "N early answer" in contents(s["ctx"]))
+        assert n.state == "busy" and n.worker.is_alive()
+        gate.set()
+        th.join(10)
+        assert wait_until(lambda: n.state == "dead") and n.revivable is False
+
+    def test_run_agent_that_waits_stays_and_comes_down_at_complete(self, session):
         gate = threading.Event()
         p = Provider(
             {
@@ -524,7 +555,7 @@ class TestComeDown:
                     call("wait"),
                     complete_all("ok"),
                 ],
-                # 첫 런: 하위 run 을 띄우고 wait (빚은 남는다) — 그 회신에 깨어 갚는다
+                # 첫 런: 하위 run 을 띄우고 wait 로 끝냄 — 그 회신에 깨어 갚고 complete
                 "TASK-K": [
                     call("agent", mode="run", task="TASK-L leaf"),
                     call("wait"),
@@ -546,9 +577,9 @@ class TestComeDown:
         th.start()
         assert wait_until(lambda: len(reg._agents) == 2)
         k = next(t for t in reg._agents.values() if "TASK-K" in t.description)
-        # K 는 wait 로 런을 끝냈지만 과제 회신 전이다 — 내려오지 않는다
+        # K 의 런은 wait 로 끝났다 — 내려오지 않고 받은편지함을 기다린다
         assert wait_until(lambda: k.state == "idle")
-        assert k.worker.is_alive() and not reg._task_delivered(k)
+        assert k.worker.is_alive() and k.revivable is True
         gate.set()
         th.join(10)
         assert wait_until(lambda: k.state == "dead") and k.revivable is False

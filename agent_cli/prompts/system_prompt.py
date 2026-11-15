@@ -888,7 +888,7 @@ def build_live_agents_section(
             "These agents are already running and remember all previous "
             "exchanges — send follow-up work with `message` (`to` the agent's "
             "key or name) instead of spawning a new one for the same thread "
-            "of work; a run agent ends after its reply. Once you have handed "
+            "of work; a run agent ends when it completes. Once you have handed "
             "work to an agent, finish what is "
             "yours, then call `wait`: you are woken when its reply arrives, so "
             "never predict a pending reply, and do not poll `status` or re-send "

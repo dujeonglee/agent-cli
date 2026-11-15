@@ -3,7 +3,7 @@
 모든 에이전트(`agent` `mode` "run" 의 run 에이전트와 `spawn` 의 상주 에이전트)는 레지스트리
 하나(`subagent/agents_live.py::AgentRegistry`)에 오르고, 각자 자기 스레드(`agent-<key>`)에서 같은
 루프 종류(`ResidentLoop`)로 돈다. run 과 spawn 의 차이는 에이전트 값 `ends_after_task` 하나다 —
-참이면 과제 하나의 회신을 보내고 내려온다(채널은 회색으로 남는다), 거짓이면 다음 메시지를 기다린다.
+참이면 런이 `complete` 로 끝날 때 내려온다(채널은 회색으로 남는다), 거짓이면 다음 메시지를 기다린다.
 결과는 요청자에게 가는 **회신**(`reply`)이고, 요청은 누구든 `message` 로 보낸다.
 
 이 문서는 지금 구조(P1·P2)와 남은 단계(P3)를 적는다.
@@ -33,7 +33,7 @@ tool_bridge._invoke_agent ─▶ agents_live.tool_agent(args, registry, caller=C
                                  └─ spawn ─▶ AgentRegistry.spawn(…, agent_stack=호출자 것)  (같은 깊이·순환 검사)
 
 워커(_worker) ─ ResidentLoop.run(받은편지함 묶음) … 런마다
-              └─ ends_after_task 이고 과제 회신이 나갔으면(_task_delivered) 내려온다(_come_down → dead)
+              └─ ends_after_task 이고 런이 wait 로 끝나지 않았으면(complete 등) 내려온다(_come_down → dead)
 ```
 
 | 모듈 | 하는 일 |
@@ -73,8 +73,11 @@ tool_bridge._invoke_agent ─▶ agents_live.tool_agent(args, registry, caller=C
   "the wait was interrupted — the user wrote to you; … still awaited, so `wait` again when you are done" 를 남긴다.
   같은 런이라 감사(auditor)의 구간이 회신까지 덮는다. 기다리는 회신 없이 작업·모니터만 기다리면 지금처럼 런을 끝낸다.
   에이전트의 `wait` 는 그대로다(런 끝, 메일로 깸).
-- **내려옴.** run 에이전트는 런이 끝날 때마다 과제 회신이 나갔는지 본다(`_task_delivered` — 과제 빚이 갚아졌거나 폴백으로
-  닫혔다). `wait` 로 끝난 런은 빚이 남아 내려오지 않고, 그 회신에 깨어 갚은 뒤 내려온다.
+- **내려옴 (사용자 결정).** run 에이전트는 런이 `complete` 로 끝날 때 내려온다 — `complete` 는 모든 루프에서 런을 끝내는
+  동사이고, run 에이전트에게는 그게 곧 수명 끝이다(`_run_ended_by_wait` 가 아니면 `_come_down`; 턴 상한·오류로 끝난 런도
+  끝이다). `wait` 로 끝난 런(자기 하위 run 을 기다림)은 내려오지 않고 깨어 계속하다 `complete` 때 내려온다. 런 중간에
+  `reply` 를 먼저 보내도 내려오지 않는다. 회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도
+  남으면 런 끝 폴백이 런 요약으로 회신한다. 정지(■·kill)로 끊긴 run 의 수명은 P1 그대로(내려온다) — 정리는 P3.
 
 ### 2.3 정지
 
@@ -122,7 +125,7 @@ P1 이 둔 임시 종류·결과 어댑터·결과 포장·`run:` 주소·축소
 
 | 자리 | 지금 |
 |------|------|
-| run 의 루프 종류 | `ResidentLoop` + `ends_after_task` — 회신을 보내면 내려온다 |
+| run 의 루프 종류 | `ResidentLoop` + `ends_after_task` — 런이 `complete` 로 끝나면 내려온다 |
 | run 의 결과 | 회신(`reply`, 없으면 런 끝 폴백) — 도구 결과는 "started agent … on request r-…" 한 줄 |
 | run 의 주소 | `agent:<key>` — 받은편지함으로 통지·회신을 받는다 |
 | run 의 `wait` | 에이전트와 같다(런 끝). `WAIT_BLOCK` 은 하니스 작업과 기다리는 회신을 둔 main 이 쓴다 |

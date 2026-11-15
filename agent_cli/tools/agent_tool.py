@@ -52,7 +52,7 @@ class AgentTool(Tool):
     # none(기본)·fork 둘 다 가능 — "empty" 로 단정하지 않는다. v10.141.0: 결과는 회신이다 —
     # run 은 바로 돌아오고, 기다리는 법은 꼬리(`## Open Items`·`## Live Agents`)가 말한다.
     RUN_DESCRIPTION = (
-        '`mode` "run" gives one task to a new sub-agent that ends after it replies, '
+        '`mode` "run" gives one task to a new sub-agent that ends when it completes, '
         "and you get back only its reply: whatever it read stays in its window, both "
         "handoffs drop detail, and its mistakes return in the same confident tone as "
         "its findings. Delegate when answering would mean reading across many "
@@ -84,7 +84,7 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": list(AGENT_MODES),
                 "description": (
-                    '"run": one task for a new agent that ends after its reply — '
+                    '"run": one task for a new agent that ends when it completes — '
                     "returns at once; the reply comes to you later as a message. "
                     '"spawn": create a persistent agent that keeps its context '
                     "between requests (returns its key; send it work with "

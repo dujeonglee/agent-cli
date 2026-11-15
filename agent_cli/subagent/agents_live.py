@@ -476,7 +476,8 @@ class AgentInstance:
         self.key = key
         self.profile_name = profile_name
         #: run 에이전트(`agent` ``mode`` "run", docs/agent-engine/DESIGN.md §2) — 과제 하나의
-        #: 회신(명시 `reply` 또는 런 끝 폴백)이 나가면 내려온다. 그 밖은 spawn 과 같다:
+        #: 런이 `complete` 로 끝나면 내려온다(`wait` 로 끝난 런은 아니다 — `_run_ended_by_wait`).
+        #: 그 밖은 spawn 과 같다:
         #: 명단·주소·상한·agents.json·채널. ``task_id`` 가 그 과제 요청의 id 다.
         self.ends_after_task = ends_after_task
         self.task_id = ""
@@ -3133,7 +3134,7 @@ class AgentRegistry:
                 else:
                     self._begin_items(tm, [item])
                     finished = kind.run(kind.start([item]))
-                if tm.ends_after_task and self._task_delivered(tm):
+                if tm.ends_after_task and not self._run_ended_by_wait(finished):
                     self._come_down(tm, finished)
                     break
         except BaseException as e:
@@ -3182,14 +3183,14 @@ class AgentRegistry:
                 if tm.stop_event.is_set():
                     return _SHUTDOWN
 
-    def _task_delivered(self, tm: AgentInstance) -> bool:
-        """run 에이전트의 과제 회신이 나갔는가 — 명시 `reply` 로 갚았거나 런 끝 폴백이
-        장부에서 뺐다. `wait` 로 끝난 런은 빚이 남아 있어 아직이다. 과제가 아직 받은편지함에
-        있으면(시작 전) 아직이다."""
-        if any(i.get("id") == tm.task_id for i in self._queued(tm)):
-            return False
-        d = self.debt_by_id(f"agent:{tm.key}", tm.task_id)
-        return d is None or d.settled
+    @staticmethod
+    def _run_ended_by_wait(finished) -> bool:
+        """그 런이 `wait` 로 끝났는가 — run 에이전트가 내려오지 않는 유일한 끝이다(깨어 계속한다).
+        그 밖의 끝(`complete`, 턴 상한·오류)은 run 에이전트의 수명 끝이다 (사용자 결정 2026-11-15:
+        회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도 남으면 런 끝
+        폴백이 런 요약으로 회신한다). 런 중간의 `reply` 는 끝이 아니다."""
+        result = finished[0] if isinstance(finished, tuple) else finished
+        return bool(getattr(result, "waiting", False))
 
     def _come_down(self, tm: AgentInstance, finished) -> None:
         """run 에이전트가 과제를 마쳤다 — 되살릴 대상이 아니고(채널은 회색으로 남는다),

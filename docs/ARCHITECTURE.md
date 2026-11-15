@@ -486,7 +486,7 @@ class ParsedAction:            # 단수 투영 — thought·action·action_input
 | 종류 | 자리 | 무엇 |
 |------|------|------|
 | `MainLoop` | `runtime.py` | 세션의 main — 펌프가 요청마다 `run(start)` |
-| `ResidentLoop` | `subagent/resident_loop.py` | 에이전트(run·spawn) — 받은편지함 묶음마다. run 은 값 `ends_after_task` 로 과제 회신 뒤 내려온다 |
+| `ResidentLoop` | `subagent/resident_loop.py` | 에이전트(run·spawn) — 받은편지함 묶음마다. run 은 값 `ends_after_task` 로 런이 `complete` 로 끝나면 내려온다 |
 | `SkillLoop` | `skills/executor.py` | `run_skill`·`/skill` |
 | `HarnessLoop` | `harness/jobs.py` | 하니스 작업(감사자) (`PrivateLoop`) |
 
@@ -686,7 +686,7 @@ op 에 준 `tools`·`model` 이 프로파일 값보다 우선한다(`subagent/ru
 run 은 레지스트리의 에이전트다(값 `ends_after_task`, docs/agent-engine/DESIGN.md). `agent` 의 모든 모드가 `tool_agent`
 (`subagent/agents_live.py`)의 모드 표로 가고, run 은 `subagent/run_agent.py` 가 거부 판정(`subagent/delegation_checks.py`) →
 `AgentRegistry.spawn(ends_after_task=True)` → 과제 요청(`request`, 요청자 = 부른 루프의 주소) 순으로 띄우고 **바로 돌아온다**.
-결과는 그 에이전트의 회신이다 — 명시 `reply`, 없으면 런 끝 폴백(라벨 붙은 런 요약). 회신이 나가면 워커가 내려온다(dead, 채널은 회색).
+결과는 그 에이전트의 회신이다 — 명시 `reply`, 없으면 런 끝 폴백(라벨 붙은 런 요약). 런이 `complete` 로 끝나면 워커가 내려온다(dead, 채널은 회색) — `wait` 로 끝난 런은 깨어 계속하고, 런 중간의 `reply` 는 끝이 아니다.
 깊이·순환은 호출자(`loop.kind.Caller`)의 것으로 센다 — 에이전트가 띄운 에이전트는 한 단계 깊다(`AgentInstance.caller_runtime`).
 run 의 정지는 부른 런의 정지에 묶인다(`LinkedStop`); spawn 의 정지는 평생 것(kill·세션 종료)이다.
 
