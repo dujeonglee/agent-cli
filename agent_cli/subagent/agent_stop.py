@@ -14,8 +14,9 @@
 세션 종료(`shutdown_all`)는 사람의 정지가 아니다 — 원인이 비어 있고, 빚은 지금처럼 버려 재시작이 되넣는다.
 
 회신은 회신이다(P2 규칙): 요청자의 기다리는 회신 항목을 닫고 새 장부 항목을 만들지 않는다. 글은 여기서
-짓는다 — 모델이 읽는 문장이라 모듈 상수다(`prompts.inventory` 표본). "Do not redo" 줄이 없으면 35B 가 멈춘
-일을 10/10 다시 돌렸다(E1).
+짓는다 — 모델이 읽는 문장이라 모듈 상수다(`prompts.inventory` 표본). 마지막 줄은 다음 걸음을 요청자에게
+맡긴다(사용자 결정 C, 2026-11-15): 사람은 일꾼만 멈춘 것이니 요청자가 다른 방법으로 마저 해도 된다. 종전 금지 문장
+("Do not redo …")은 run 하나를 멈춘 실측에서 35B 가 3/3 지키지 않았고 GLM 의 "다르게 해 달라" 해석만 막았다.
 
 레지스트리를 import 하지 않는 잎이다 — 레지스트리(`agents_live`)와 에이전트 루프(`resident_loop`)가 부른다.
 """
@@ -44,7 +45,7 @@ REMOVED_REPLY = (
 )
 LAST_ACTIVITY = "Last activity: {calls}"
 PARTIAL_NOTES = "Partial notes: {notes}"
-DO_NOT_REDO = "Do not redo this work unless the user asks."
+NEXT_STEP = "Decide whether to continue another way or report back to the user."
 
 #: "Last activity" 에 싣는 호출 수(뒤에서부터)와 인용·메모 길이.
 ACTIVITY_CALLS = 3
@@ -174,7 +175,7 @@ def stopped_reply(
         lines.append(LAST_ACTIVITY.format(calls=" · ".join(activity)))
     if notes:
         lines.append(PARTIAL_NOTES.format(notes=notes))
-    lines.append(DO_NOT_REDO)
+    lines.append(NEXT_STEP)
     return "\n".join(lines)
 
 
@@ -188,6 +189,6 @@ def removed_reply(agent: str, rid: str, request: str, *, by: str) -> str:
                 rid=rid,
                 quote=_one_line(request, QUOTE_CHARS),
             ),
-            DO_NOT_REDO,
+            NEXT_STEP,
         ]
     )

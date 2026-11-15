@@ -119,11 +119,11 @@ tool_bridge._invoke_agent ─▶ agents_live.tool_agent(args, registry, caller=C
 The user stopped agt-3 while it was working on your request [r-21] ("find every caller of parse_tokens, incl. tests/").
 Last activity: `shell` "rg -n parse_tokens" ✓ · `read_file` "src/lexer.py" ✓
 Partial notes: lexer.py:42, cli.py:118
-Do not redo this work unless the user asks.
+Decide whether to continue another way or report back to the user.
 
 ── reply [n-9] from agt-5 re [r-32] · removed by user ──
 The user removed agt-5 before it started your request [r-32] ("review the parser next"). Nothing was done for it.
-Do not redo this work unless the user asks.
+Decide whether to continue another way or report back to the user.
 ```
 
 "Last activity" 는 그 런이 기록한 호출 중 실행된 마지막 셋(`agent_stop.run_activity` — ctx 의 그 런 구간), "Partial notes"

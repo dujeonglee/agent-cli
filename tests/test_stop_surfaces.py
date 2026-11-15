@@ -283,7 +283,10 @@ class TestMainWaitWakesOnAStoppedReply:
         assert not holder["target"].exists()  # 멈춘 뒤 도구 0회
         text = contents(s["ctx"])
         assert "re [r-" in text and "· stopped by user ──" in text
-        assert "The user stopped agt-" in text and "Do not redo this work" in text
+        assert (
+            "The user stopped agt-" in text
+            and "Decide whether to continue another way" in text
+        )
         assert 'Last activity: `shell` "ls -d . >/dev/null # step 0" ✓' in text
         assert s["reg"].awaited_replies("main") == []
         (tm,) = s["reg"]._agents.values()
@@ -380,7 +383,10 @@ class TestStopEverythingDoesNotWakeMain:
         assert s["run"](text="MAIN what happened?").success
         first = p.calls["MAIN"][calls_before]
         text = "\n".join(str(m.get("content") or "") for m in first)
-        assert "· stopped by user ──" in text and "Do not redo this work" in text
+        assert (
+            "· stopped by user ──" in text
+            and "Decide whether to continue another way" in text
+        )
 
     def test_stop_all_agents_wakes_main(self, session):  # noqa: F811
         p = Provider(
