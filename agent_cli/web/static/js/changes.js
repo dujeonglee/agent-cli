@@ -28,6 +28,10 @@
 // 다시 꾸민다. 표시는 목록에서만 나오므로 Clear 로 0 이 되면 배지·런 끝 줄과 함께 사라진다.
 // 파일 글자를 누르면 그 파일 diff 를 연 채로 패널이 열린다 — Workspace 드로어는 그대로 둔다
 // (패널이 그 위를 덮고, 패널을 닫으면 보던 트리로 돌아온다). 폴더 점은 패널만 연다.
+// v10.138.2: 🔗 행(`data-type="link"` — 밖을 가리키거나 깨진 링크)도 파일처럼 글자 — 목록의
+// 변경은 링크 자체(대상 문자열)이고 diff 도 그것이다. 목록의 경로가 트리에서 폴더 행이면
+// 하위 git 저장소(gitlink — 커밋이 바뀌면 그 폴더 한 줄로 오른다)거나 안을 가리키는 폴더
+// 링크라 그 행에도 점 ●, 누르면 그 경로 diff.
 //
 // 다시 세는 때: 페이지 로드(스냅샷 재생 끝), 패널을 열 때, ↻, 런 끝. 런 끝은 기존 SSE 로
 // 안다 — main 런은 `worker_state` 가 바쁨 → 한가로 바뀔 때(main 런은 `scope_end` 를 내지
@@ -134,9 +138,10 @@ if ($badge && $drawer) {
     const rel = row.dataset.rel;
     if (rel === undefined) return null;
     const since = sinceText(data.baseline);
-    if (row.dataset.type === "file") {
-      const f = byPath.get(rel);
-      if (!f || f.status === "D") return null;
+    const type = row.dataset.type;
+    const f = byPath.get(rel);
+    // 파일·symlink — 목록의 글자 그대로(삭제된 것은 트리에 없다)
+    if ((type === "file" || type === "link") && f && f.status !== "D") {
       const b = el("button", ["chg-mark", "chg-st", "chg-st-" + f.status], f.status);
       b.title = (f.status === "A" ? "Added " : "Modified ") + since;
       b.addEventListener("click", function (e) {
@@ -145,7 +150,20 @@ if ($badge && $drawer) {
       });
       return b;
     }
-    if (row.dataset.type === "dir" && dirty.has(rel)) {
+    if (type !== "dir") return null;
+    // 폴더 행 자체가 목록에 있으면 하위 git 저장소(gitlink)거나 안을 가리키는 폴더 링크의
+    // 대상이 바뀐 것(서버는 그런 링크를 대상 종류 dir 로 보인다 — 프런트는 둘을 못 가른다).
+    // 그 경로 diff 를 연다
+    if (f) {
+      const b = el("button", ["chg-mark", "chg-dot"], "●");
+      b.title = "Nested repository or symlink changed " + since;
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        open(rel);
+      });
+      return b;
+    }
+    if (dirty.has(rel)) {
       const b = el("button", ["chg-mark", "chg-dot"], "●");
       b.title = "Contains changed files";
       b.addEventListener("click", function (e) {
