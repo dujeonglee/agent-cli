@@ -26,7 +26,11 @@ from agent_cli.subagent.agents_live import (
     tool_agent,
 )
 from tests.binding_support import make_binding
+from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS, make_ports
+
+#: 루프 밖의 main 호출자 — `tool_agent` 는 호출자를 받는다 (v10.141.0)
+MAIN_CALLER = make_caller()
 
 
 def wait_until(pred, timeout: float = 5.0) -> bool:
@@ -857,18 +861,11 @@ class TestWaitAndScope:
 
 class TestToolTeammate:
     def test_no_registry_rejected(self):
-        # 5.0.0 모드 축소: 상주 모드는 main 전용 — run 안내와 함께 거부.
-        r = tool_agent({"mode": "spawn"}, registry=None)
-        assert not r.success and "main-session only" in r.error
-        assert '`mode` "run"' in r.error
-        assert "`message`" not in r.error  # 일회성 루프엔 peer 채널이 없다
-
-    def test_no_registry_rejected_in_resident_loop_points_to_message(self):
-        """v10.1.0 (실측 mgv4en): 상주 루프에서 request/spawn 을 부르면 거절
-        문구가 peer 채널 `message` 를 가리킨다 — 키나 이름, 또는 main."""
-        r = tool_agent({"mode": "request", "key": "x"}, registry=None, resident=True)
-        assert not r.success and "main-session only" in r.error
-        assert "use `message`" in r.error and "key or name" in r.error
+        # v10.141.0: 모든 루프가 같은 표면이라 "main 전용" 모드가 없다 — 레지스트리가 없는
+        # 세션이면 어느 모드든(run 포함) 같은 사실 한 줄로 거부.
+        for mode in ("spawn", "run", "status"):
+            r = tool_agent({"mode": mode}, caller=MAIN_CALLER, registry=None)
+            assert not r.success and "no agent registry" in r.error
 
     def test_spawn_observation_tells_main_how_peers_reach_it(self, tmp_path, renderer):
         """v10.1.0: spawn 관찰이 peer 채널(message, 키·이름)과 꼬리 로스터를
@@ -876,6 +873,7 @@ class TestToolTeammate:
         reg = make_registry(tmp_path)
         r = tool_agent(
             {"mode": "spawn", "name": "player2", "task": "wait"},
+            caller=MAIN_CALLER,
             registry=reg,
             runtime=reg.runtime,
         )
@@ -884,14 +882,19 @@ class TestToolTeammate:
             r.output
         )
         assert "roster in their own per-turn tail" in r.output
-        r2 = tool_agent({"mode": "spawn"}, registry=reg, runtime=reg.runtime)
+        r2 = tool_agent(
+            {"mode": "spawn"}, caller=MAIN_CALLER, registry=reg, runtime=reg.runtime
+        )
         assert '`message` tool as key "agt-' in r2.output
         reg.shutdown_all()
 
     def test_spawn_with_initial_task(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         r = tool_agent(
-            {"mode": "spawn", "task": "explore"}, registry=reg, runtime=reg.runtime
+            {"mode": "spawn", "task": "explore"},
+            caller=MAIN_CALLER,
+            registry=reg,
+            runtime=reg.runtime,
         )
         assert r.success
         assert 'spawned agent "agt-' in r.output
@@ -899,42 +902,47 @@ class TestToolTeammate:
         assert wait_until(reg.has_pending_replies)
         reg.shutdown_all()
 
-    def test_request_then_delivery_flow(self, tmp_path, renderer):
+    def test_message_then_delivery_flow(self, tmp_path, renderer):
+        """v10.141.0: main 의 일 맡기기는 `message` 다(종전 `agent` "request")."""
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
-        r = tool_agent({"mode": "request", "key": key, "task": "go"}, registry=reg)
-        assert r.success and "queued" in r.output
-        assert "DELIVERED" not in r.output  # 안내는 도구 설명이 담당
-        # v10.85.0: 결과는 사실만("회신이 깨운다") — "기다리는 법"은 꼬리
-        # `## Live Agents` 머리글 한 곳이 상시로 말한다(agent 검토 PR B, T2).
-        assert "wakes you" in r.output and "`wait`" not in r.output
+        out = reg.message_handler("main")(key, "go")
+        assert out.startswith('delivered as request "r-')
+        # 결과는 사실만("회신 표지") — "기다리는 법"은 꼬리가 말한다(agent 검토 PR B, T2).
+        assert "`wait`" not in out
         assert wait_until(reg.has_pending_replies)
         reply = reg.drain_replies()[0]
         assert "done:go" in reply["output"]
         reg.shutdown_all()
 
-    def test_wait_mode_rejected(self, tmp_path, renderer):
-        # 스키마 밖 모드 — 의미론 검증과 디스패치 양쪽에서 거부.
+    def test_wait_and_request_modes_rejected(self, tmp_path, renderer):
+        # 스키마 밖 모드 — 의미론 검증과 디스패치 양쪽에서 거부. "request" 는 v10.141.0 에
+        # `message` 로 갔다.
         from agent_cli.tools.registry import TOOLS
 
         assert "unknown `mode`" in TOOLS["agent"].validate({"mode": "wait"})
+        assert "unknown `mode`" in TOOLS["agent"].validate(
+            {"mode": "request", "key": "k", "task": "t"}
+        )
         reg = make_registry(tmp_path)
-        r = tool_agent({"mode": "wait", "key": "agt-x"}, registry=reg)
+        r = tool_agent(
+            {"mode": "wait", "key": "agt-x"}, caller=MAIN_CALLER, registry=reg
+        )
         assert not r.success and "unknown `mode`" in r.error
 
     def test_status_and_kill_modes(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        s = tool_agent({"mode": "status"}, registry=reg)
+        s = tool_agent({"mode": "status"}, caller=MAIN_CALLER, registry=reg)
         assert s.success and key in s.output
-        k = tool_agent({"mode": "kill", "key": key}, registry=reg)
+        k = tool_agent({"mode": "kill", "key": key}, caller=MAIN_CALLER, registry=reg)
         assert k.success and "terminated" in k.output
         assert wait_until(lambda: reg.get(key).state == "dead")
 
     def test_unknown_mode(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
-        r = tool_agent({"mode": "dance"}, registry=reg)
+        r = tool_agent({"mode": "dance"}, caller=MAIN_CALLER, registry=reg)
         assert not r.success and "unknown `mode`" in r.error
 
 
@@ -957,9 +965,8 @@ class TestAgentToolValidate:
 
     def test_mode_conditional_required(self):
         t = self._tool()
-        assert "requires" in t.validate({"mode": "request", "key": "agt-1"})
-        assert "requires" in t.validate({"mode": "request", "task": "x"})
-        assert t.validate({"mode": "request", "key": "agt-1", "task": "x"}) is None
+        assert "requires" in t.validate({"mode": "run"})
+        assert t.validate({"mode": "run", "task": "x"}) is None
         assert "requires" in t.validate({"mode": "resume"})
         assert "requires" in t.validate({"mode": "kill", "key": "  "})
 
@@ -968,9 +975,9 @@ class TestAgentToolValidate:
 
 
 class TestLoopWiring:
-    def test_tool_present_without_registry_mode_reduced(self):
-        # 5.0.0 모드 축소: 레지스트리 없어도 agent 는 존재 (run 용) —
-        # 상주 모드는 디스패치 거부 + 설명 축소가 담당.
+    def test_tool_present_without_registry_port(self):
+        # 포트에 레지스트리가 없는 루프(서브루프)도 agent 는 같은 표면으로 있다 (v10.141.0) —
+        # 디스패치가 세션 슬롯의 레지스트리로 간다.
         from unittest.mock import MagicMock
 
         from tests.loopkit import make_loop
@@ -1144,12 +1151,9 @@ class TestFullLoopIntegration:
         )
         reg.shutdown_all()
 
-    def test_subloop_gets_reduced_agent_description(self, tmp_path):
-        # 5.0.0 모드 축소: 서브루프(레지스트리 없음)의 Available Tools 는
-        # run 전용 축소 설명, main 은 상주 모드 포함 전체 설명.
-        # v10.110.0: agent 는 지연 도구 — 설명 전문은 `tool_help` 결과(`tool_guide_text`)로
-        # 가고, 프롬프트에는 한 줄 요약 + 인자 뼈대만. 축소는 둘 다에 남는다: 전문은
-        # 서브루프 설명, 뼈대의 `mode` 는 "run" 하나.
+    def test_every_loop_gets_the_same_agent_surface(self, tmp_path):
+        """v10.141.0: 서브루프 축소판이 없다 — 전문과 프롬프트의 인자 뼈대가 루프와 무관하게
+        같고, `mode` 는 run·spawn·status·resume·kill(`request` 없음)."""
         from agent_cli.dialects import get as get_wf
         from agent_cli.prompts.system_prompt import (
             _build_tools_section,
@@ -1157,16 +1161,12 @@ class TestFullLoopIntegration:
         )
 
         wf = get_wf("json_fc")
-        sub = tool_guide_text("agent", ["agent"], wf, has_agent_registry=False)
-        main = tool_guide_text("agent", ["agent"], wf, has_agent_registry=True)
-        assert '`mode` "run" only here' in sub
-        assert "a persistent agent that keeps" not in sub.split("Input JSON")[0]
-        assert "spawn" in main and "a persistent agent that keeps" in main
-        sub_prompt = _build_tools_section(["agent"], wf, has_agent_registry=False)
-        main_prompt = _build_tools_section(["agent"], wf, has_agent_registry=True)
-        assert '"mode": "string, required — \\"run\\""' in sub_prompt
-        assert "spawn" not in sub_prompt.split("- complete:")[0]
-        assert '\\"spawn\\"' in main_prompt
+        full = tool_guide_text("agent", ["agent"], wf)
+        assert "a persistent agent that keeps" in full and "only here" not in full
+        prompt = _build_tools_section(["agent"], wf)
+        for mode in ("run", "spawn", "status", "resume", "kill"):
+            assert f'\\"{mode}\\"' in prompt
+        assert '\\"request\\"' not in prompt
 
 
 # ── P2: ask→main 양방향 라우팅 ──────────────────
@@ -1572,7 +1572,10 @@ class TestResumeRestore:
         # 모든 도구 호출이 runtime 을 갱신한다.
         reg = make_registry(tmp_path)
         r = tool_agent(
-            {"mode": "status"}, registry=reg, runtime={"model": "fresh-model"}
+            {"mode": "status"},
+            caller=MAIN_CALLER,
+            registry=reg,
+            runtime={"model": "fresh-model"},
         )
         assert r.success
         assert reg.runtime["model"] == "fresh-model"
@@ -2227,7 +2230,7 @@ class TestLiveTeammatesSection:
         assert "[dead · resumable]" in desc
         assert '`mode` "resume"' in desc
         assert "..." in desc and "x" * 198 not in desc  # 197자 + "..." 캡 폴백
-        assert '`mode` "request"' in desc  # 재사용 유도
+        assert "send follow-up work with `message`" in desc  # 재사용 유도 (v10.141.0)
         # v10.85.0: "기다리는 법" 네 문장은 설명이 아니라 이 머리글의 말(PR B, T2)
         assert "finish what is yours, then call `wait`" in desc
         assert "never predict a pending reply" in desc
@@ -2280,10 +2283,7 @@ class TestLiveTeammatesSection:
         # edit invalidates the KV prefix for the whole conversation). The
         # STATIC catalogue stays — it never changes within a session.
         main_names = [
-            n
-            for n, _ in build_system_prompt_sections(
-                caps, active_tools=["agent"], agent_registry=reg
-            )
+            n for n, _ in build_system_prompt_sections(caps, active_tools=["agent"])
         ]
         assert "Agent Profiles" in main_names
         assert "Live Agents" not in main_names
@@ -2291,7 +2291,7 @@ class TestLiveTeammatesSection:
         sub_names = [
             n
             for n, _ in build_system_prompt_sections(
-                caps, active_tools=["read_file", "agent"], agent_registry=None
+                caps, active_tools=["read_file", "agent"]
             )
         ]
         assert "Agent Profiles" in sub_names  # 5.0.0: 카탈로그는 서브루프에도 (run 용)
@@ -2311,7 +2311,7 @@ class TestLiveTeammatesSection:
         desc = build_live_agents_section(reg, exclude_key=k1, via_message_tool=True)
         assert f"`{k2}`" in desc and f"`{k1}`" not in desc  # 자기 제외
         assert "message" in desc  # message 도구 안내
-        assert '`mode` "request"' not in desc  # main 전용 안내 아님
+        assert "send follow-up work" not in desc  # main 의 안내 아님
         assert "finish what is yours" not in desc  # main 의 기다리는 법도 아님
         reg.shutdown_all()
 
@@ -2331,7 +2331,6 @@ class TestLiveTeammatesSection:
             for n, _ in build_system_prompt_sections(
                 caps,
                 active_tools=["read_file"],
-                agent_registry=None,
                 peer_agents_section="## Live Agents\n- `x`",
             )
         ]
@@ -2450,7 +2449,7 @@ class TestPeerMessaging:
         """v10.1.2: 구두점뿐인 message/reply 는 보내지 않는다 (실측 `>`)."""
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
-        handler = reg._make_message_handler(reg.get(a))
+        handler = reg.message_handler(f"agent:{a}")
         out = handler(b, ">")
         assert "no words" in out and "nothing sent" in out
         assert not wait_until(lambda: reg.get(b).handled >= 1, timeout=0.4)
@@ -2469,7 +2468,7 @@ class TestPeerMessaging:
         본다(v10.77.0, D — 할 일이 없으니 괄호 줄 없음)."""
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
-        handler = reg._make_message_handler(reg.get(a))
+        handler = reg.message_handler(f"agent:{a}")
         out = handler(b, "fyi: I am done", expects_reply=False)
         assert out == 'delivered as notice "n-1" — nothing is owed back'
         assert wait_until(lambda: reg.get(b).handled >= 1)
@@ -2487,7 +2486,7 @@ class TestPeerMessaging:
     def test_notice_to_main_renders_as_notice(self, tmp_path, renderer):
         runner = _RecordingRunner()
         reg, a, _b = self._reg_two(tmp_path, runner)
-        handler = reg._make_message_handler(reg.get(a))
+        handler = reg.message_handler(f"agent:{a}")
         out = handler("main", "status: half done", expects_reply=False)
         assert out.startswith('delivered as notice "n-')
         (rec,) = [
@@ -2506,7 +2505,7 @@ class TestPeerMessaging:
         me = f"agent:{a}"
         reg.note_owes(me, f"agent:{b}", "do it", id="1")
         assert reg.reply_debts(me)
-        handler = reg._make_message_handler(reg.get(a))
+        handler = reg.message_handler(f"agent:{a}")
         handler(b, "done, no answer needed", expects_reply=False)
         assert reg.reply_debts(me) == []
         reg.shutdown_all()
@@ -2529,7 +2528,7 @@ class TestPeerMessaging:
         배달된다 — cnr60g 에서 둘 다 "unknown agent" 였다."""
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
-        handler = reg._make_message_handler(reg.get(a))
+        handler = reg.message_handler(f"agent:{a}")
         assert handler(f"agent:{b}", "by prefix").startswith('delivered as request "r-')
         assert handler("beta", "by name").startswith('delivered as request "r-')
         assert wait_until(lambda: reg.get(b).handled >= 2)
@@ -2643,7 +2642,7 @@ class TestPeerMessaging:
     def test_message_handler_targets(self, tmp_path, renderer):
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
-        handler = reg._make_message_handler(reg.get(a))
+        handler = reg.message_handler(f"agent:{a}")
 
         # peer 로 전송 → 대상이 author=agent:A 로 받음
         out = handler(b, "ping")
@@ -2672,7 +2671,7 @@ class TestPeerMessaging:
         conversation.jsonl 을 건너뛰던 갭 — out 방향으로 둘 다 남겨야 한다."""
         runner = _RecordingRunner()
         reg, a, _b = self._reg_two(tmp_path, runner)
-        handler = reg._make_message_handler(reg.get(a))
+        handler = reg.message_handler(f"agent:{a}")
         with renderer.lock:
             renderer.calls.clear()
         handler("main", "직접 보고: 리뷰 시작합니다")
@@ -2694,7 +2693,7 @@ class TestPeerMessaging:
         request() 경로가 담당 — 각 창은 그 에이전트 관점의 완결 대화)."""
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
-        handler = reg._make_message_handler(reg.get(a))
+        handler = reg.message_handler(f"agent:{a}")
         with renderer.lock:
             renderer.calls.clear()
         handler(b, "b야 이것 좀 확인해줘")
@@ -2718,7 +2717,11 @@ class TestPeerMessaging:
         from agent_cli.prompts.system_prompt import build_live_agents_section
 
         reg = make_registry(tmp_path)
-        res = tool_agent({"mode": "spawn", "task": "build the game"}, registry=reg)
+        res = tool_agent(
+            {"mode": "spawn", "task": "build the game"},
+            caller=MAIN_CALLER,
+            registry=reg,
+        )
         out = res.output
         assert 'initial task queued as request "r-' in out and "wakes you" in out
         assert "Do NOT" not in out and "`wait`" not in out
@@ -2728,9 +2731,9 @@ class TestPeerMessaging:
         assert "never predict a pending reply" in tail
         reg.shutdown_all()
 
-    def test_request_ack_warns_on_stacked_duplicates(self, tmp_path, renderer):
-        """이미 밀린 에이전트에 또 request → 적체 경고 + 대기 지시
-        (재촉 재전송이 중복 작업으로 쌓여 실제로 느려짐을 명시)."""
+    def test_message_ack_warns_on_stacked_duplicates(self, tmp_path, renderer):
+        """이미 밀린 에이전트에 또 요청(`message`, v10.141.0 — 종전 `agent` request) → 적체
+        경고(재촉 재전송이 중복 작업으로 쌓여 실제로 느려짐을 명시)."""
         gate = threading.Event()
         reg = make_registry(tmp_path, runner=make_runner(block=gate))
         key, _ = reg.spawn()
@@ -2738,11 +2741,10 @@ class TestPeerMessaging:
         reg.request(key, "first")  # worker 가 집어 busy 로 블록
         wait_until(lambda: reg.get(key).state == "busy")
         reg.request(key, "second")  # inbox 1 적체
-        res = tool_agent({"mode": "request", "key": key, "task": "third"}, registry=reg)
+        out = reg.message_handler("main")(key, "third")
         gate.set()
-        out = res.output
         assert "queued requests" in out  # 적체 수 명시
-        assert "complete" in out and "wakes you" in out
+        assert "reaches you on its own" in out
         reg.shutdown_all()
 
     def test_build_reply_record_peer_message(self):
@@ -3102,6 +3104,7 @@ class TestResumeMode:
         reg.kill(key)
         r = tool_agent(
             {"mode": "resume", "key": key, "task": "continue the work"},
+            caller=MAIN_CALLER,
             registry=reg,
         )
         assert r.success
@@ -3311,26 +3314,38 @@ class TestResultsAreFactsOnly:
     깨운다"만 말한다. "기다리는 법"(finish what is yours, then `wait` …)은 꼬리
     `## Live Agents` 머리글 한 곳에, 폴링 금지는 `status` 넛지에 — 세 겹이 한 겹으로."""
 
-    def test_spawn_and_request_results_carry_no_wait_instruction(
+    def test_spawn_run_and_message_results_carry_no_wait_instruction(
         self, tmp_path, renderer
     ):
         reg = make_registry(tmp_path)
         r = tool_agent(
-            {"mode": "spawn", "task": "explore"}, registry=reg, runtime=reg.runtime
+            {"mode": "spawn", "task": "explore"},
+            caller=MAIN_CALLER,
+            registry=reg,
+            runtime=reg.runtime,
         )
         key = r.output.split('"')[1]
         assert 'initial task queued as request "r-' in r.output
         assert "wakes you" in r.output
         for banned in ("`wait`", "poll", "finish the rest", "re-send"):
             assert banned not in r.output, banned
-        r2 = tool_agent(
-            {"mode": "request", "key": key, "task": "more"},
+        out = reg.message_handler("main")(key, "more")
+        assert out.startswith('delivered as request "r-')
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(32768, 4096, False)
+        r3 = tool_agent(
+            {"mode": "run", "task": "look"},
+            caller=make_caller(
+                binding=make_binding(provider=object(), model="m", capabilities=caps)
+            ),
             registry=reg,
             runtime=reg.runtime,
         )
-        assert r2.success and "queued to" in r2.output and "wakes you" in r2.output
-        for banned in ("`wait`", "poll", "If your plan"):
-            assert banned not in r2.output, banned
+        assert r3.success and "wakes you" in r3.output
+        for text in (out, r3.output):
+            for banned in ("`wait`", "poll", "If your plan"):
+                assert banned not in text, banned
         reg.shutdown_all()
 
     def test_no_call_shapes_or_caps_in_results(self, tmp_path, renderer):
@@ -3339,14 +3354,24 @@ class TestResultsAreFactsOnly:
         import re
 
         reg = make_registry(tmp_path)
-        r = tool_agent({"mode": "spawn"}, registry=reg, runtime=reg.runtime)
+        r = tool_agent(
+            {"mode": "spawn"}, caller=MAIN_CALLER, registry=reg, runtime=reg.runtime
+        )
         key = r.output.split('"')[1]
         wait_until(lambda: reg.get(key).state == "idle")
         outs = [r.output, reg.format_status(key)]
-        outs.append(tool_agent({"mode": "kill", "key": key}, registry=reg).output)
+        outs.append(
+            tool_agent(
+                {"mode": "kill", "key": key}, caller=MAIN_CALLER, registry=reg
+            ).output
+        )
         wait_until(lambda: reg.get(key).state == "dead")
         outs.append(reg.format_status(key))
-        outs.append(tool_agent({"mode": "resume", "key": key}, registry=reg).output)
+        outs.append(
+            tool_agent(
+                {"mode": "resume", "key": key}, caller=MAIN_CALLER, registry=reg
+            ).output
+        )
         for out in outs:
             assert '"mode":' not in out, out
             assert not re.search(r"(?<![`\w])[A-Z]{3,}(?![`\w])", out), out
@@ -3360,7 +3385,6 @@ class TestResultsAreFactsOnly:
         assert "do not also do it yourself" in desc
         assert "`## Live Agents` section" in desc
         assert "instant-agent" not in str(AgentTool.parameters)
-        assert "instant-agent" not in str(AgentTool.SUBLOOP_PARAMETERS)
 
 
 class TestResumeGuidance:
@@ -3368,7 +3392,7 @@ class TestResumeGuidance:
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        r = tool_agent({"mode": "kill", "key": key}, registry=reg)
+        r = tool_agent({"mode": "kill", "key": key}, caller=MAIN_CALLER, registry=reg)
         assert '`mode` "resume"' in r.output and key in r.output
         assert "context is kept" in r.output
 
@@ -3378,9 +3402,9 @@ class TestResumeGuidance:
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        tool_agent({"mode": "kill", "key": key}, registry=reg)
+        tool_agent({"mode": "kill", "key": key}, caller=MAIN_CALLER, registry=reg)
         wait_until(lambda: reg.get(key).state == "dead")
-        r = tool_agent({"mode": "kill", "key": key}, registry=reg)
+        r = tool_agent({"mode": "kill", "key": key}, caller=MAIN_CALLER, registry=reg)
         assert r.success and "was already terminated" in r.output
         assert "nothing to do" in r.output and '`mode` "resume"' in r.output
 
@@ -3414,29 +3438,33 @@ class TestResumeGuidance:
         # 먹지 않았다. 실제로 사용자 세션에서 같은 이름 칩 둘이 생겼고, 키는
         # 유일해도 **사람이 글자로 구별할 수 없어** 어느 쪽에 말을 거는지 알 수
         # 없었다. 거절 메시지가 두 갈래(resume / distinct name)를 다 가리킨다.
-        r = tool_agent({"mode": "spawn", "profile": "comedian"}, registry=reg)
+        r = tool_agent(
+            {"mode": "spawn", "profile": "comedian"}, caller=MAIN_CALLER, registry=reg
+        )
         assert not r.success
         assert k1 in r.error and '`mode` "resume"' in r.error
         assert "distinct `name`" in r.error
         # 이름을 달리하면 통과 — 병렬 독립 작업용 다중 인스턴스는 정당하다.
         r2 = tool_agent(
-            {"mode": "spawn", "profile": "comedian", "name": "second"}, registry=reg
+            {"mode": "spawn", "profile": "comedian", "name": "second"},
+            caller=MAIN_CALLER,
+            registry=reg,
         )
         assert r2.success
         # 그 경우엔 종전의 사후 안내가 그대로 산다(같은 역할의 dead 존재 고지).
         assert "no memory" in r2.output and k1 in r2.output
         reg.shutdown_all()
 
-    def test_duplicate_alive_label_rejected_pointing_at_request(
+    def test_duplicate_alive_label_rejected_pointing_at_message(
         self, tmp_path, renderer
     ):
-        """살아 있는 동명 개체가 있으면 resume 이 아니라 request 를 가리킨다."""
+        """살아 있는 동명 개체가 있으면 resume 이 아니라 `message` 를 가리킨다(v10.141.0)."""
         reg = make_registry(tmp_path)
         k1, _ = reg.spawn(name="ui")
         wait_until(lambda: reg.get(k1).state == "idle")
         k2, err = reg.spawn(name="ui")
         assert k2 == ""
-        assert k1 in err and '`mode` "request"' in err
+        assert k1 in err and "send it work with `message`" in err
         reg.shutdown_all()
 
     def test_anonymous_spawns_never_collide(self, tmp_path, renderer):
@@ -3450,7 +3478,7 @@ class TestResumeGuidance:
 
     def test_spawn_without_dead_role_has_no_hint(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
-        r = tool_agent({"mode": "spawn"}, registry=reg)
+        r = tool_agent({"mode": "spawn"}, caller=MAIN_CALLER, registry=reg)
         assert "no memory" not in r.output
         reg.shutdown_all()
 
@@ -3789,6 +3817,7 @@ class TestInstantAgent:
         reg = make_registry(tmp_path, runner=spy_runner)
         r = tool_agent(
             {"mode": "spawn", "instructions": "ad-hoc 전문가", "task": "일해"},
+            caller=MAIN_CALLER,
             registry=reg,
         )
         assert r.success
@@ -3812,66 +3841,50 @@ class TestRunMode:
             supports_thinking=False,
         )
 
-    def test_parallel_batchable_is_mode_aware(self):
+    def test_no_parallel_batch_any_more(self):
+        """v10.141.0: run 은 바로 돌아오고 에이전트는 자기 스레드에서 돈다 — 한 턴의 run 여럿을
+        묶어 막힌 채 돌리던 병렬 배치는 없다(도구에 그 선언이 없다)."""
         from agent_cli.tools.registry import TOOLS
 
         tool = TOOLS["agent"]
-        assert tool.parallel_safe is True
-        assert tool.parallel_batchable({"mode": "run", "task": "x"}) is True
-        assert tool.parallel_batchable({"mode": "spawn"}) is False
-        assert tool.parallel_batchable({"mode": "request", "key": "k"}) is False
-        assert tool.parallel_batchable({"mode": "bogus"}) is False  # 미지 모드
-        assert tool.parallel_batchable({}) is False  # 모드 없음
+        assert not hasattr(tool, "parallel_safe")
+        assert not hasattr(tool, "parallel_batchable")
 
     def test_mode_table_is_single_source(self):
-        """모드 테이블화 (리뷰 §4.4 T3): 스키마 enum·registry 핸들러·oneshot
-        라우팅이 전부 AGENT_MODES 한 곳에서 파생됨을 고정 — 나열 불일치
-        (enum 에만 추가하고 핸들러 누락 → 조용한 폴스루) 버그 클래스 차단."""
+        """모드 테이블화 (리뷰 §4.4 T3): 스키마 enum·핸들러가 AGENT_MODES 한 곳에서 파생됨을
+        고정 — 나열 불일치(enum 에만 추가하고 핸들러 누락 → 조용한 폴스루) 버그 클래스 차단.
+        v10.141.0: run 도 같은 핸들러 표에 있고, request 는 없다(`message` 로 갔다)."""
         from agent_cli.subagent.agents_live import _MODE_HANDLERS
-        from agent_cli.tools.agent_tool import AGENT_MODES, REGISTRY_MODES
+        from agent_cli.tools.agent_tool import AGENT_MODES
         from agent_cli.tools.registry import TOOLS
 
         # 스키마 enum == 테이블 (순서 포함 — 프롬프트 렌더 안정성)
         enum = TOOLS["agent"].parameters["properties"]["mode"]["enum"]
-        assert enum == list(AGENT_MODES)
-        # registry 모드 ↔ 핸들러 1:1 (순서 무관)
-        assert set(_MODE_HANDLERS) == set(REGISTRY_MODES)
-        # run 은 run 에이전트 호스트 — 핸들러 테이블 밖 (tool_bridge 가 라우팅)
-        assert AGENT_MODES["run"].engine == "run"
-        assert "run" not in _MODE_HANDLERS
-        # batchable 은 run 만 (설계 §3.6)
-        assert [m for m, s in AGENT_MODES.items() if s.batchable] == ["run"]
-        # 필수 필드 테이블 보존 (종전 _MODE_REQUIRED 의미 그대로)
+        assert enum == list(AGENT_MODES) == ["run", "spawn", "status", "resume", "kill"]
+        assert list(_MODE_HANDLERS) == list(AGENT_MODES)
         assert AGENT_MODES["run"].required == ("task",)
-        assert AGENT_MODES["request"].required == ("key", "task")
         assert AGENT_MODES["resume"].required == ("key",)
         assert AGENT_MODES["kill"].required == ("key",)
         assert AGENT_MODES["spawn"].required == ()
         assert AGENT_MODES["status"].required == ()
 
     def test_unknown_mode_error_derives_from_handler_table(self):
-        """unknown-mode 에러 문구가 핸들러 테이블에서 파생 — 종전 하드코딩
-        나열('use spawn / request / status / resume / kill')과 동일 문자열
-        유지(회귀 없음), 단 소스가 테이블이라 모드 추가 시 자동 갱신."""
+        """unknown-mode 에러 문구가 핸들러 테이블에서 파생."""
         from unittest.mock import MagicMock
 
         from agent_cli.subagent.agents_live import tool_agent
 
         registry = MagicMock()
-        r = tool_agent({"mode": "bogus"}, registry=registry)
+        r = tool_agent({"mode": "bogus"}, caller=MAIN_CALLER, registry=registry)
         assert r.success is False
         assert 'unknown `mode` "bogus"' in r.error
-        assert "spawn / request / status / resume / kill" in r.error
+        assert "run / spawn / status / resume / kill" in r.error
 
-    def test_registry_none_error_derives_from_table(self):
-        """registry 없는 루프의 상주-모드 거부 문구 — REGISTRY_MODES 파생,
-        종전 하드코딩 'spawn/request/status/resume/kill' 과 동일 문자열."""
-        from agent_cli.subagent.agents_live import tool_agent
+    def test_registry_none_error_is_one_fact(self):
+        from agent_cli.subagent.agents_live import NO_REGISTRY, tool_agent
 
-        r = tool_agent({"mode": "spawn"}, registry=None)
-        assert r.success is False
-        assert "spawn/request/status/resume/kill" in r.error
-        assert '`mode` "run"' in r.error  # run 대안 안내 유지
+        r = tool_agent({"mode": "spawn"}, caller=MAIN_CALLER, registry=None)
+        assert r.success is False and r.error == NO_REGISTRY
 
     def test_run_validate_requires_task(self):
         from agent_cli.tools.registry import TOOLS
@@ -3880,138 +3893,7 @@ class TestRunMode:
         assert "requires" in tool.validate({"mode": "run"})
         assert tool.validate({"mode": "run", "task": "do"}) is None
 
-    def test_run_single_through_full_loop(
-        self, tmp_path, renderer, agent_registry_slot
-    ):
-        # main 이 run op → 같은 provider 로 서브루프가 돌아 결과가 그 턴
-        # 관찰(STATUS/RESULT)로 — 구 delegate 의미 그대로.
-        import json
-        from unittest.mock import MagicMock
-
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.providers.base import LLMResponse
-        from tests.loopkit import run_loop
-
-        def emit(action, ai):
-            return json.dumps({"action": action, **ai})
-
-        ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
-        provider = MagicMock()
-        provider.call.side_effect = [
-            LLMResponse(content=emit("agent", {"mode": "run", "task": "count to 3"})),
-            LLMResponse(content=emit("complete", {"result": "1 2 3"})),  # 서브루프
-            LLMResponse(content=emit("complete", {"result": "done"})),  # main
-        ]
-        result = run_loop(
-            ports=TEST_PORTS,
-            query="use run",
-            provider=provider,
-            capabilities=self._caps(),
-            model="m",
-            ctx=ctx,
-        )
-        assert result.success and result.output == "done"
-        obs = [
-            m
-            for m in ctx.get_raw_messages()
-            if m.get("role") == "user" and m.get("tool") == "agent"
-        ]
-        assert obs and "STATUS: success" in obs[0]["content"]
-        assert "1 2 3" in obs[0]["content"]
-
-    def test_run_carries_instructions_to_subagent(
-        self, tmp_path, renderer, agent_registry_slot
-    ):
-        # instant + run: 인라인 지시가 서브루프 system 의 Role 로.
-        import json
-        from unittest.mock import MagicMock
-
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.providers.base import LLMResponse
-        from tests.loopkit import run_loop
-
-        def emit(action, ai):
-            return json.dumps({"action": action, **ai})
-
-        ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
-        provider = MagicMock()
-        provider.call.side_effect = [
-            LLMResponse(
-                content=emit(
-                    "agent",
-                    {"mode": "run", "task": "t", "instructions": "MARKER-ROLE-9"},
-                )
-            ),
-            LLMResponse(content=emit("complete", {"result": "sub done"})),
-            LLMResponse(content=emit("complete", {"result": "done"})),
-        ]
-        run_loop(
-            ports=TEST_PORTS,
-            query="q",
-            provider=provider,
-            capabilities=self._caps(),
-            model="m",
-            ctx=ctx,
-        )
-        # 두 번째 LLM 호출(서브루프)의 system 에 인라인 역할이 실렸다
-        _, kwargs = provider.call.call_args_list[1]
-        assert "MARKER-ROLE-9" in kwargs["system"]
-        # main(1·3번째)에는 없음
-        assert "MARKER-ROLE-9" not in provider.call.call_args_list[0].kwargs["system"]
-
-    def test_run_fanout_multiop_parallel_batch(
-        self, tmp_path, renderer, agent_registry_slot
-    ):
-        # 멀티-op run ×2 = 한 배치(병렬 엔진) → [1/2][2/2] 결합 관찰.
-        import json
-        from unittest.mock import MagicMock
-
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.dialects import get as get_wf
-        from agent_cli.providers.base import LLMResponse
-        from tests.loopkit import make_loop
-
-        wf = get_wf("json_fc")
-
-        def turn(ops):
-            # json_fc 캐노니컬 모양: 산문 + flat op 배열
-            return "t\n\n" + json.dumps(ops)
-
-        ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
-        provider = MagicMock()
-        responses = [
-            turn(
-                [
-                    {"action": "agent", "mode": "run", "task": "job A"},
-                    {"action": "agent", "mode": "run", "task": "job B"},
-                ]
-            ),
-            # 서브루프 2개 (병렬 — 순서 무관하게 각자 complete)
-            turn([{"action": "complete", "result": "A-done"}]),
-            turn([{"action": "complete", "result": "B-done"}]),
-            turn([{"action": "complete", "result": "main-done"}]),
-        ]
-        provider.call.side_effect = [LLMResponse(content=r) for r in responses]
-        result = make_loop(
-            ports=TEST_PORTS,
-            query="fan out",
-            provider=provider,
-            capabilities=self._caps(),
-            model="m",
-            ctx=ctx,
-            dialect=wf,
-        ).run()
-        assert result.success
-        combined = [
-            m
-            for m in ctx.get_raw_messages()
-            if m.get("role") == "user" and "[Task 1]" in str(m.get("content"))
-        ]
-        assert len(combined) == 1  # 배치 = 결합 관찰 1개 (병렬 엔진 관통)
-        c = combined[0]["content"]
-        assert "[Task 2]" in c and "A-done" in c and "B-done" in c
-        # 두 서브루프가 실제로 각각 돌았다 (main 2 + sub 2 = 4 콜)
-        assert provider.call.call_count == 4
+    # 루프를 통째로 도는 run(main → run → 제자리 wait → 회신)은 tests/test_engine_p2.py.
 
 
 class TestAgentTaskFieldUnification:
@@ -4048,7 +3930,7 @@ class TestAgentTaskFieldUnification:
         from agent_cli.tools.registry import TOOLS
 
         tool = TOOLS["agent"]
-        for mode in ("request", "resume", "spawn"):
+        for mode in ("run", "resume", "spawn"):
             err = tool.validate({"mode": mode, "key": "agt-x", "message": "지시"})
             assert err is not None, mode
             assert "`task`" in err, err  # 교정 방향이 필드-정밀해야 자가 교정된다
@@ -4060,54 +3942,27 @@ class TestAgentTaskFieldUnification:
         from agent_cli.tools.registry import TOOLS
 
         tool = TOOLS["agent"]
-        for mode in ("spawn", "request", "run"):
+        for mode in ("spawn", "resume", "run"):
             args = {"mode": mode, "key": "agt-x", "task": "\n>\n"}
             err = tool.validate(args)
             assert err is not None and "no words" in err and "`task`" in err, (
                 mode,
                 err,
             )
-        assert tool.validate({"mode": "request", "key": "agt-x", "task": "가"}) is None
+        assert tool.validate({"mode": "resume", "key": "agt-x", "task": "가"}) is None
         assert tool.validate({"mode": "run", "task": "x1"}) is None
         assert (
             tool.validate({"mode": "spawn", "name": "p2"}) is None
         )  # task 생략은 허용
-
-    def test_request_requires_task_not_message(self):
-        from agent_cli.tools.registry import TOOLS
-
-        tool = TOOLS["agent"]
-        assert tool.validate({"mode": "request", "key": "agt-x"}) is not None
-        assert (
-            tool.validate({"mode": "request", "key": "agt-x", "task": "해줘"}) is None
-        )
-
-    def test_request_branch_reads_task(self, tmp_path, monkeypatch):
-        from agent_cli.subagent.agents_live import tool_agent
-
-        reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
-
-        class _TM:  # request 분기가 참조하는 최소 표면 (state·inbox)
-            state = "idle"
-
-            class inbox:
-                @staticmethod
-                def qsize():
-                    return 0
-
-        monkeypatch.setattr(reg, "get", lambda key: _TM())
-        res = tool_agent(
-            {"mode": "request", "key": "agt-x", "task": "이걸 해줘"}, registry=reg
-        )
-        assert res.success
-        assert sent == [("agt-x", "이걸 해줘")]
 
     def test_resume_task_queues(self, tmp_path, monkeypatch):
         from agent_cli.subagent.agents_live import tool_agent
 
         reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
         res = tool_agent(
-            {"mode": "resume", "key": "agt-x", "task": "이어서"}, registry=reg
+            {"mode": "resume", "key": "agt-x", "task": "이어서"},
+            caller=MAIN_CALLER,
+            registry=reg,
         )
         assert res.success
         assert sent == [("agt-x", "이어서")]
@@ -4122,6 +3977,7 @@ class TestAgentTaskFieldUnification:
         reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
         res = tool_agent(
             {"mode": "resume", "key": "agt-x", "message": "버려질 지시"},
+            caller=MAIN_CALLER,
             registry=reg,
         )
         assert res.success  # resume 자체는 성공
@@ -4133,18 +3989,23 @@ class TestAgentTaskFieldUnification:
 
         reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
         res = tool_agent(
-            {"mode": "spawn", "profile": "", "task": "첫 작업"}, registry=reg
+            {"mode": "spawn", "profile": "", "task": "첫 작업"},
+            caller=MAIN_CALLER,
+            registry=reg,
         )
         assert res.success
         assert sent and sent[0][1] == "첫 작업"
 
     def test_ack_texts_teach_task_vocabulary(self, tmp_path, monkeypatch):
-        """ACK/안내문구가 계속 message 를 가르치면 통일이 자멸한다."""
+        """ACK/안내문구가 `agent` 의 ``message`` 필드를 가르치면 통일이 자멸한다. v10.141.0:
+        일은 `message` **도구**로 보낸다 — 안내는 그 도구와 인자(`to`·`text`)를 말한다."""
         from agent_cli.subagent.agents_live import tool_agent
 
         reg, _sent = self._registry_with_request_capture(tmp_path, monkeypatch)
-        res = tool_agent({"mode": "spawn", "profile": ""}, registry=reg)
-        assert "`task`" in res.output
+        res = tool_agent(
+            {"mode": "spawn", "profile": ""}, caller=MAIN_CALLER, registry=reg
+        )
+        assert "send it work with `message` (`to`" in res.output
         assert '"message"' not in res.output
 
 
@@ -4154,17 +4015,16 @@ class TestDelegationGuidanceIsCostFirst:
     같은 조사를 반복하다 두 턴을 다 잘라먹었고, 비용 우선 문구는 같은
     세트에서 폭주 0·넘긴 뒤 중복 0 이었다.
 
-    핵심 계약 3개: ①위임의 비용(요약만 온다·틀린 것도 같은 어조)과 "의심
-    스러우면 직접" 이 run 설명에 있다 ②넘긴 뒤에는 직접 하지 않는다
-    ③spawn 이 불가능한 서브루프 설명(SUBLOOP_DESCRIPTION)에는 spawn 문구가
-    새지 않는다.
+    핵심 계약 2개: ①위임의 비용(회신만 온다·틀린 것도 같은 어조)과 "의심
+    스러우면 직접" 이 run 설명에 있다 ②넘긴 뒤에는 직접 하지 않는다. (셋째 —
+    서브루프 축소 설명 — 은 v10.141.0 에 모든 루프가 같은 표면이 되며 없어졌다.)
     """
 
     def test_run_description_states_the_cost_and_the_default(self):
         from agent_cli.tools.registry import TOOLS
 
         d = TOOLS["agent"].description
-        assert "only its summary" in d and "both handoffs drop detail" in d
+        assert "only its reply" in d and "both handoffs drop detail" in d
         assert "same confident tone" in d  # 틀린 것도 자신 있게 돌아온다
         assert "handful of calls" in d and "when in doubt, do it yourself" in d
         assert "OWN full context window" not in d and "N windows" not in d
@@ -4179,15 +4039,6 @@ class TestDelegationGuidanceIsCostFirst:
         assert "several rounds of questions" in d  # spawn 의 유일한 사유
         assert "One agent per area" in d and "disjoint" in d
         assert "Prefer spawn" not in d
-
-    def test_subloop_description_has_no_spawn_encouragement(self):
-        from agent_cli.tools.agent_tool import AgentTool
-
-        sub = AgentTool.SUBLOOP_DESCRIPTION
-        assert "spawn" not in sub.lower()
-        # 스케일링 문구 미유출 — spawn 문단 고유 표현으로 본다. "context
-        # window" 자체는 v9.24.1 run 문장(분리된 컨텍스트)이 정당하게 쓴다.
-        assert "working memory" not in sub and "N windows" not in sub
 
 
 class TestAttributionInheritance:

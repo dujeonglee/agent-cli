@@ -66,7 +66,7 @@
 `main` → `_push_reply` · `user:*` → 창만. **답을 `author=주소`,
 `expects_reply=True` 로 보내면 결과가 저절로 제자리로 간다** — 새 필드 0.
 
-**③ 질문 배달 배관이 이미 있다.** peer 는 `_make_message_handler:930` 이 쓰는
+**③ 질문 배달 배관이 이미 있다.** peer 는 `message` 라우팅 훅(:930)이 쓰는
 `submit(...)`, main 은 `_push_reply(kind:"question")`(`:1628`) → `MailWaker`
 (`:1734`)가 idle main 을 깨운다.
 
@@ -79,7 +79,7 @@
 붙이고 `_CONTINUE` 를 돌려준다(`dispatch.py:697·740`).
 
 **⑥ per-loop 설명 교체 선례가 있다** — `description_overrides` 로
-`AgentTool.SUBLOOP_DESCRIPTION` 을 갈아끼운다(`system_prompt.py:640-648`).
+`agent` 도구의 서브루프 설명을 갈아끼운다(`system_prompt.py:640-648`).
 
 **⑦ 레지스트리는 서브루프에 넘기면 안 된다** — `state.py:59-62` 가
 *"teammate 안 teammate 금지의 단일 가드"*. 새 훅은 callable/객체 seam 으로.
@@ -450,7 +450,7 @@ main 도 포트를 받으므로 **`questions is not None` 으로는 못 가른�
 `_make_ask_handler` 의 블록 본체는 ④에서 삭제.
 
 **같은 신호가 시스템 프롬프트에도 필요하다.** `_build_tools_section` 은
-`has_agent_registry` 만 받고(`system_prompt.py:630-648`), `loop/prompt.py:35-47`
+레지스트리 유무 하나만 받고(`system_prompt.py:630-648`), `loop/prompt.py:35-47`
 → `build_system_prompt_sections(:777)` 경로로 `ask_handler` 유무가 전달되지
 않는다. `nonblocking_ask: bool` 을 그 경로에 꿴다 — `description_overrides`
 선택과 `_ASK_INLINE` 선택(`:616-620`)이 같은 인자를 쓴다.

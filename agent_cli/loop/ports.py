@@ -142,8 +142,8 @@ def _hook_unwired() -> dict:
 
 
 _NO_REGISTRY_IN_SUBLOOP = (
-    "서브루프에 레지스트리가 닿으면 안 된다 — 'teammate 안 teammate 금지'의 "
-    "단일 가드가 포트의 agent_registry 다"
+    "에이전트를 띄우는 루프가 아니다(하니스 작업) — `agent` 도구의 권한이 포트의 "
+    "agent_registry 다. 에이전트(run·spawn)는 받는다(v10.141.0); 깊이는 엔진이 막는다"
 )
 _AS_BEFORE = "종전 배선 유지 — 이 호스트는 이 포트를 받은 적이 없다"
 _RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다 (v10.1.0)"

@@ -12,8 +12,8 @@
 - ⑨–⑫·⑮·⑯(프롬프트 윤곽·꼬리 로스터·렌더·시작·흡수·wait 정책)은 PR 2 에서 엔진이 종류에게
   묻는다 — PR 1 의 엔진은 종전 플래그를 그대로 읽는다.
 
-다섯 구현은 각자의 영역에 있다: `runtime.MainLoop` · `subagent.resident_loop.ResidentLoop` ·
-`subagent.run_agent.RunAgentLoop` · `skills.executor.SkillLoop` · `harness.jobs.HarnessLoop`.
+네 구현은 각자의 영역에 있다: `runtime.MainLoop` · `subagent.resident_loop.ResidentLoop`
+(run·spawn 에이전트 전부) · `skills.executor.SkillLoop` · `harness.jobs.HarnessLoop`.
 스레드와 수명(펌프·에이전트 스레드·작업 스레드)은 종류 밖 — 호스트의 것이다. 주소는
 문자열 그대로라 레지스트리의 라우팅(`deliver`·`fire_checkin`·`arrived_for`)은 바뀌지 않는다.
 
@@ -63,8 +63,6 @@ class PromptProfile:
     role: str
     #: 상주의 `## Live Agents` 안내 + Reply Discipline (빈 문자열이면 없음)
     peer_section: str
-    #: `agent` 도구를 전부 광고할 레지스트리 — None 이면 run-only 축소 스키마
-    agent_registry: Any
     #: `ask` 가 사람 답을 기다리며 막는가 (상주는 질문 포트로 비차단)
     ask_blocking: bool
     #: 종결문이 "호출자에게 보고" 어투인가 (서브루프)
@@ -75,7 +73,7 @@ class PromptProfile:
 
 @dataclass(frozen=True)
 class Caller:
-    """중첩 루프(one-shot·스킬)가 **호출자**에게서 읽는 것.
+    """호출자 — 중첩 루프(스킬)와 에이전트 도구(run·spawn)가 **부른 루프**에게서 읽는 것.
 
     루프 안에서 부르면 ``from_loop(cfg, state, ctx)`` (돌고 있는 루프의 종류 ``cfg.kind`` 와 그
     루프가 계산한 도구 목록·스택이 곧 호출자의 정체), 루프 밖(``@agent``·``/skill`` 명령)에서 부르면 ``main_session(...)`` —
@@ -104,6 +102,8 @@ class Caller:
     agent_stack: list[str]
     ctx: Any
     stop_event: Any
+    #: 부른 자리의 턴 — run 의 훅(``OnAgentStart``/``OnAgentEnd``) 인자. 루프 밖이면 0.
+    turn: int
 
     @classmethod
     def from_loop(cls, cfg, state, ctx) -> Caller:
@@ -129,6 +129,7 @@ class Caller:
             agent_stack=list(cfg.agent_stack),
             ctx=ctx,
             stop_event=state.stop_event,
+            turn=state.turn,
         )
 
     @classmethod
@@ -169,6 +170,7 @@ class Caller:
             agent_stack=[],
             ctx=ctx,
             stop_event=stop_event,
+            turn=0,
         )
 
 
@@ -219,12 +221,12 @@ class LoopKind:
 
     # ── 템플릿 ──
     def start(self, *args, **kwargs) -> Start:
-        """종류가 스스로 시작을 만든다(스킬·one-shot·하니스·상주). main 은 호스트가 넘긴다."""
+        """종류가 스스로 시작을 만든다(스킬·하니스·에이전트). main 은 호스트가 넘긴다."""
         raise NotImplementedError(f"{type(self).__name__} needs an explicit Start")
 
     def run(self, start: Start | None = None):
         """스코프 → ctx → 엔진 → 정리 → 결과 포장 → 스코프 닫기. 반환 모양은 종류의 것
-        (`finish` 가 정한다): one-shot·스킬은 `ToolResult`, 상주는 ``(ToolResult, secs)``,
+        (`finish` 가 정한다): 스킬은 `ToolResult`, 에이전트는 ``(ToolResult, secs)``,
         하니스는 ``(ok, output)``, main 은 엔진 결과 그대로."""
         if start is None:
             start = self.start()
@@ -287,7 +289,6 @@ class LoopKind:
         return PromptProfile(
             role=self.agent_role,
             peer_section=self.peer_agents_section,
-            agent_registry=self.ports.agent_registry,
             ask_blocking=not (q is not None and getattr(q, "nonblocking", False)),
             reports_to_caller=self.depth > 0,
             peer_channel=self.ports.message_handler is not None,
@@ -360,7 +361,7 @@ class LoopKind:
 
 
 class PrivateLoop(LoopKind):
-    """자기 주소(``run:``·``harness:``)를 가진 루프 (v10.84.0, docs/wait/DESIGN.md §7) —
+    """자기 주소(``harness:``)를 가진 루프 (v10.84.0, docs/wait/DESIGN.md §7) —
     레지스트리의 private 메일함을 턴 경계에 흡수하므로 깨울 수 있고(`wait` 광고), `wait` 는
     런을 끝내는 대신 메일 도착까지 막는다. 끝나면 잡·모니터·메일함·체크인을 전부 거둔다."""
 
@@ -386,7 +387,7 @@ class PrivateLoop(LoopKind):
                 "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
                 "questions": _AS_BEFORE,
                 "mcp_manager": _AS_BEFORE,
-                "message_handler": "one-shot 은 상주가 아니다 — 받을 상대가 없다",
+                "message_handler": "하니스 작업은 에이전트가 아니다 — 받을 상대가 없다",
                 **_hook_unwired(),
                 "route_message": _WEB_ONLY,
                 "dequeue_user_message": _WEB_ONLY,
@@ -411,7 +412,6 @@ class PrivateLoop(LoopKind):
         return PromptProfile(
             role=self.agent_role,
             peer_section="",
-            agent_registry=None,  # run-only 축소 스키마
             ask_blocking=True,
             reports_to_caller=True,
             peer_channel=False,

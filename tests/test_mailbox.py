@@ -51,7 +51,7 @@ class TestWithRegistry:
         reg.next_checkin_s.assert_called_once_with("agent:a")
         reg.parked_debtors_for.assert_called_once_with("agent:a")
         reg.wait_mail.assert_called_once_with(
-            "agent:a", stop_event=stop, still_waiting=still
+            "agent:a", stop_event=stop, still_waiting=still, wait_input=None
         )
         reg.run_started.assert_called_once_with("agent:a")
         reg.arm_checkin.assert_called_once_with("agent:a")
@@ -82,6 +82,7 @@ class TestEveryKindHasOne:
             questions=_S,
             inbox=list,
             peer_roster=_S,
+            agent_registry=None,
         ).mailbox
         private = PrivateLoop.make_ports("run:t1").mailbox
         skill = SkillLoop.make_ports(agent_registry=None, owner="agent:p").mailbox
@@ -152,7 +153,12 @@ class TestWakeableTruthTable:
             route_message=lambda *a: None,
         )
         resident = ResidentLoop.make_ports(
-            key="k1", message_handler=_S, questions=_S, inbox=list, peer_roster=_S
+            key="k1",
+            message_handler=_S,
+            questions=_S,
+            inbox=list,
+            peer_roster=_S,
+            agent_registry=None,
         )
         oneshot = PrivateLoop.make_ports("run:task_1")
         harness = PrivateLoop.make_ports("harness:auditor:1-1")

@@ -184,7 +184,7 @@ class TestMultiOpPromptBranches:
     def test_delegate_one_task_per_op(self, section):
         # v10.26.0: "ONE task" 는 RUN_DESCRIPTION 한 곳에만 — 인라인 가이드의
         # 머리말("Each run op gives ONE task …")은 그 중복이라 제거됐다.
-        assert '`mode` "run" gives one task to a sub-agent' in section
+        assert '`mode` "run" gives one task to a new sub-agent' in section
         assert "Each run op gives ONE task" not in section
         assert 'Always use the "tasks" array format' not in section
 
@@ -580,33 +580,19 @@ class TestBuildSystemPrompt:
         tools = _build_tools_section(["shell", "agent"], _get_dialect("json_fc"))
         assert '"mode": "run"' in tools and '"mode": "spawn"' in tools
 
-    def test_sub_loop_sees_run_only_everywhere(self, full_tool_text):
-        """A loop without an agent registry can only ``run``. Its description
-        said so, but the schema still listed all six modes, the guide showed a
-        spawn example and Agent Profiles advertised mode:"spawn" — a
-        sub-agent that followed them was refused (v10.13.0)."""
+    def test_every_loop_sees_the_same_agent_surface(self, full_tool_text):
+        """v10.141.0 (docs/agent-engine/DESIGN.md §1): 서브루프 축소판(run 만 — v10.13.0)은
+        없다. 프롬프트·프로파일 절·디코딩 문법이 같은 스키마(run·spawn·status·resume·kill)를
+        보고, `request` 는 없다(`message` 로 갔다)."""
+        from agent_cli.tools.registry import TOOLS
+
         sections = dict(build_system_prompt_sections(_make_caps(), ["shell", "agent"]))
         tools, profiles = sections["Available Tools"], sections["Agent Profiles"]
-        assert '"mode": "run"' in tools and '"mode": "run"' in profiles
-        # 가이드·프로파일 섹션의 예시와 안내 (프로파일 설명 본문은 제외 —
-        # "Spawn-only" 같은 단어가 프로파일 자기소개에 들어 있다).
-        for text in (tools, profiles.split("\n- `", 1)[0]):
-            assert '"mode": "spawn"' not in text
-            assert 'mode:"spawn"' not in text
-        # 스키마 줄: 상주 전용 모드가 나열되지 않는다
-        for word in ("spawn:", "request:", "resume:", "kill:", "status:"):
-            assert word not in tools, word
-
-    def test_sub_loop_agent_schema_is_run_only_for_prompt_and_grammar(self):
-        """프롬프트와 디코딩 문법이 같은 스키마를 본다 — 서브에이전트는
-        spawn 을 배우지도, 낼 수도 없다."""
-        from agent_cli.prompts.system_prompt import parameter_overrides_for
-
-        params = parameter_overrides_for(["agent"], has_agent_registry=False)["agent"]
-        assert params["properties"]["mode"]["enum"] == ["run"]
-        assert "key" not in params["properties"]
-        assert "name" not in params["properties"]
-        assert parameter_overrides_for(["agent"], has_agent_registry=True) == {}
+        assert '"mode": "run"' in tools and '"mode": "spawn"' in tools
+        assert '"mode": "run"' in profiles and '"mode": "spawn"' in profiles
+        enum = TOOLS["agent"].parameters["properties"]["mode"]["enum"]
+        assert enum == ["run", "spawn", "status", "resume", "kill"]
+        assert '"mode": "request"' not in tools
 
     def test_agent_guide_does_not_restate_the_parameters(self):
         """ "Context modes" used to list ``tools`` and ``agent`` beside
@@ -1692,22 +1678,22 @@ class TestReplyDisciplineSection:
 class TestRunDescriptionFocusesOnContext:
     """v9.24.1: run 설명의 이유는 동시성이 아니라 분리된 컨텍스트다 — 종전
     "fan out … in PARALLEL" 은 속도로 읽혔고, 로컬 서버 하나에서는 빨라지지
-    않은 채 부모만 멈췄다. 메인·서브루프 설명이 같은 문장을 쓴다. v10.26.0:
+    않은 채 부모만 멈췄다. v10.26.0:
     fork 는 ``context`` 파라미터 한 곳에서만 설명하고, "속도용이 아니다" 는
     도구 섹션 전체에 한 번만 나온다(인라인 머리말의 복사본 제거)."""
 
-    def test_both_descriptions_share_the_run_text(self):
+    def test_description_carries_the_run_text(self):
+        """v10.141.0: 설명은 하나다(서브루프 판 없음), run 은 막지 않는다("blocked" 없음 —
+        결과는 회신으로 온다)."""
         from agent_cli.tools.agent_tool import AgentTool
 
-        assert AgentTool.RUN_DESCRIPTION in AgentTool.description
-        assert AgentTool.RUN_DESCRIPTION in AgentTool.SUBLOOP_DESCRIPTION
-        for text in (AgentTool.description, AgentTool.SUBLOOP_DESCRIPTION):
-            assert "PARALLEL" not in text
-            assert "stays in its window" in text
-            assert "not for speed" in text and "blocked" in text
-        for params in (AgentTool.parameters, AgentTool.SUBLOOP_PARAMETERS):
-            ctx = params["properties"]["context"]["description"]
-            assert "fork" in ctx and "copy of your conversation" in ctx
+        text = AgentTool.description
+        assert AgentTool.RUN_DESCRIPTION in text
+        assert "PARALLEL" not in text
+        assert "stays in its window" in text
+        assert "not for speed" in text and "blocked" not in text
+        ctx = AgentTool.parameters["properties"]["context"]["description"]
+        assert "fork" in ctx and "copy of your conversation" in ctx
 
     def test_not_for_speed_is_said_once_in_the_tools_section(self, full_tool_text):
         from agent_cli.dialects import get

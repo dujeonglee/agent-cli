@@ -125,7 +125,7 @@ TASK_GUIDELINES = """\
 
 
 # ── Inline guides for tools ──────────────────────
-def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
+def _build_agent_inline(dialect) -> str:
     """Build the delegate inline guide.
 
     Each ``Examples:`` line shows only the action_input dict for the
@@ -159,19 +159,18 @@ def _build_agent_inline(dialect, *, has_agent_registry: bool = True) -> str:
             },
         ),
     ]
-    if has_agent_registry:
-        # 서브루프는 run 만 쓴다 — 쓸 수 없는 spawn 예시를 보여 주지 않는다.
-        examples.append(
-            (
-                "Persistent",
-                {
-                    "mode": "spawn",
-                    "profile": "code-writer",
-                    "name": "ui",
-                    "task": "own the UI module",
-                },
-            )
+    # 모든 루프가 같은 표면이다 (v10.141.0, docs/agent-engine/DESIGN.md §1).
+    examples.append(
+        (
+            "Persistent",
+            {
+                "mode": "spawn",
+                "profile": "code-writer",
+                "name": "ui",
+                "task": "own the UI module",
+            },
         )
+    )
     if getattr(dialect, "multi_op", False):
         dependency = (
             "  - If task B depends on task A's result, emit only A now; "
@@ -231,7 +230,6 @@ def _build_tool_inline_guides(
     dialect,
     *,
     nonblocking_ask: bool = False,
-    has_agent_registry: bool = True,
 ) -> dict[str, str]:
     """Build the tool→inline-guide map for the given active tools.
 
@@ -241,7 +239,7 @@ def _build_tool_inline_guides(
     설명은 머리(도구 설명)가 맡는다 (docs/tool-review/TRACKER.md).
     """
     guides = {
-        "agent": _build_agent_inline(dialect, has_agent_registry=has_agent_registry),
+        "agent": _build_agent_inline(dialect),
     }
     if nonblocking_ask:
         guides["ask"] = _ASK_INLINE_RESIDENT
@@ -249,20 +247,16 @@ def _build_tool_inline_guides(
 
 
 def description_overrides_for(
-    active_tools, *, has_agent_registry: bool = True, nonblocking_ask: bool = False
+    active_tools, *, nonblocking_ask: bool = False
 ) -> dict[str, str]:
     """루프별 도구 설명 교체 — ``## Available Tools`` 와 native 함수 스키마가
     **같은** 설명을 싣도록 한 함수에서 나온다.
 
-    - 서브루프(레지스트리 없음)의 ``agent`` 는 run 전용 축소판 (설계 §3.2).
-    - 상주 에이전트의 ``ask`` 는 막지 않는다 — 설명이 "WAIT for their reply"
+    - 에이전트의 ``ask`` 는 막지 않는다 — 설명이 "WAIT for their reply"
       라고 거짓말하면 모델이 그걸 믿고 추측으로 메운다.
+    (``agent`` 의 서브루프 축소판은 v10.141.0 에 지웠다 — 모든 루프가 같은 표면.)
     """
     overrides: dict[str, str] = {}
-    if not has_agent_registry and "agent" in active_tools:
-        from agent_cli.tools.agent_tool import AgentTool
-
-        overrides["agent"] = AgentTool.SUBLOOP_DESCRIPTION
     if nonblocking_ask and "ask" in active_tools:
         from agent_cli.tools.virtual import AskTool
 
@@ -270,28 +264,10 @@ def description_overrides_for(
     return overrides
 
 
-def parameter_overrides_for(
-    active_tools, has_agent_registry: bool = True
-) -> dict[str, dict]:
-    """루프별 도구 스키마 교체 — 프롬프트와 디코딩 문법(v9.24.0)이 **같은**
-    스키마를 봐야 한다. 한쪽만 알면 문법이 프롬프트가 가르친 키를 막는다.
-
-    - 서브루프(레지스트리 없음)의 ``agent`` 는 ``run`` 만 갖는다 (v10.13.0).
-      (상주 에이전트 ``ask`` 의 ``to`` 는 v10.77.0 에서 지웠다 — 질문은 사람에게만.)
-    """
-    overrides: dict[str, dict] = {}
-    if not has_agent_registry and "agent" in active_tools:
-        from agent_cli.tools.agent_tool import AgentTool
-
-        overrides["agent"] = AgentTool.SUBLOOP_PARAMETERS
-    return overrides
-
-
 def function_schemas_for(
     active_tools: list[str],
     dialect,
     *,
-    has_agent_registry: bool = True,
     nonblocking_ask: bool = False,
 ) -> list[dict]:
     """native_fc (v10.2.0): `## Available Tools` 와 같은 재료로 OpenAI 함수 스키마
@@ -300,17 +276,9 @@ def function_schemas_for(
     싣는 것이 어긋나지 않게 한 함수에서 나온다."""
     from agent_cli.tools.registry import TOOL_SCHEMAS, effective_tool_names, tool_view
 
-    overrides = description_overrides_for(
-        active_tools,
-        has_agent_registry=has_agent_registry,
-        nonblocking_ask=nonblocking_ask,
-    )
-    param_overrides = parameter_overrides_for(active_tools, has_agent_registry)
+    overrides = description_overrides_for(active_tools, nonblocking_ask=nonblocking_ask)
     guides = _build_tool_inline_guides(
-        active_tools,
-        dialect,
-        nonblocking_ask=nonblocking_ask,
-        has_agent_registry=has_agent_registry,
+        active_tools, dialect, nonblocking_ask=nonblocking_ask
     )
     out: list[dict] = []
     for name in effective_tool_names(active_tools, dialect):
@@ -320,7 +288,6 @@ def function_schemas_for(
         description, params, guide = tool_view(
             name,
             description_overrides=overrides,
-            parameter_overrides=param_overrides,
             inline_guides=guides,
         )
         guide = (guide or "").strip()
@@ -344,7 +311,6 @@ def tool_guide_text(
     active_tools: list[str],
     dialect,
     *,
-    has_agent_registry: bool = True,
     nonblocking_ask: bool = False,
 ) -> str | None:
     """도구 하나의 **전문** — 이 루프의 ``## Available Tools`` 에 지연 없이 실렸을 블록
@@ -358,16 +324,10 @@ def tool_guide_text(
         name,
         dialect=dialect,
         description_overrides=description_overrides_for(
-            active_tools,
-            has_agent_registry=has_agent_registry,
-            nonblocking_ask=nonblocking_ask,
+            active_tools, nonblocking_ask=nonblocking_ask
         ),
-        parameter_overrides=parameter_overrides_for(active_tools, has_agent_registry),
         inline_guides=_build_tool_inline_guides(
-            active_tools,
-            dialect,
-            nonblocking_ask=nonblocking_ask,
-            has_agent_registry=has_agent_registry,
+            active_tools, dialect, nonblocking_ask=nonblocking_ask
         ),
         full=True,
     )
@@ -378,33 +338,20 @@ def _build_tools_section(
     active_tools: list[str],
     dialect,
     *,
-    has_agent_registry: bool = True,
     nonblocking_ask: bool = False,
 ) -> str:
     """Build Available Tools section with inline guides.
 
     Order comes from ``effective_tool_names`` — related tools together.
-    ``has_agent_registry=False``(서브루프)면 agent 도구 설명을 run 전용
-    축소판으로 스왑 — 모드 축소 노출 (설계 §3.2: 스키마 사본 없이 렌더만
-    분기).
     """
-    overrides = description_overrides_for(
-        active_tools,
-        has_agent_registry=has_agent_registry,
-        nonblocking_ask=nonblocking_ask,
-    )
-    param_overrides = parameter_overrides_for(active_tools, has_agent_registry)
+    overrides = description_overrides_for(active_tools, nonblocking_ask=nonblocking_ask)
     tool_block = get_tool_descriptions(
         active_tools,
         inline_guides=_build_tool_inline_guides(
-            active_tools,
-            dialect,
-            nonblocking_ask=nonblocking_ask,
-            has_agent_registry=has_agent_registry,
+            active_tools, dialect, nonblocking_ask=nonblocking_ask
         ),
         dialect=dialect,
         description_overrides=overrides or None,
-        parameter_overrides=param_overrides or None,
     )
     return f"## Available Tools\n{tool_block}"
 
@@ -578,7 +525,6 @@ def build_system_prompt_sections(
     dialect=None,
     depth: int = 0,
     max_depth: int = 0,
-    agent_registry=None,
     peer_agents_section: str = "",
     nonblocking_ask: bool = False,
 ) -> list[tuple[str, str]]:
@@ -636,7 +582,6 @@ def build_system_prompt_sections(
                 _build_tools_section(
                     active_tools,
                     dialect,
-                    has_agent_registry=agent_registry is not None,
                     nonblocking_ask=nonblocking_ask,
                 ),
             )
@@ -651,9 +596,7 @@ def build_system_prompt_sections(
             sections.append(("Skills", skill_desc))
 
     if "agent" in active_tools:
-        profiles_desc = build_agent_profiles_section(
-            dialect=dialect, has_agent_registry=agent_registry is not None
-        )
+        profiles_desc = build_agent_profiles_section(dialect=dialect)
         if profiles_desc:
             sections.append(("Agent Profiles", profiles_desc))
     # v5.11: 상주 서브에이전트는 registry 없이(상주 모드 차단 유지) 미리
@@ -821,17 +764,11 @@ def _build_context_recovery() -> str:
     )
 
 
-def build_agent_profiles_section(
-    dialect=None, *, has_agent_registry: bool = True
-) -> str:
+def build_agent_profiles_section(dialect=None) -> str:
     """## Agent Profiles — 프로파일 카탈로그 (5.0.0 통합 광고).
 
-    run(일회성)과 spawn(상주) 이 같은 카탈로그를 쓴다. 서브루프에도
-    노출된다 (run 이 profile 을 받으므로) — Live Agents 와 달리
-    레지스트리 게이트가 없다. ``disable-model-invocation`` 제외.
-
-    ``has_agent_registry=False``(서브루프): run 만 쓸 수 있으므로 spawn 안내와
-    예시를 싣지 않는다 (v10.13.0).
+    run 과 spawn 이 같은 카탈로그를 쓴다 — 모든 루프가 같은 표면이다(v10.141.0).
+    ``disable-model-invocation`` 제외.
     """
     if dialect is None:
         dialect = _get_dialect()
@@ -852,19 +789,12 @@ def build_agent_profiles_section(
         "agent", {"mode": "spawn", "profile": "profile-name", "task": "..."}
     )
     indent = lambda s: "\n".join(f"  {line}" for line in s.splitlines())
-    if has_agent_registry:
-        lines = [
-            "## Agent Profiles",
-            "Profiles give a sub-agent a specialist role (run or spawn):",
-            indent(run_example),
-            indent(spawn_example),
-        ]
-    else:
-        lines = [
-            "## Agent Profiles",
-            'Profiles give a sub-agent a specialist role (`agent` with `mode` "run"):',
-            indent(run_example),
-        ]
+    lines = [
+        "## Agent Profiles",
+        "Profiles give a sub-agent a specialist role (run or spawn):",
+        indent(run_example),
+        indent(spawn_example),
+    ]
     for name, desc in profiles:
         suffix = f" — {desc}" if desc else ""
         lines.append(f"- `{name}`{suffix}")
@@ -903,12 +833,14 @@ def build_live_agents_section(
         snapshot = agent_registry.roster_snapshot()
     except Exception:
         return ""
-    # run 에이전트(과제 하나, docs/agent-engine/DESIGN.md)는 모델 대면 명단에 없다 — 부를 수도
-    # 되살릴 수도 없는 개체이고, P1 은 모델 바이트를 바꾸지 않는다. 화면 로스터에는 있다.
+    # run 에이전트도 명단에 있다 (v10.141.0, docs/agent-engine/DESIGN.md §1) — 일하는 동안은
+    # `message` 상대다(지시를 바꾼다). 과제를 마치고 내려온 run 은 없다: 되살릴 기억이 아니라
+    # 끝난 일이고, 매 턴 꼬리에 쌓이기만 한다.
     rows = [
         s
         for s in snapshot
-        if s.get("key") != exclude_key and not s.get("ends_after_task")
+        if s.get("key") != exclude_key
+        and not (s.get("ends_after_task") and s.get("state") == "dead")
     ]
     # 죽은 개체는 **main 로스터에만** 남긴다 (v9.6.0).
     #
@@ -946,17 +878,18 @@ def build_live_agents_section(
             "below. Ask any of them directly with the `message` tool (`to` a "
             'key or name, or "main" to reach the main agent). Their reply '
             "arrives to you as a new message — you are not blocked; keep "
-            "working or complete, and you'll be woken when it comes."
+            "working, or call `wait`, and you'll be woken when it comes."
         )
     else:
         # v10.85.0 (agent 검토 PR B, T2): "기다리는 법" 네 문장이 `agent` 설명에서
-        # 여기로 왔다 — 에이전트가 있을 때만 보이는 상태 블록의 말이다. spawn·
-        # request 결과는 사실만 말하고 지시는 이 머리글 한 곳에 있다.
+        # 여기로 왔다 — 에이전트가 있을 때만 보이는 상태 블록의 말이다. run·spawn·
+        # `message` 결과는 사실만 말하고 지시는 이 머리글 한 곳에 있다.
         intro = (
             "These agents are already running and remember all previous "
-            'exchanges — send follow-up work with `mode` "request" and the '
-            "agent's `key` instead of spawning a new one for the same thread "
-            "of work. Once you have handed work to an agent, finish what is "
+            "exchanges — send follow-up work with `message` (`to` the agent's "
+            "key or name) instead of spawning a new one for the same thread "
+            "of work; a run agent ends after its reply. Once you have handed "
+            "work to an agent, finish what is "
             "yours, then call `wait`: you are woken when its reply arrives, so "
             "never predict a pending reply, and do not poll `status` or re-send "
             "a request (each re-send queues more work). Queue only requests that "
@@ -980,7 +913,15 @@ def build_live_agents_section(
     lines = [heading, intro]
     for s in alive + dead:
         # (v5.0 스냅샷 키 개명 잔재 수정: role → profile)
-        who = " · ".join(p for p in (s.get("profile", ""), s.get("name", "")) if p)
+        who = " · ".join(
+            p
+            for p in (
+                s.get("profile", ""),
+                s.get("name", ""),
+                "run" if s.get("ends_after_task") else "",
+            )
+            if p
+        )
         label = f"`{s['key']}`" + (f" ({who})" if who else "")
         desc = ""
         # 전문영역 요약 — registry 의 AgentInstance 가 description 을 들고 있다.

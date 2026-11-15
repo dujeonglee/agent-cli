@@ -699,6 +699,7 @@ class TestQuestionPort:
             "nonblocking",
             "reply",  # v9.21.0 — 빚진 회신을 갚는 표면. 레지스트리 노출은 아니다.
             "debts",  # v9.22.0 — main·상주 공통 회신 빚 목록 (v10.77.0: answer 빚 없음)
+            "awaited",  # v10.141.0 — 보내 놓고 아직 못 받은 회신(장부의 기다리는 회신)
         }
         # 상주는 비블로킹, main 은 기존 블로킹 경로 (§8-④)
         assert port.nonblocking is True
@@ -1398,7 +1399,7 @@ class TestCompleteIsLocal:
 
     @staticmethod
     def _handler(reg, key):
-        return reg._make_message_handler(reg.get(key))
+        return reg.message_handler(f"agent:{key}")
 
     def _run(self, reg, b, requester, body, **req):
         ran = []
@@ -1484,7 +1485,7 @@ class TestCompleteIsLocal:
 
         def runner(kind, start, ctx):
             if start.query == "원 일감":  # a 의 런 — b 에게 묻는다
-                box["res"] = reg._make_message_handler(reg.get(a))(b, "정책?")
+                box["res"] = reg.message_handler(f"agent:{a}")(b, "정책?")
             elif start.query.startswith("── request ["):  # b 의 런 — 답하지 않는다
                 pass
             elif start.query.startswith("── reply ["):  # a 가 받은 것
@@ -1559,17 +1560,14 @@ class TestCompleteIsLocal:
         assert "person watching this window" in err and "Just `complete`" in err
         assert "message(to=" not in err
 
-    def test_main_with_nothing_owed_is_refused_and_pointed_to_agent_request(
+    def test_main_with_nothing_owed_is_refused_and_pointed_to_message(
         self, mkreg, renderer
     ):
         """v10.56.0: main 도 `reply` 를 갖는다(빚을 갚는 도구는 하나) — 빚이 없으면
-        거부하고, 일을 시키는 길(`agent request`)을 알려 준다."""
+        거부하고, 일을 시키는 길(v10.141.0: `message`)을 알려 준다."""
         reg = mkreg()
         err = reg.question_port(None).reply("x")
-        assert (
-            err.startswith("nothing to reply to")
-            and '`agent` with mode "request"' in err
-        )
+        assert err.startswith("nothing to reply to") and "use `message`" in err
 
     def test_port_reports_the_debt_and_its_repayment(self, mkreg, renderer):
         reg = mkreg()
@@ -1732,6 +1730,7 @@ class TestUnifiedDebtRules:
             questions=reg.question_port(b),
             inbox=lambda: reg.absorb_pending(reg.get(b)),
             peer_roster=None,
+            agent_registry=None,
         )
         tm = reg.get(b)
         tm.current_author = "user:dj"
@@ -1798,6 +1797,7 @@ class TestUnifiedDebtRules:
             questions=reg.question_port(b),
             inbox=lambda: reg.absorb_pending(reg.get(b)),
             peer_roster=None,
+            agent_registry=None,
         )
         tm = reg.get(b)
         tm.current_author = f"agent:{a}"
@@ -2307,10 +2307,11 @@ class TestMidRunAbsorption:
             dialect="json_fc",
             ports=ResidentLoop.make_ports(
                 key=b,
-                message_handler=reg._make_message_handler(tm),
+                message_handler=reg.message_handler(f"agent:{tm.key}"),
                 questions=reg.question_port(b),
                 inbox=lambda: reg.absorb_pending(tm),
                 peer_roster=None,
+                agent_registry=None,
             ),
         )
         return calls, ctx, res

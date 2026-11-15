@@ -158,7 +158,7 @@ class LLMCaller:
     def _function_schemas(self) -> list[dict] | None:
         """native_fc (v10.2.0): 요청에 실을 OpenAI 함수 스키마 — 프롬프트의
         `## Available Tools` 와 **같은 소스**(effective_tool_names · 스키마 ·
-        parameter_overrides · 인라인 가이드)로 만든다. description = 한 줄 설명 +
+        인라인 가이드)로 만든다. description = 한 줄 설명 +
         가이드 전문(NATIVE.md N1). 캐시해 두고 재사용한다."""
         if not getattr(self.cfg.dialect, "server_parsed", False):
             return None
@@ -170,7 +170,6 @@ class LLMCaller:
             self._function_schemas_cache = function_schemas_for(
                 self.cfg.tools_list,
                 self.cfg.dialect,
-                has_agent_registry=profile.agent_registry is not None,
                 nonblocking_ask=nonblocking_ask,
             )
         return self._function_schemas_cache
@@ -179,7 +178,7 @@ class LLMCaller:
         """이 콜의 디코딩 문법 (v9.24.0) — 서버가 강제하고(capabilities
         ``supports_grammar``) 세션이 끄지 않았을 때만. 도구 집합과 스키마는
         **프롬프트와 같은 함수**에서 나온다(`effective_tool_names` ·
-        `flat_param_schemas` · `parameter_overrides_for`) — 문법이 프롬프트가
+        `flat_param_schemas`) — 문법이 프롬프트가
         가르친 것을 막거나 안 가르친 것을 허용하면 안 된다. `<think>` 블록이
         열린 채 생성이 시작되는지는 thinking 정책에서 읽는다."""
         from agent_cli.context.manager import grammar_active
@@ -191,7 +190,6 @@ class LLMCaller:
         if not grammar_active(override, caps.supports_grammar):
             return None
         if self._grammar_cache is None:
-            from agent_cli.prompts.system_prompt import parameter_overrides_for
             from agent_cli.tools.registry import (
                 TOOL_SCHEMAS,
                 allows_extra_keys,
@@ -199,16 +197,12 @@ class LLMCaller:
                 flat_param_schemas,
             )
 
-            overrides = parameter_overrides_for(
-                self.cfg.tools_list,
-                self.cfg.kind.prompt_profile().agent_registry is not None,
-            )
             tools = []
             for name in effective_tool_names(self.cfg.tools_list, self.cfg.dialect):
                 schema = TOOL_SCHEMAS.get(name)
                 if schema is None:
                     continue
-                params = overrides.get(name, schema.parameters)
+                params = schema.parameters
                 tools.append(
                     (name, flat_param_schemas(name, params), allows_extra_keys(params))
                 )

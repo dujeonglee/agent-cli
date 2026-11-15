@@ -1,12 +1,14 @@
 """run 에이전트 = 채널 — 실브라우저 (docs/agent-engine/DESIGN.md §2.5).
 
-실제 호스트(`run_agents`)·실제 레지스트리·실제 WebRenderer 로 돌리고(엔진만 가짜) 화면을 본다:
+실제 진입(`run_agent.launch_run`)·실제 레지스트리·실제 WebRenderer 로 돌리고(엔진만 가짜) 화면을
+본다(v10.141.0 — run 은 바로 돌아오고, 테스트는 그 회신을 기다린다):
 
 1. 부른 자리(main)에 한 줄 카드 `→ Run … working · open channel` — 끝나면 `done`.
 2. `open channel` 이 그 run 의 채널로 — 채널엔 런 블록(머리 = 과제), 그 안에 단계.
-3. 끝난 run 채널은 회색 칩(`.ov-ch.run.done`, ✕/↻ 없음), 입력창은 닫혀 있다.
+3. 일하는 run 채널은 열려 있다(✕ 있음, 사람이 직접 쓴다 — 시안 C). 끝난 run 은 회색 칩
+   (`.ov-ch.run.done`, ✕/↻ 없음)이고 입력창이 닫힌다.
 4. 깊이 2 — run 안의 run 도 자기 채널이고, 한 줄 카드는 부른 run 의 런 블록에 놓인다.
-5. resume 재생 — 사이드카(`scopes.jsonl`)와 run 디렉터리의 history 로 같은 카드·채널이 선다.
+5. resume 재생 — 사이드카(`scopes.jsonl`)와 그 에이전트의 history 로 같은 카드·채널이 선다.
 """
 
 from __future__ import annotations
@@ -75,7 +77,8 @@ def _engine_steps(kind, start, ctx, *, gate=None):
 
 
 def _call_run(ctx, args, *, depth=0):
-    from agent_cli.subagent.run_agent import run_agents
+    """run 하나를 띄우고 그 회신을 기다린다 — 그 회신(`ToolResult`)."""
+    from tests.loop_kinds import run_tasks
 
     caller = make_caller(
         ctx=ctx,
@@ -83,7 +86,13 @@ def _call_run(ctx, args, *, depth=0):
         binding=make_binding(provider=object(), capabilities=CAPS),
         stop_event=threading.Event(),
     )
-    return run_agents(args, caller)
+    (out,) = run_tasks(args, caller)
+    return out
+
+
+def _block(reg, key):
+    """그 run 의 과제 런 블록 선택자 — 런 이름은 과제 요청 id (``<key>#r-…``)."""
+    return f'#messages > .card-run[data-task-id="{key}#{reg.get(key).task_id}"]'
 
 
 def _run_key(stack):
@@ -123,7 +132,13 @@ class TestRunChannel:
         chip = page.locator(f'.ov-ch[data-key="{key}"]')
         assert _wait(lambda: chip.count() == 1)
         assert "run" in chip.get_attribute("class")
-        assert chip.locator(".ov-ch-ctl").count() == 0  # ✕/↻ 없음 (정지는 P3)
+        # 일하는 동안: ✕ 가 있고(kill), 채널에 사람이 직접 쓸 수 있다 (시안 C)
+        assert chip.locator('.ov-ch-ctl[data-act="kill"]').count() == 1
+        chip.locator(".ov-ch-lb").click()
+        assert _wait(lambda: "on" in (chip.get_attribute("class") or ""))
+        assert not page.locator("#input").is_disabled()
+        assert "To " in page.locator("#input").get_attribute("placeholder")
+        page.locator('.ov-ch[data-key="main"]').click()
 
         gate.set()
         t.join(10)
@@ -131,17 +146,18 @@ class TestRunChannel:
         assert _wait(lambda: "done" in link.first.inner_text())
         assert _wait(lambda: "done" in (chip.get_attribute("class") or ""))
         assert "dead" not in chip.get_attribute("class")  # 지운 줄이 아니라 회색
+        assert chip.locator(".ov-ch-ctl").count() == 0  # 끝난 run — ✕/↻ 없음
 
         # open channel → 그 채널의 런 블록(머리 = 과제, 몸통 = 단계)
         link.first.locator(".run-link-open").click()
         assert _wait(lambda: "on" in (chip.get_attribute("class") or ""))
-        block = page.locator(f'#messages > .card-run[data-task-id="{key}#run"]')
+        block = page.locator(_block(stack.server.agent_registry, key))
         assert block.count() == 1 and block.is_visible()
         assert "find every caller" in block.locator(".run-head").inner_text()
         assert block.locator(".run-body .card-assistant").count() >= 1
         assert not link.first.is_visible()  # main 의 카드는 main 채널에만
         assert page.locator("#input").is_disabled()
-        assert "takes no messages" in page.locator("#input").get_attribute(
+        assert "finished its task" in page.locator("#input").get_attribute(
             "placeholder"
         )
 
@@ -166,16 +182,9 @@ class TestRunChannel:
         # main 에는 바깥 run 의 카드 하나, 안쪽 run 의 카드는 바깥 run 의 런 블록 안
         top = page.locator("#messages > .card-run-link")
         assert top.count() == 1 and outer in top.first.inner_text()
-        nested = page.locator(
-            f'#messages > .card-run[data-task-id="{outer}#run"] .card-run-link'
-        )
+        nested = page.locator(f"{_block(reg, outer)} .card-run-link")
         assert nested.count() == 1 and inner in nested.first.inner_text()
-        assert (
-            page.locator(
-                f'#messages > .card-run[data-task-id="{inner}#run"]'
-            ).get_attribute("data-ch")
-            == inner
-        )
+        assert page.locator(_block(reg, inner)).get_attribute("data-ch") == inner
 
 
 class TestRunChannelResume:
@@ -226,8 +235,8 @@ class TestRunChannelResume:
         assert _wait(lambda: chip.count() == 1)
         assert "done" in chip.get_attribute("class")
         link.first.locator(".run-link-open").click()
-        block = page.locator(f'#messages > .card-run[data-task-id="{key}#run"]')
+        block = page.locator(_block(restored, key))
         assert _wait(lambda: block.count() == 1 and block.is_visible())
         assert "find every caller" in block.locator(".run-head").inner_text()
-        # run 디렉터리의 history 가 통째로 블록 안에 재생된다
+        # 그 에이전트의 history(agents/<key>)가 그 런의 구간만큼 블록 안에 재생된다
         assert block.locator(".run-body .card-assistant").count() >= 1

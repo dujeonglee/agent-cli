@@ -297,27 +297,6 @@ class TestSourcePathTools:
         assert "/nope/gone.py" not in n
         assert (tmp_path / OVERSIZED_DIRNAME).exists()
 
-    def test_agent_points_at_result_md(self, tmp_path):
-        run = tmp_path / "run-1"
-        run.mkdir()
-        (run / "result.md").write_text("FULL ANSWER")
-        body = "\n".join(f"line {i}" for i in range(4000))
-        tool = TOOLS["agent"]
-        ctx = RunContext(
-            session_dir=tmp_path,
-            oversized_cap=1000,
-            tools_available=frozenset({"agent"}),
-        )
-        n = tool.render_oversized(
-            ToolResult(True, output=body, artifact="run-1"),
-            {"mode": "run"},
-            body=body,
-            tokens=estimate_tokens(body),
-            ctx=ctx,
-        )
-        assert str(run / "result.md") in n
-        assert not (tmp_path / OVERSIZED_DIRNAME).exists()
-
     def test_agent_without_artifact_persists(self, tmp_path):
         body = "\n".join(f"line {i}" for i in range(4000))
         n = _nudge("agent", body, tmp_path=tmp_path, args={"mode": "run"})

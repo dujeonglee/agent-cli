@@ -75,7 +75,7 @@ class InputQueue:
                 "images": list(images or []),
             }
             self._items.append(item)
-            self._cv.notify()
+            self._cv.notify_all()  # 블록 소비자와 도착 대기자(wait_for_arrival) 모두
         self._changed()
         return item
 
@@ -94,6 +94,26 @@ class InputQueue:
             item = self._items.popleft()
         self._changed()
         return item
+
+    def wait_for_arrival(self, timeout: float) -> bool:
+        """사람 입력이 **도착할 때까지만** 기다린다 — 꺼내지 않는다 (v10.141.0).
+
+        main 이 기다리는 회신을 둔 채 제자리에서 `wait` 하는 동안(docs/agent-engine/DESIGN.md
+        §3) 사람이 입력창에 친 말이 그 대기를 깨운다. 꺼내는 것은 다음 턴 경계의
+        흡수(`dequeue_nowait`)다 — 여기서 꺼내면 라우팅(명령·주입)을 건너뛴다.
+        합성 입력(``system`` — 메일 깨우기)은 세지 않는다: 메일은 메일함이 깨운다.
+        ``timeout`` 안에 도착했거나 이미 있으면 True, shutdown 이면 False."""
+        with self._cv:
+            return (
+                self._cv.wait_for(
+                    lambda: (
+                        self._shutdown
+                        or any(not it.get("system") for it in self._items)
+                    ),
+                    timeout,
+                )
+                and not self._shutdown
+            )
 
     def dequeue_nowait(self) -> dict | None:
         """턴 경계 (running loop): 있으면 하나, 없으면 None (비블록)."""

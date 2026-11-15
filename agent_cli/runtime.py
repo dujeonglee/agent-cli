@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any
 
-from agent_cli.loop.kind import WAIT_END_RUN, LoopKind, PromptProfile, Start
+from agent_cli.loop.kind import WAIT_BLOCK, WAIT_END_RUN, LoopKind, PromptProfile, Start
 from agent_cli.loop.ports import (
     _RESIDENT_ROSTER,
     LoopPorts,
@@ -538,11 +538,14 @@ def wire_session(
     surface,
     policy,
     on_mail_notice=None,
+    on_wait_input=None,
 ) -> WiredSession:
     """메일 복원·자동 스폰(`wire_agent_mail`) → `MainLoop` → `SessionPump` → 예약 스레드.
     **소비자를 다 세운 뒤에 생산자를 켠다** 가 이 함수 하나에서 보장된다 — 도중에
     죽으면 예약은 켜지지 않는다. ``surface``·``policy`` 는 호스트의 것(펌프 표면·수명),
-    ``on_mail_notice`` 는 main 이 바쁠 때의 메일 알림(run 만 — web 은 대기열이 그 자리)."""
+    ``on_mail_notice`` 는 main 이 바쁠 때의 메일 알림(run 만 — web 은 대기열이 그 자리),
+    ``on_wait_input`` 은 제자리 대기를 깨울 사람 입력을 기다리는 법(없으면 입력 큐 — run 은
+    터미널 줄도)."""
     from agent_cli.pump import PumpDeps, SessionPump
 
     registry = owners.agent_registry
@@ -567,6 +570,7 @@ def wire_session(
             None, text, nickname=nickname
         ),
         route_message=lambda text: pump.route(text),
+        wait_for_user_input=on_wait_input or queue.wait_for_arrival,
         max_turns=spec.max_turns,
         max_depth=spec.max_depth,
         verbose=spec.verbose,
@@ -684,6 +688,7 @@ class MainLoop(LoopKind):
         record_turns: bool,
         hooks_config: dict | None,
         graceful_interrupt: bool,
+        wait_for_user_input=None,
     ) -> None:
         self.owner = "main"
         self.binding = binding
@@ -701,6 +706,7 @@ class MainLoop(LoopKind):
             dequeue_user_message=dequeue_user_message,
             enqueue_user_message=enqueue_user_message,
             route_message=route_message,
+            wait_for_user_input=wait_for_user_input,
         )
 
     @staticmethod
@@ -711,7 +717,11 @@ class MainLoop(LoopKind):
         dequeue_user_message,
         enqueue_user_message,
         route_message,
+        wait_for_user_input=None,
     ) -> LoopPorts:
+        """``wait_for_user_input`` (v10.141.0): ``(timeout) -> bool`` — 사람 입력이 도착했는가
+        (꺼내지 않는다; 호스트의 것 — web 은 입력 큐, run 은 터미널 줄 + 입력 큐). 기다리는
+        회신을 둔 제자리 `wait` 를 사람의 말이 깨운다."""
         return LoopPorts(
             owner="main",
             questions=_main_questions(agent_registry),
@@ -720,12 +730,21 @@ class MainLoop(LoopKind):
             dequeue_user_message=dequeue_user_message,
             enqueue_user_message=enqueue_user_message,
             route_message=route_message,
-            message_handler=None,
+            # main 도 `message` 로 요청·통지를 보낸다 (v10.141.0 — 종전 `agent` "request")
+            message_handler=(
+                agent_registry.message_handler("main")
+                if agent_registry is not None
+                else None
+            ),
             hook_runner=_hook_runner_port(),
             peer_roster=None,
-            mailbox=Mailbox(agent_registry, "main"),
+            mailbox=Mailbox(agent_registry, "main", wait_input=wait_for_user_input),
             unwired={
-                "message_handler": "상주 에이전트 전용 — main 은 agent 도구로 보낸다",
+                **(
+                    {"message_handler": "레지스트리가 없는 세션 — 보낼 상대가 없다"}
+                    if agent_registry is None
+                    else {}
+                ),
                 **_hook_unwired(),
                 "peer_roster": _RESIDENT_ROSTER,
             },
@@ -733,7 +752,10 @@ class MainLoop(LoopKind):
 
     # ── 엔진이 묻는 것 (v10.88.0) ──
     def wait_policy(self) -> str:
-        return WAIT_END_RUN  # 런을 끝내고 펌프가 깨우기를 기다린다 (체크인 타이머는 레지스트리)
+        """기다리는 회신이 있으면 제자리(v10.141.0, docs/agent-engine/DESIGN.md §3) — 같은 런에서
+        회신·사람 입력·체크인에 깬다(감사 범위도 그 런 하나). 작업·모니터만 기다리면 런을 끝내고
+        펌프가 깨우기를 기다린다(체크인 타이머는 레지스트리)."""
+        return WAIT_BLOCK if self.ports.mailbox.awaited() else WAIT_END_RUN
 
     def intake(self) -> list[dict]:
         """입력 큐를 전부 비우고(라우팅은 엔진), 레지스트리의 미배달 회신을 받는다."""
@@ -754,7 +776,6 @@ class MainLoop(LoopKind):
         return PromptProfile(
             role="",  # 기본 ROLE_PROMPT
             peer_section="",
-            agent_registry=self.ports.agent_registry,  # `agent` 전부
             ask_blocking=True,
             reports_to_caller=False,
             peer_channel=False,

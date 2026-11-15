@@ -1,119 +1,141 @@
-# 에이전트 엔진 — 엔진 하나, 수명 값 하나
+# 에이전트 엔진 — 엔진 하나, 메시지 한 쌍, 수명 값 하나
 
 모든 에이전트(`agent` `mode` "run" 의 run 에이전트와 `spawn` 의 상주 에이전트)는 레지스트리
-하나(`subagent/agents_live.py::AgentRegistry`)에 오르고, 각자 자기 스레드(`agent-<key>`)에서 돈다.
-run 과 spawn 의 차이는 에이전트 값 `ends_after_task` 하나다 — 참이면 과제 하나의 회신을 보내고
-내려온다(채널은 회색으로 남는다), 거짓이면 다음 메시지를 기다린다.
+하나(`subagent/agents_live.py::AgentRegistry`)에 오르고, 각자 자기 스레드(`agent-<key>`)에서 같은
+루프 종류(`ResidentLoop`)로 돈다. run 과 spawn 의 차이는 에이전트 값 `ends_after_task` 하나다 —
+참이면 과제 하나의 회신을 보내고 내려온다(채널은 회색으로 남는다), 거짓이면 다음 메시지를 기다린다.
+결과는 요청자에게 가는 **회신**(`reply`)이고, 요청은 누구든 `message` 로 보낸다.
 
-이 문서는 지금 구조(P1)와 남은 단계(P2·P3)를 적는다.
+이 문서는 지금 구조(P1·P2)와 남은 단계(P3)를 적는다.
 
 ## 1. 결정 (사용자)
 
 - 엔진은 하나로 합친다 — 주소만 통일하는 안은 접었다.
-- 결과는 요청자에게 가는 회신이다. 기다리는 회신이 남으면 `complete` 할 수 없다(P2).
+- 결과는 요청자에게 가는 회신이다. 기다리는 회신이 남으면 `complete` 할 수 없다.
 - 정지는 명시적 UI 로, run·spawn 공통이다. 멈추면 빚진 상대 모두에게 알린다(P3).
 - 상한은 run 도 똑같이 센다. 화면은 모두 채널이다.
-- main 은 기다리는 회신이 있는 동안 제자리에서 기다리되, 사용자 입력에 깨어 그 일을 하고 회신은 계속 기다린다(P2).
+- main 은 기다리는 회신이 있는 동안 제자리에서 기다리되, 사용자 입력에 깨어 그 일을 하고 회신은 계속 기다린다.
 - 방 ■ 는 main 만 멈춘다. 자식은 채널 ■ 또는 "모두 정지"(P3).
-- P1 의 결과 어댑터는 회귀 방지로 두고, P2 에서 가드 테스트와 함께 지운다.
-- 에이전트 사이의 말은 `message` / `reply` 한 쌍으로 합친다(P2).
+- P1 의 결과 어댑터는 회귀 방지로 두었다가 P2 에서 가드 테스트와 함께 지웠다 — 최종 디자인은 단일 모듈이다.
+- 에이전트 사이의 말은 `message` / `reply` 한 쌍이다.
 
-## 2. 구조 (P1)
+## 2. 구조
 
 ```
-tool_bridge._invoke_agent  ─ run ─▶ run_agent.run_agents(args, Caller)
-      │ OnAgentStart/End 훅이 감싼다            │
-      │                                         ├─ delegation_checks.run_refusal   (빈 과제·provider·순환·깊이)
-      │                                         ├─ AgentRegistry.start_run_agent  (상한·명단·agents.json·로스터·스레드)
-      │                                         │     └─ 스레드: begin_prompt_scope → RunAgentLoop.run() → dead
-      │                                         ├─ 회신을 막힌 채 기다림 (스레드 끝 = 회신 뒤 내려옴)
-      │                                         └─ run_result.write_result_md_and_tool_result / batch_tool_result
-      └─ spawn·request·… ─▶ agents_live.tool_agent → AgentRegistry.spawn (delegation_checks.depth_or_recursion_refusal)
+tool_bridge._invoke_agent ─▶ agents_live.tool_agent(args, registry, caller=Caller.from_loop(…), runtime)
+                                 │ 모드 표 _MODE_HANDLERS: run · spawn · status · resume · kill
+                                 ├─ run   ─▶ run_agent.start_run → launch_run
+                                 │            ├─ delegation_checks.run_refusal  (빈 과제·provider·순환·깊이)
+                                 │            ├─ AgentRegistry.spawn(ends_after_task=True, stop_event=LinkedStop(부른 런의 정지))
+                                 │            ├─ OnAgentStart 훅 · on_task_end ← OnAgentEnd 훅
+                                 │            └─ AgentRegistry.request(key, 과제, author=caller.owner, item_id=r-…)
+                                 │            → "started agent … on request r-… — its reply comes back marked [r-…]" (바로 돌아온다)
+                                 └─ spawn ─▶ AgentRegistry.spawn(…, agent_stack=호출자 것)  (같은 깊이·순환 검사)
+
+워커(_worker) ─ ResidentLoop.run(받은편지함 묶음) … 런마다
+              └─ ends_after_task 이고 과제 회신이 나갔으면(_task_delivered) 내려온다(_come_down → dead)
 ```
 
 | 모듈 | 하는 일 |
 |------|---------|
-| `subagent/run_agent.py` | 호스트 `run_agents` — 과제마다 거부 판정 → 레지스트리에 올림 → 기다림 → 어댑터. run 에이전트의 루프 종류 `RunAgentLoop`(`PrivateLoop`) |
-| `subagent/run_result.py` | P1 결과 어댑터 — 회신(`RunReply`)을 `STATUS: success\nRESULT:\n…`·`STATUS: error\nERROR: Subagent did not complete\n…`·`[Task i]` 묶음·`artifact`·`result.md` 로. `subagent/report.py` 의 포맷터를 부른다. **P2 에서 지운다** |
+| `subagent/run_agent.py` | `agent` run 의 진입 — 거부 판정 → spawn(`ends_after_task`) → 과제 요청. 묶인 정지 `LinkedStop`. run 의 훅. 레지스트리를 import 하지 않는 잎 |
 | `subagent/delegation_checks.py` | 에이전트를 띄우기 전 거부 판정 — `run_refusal`(run), `depth_or_recursion_refusal`(run·spawn 공통). 쓰지도 띄우지도 않는다 |
-| `subagent/agents_live.py` | 레지스트리 — `start_run_agent`(올리고 스레드를 띄운다)·`_run_agent_worker`(한 번 돌고 내려온다)·`_run_agent_tombstone`(resume 의 회색 개체). 런의 정책은 모른다 — 호스트가 `body` 로 준다 |
+| `subagent/resident_loop.py` | 에이전트(run·spawn)의 루프 종류 `ResidentLoop` — 주소 `agent:<key>`, 깊이 = 띄운 쪽 +1, 스택 = 띄운 쪽 것 |
+| `subagent/agents_live.py` | 레지스트리 — 명단·상한·스레드·agents.json, `message` 라우팅(`message_handler(sender)`), 회신 배달, 보낸 쪽 기록(`_sent`)·`awaited_replies` |
 
-### 2.1 run 에이전트가 모델에게 보이는 것 — P1 은 바이트 불변
+### 2.1 도구 표면 — 보내는 길 하나, 갚는 길 하나
 
-`RunAgentLoop` 의 정체는 상주(`ResidentLoop`)와 다르다: 주소 `run:<run_dir>`(private 메일함 — 잡·모니터·체크인
-통지가 여기로), `wait` 는 제자리에서 막는다, run-only 축소 스키마, 시작 메시지는 과제 원문, ctx 집은 세션 디렉터리의
-`run_<name>_<hash>_<ts>/`(결과 파일 자리와 같다).
+| 도구 | 누가 | 무엇 |
+|------|------|------|
+| `agent` | 깊이 상한 아래의 모든 루프 | run · spawn · status · resume · kill — 같은 스키마(루프별 축소판 없음) |
+| `message` | main · 모든 에이전트 | 요청(기본 — 상대가 `reply` 를 빚진다) 또는 통지(`expects_reply` false). 받는 이 = 키·이름·`"main"` |
+| `reply` | main · 모든 에이전트 | 빚 갚기 — run 에이전트의 "결과" 도 이것 |
+| `wait` | 깨울 길이 있는 루프(강제 탑재) | main 은 기다리는 회신이 있으면 제자리, 에이전트는 런을 끝내고 받은편지함이 깨운다 |
 
-**`RunAgentLoop` 는 P1 한정 임시 종류다** (결과 어댑터와 같은 대우). 사용자가 승인한 설계는 루프 종류 하나
-(`ResidentLoop`)이고, 이 종류가 따로 있는 이유는 P1 의 모델 바이트 불변 하나뿐이다. 그래서 **종류 정책 메서드만**
-든다 — 정체(주소·깊이·스택·바인딩·도구·훅·정지 이벤트), 시작(과제 원문), ctx(프로파일·바인딩 고정·ctx 생성),
-스코프(채널 블록), 결과 모양(`RunReply`). 루프 본체는 엔진(`run_loop`), 스레드·상한·저장·로스터는 레지스트리의 것이다.
-제거 조건은 §4.
+사람의 `@agt-<key>` 명령과 웹 채널 직접 입력(`/api/agent/<key>/input`)은 그대로 `request(author="user:…")` 다 —
+일하는 run 에이전트에도 쓸 수 있다(시안 C). 사람의 `@<profile> <task>` 는 루프 밖의 run 하나를 띄우고
+그 회신을 main 메일함에서 꺼내 답으로 돌려준다(`main._dispatch_agent` → `launch_run` → `AgentRegistry.take_reply`).
 
-모델 대면 명단에는 run 에이전트가 없다(`AgentRegistry._residents`) — `## Live Agents` 꼬리, `status`, 주소 해석
-(`resolve_key`·`request`·`resume`), 중복 이름 검사, `wait` 의 깨울 관계, auto-spawn. 상한 계산(`alive_count`)에는 든다 —
-넘으면 spawn 과 같은 문장(`agent_limit_refusal`)에 `Delegation rejected: ` 를 붙여 돌려주고, 병렬이면 그 과제의 `ERROR` 다.
+### 2.2 결과 = 회신 · 장부 · 제자리 대기
 
-등가성은 `tests/equivalence/test_run_result_parity.py` 가 고정한다 — 옛 일회성 엔진에서 만든 코퍼스(단건 성공·프로파일·
-max turns·호출자 정지·fork·큰 결과 포인터·거부 여섯·병렬 둘·`@agent`)의 도구 결과·부모와 자식의 모델 요청 전부·
-`result.md` 를 바이트로 비교한다.
+- **보내기.** run 의 과제와 `message` 요청은 받는 쪽 받은편지함에 들어갈 때(`_enqueue`; main 앞이면 `message_to_main`)
+  보낸 쪽 기록 `_sent[요청자][r-…]` 에 적힌다. 받는 쪽 빚이 끝날 때 지운다(`_close_sent` — `reply` 로 갚음, 요청자에게
+  `message` 로 갚음, 런 끝 폴백, 정지로 버림). 받는 쪽이 죽었으면 보이지 않는다.
+- **장부.** `Ledger.awaited`(질문 포트 `awaited` → `awaited_replies`)가 그것을 읽어 `## Open Items` 의 둘째 절
+  "by arrival — `wait`; each reply closes its item when it comes" 에 싣는다(`complete` 절은 셋째로 밀린다).
+  남아 있으면 `complete` 를 되돌린다 — 되돌림 예산 8·정책은 장부의 것 그대로. 예산이 다하면 결과 말미에
+  "⏳ N repl… you asked for had not arrived when this run closed" 와 목록을 적는다(회신은 그래도 메일로 온다).
+  웹 📋 띠는 같은 사본(`Ledger.snapshot`, source "awaiting")을 그린다.
+- **제자리 대기.** `MainLoop.wait_policy` 는 기다리는 회신이 있으면 `WAIT_BLOCK` — `dispatch._wait_in_place` 가
+  `Mailbox.wait` → `AgentRegistry.wait_mail` 로 메일(회신·작업 통지·체크인 — `arrived_for`) 또는 사람 입력
+  (`wait_input`: 웹은 `InputQueue.wait_for_arrival`, run 은 터미널 줄을 큐에 넣는 `main._terminal_steer_input`)이 올 때까지
+  막고, 깨면 같은 런의 다음 턴 경계 흡수(`MainLoop.intake`)가 읽는다. 사람 입력에 깨면 관찰
+  "the wait was interrupted — the user wrote to you; … still awaited, so `wait` again when you are done" 를 남긴다.
+  같은 런이라 감사(auditor)의 구간이 회신까지 덮는다. 기다리는 회신 없이 작업·모니터만 기다리면 지금처럼 런을 끝낸다.
+  에이전트의 `wait` 는 그대로다(런 끝, 메일로 깸).
+- **내려옴.** run 에이전트는 런이 끝날 때마다 과제 회신이 나갔는지 본다(`_task_delivered` — 과제 빚이 갚아졌거나 폴백으로
+  닫혔다). `wait` 로 끝난 런은 빚이 남아 내려오지 않고, 그 회신에 깨어 갚은 뒤 내려온다.
 
-### 2.2 정지
+### 2.3 정지
 
-run 에이전트의 런은 **호출자의 stop Event** 를 따른다(방 ■·Ctrl+C 가 run 을 멈춘다). 기다리던 호출 스레드가 끊기면
-(CLI Ctrl+C) 그 Event 를 세우고 그대로 던진다. 상주의 평생 stop(`AgentInstance.stop_event`, kill·shutdown)은 run 과
-무관하다. 에이전트별 런 정지(■·✕)는 P3 이다.
+run 에이전트의 정지는 `LinkedStop` — 자기 정지(kill·세션 종료)와 부른 런의 정지 중 어느 쪽이 서도 참이다(방 ■·Ctrl+C
+가 run 을 멈춘다). 제자리 대기 중 Ctrl+C 로 스레드가 끊기면 런의 정지를 세우고 던진다. 상주의 평생 stop 은 run 과 무관하다.
+멈춘 run 의 빚은 지금처럼 조용히 버려진다(요청자의 기다림도 닫힌다) — 빚진 상대 알림은 P3.
 
-### 2.3 저장·resume
+### 2.4 저장·resume
 
-run 에이전트는 `agents.json` 에 `ends_after_task: true`·`home: <run 디렉터리 이름>` 으로 남는다. resume 은 되살리지
-않는다 — 끝나기 전에 프로세스가 죽은 것도 같다(그 회신을 받을 막힌 호출이 이미 없다). 회색 개체로 복원되어 화면
-로스터와 채널 재생에만 쓰인다. 되살리기는 결과 = 회신이 되는 P2 의 일이다.
+agents.json 에 run 에이전트는 `ends_after_task: true`·`task_id` 로, 모든 에이전트는 띄운 쪽의 `depth`·`agent_stack` 으로 남는다
+(더해진 키 — 옛 파일도 읽는다; v10.140.0 의 run 에이전트는 `home` 이 `run_…` 이고 dead 라 회색 개체로 선다). 끝나기 전에
+프로세스가 죽은 run 은 되살아나 회신을 마친다 — 끊긴 과제를 새 id 로 다시 넣고(`_requeue`, `task_id` 를 잇는다), 요청자가
+돌아오지 않았으면 그 회신은 main 메일로 간다. 에이전트의 훅 설정은 hooks.json 모양으로 저장·복원된다(`hooks_to_json`·`hooks_from_json`).
 
-### 2.4 훅
+### 2.5 훅
 
-`OnAgentStart`/`OnAgentEnd` 는 run 에만 발화한다 — `ToolBridge._invoke_agent` 가 `run_agents` 를 감싸므로 인자·시점은
-`agent` 호출 하나에 한 쌍이다. 상주 spawn 에 붙이는 일은 P1 밖이다.
+`OnAgentStart` 는 run 을 띄울 때(부른 자리의 턴·과제 인자), `OnAgentEnd` 는 그 run 이 과제를 마치고 내려올 때(마지막 런의
+결과가 `delegate_result`) 발화한다. spawn 에 붙이는 일은 범위 밖이다.
 
-### 2.5 화면
+### 2.6 화면
 
-- 웹: run 은 상주와 같은 채널이다 — 에이전트 스레드의 `begin_agent_work(…, ctx_dir=<run 디렉터리>, caller_task=<부른 자리>)`
-  가 `scope_start` 를 낸다(`channel` = 키, `run` = 참). 프런트는 그 채널에 런 블록을 열고, 부른 자리(main 의 맨 위, 또는
-  부른 에이전트의 런 블록)에 한 줄 카드 `→ agt-… <profile> · working/done · open channel` 을 놓는다. 끝난 run 채널은 회색
-  칩이고 입력창은 닫혀 있다(run 은 과제 하나만 받는다). 같은 이벤트가 `scopes.jsonl` 에 실려 resume 재생도 같은 자리에
-  같은 카드와 채널을 그린다(run 디렉터리의 history 를 통째로).
-- CLI: 모든 에이전트(run·상주)는 자기 스레드의 평소 출력을 버리고, 런의 시작·끝과 끝난 도구 호출마다 한 줄을 오는
-  순서대로 찍는다 — `  agt-3a1b2c4d │ shell  rg -n parse_tokens src/  ✓`.
+- 웹: run 은 다른 에이전트와 같은 채널(`agents/<key>`)이다. 과제 런의 `scope_start` 가 `run`·`caller_task`(부른 자리)를 실어
+  부른 자리에 한 줄 카드 `→ agt-… <profile> · working/done · open channel` 을 놓는다(resume 재생도 같은 사이드카로).
+  일하는 run 칩엔 ✕ 가 있고 채널 입력창이 열려 있다. 끝난 run 은 회색 칩(✕/↻ 없음)이고 입력창이 닫힌다.
+  📋 띠는 기다리는 회신이 있으면 "📋 Waiting for N reply · r-21 from agt-3", main 이 제자리에서 기다리는 동안엔 띠 끝에
+  "main is waiting for agt-3 — type to steer it or give new work"(스티키 `waiting_in_place`). main 의 `message` 는 발신 카드(→).
+- CLI: 모든 에이전트의 진행 줄이 오는 순서대로 `  agt-3 │ shell  rg -n parse_tokens src/  ✓`. main 의 제자리 대기는
+  `⏳ waiting for 1 reply (r-21) — type to steer or give new work, Enter to send`, main 의 `message` 는
+  `✉ message → agt-3 (notice) …`, 바쁠 때 도착한 회신은 `↩ reply r-21 ← agt-3  …`.
 
 ## 3. 단계
 
 | 단계 | 무엇 | 모델 바이트 |
 |------|------|-------------|
-| P1 (지금) | 엔진 하나 — run = 레지스트리 에이전트, 상한·저장·채널·훅·깊이 검사 공통. 화면: run 카드 → 채널 + 한 줄 카드, CLI 에이전트 줄. 결과 어댑터 | 불변 — 코퍼스 바이트 비교 |
-| P2 | 결과 = 회신, `message`/`reply` 한 쌍(`agent` `request` → `message`). 어댑터 삭제 + 가드 테스트(모듈·함수 이름·`STATUS: success` 조립 문자열이 저장소에 없음). 장부의 "기다리는 회신" 항목, main 제자리 `wait`(회신·사용자 입력·체크인에 깸), 남으면 `complete` 되돌림. run 에이전트 되살리기 | 바뀜 — 35B·GLM A/B(짝 기준, 교차 순서) |
+| P1 | 엔진 하나 — run = 레지스트리 에이전트, 상한·저장·채널·훅·깊이 검사 공통. 화면: run 카드 → 채널 + 한 줄 카드, CLI 에이전트 줄. 결과 어댑터 | 불변 — 코퍼스 바이트 비교 |
+| P2 (지금) | 결과 = 회신, `message`/`reply` 한 쌍(`agent` 의 요청 모드 → `message`, main 에도 `message`). 장부의 기다리는 회신, main 제자리 `wait`(회신·사용자 입력·체크인), 남으면 `complete` 되돌림. run 에이전트 되살리기. 모든 루프가 같은 `agent` 표면 | 바뀜 — 35B·GLM A/B(짝 기준, 교차 순서)로 판정 |
 | P3 | 에이전트 런 단위 stop, 채널 머리 ■/✕, ■ 메뉴(main · 모든 에이전트 · 전부), `/stop` 슬래시. 빚진 상대 모두에게 `stopped by user` 회신 — kill 의 조용한 빚 버리기도 고친다 | 바뀜 — 회신 문구 실측 |
 
-## 4. P2 완료 조건 — P1 임시물을 전부 지운다
+## 4. P2 완료 — P1 임시물은 없다
 
 사용자 결정: 지울 때 철저하게 없애 최종 디자인은 **단일 모듈**(루프 종류 하나 = `ResidentLoop`, 결과 = 회신)이다.
-아래 이름은 `tests/test_agent_engine_transitional.py` 의 `TRANSITIONAL`·`TRANSITIONAL_STRINGS` 에 한 곳으로 적혀
-있고, 지금은 "있다" 를 확인한다. **P2 는 그 테스트를 "저장소 어디에도 없다" 로 뒤집는 것으로 끝난다.**
+P1 이 둔 임시 종류·결과 어댑터·결과 포장·`run:` 주소·축소 스키마·run 전용 수명과 명단 필터·run 채널 읽기 전용·바이트 기준
+코퍼스는 전부 지웠다. 무엇을 지웠는지는 `tests/test_agent_engine_transitional.py` 한 곳이 기억하고, 그 이름·글이
+`agent_cli/`·`tests/`·`docs/` 어디에도 다시 나타나지 않음을 지킨다(이 문서도 그 이름을 쓰지 않는다).
 
-| 지울 것 | 자리 | 대체 |
-|---------|------|------|
-| `RunAgentLoop` | `subagent/run_agent.py` | `ResidentLoop` + `ends_after_task` — 회신을 보내면 내려온다 |
-| `RUN_ITEM` (런 이름 `"run"`) | `subagent/run_agent.py` | 요청 id `r-…`(장부의 기다리는 회신) |
-| `_wait_for_replies` (막힌 기다림) | `subagent/run_agent.py` | 장부의 기다리는 회신 + main 제자리 `wait`(회신·사용자 입력·체크인에 깸) |
-| `run_result` 모듈 — `RunReply`·`write_result_md_and_tool_result`·`batch_tool_result` | `subagent/run_result.py` | 회신(`reply`)이 곧 결과 |
-| `STATUS: success\nRESULT:` / `STATUS: error\nERROR: Subagent did not complete` 조립 | `subagent/run_result.py` | 회신 본문 |
-| `DelegateResult`·`_extract_activity_log`·`_extract_last_actions`·`_format_delegate_output`·`_format_parallel_results`·`_persist_run_result`·`extract_result_body` | `subagent/report.py` | 회신 모양(웹 지시문 편집기·`@agent` 는 회신 본문을 읽는다) |
-| `RUN_OWNER_PREFIX` (`run:` 주소) | `constants.py` | run 에이전트도 `agent:<key>` — 받은편지함으로 통지를 받는다 |
-| run 의 `wait` 제자리(`PrivateLoop` 의 WAIT_BLOCK 을 run 이 쓰는 것) | `RunAgentLoop` 와 함께 | 상주의 WAIT_END_RUN. `WAIT_BLOCK` 상수 자체는 하니스 작업·P2 의 main 제자리 대기가 쓰므로 남는다 |
-| `AgentTool.SUBLOOP_PARAMETERS` (run 전용 축소 스키마) | `tools/agent_tool.py` | 모든 에이전트가 같은 도구 표면(§1의 run·spawn·status·resume·kill + `message`/`reply`) |
-| `AgentRegistry.start_run_agent`·`_run_agent_worker` | `subagent/agents_live.py` | `spawn(…, ends_after_task=True)` 한 길 |
-| `AgentRegistry._run_agent_tombstone` | `subagent/agents_live.py` | resume 이 못 끝낸 run 에이전트를 되살려 회신을 마친다 |
-| `AgentRegistry._residents` (모델 대면 명단에서 run 빼기) | `subagent/agents_live.py` | run 에이전트도 명단·주소에 나온다(`message` 상대) |
-| `build_live_agents_section` 의 `ends_after_task` 거르기, `resolve_key`·`format_status`·`kill`·`resume_teammate` 의 run 키 거절 | `prompts/system_prompt.py`·`subagent/agents_live.py` | 같음 — run 도 이름 있는 에이전트로 보이고, 정지는 P3 의 런 정지 |
-| run 채널 읽기 전용(`ovActiveRun`·"This run agent takes no messages")·run 칩의 ✕/↻ 숨김 | `web/static/js/runs.js` | P2: 사람이 run 채널에 직접 쓴다(시안 C) · P3: 채널 머리 ■ 런 정지·✕ 제거. 끝난 run 의 회색 칩·`run` 표시는 최종 디자인이라 남는다 |
-| `tests/equivalence/test_run_result_parity.py`·`expected/run_results.json` | 테스트 | P1 바이트 기준 — P2 는 바이트가 바뀐다(35B·GLM A/B 로 판정) |
+| 자리 | 지금 |
+|------|------|
+| run 의 루프 종류 | `ResidentLoop` + `ends_after_task` — 회신을 보내면 내려온다 |
+| run 의 결과 | 회신(`reply`, 없으면 런 끝 폴백) — 도구 결과는 "started agent … on request r-…" 한 줄 |
+| run 의 주소 | `agent:<key>` — 받은편지함으로 통지·회신을 받는다 |
+| run 의 `wait` | 에이전트와 같다(런 끝). `WAIT_BLOCK` 은 하니스 작업과 기다리는 회신을 둔 main 이 쓴다 |
+| `agent` 스키마 | 모든 루프가 같다 — run·spawn·status·resume·kill. 깊이 상한만 도구를 뺀다 |
+| run 의 수명 | `AgentRegistry.spawn(ends_after_task=True)` 한 길 · resume 은 못 끝낸 run 을 되살린다 |
+| 모델 대면 명단 | run 에이전트도 일하는 동안은 `## Live Agents`·`status`·주소에 있다(`message` 상대). 끝난 run 은 꼬리에서 빠진다 |
+| run 채널 | 일하는 동안 사람이 직접 쓴다 · 끝나면 회색 칩 |
+| 한 턴의 run 여럿 | 병렬 배치는 없다 — 각 run 이 바로 돌아오고 에이전트가 각자 돈다 |
 
+### 4.1 P2 에서 함께 고친 것
+
+- 에이전트의 훅 설정이 agents.json 저장을 깨뜨리던 것(`TypeError` — 훅 객체를 그대로 넘겼다) → JSON 모양으로 저장·복원.
+- 레지스트리 런타임 하나를 매 호출 덮어써 에이전트가 띄운 에이전트의 깊이가 main 의 것과 섞이던 것 → 에이전트마다
+  띄운 쪽의 배선(`caller_runtime`), 레지스트리 기본값은 main 의 호출만 갱신.
+- 쓰는 곳이 없어진 것: `agent` 의 병렬 배치 기계(디스패치·도구 선언), 결과 파일 포인터(`oversized_source_path`), 루프별 인자
+  스키마 교체(`parameter_overrides`), `begin_agent_work` 의 `ctx_dir`, 세션 배치의 `RUN_PREFIX`.

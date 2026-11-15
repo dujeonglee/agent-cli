@@ -359,7 +359,7 @@ class TestIdsReachTheModel:
         src = inspect.getsource(LLMCaller._build_session_state)
         assert "self.state.ledger.block(can_wait=" in src and "items=items" in src
         block = inspect.getsource(Ledger.block)
-        assert "if not self.requests and not debts:" in block, (
+        assert "if not self.requests and not debts and not awaited:" in block, (
             "단건 런이 꼬리에서 빠졌다"
         )
 
@@ -1034,6 +1034,7 @@ class TestAgentLoopsAreUntouched:
             questions=None,
             inbox=None,
             peer_roster=None,
+            agent_registry=None,
         )
 
     @staticmethod

@@ -728,7 +728,7 @@ class TestAgentFrontmatterHooks:
 
         with (
             patch(
-                "agent_cli.subagent.run_agent.load_profile",
+                "agent_cli.subagent.profiles.load_profile",
                 return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
             ),
             patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop),
@@ -775,7 +775,7 @@ class TestAgentFrontmatterHooks:
 
         with (
             patch(
-                "agent_cli.subagent.run_agent.load_profile",
+                "agent_cli.subagent.profiles.load_profile",
                 return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
             ),
             patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop),
@@ -811,7 +811,7 @@ class TestAgentFrontmatterHooks:
 
         with (
             patch(
-                "agent_cli.subagent.run_agent.load_profile",
+                "agent_cli.subagent.profiles.load_profile",
                 return_value=self._stubload_profile(hooks_raw=None),
             ),
             patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop),

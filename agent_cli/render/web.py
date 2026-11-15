@@ -629,7 +629,6 @@ class WebRenderer(Renderer):
         message: str,
         req_ts: float | str | None = None,
         items: list[str] | None = None,
-        ctx_dir: str | None = None,
         caller_task: str | None = None,
     ) -> None:
         tid = threading.get_ident()
@@ -658,12 +657,12 @@ class WebRenderer(Renderer):
             "depth": 0,
             # 이 스코프가 곧 채널이다 — 프런트가 이 키의 채널에 런 블록을 연다.
             "channel": key,
-            # A resident agent's turns accumulate in agents/<key>/history.jsonl —
+            # An agent's turns (run or spawn) accumulate in agents/<key>/history.jsonl —
             # ONE continuous file across requests, so the resume replay
             # slices it by this scope's [start, end] timestamps to put each
-            # request's turns into its own card. A run agent's live in its own
-            # ``run_…`` directory (one task) and replay whole.
-            "ctx_dir": ctx_dir or f"agents/{key}",
+            # request's turns into its own card. (Sessions from v10.140.0 have run
+            # agents in ``run_…`` directories; their sidecar keeps that name.)
+            "ctx_dir": f"agents/{key}",
             # 이 런이 처리하는 inbox 항목들 (v9.23.0). 프론트의 런 블록이 큐에서
             # 먼저 도착한 수신 줄을 이걸로 머리로 끌어온다. scopes.jsonl 에
             # 박혀 resume 재생에서도 같은 블록이 선다.
@@ -678,7 +677,7 @@ class WebRenderer(Renderer):
         if req_ts is not None:
             payload["nav_ts"] = req_ts
         if caller_task is not None:
-            # run 에이전트: 부른 자리(부모의 카드·런 블록, main 이면 "")에 한 줄 카드 —
+            # run 의 과제 런: 부른 자리(부모의 카드·런 블록, main 이면 "")에 한 줄 카드 —
             # 사이드카에 같이 실려 resume 재생도 같은 자리에 같은 카드를 놓는다.
             payload["run"] = True
             payload["caller_task"] = caller_task
@@ -1579,6 +1578,29 @@ class WebRenderer(Renderer):
         }
         if prev != payload:
             self.set_sticky("stuck", "stuck", payload)
+
+    def wait_in_place(self, waiting: bool, awaited: list[dict]) -> None:
+        """제자리 대기 스티키 ``waiting_in_place`` (v10.141.0, 설계 §5 시안 A) — 입력창 위
+        "main is waiting for agt-3 — type to steer it or give new work". 깨면 지운다(휘발
+        이벤트로 띠를 숨긴다). main 의 것뿐이라 중첩 렌더(에이전트 스레드)는 그리지 않는다."""
+        if self.in_nested_render():
+            return
+        if not waiting:
+            if self.hub.sticky_payload("waiting_in_place") is not None:
+                self.clear_sticky("waiting_in_place")
+                self._emit("waiting_in_place", {"waiting": False}, persistent=False)
+            return
+        payload = {
+            "waiting": True,
+            "awaited": [
+                {
+                    "id": str(r.get("id") or ""),
+                    "from": str(r.get("from") or "").split(":", 1)[-1],
+                }
+                for r in awaited
+            ],
+        }
+        self.set_sticky("waiting_in_place", "waiting_in_place", payload)
 
     def stuck_summary(self) -> dict | None:
         """제자리 고리 요약 ``{turns, since_turn, asking}`` — status.json 과 ``/api/health``

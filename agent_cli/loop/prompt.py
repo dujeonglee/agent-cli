@@ -32,8 +32,7 @@ class SystemPromptSvc:
         ``apply_hook_sections``."""
         session_dir = str(self.ctx.session_dir) if self.ctx else ""
         # 종류에 따라 다른 입력은 종류가 말한다 (v10.88.0 `PromptProfile`): 역할, 상주 안내,
-        # `agent` 스키마를 전부 광고할 레지스트리, `ask` 차단 여부. 글은 그대로 — 같은 입력이
-        # 같은 절을 만든다.
+        # `ask` 차단 여부. 글은 그대로 — 같은 입력이 같은 절을 만든다.
         profile = self.cfg.kind.prompt_profile()
         self.sections = build_system_prompt_sections(
             capabilities=self.cfg.capabilities,
@@ -45,7 +44,6 @@ class SystemPromptSvc:
             dialect=self.cfg.dialect,
             depth=self.cfg.kind.depth,
             max_depth=self.cfg.kind.max_depth,
-            agent_registry=profile.agent_registry,
             peer_agents_section=profile.peer_section,
             nonblocking_ask=not profile.ask_blocking,
         )

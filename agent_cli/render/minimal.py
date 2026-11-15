@@ -275,6 +275,19 @@ def _step_summary(tool_input: str) -> str:
     return _one_line(str(args))
 
 
+def _message_line(tool_input: str) -> str:
+    """`message` 호출 → ``✉ message → <to> (request|notice) <첫 줄>``. 모양이 아니면 ""."""
+    try:
+        args = json.loads(tool_input) if tool_input else {}
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(args, dict) or not args.get("to"):
+        return ""
+    notice = str(args.get("expects_reply", True)).lower() in ("false", "0", "no")
+    kind = "notice" if notice else "request"
+    return f"✉ message → {args['to']} ({kind}) {_one_line(str(args.get('text') or ''))}"
+
+
 class MinimalRenderer(Renderer):
     """Clean indented output with icons, no boxes or color-dependent structure.
 
@@ -398,6 +411,12 @@ class MinimalRenderer(Renderer):
     def action(self, tool_name: str, tool_input: str, turn: int) -> None:
         self.note_action(tool_name, tool_input)
         self._note_agent_step(tool_name, tool_input)
+        if tool_name == "message" and not self.is_capturing:
+            # ``✉ message → agt-3 (notice) Scope change: …`` (v10.141.0, 설계 §6)
+            line = _message_line(tool_input)
+            if line:
+                self._p(f"  {line}", highlight=False, markup=False)
+                return
         display = tool_input[:200] + "..." if len(tool_input) > 200 else tool_input
         self._p(f"  ⚡ {tool_name} → {display}", highlight=False, markup=False)
 
@@ -486,6 +505,25 @@ class MinimalRenderer(Renderer):
             return
         self._last_stale_fires = fires
         self._p(f"  [{_MUTED}]{escape(f'🔁 no new results for {n} turns')}[/]")
+
+    def agent_mail_hint(self, *, key: str, kind: str, text: str) -> None:
+        """main 앞 메일 도착 한 줄 — ``↩ reply r-21 ← agt-3 …``·``⏳ Queued …``. 알림은 보낸
+        에이전트의 스레드에서 오고 그 스레드의 출력은 캡처해 버리므로(에이전트 줄), 캡처를 거치지
+        않고 바로 찍는다 — 거치면 회신 줄이 통째로 사라진다."""
+        self.con.print(f"  {text}", markup=False, highlight=False, soft_wrap=True)
+
+    def wait_in_place(self, waiting: bool, awaited: list[dict]) -> None:
+        """``⏳ waiting for N reply (r-21) — type to steer…`` 한 줄 (v10.141.0, 설계 §6) —
+        main 이 제자리 대기에 들어갈 때만. 깰 때는 찍지 않는다(다음 줄이 그 이유를 말한다)."""
+        if not waiting or not awaited:
+            return
+        n = len(awaited)
+        ids = ", ".join(str(r.get("id")) for r in awaited)
+        text = (
+            f"⏳ waiting for {n} repl{'ies' if n != 1 else 'y'} ({ids}) — type to steer "
+            "or give new work, Enter to send"
+        )
+        self._p(f"  [{_MUTED}]{escape(text)}[/]")
 
     def push_user_message(
         self,
@@ -1043,7 +1081,6 @@ class MinimalRenderer(Renderer):
         message: str,
         req_ts: float | str | None = None,
         items: list[str] | None = None,
-        ctx_dir: str | None = None,
         caller_task: str | None = None,
     ) -> None:
         self.start_capture()

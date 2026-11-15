@@ -541,29 +541,26 @@ class TestMultiOpDispatch:
 
 
 class TestMultiOpDelegateParallel:
-    """agent run is flat-native + ``parallel_safe`` (Step 3): a run of ≥2
-    consecutive run ops in one turn is batched by the loop into ONE
-    ``run_agents({tasks:[...]})`` call → one run agent per task, each on its
-    own thread. This is what makes the prompt's "several run ops run in
-    parallel" actually true — the N-op loop is otherwise sequential."""
+    """agent run is flat-native: one op = one task. v10.141.0: a run returns at
+    once (its agent works on its own thread and replies later), so the loop no
+    longer batches consecutive run ops — each op is its own `agent` call, in
+    order, through the same host (`agents_live.tool_agent`)."""
 
     def _patch(self, monkeypatch):
-        # 브리지가 run_agent.run_agents 를 함수-내부 import 하므로 소유 모듈을 patch 한다.
-        import agent_cli.subagent.run_agent as run_agent_mod
+        # 브리지가 tool_agent 를 함수-내부 import 하므로 소유 모듈을 patch 한다.
+        import agent_cli.subagent.agents_live as agents_live_mod
         from agent_cli.tools.result import ToolResult
 
         calls = []
 
-        def fake_run_agents(args, caller):
-            calls.append(args.get("tasks"))
-            return ToolResult(True, output="STATUS: success\nRESULT:\nok")
+        def fake_tool_agent(args, *, registry, caller, runtime=None):
+            calls.append(dict(args))
+            return ToolResult(True, output='started agent "agt-1" on request "r-1"')
 
-        monkeypatch.setattr(run_agent_mod, "run_agents", fake_run_agents)
+        monkeypatch.setattr(agents_live_mod, "tool_agent", fake_tool_agent)
         return calls
 
-    def test_two_delegate_ops_batched_into_one_parallel_call(
-        self, tmp_path, monkeypatch
-    ):
+    def test_two_run_ops_are_two_calls_in_order(self, tmp_path, monkeypatch):
         calls = self._patch(monkeypatch)
         result, _, _ = _run(
             [
@@ -588,17 +585,14 @@ class TestMultiOpDelegateParallel:
             tmp_path,
         )
         assert result.success
-        # ONE run_agents call carrying BOTH tasks.
-        assert len(calls) == 1
-        assert len(calls[0]) == 2
-        assert {t["task"] for t in calls[0]} == {"Analyze A", "Analyze B"}
+        assert [c["task"] for c in calls] == ["Analyze A", "Analyze B"]
+        assert all(c["mode"] == "run" for c in calls)
 
     def test_single_delegate_op_runs_one_task_and_keeps_agent(
         self, tmp_path, monkeypatch
     ):
-        # A lone delegate op takes the normal per-op path; _invoke_delegate
-        # wraps the flat spec as {tasks:[it]} (sync) — preserving every field
-        # incl. agent (the flat-native normalization fix).
+        # A lone run op keeps every field incl. its profile (the flat-native
+        # normalization fix).
         calls = self._patch(monkeypatch)
         result, _, _ = _run(
             [
@@ -617,9 +611,9 @@ class TestMultiOpDelegateParallel:
             tmp_path,
         )
         assert result.success
-        assert len(calls) == 1 and len(calls[0]) == 1
-        assert calls[0][0]["task"] == "solo"
-        assert calls[0][0]["agent"] == "explorer"
+        assert len(calls) == 1
+        assert calls[0]["task"] == "solo"
+        assert calls[0]["profile"] == "explorer"
 
     def test_no_ops_goes_to_recovery(self, tmp_path):
         # A turn with zero usable ops (unparseable) = the model said nothing

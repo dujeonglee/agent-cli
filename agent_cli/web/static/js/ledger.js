@@ -12,6 +12,11 @@
 // 띠는 셋이고 방향으로 나뉜다: ❓ 트레이(모델→사람, 답해야 한다) → 📋 장부(사람→모델,
 // 들어가서 갚는 중 — 보고 점프만 한다) → ⏳ 대기열(아직 안 들어감, 취소할 수 있다).
 // 같은 요청이 대기열에서 장부로 같은 id(`u-N`)로 옮겨 온다.
+//
+// 기다리는 회신(v10.141.0, docs/agent-engine/DESIGN.md §5 시안 A·B): main 이 보낸 요청(run 의
+// 과제·`message`)의 회신이 아직 안 온 것 — source "awaiting". 머리가 "Waiting for N reply ·
+// r-21 from agt-3" 로 말하고, main 이 제자리에서 기다리는 동안(스티키 `waiting_in_place`)엔
+// 띠 끝에 "main is waiting for agt-3 — type to steer it or give new work" 한 줄.
 
 import { el } from "./dom.js";
 import { es } from "./sse.js";
@@ -29,9 +34,12 @@ const OI_FOLD_ROWS = 3;
 // 한도 이하로 줄어 토글이 사라지면 접힘으로 돌아간다(다음에 넘칠 때 띠가 갑자기 길게
 // 서지 않도록).
 let oiExpanded = false;
+// 제자리 대기 중인가 — {awaited:[{id, from}]} 또는 null
+let oiWaiting = null;
 
 // 닫는 법 힌트 — 꼬리가 모델에게 말하는 것과 같은 도구 이름
 function oiCloserHint(it) {
+  if (it.source === "awaiting") return "← reply";
   if (it.closer === "complete") {
     return it.source === "mail" ? "→ complete, answers" : "→ complete";
   }
@@ -113,7 +121,7 @@ function oiRender() {
   if (oiItems.length <= OI_FOLD_ROWS) oiExpanded = false;
   if ($openItems.hidden) return;
   const hd = el("div", ["oi-hd"]);
-  hd.appendChild(el("span", ["oi-title"], "📋 open items · the model owes these"));
+  hd.appendChild(el("span", ["oi-title"], oiTitle()));
   if (oiBudget && oiBudget.total != null) {
     const b = el("span", ["oi-budget"], "budget " + oiBudget.left + "/" + oiBudget.total);
     b.title = "Reminders left before the harness closes what is still open";
@@ -139,6 +147,17 @@ function oiRender() {
   $openItems.appendChild(list);
   list.scrollTop = scrollTop;
   if (folds) $openItems.appendChild(oiToggle(oiItems.length - OI_FOLD_ROWS));
+  if (oiWaiting && oiWaiting.awaited && oiWaiting.awaited.length) {
+    const who = oiWaiting.awaited.map(function (r) { return r.from; });
+    const uniq = who.filter(function (w, i) { return who.indexOf(w) === i; });
+    $openItems.appendChild(
+      el(
+        "div",
+        ["oi-wait"],
+        "main is waiting for " + uniq.join(", ") + " — type to steer it or give new work"
+      )
+    );
+  }
 
   if (focusKey === "more") {
     const m = $openItems.querySelector(".oi-more");
@@ -148,6 +167,24 @@ function oiRender() {
     if (r && r.tabIndex >= 0) r.focus();
   }
 }
+
+// 머리 — 기다리는 회신뿐이면 그것을 말한다("Waiting for 1 reply · r-21 from agt-3")
+function oiTitle() {
+  const awaiting = oiItems.filter(function (it) { return it.source === "awaiting"; });
+  if (!awaiting.length) return "📋 open items · the model owes these";
+  const n = awaiting.length;
+  const first = awaiting[0];
+  const head =
+    "📋 Waiting for " + n + (n === 1 ? " reply" : " replies") + " · " + first.id +
+    " from " + first.who + (n > 1 ? " +" + (n - 1) : "");
+  return awaiting.length === oiItems.length ? head : head + " · the model owes the rest";
+}
+
+es.addEventListener("waiting_in_place", function (e) {
+  const d = JSON.parse(e.data);
+  oiWaiting = d && d.waiting ? d : null;
+  oiRender();
+});
 
 es.addEventListener("open_items", function (e) {
   const d = JSON.parse(e.data);

@@ -237,7 +237,7 @@ role_prompt = profile 파일 본문                (profile 지정 시)
   - PR-3 AgentTool: 도구명 `agent`, run 흡수(브리지 `_invoke_agent`
     3-way: tasks 배치/run 단건→oneshot 엔진, 상주→tool_agent),
     mode-aware 배칭(`parallel_batchable`=run 만), 모드 축소 노출
-    (SUBLOOP_DESCRIPTION + 디스패치 거부 — no-registry 도구 strip 제거),
+    (서브루프 축소 설명 + 디스패치 거부 — no-registry 도구 strip 제거),
     run 은 main+서브루프 양쪽. tools/delegate/ 해체 →
     `subagent/oneshot.py`+`report.py`(엔진 함수명 보존).
   - PR-4 하드컷: DelegateTool·delegate 스키마·`@teammates`·

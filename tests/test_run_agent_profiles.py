@@ -505,7 +505,7 @@ class TestRunSingleWithAgent:
 
 
 class TestRunAgentsPassAgent:
-    """호스트(`run_agents`)가 과제의 ``agent`` 를 그 run 에이전트의 종류에 넘긴다 — 엔진은
+    """호스트(`run_agent.launch_run`)가 과제의 ``agent`` 를 그 run 에이전트의 종류에 넘긴다 — 엔진은
     가짜(`agent_cli.loop.run.run_loop`), 프로파일은 내장(실제 로드)."""
 
     @staticmethod
@@ -565,8 +565,8 @@ class TestRunAgentsPassAgent:
         )
         assert sorted(captured) == ["code-reviewer", "code-writer"]
 
-    def test_parallel_run_agents_unique_across_calls(self, monkeypatch):
-        """AG-23: run agent keys (and so their channel blocks ``<key>#run``) stay
+    def test_parallel_runs_get_unique_keys_across_calls(self, monkeypatch):
+        """AG-23: run agent keys (and so their channel blocks ``<key>#<item>``) stay
         unique across consecutive parallel calls — a recycled id would make the
         web frontend reuse a stale block and never draw the new one."""
         from tests.loop_kinds import run_tasks
@@ -593,6 +593,11 @@ class TestRunAgentsPassAgent:
                 keys.append(key)
 
             def end_agent_work(self, **kw):
+                pass
+
+            def agent_message(
+                self, **kw
+            ):  # 과제 요청·회신 줄 (v10.141.0 — run 도 요청을 받는다)
                 pass
 
         monkeypatch.setattr(

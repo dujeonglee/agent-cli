@@ -47,19 +47,6 @@ from agent_cli.tools.registry import (
 _MAX_DEPTH = 3
 
 
-class _NoAgents:
-    """What the prompt builder reads from an agent registry, with nobody
-    spawned — the main loop's prompt at the start of a session."""
-
-    max_agents = 5
-
-    def roster_snapshot(self) -> list:
-        return []
-
-    def get(self, key):
-        return None
-
-
 @dataclass(frozen=True)
 class Scenario:
     """One loop situation the prompt differs by."""
@@ -68,26 +55,23 @@ class Scenario:
     title: str
     tools: tuple[str, ...] | None  # None = every built-in tool
     depth: int
-    has_registry: bool
     session_dir: str = ""
 
 
 SCENARIOS: tuple[Scenario, ...] = (
-    Scenario("main", "Main loop — all tools, can spawn agents", None, 0, True),
-    Scenario("subagent", "Sub-agent loop — all tools, run only", None, 1, False),
+    Scenario("main", "Main loop — all tools", None, 0),
+    Scenario("subagent", "Sub-agent loop — all tools (same agent surface)", None, 1),
     Scenario(
         "narrowed",
         "Sub-agent with a narrowed tool list (read_file, shell)",
         ("read_file", "shell"),
         1,
-        False,
     ),
     Scenario(
         "limit",
         "Loop at the depth ceiling — no further nesting",
         None,
         _MAX_DEPTH,
-        False,
     ),
 )
 
@@ -107,7 +91,6 @@ def _scenario(dialect, sc: Scenario) -> dict:
     tools = list(sc.tools) if sc.tools is not None else list(_BUILTIN_ORDER)
     # 루프 조립과 같은 판정 — 상한 시나리오엔 `run_skill`·`agent` 와 그 절이 없다
     tools = strip_depth_gated(tools, sc.depth, _MAX_DEPTH)
-    registry = _NoAgents() if sc.has_registry else None
     sections = [
         {"name": name, "tokens": estimate_tokens(text), "text": text}
         for name, text in build_system_prompt_sections(
@@ -116,7 +99,6 @@ def _scenario(dialect, sc: Scenario) -> dict:
             dialect=dialect,
             depth=sc.depth,
             max_depth=_MAX_DEPTH,
-            agent_registry=registry,
         )
     ]
     out: dict = {
@@ -126,9 +108,7 @@ def _scenario(dialect, sc: Scenario) -> dict:
         "sections": sections,
     }
     if getattr(dialect, "server_parsed", False):
-        functions = function_schemas_for(
-            tools, dialect, has_agent_registry=sc.has_registry
-        )
+        functions = function_schemas_for(tools, dialect)
         out["functions"] = [
             {
                 "name": f["function"]["name"],
@@ -233,7 +213,7 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
     표기 가드가 이 표본을 본다."""
     from agent_cli.prompts.system_prompt import build_live_agents_section
     from agent_cli.subagent import agents_live as al
-    from agent_cli.tools.agent_tool import REGISTRY_MODES
+    from agent_cli.subagent.run_agent import RUN_STARTED
 
     return [
         (
@@ -266,10 +246,9 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             al.SPAWN_NO_TASK.format(key="agt-3"),
         ),
         (
-            "agent_request_result",
-            "`agent` request queued (second line only when two or more are queued)",
-            al.REQUEST_QUEUED.format(key="agt-1", rid="r-5")
-            + al.REQUEST_STACKED.format(n=2),
+            "agent_run_result",
+            "`agent` run accepted — the agent starts at once and its reply comes later",
+            RUN_STARTED.format(key="agt-4", as_=" (code-analyst)", rid="r-5"),
         ),
         (
             "agent_resume_result",
@@ -296,8 +275,12 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
         *_value_quoting_samples(),
         (
             "message_delivered",
-            "`message` accepted — as a request, then as a notice",
+            (
+                "`message` accepted — as a request (second line only when the "
+                "receiver has two or more queued), then as a notice"
+            ),
             al.delivered_line("r-7", expects_reply=True)
+            + al.REQUEST_STACKED.format(n=2)
             + "\n"
             + al.delivered_line("n-3", expects_reply=False),
         ),
@@ -312,11 +295,9 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             ),
         ),
         (
-            "agent_modes_refused_in_subloop",
-            "A loop without a registry (sub-agent) asked for a persistent mode",
-            al.NO_REGISTRY.format(
-                modes="/".join(REGISTRY_MODES), hint=al.NO_REGISTRY_PEER_HINT
-            ),
+            "agent_refused_no_registry",
+            "A session without an agent registry asked for any `agent` mode",
+            al.NO_REGISTRY,
         ),
     ]
 

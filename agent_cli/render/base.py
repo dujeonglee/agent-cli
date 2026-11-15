@@ -213,6 +213,12 @@ class Renderer(ABC):
         `Ledger.snapshot` 이 런 시작·턴 경계·`complete` 정산·런 끝에 온다. 모델
         입력과 무관한 표시 전용이다. Default no-op — web 은 스티키, CLI 는 한 줄."""
 
+    def wait_in_place(self, waiting: bool, awaited: list[dict]) -> None:
+        """main 이 기다리는 회신을 둔 채 제자리에서 `wait` 한다 / 깼다 (v10.141.0,
+        docs/agent-engine/DESIGN.md §5·§6). ``awaited`` 는 ``[{"id", "from", "text"}]``
+        (깰 때는 빈 목록). 표시 전용 — 사람에게 "입력하면 깨운다" 를 알린다. Default no-op —
+        web 은 입력창 위 줄(스티키), CLI 는 ⏳ 한 줄."""
+
     def note_request(self, request_id: str, hidx: int) -> None:
         """장부 항목 ``request_id`` 의 원문 레코드 history 서수 (v10.119.0) —
         `open_items` 의 행이 그 카드로 점프하는 데 쓴다. Default no-op."""
@@ -375,7 +381,6 @@ class Renderer(ABC):
         message: str,
         req_ts: float | str | None = None,
         items: list[str] | None = None,
-        ctx_dir: str | None = None,
         caller_task: str | None = None,
     ) -> None:
         """teammate worker 가 request 1건 처리를 시작 (teammate P1).
@@ -387,10 +392,9 @@ class Renderer(ABC):
         큐에 넣을 때 나가 런보다 앞서므로, 이 목록 없이는 어느 항목이 이
         런의 것인지 알 수 없다(배치가 특히 그렇다).
 
-        ``ctx_dir`` — 이 에이전트의 대화가 사는 곳(세션 기준 상대 경로, 기본
-        ``agents/<key>``). run 에이전트는 ``run_…`` 이다(결과 파일 자리와 같다).
-        ``caller_task`` — run 에이전트만: 부른 자리(`current_task_id`, main 이면 ``""``).
-        웹은 그 자리에 한 줄 카드를 놓는다. 상주는 ``None``.
+        ``caller_task`` — run 에이전트의 과제 런만: 부른 자리(`current_task_id`, main 이면
+        ``""``). 웹은 그 자리에 한 줄 카드를 놓는다. 그 밖은 ``None``. 대화가 사는 곳은
+        에이전트마다 ``agents/<key>`` 하나다(v10.141.0 — run 도).
 
         **프롬프트 스코프를 건드리지 않는다** — 스코프는 에이전트 스레드가
         begin_prompt_scope(key) 로 상시 보유. 이 표면은 런별 표시(웹 SSE 채널

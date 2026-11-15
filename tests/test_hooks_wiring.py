@@ -28,6 +28,9 @@ class _Reg:
     def question_port(self, key):
         return object()
 
+    def message_handler(self, sender):  # main 의 `message` (v10.141.0)
+        return object()
+
 
 _S = object()
 
@@ -47,10 +50,15 @@ def _all_ports():
             route_message=_S,
         ),
         "resident": ResidentLoop.make_ports(
-            key="k1", message_handler=_S, questions=_S, inbox=_S, peer_roster=_S
+            key="k1",
+            message_handler=_S,
+            questions=_S,
+            inbox=_S,
+            peer_roster=_S,
+            agent_registry=None,
         ),
         "skill": SkillLoop.make_ports(agent_registry=_Reg(), owner="agent:parent"),
-        "oneshot": PrivateLoop.make_ports("run:parent"),
+        "private": PrivateLoop.make_ports("harness:auditor:1-2"),
     }
 
 

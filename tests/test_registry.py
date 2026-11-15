@@ -116,10 +116,9 @@ class TestAgentSchema:
             assert k in props
         assert TOOL_SCHEMAS["agent"].parameters["required"] == ["mode"]
 
-    def test_agent_is_parallel_safe_mode_aware(self):
-        assert TOOLS["agent"].parallel_safe is True
-        assert TOOLS["agent"].parallel_batchable({"mode": "run", "task": "x"})
-        assert not TOOLS["agent"].parallel_batchable({"mode": "spawn"})
+    def test_agent_has_no_parallel_batch(self):
+        # v10.141.0: run 은 바로 돌아온다 — 한 턴의 run 을 묶어 돌리던 병렬 배치는 없다
+        assert not hasattr(TOOLS["agent"], "parallel_safe")
 
     def test_delegate_gone(self):
         assert "delegate" not in TOOLS

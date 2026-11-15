@@ -1,9 +1,9 @@
-"""one-shot 의 `wait` 는 자기 메일함을 기다린다 (v10.84.0, docs/wait/DESIGN.md §7).
+"""private 주소의 `wait` 는 자기 메일함을 기다린다 (v10.84.0, docs/wait/DESIGN.md §7).
 
-one-shot·하니스 작업은 private 소유자 주소(``run:<dir>``·``harness:<job>``)를 받아
-잡·모니터·체크인의 통지가 자기 메일함으로 오고, `wait` 는 런을 끝내는 대신 그
-메일함에 통지가 올 때까지 막은 뒤 런을 잇는다. 깨울 길이 없는 루프(스킬)는 `wait`
-를 명시 거부한다. 끝날 때는 그 주소가 가진 것을 전부 거둔다(사용자 결정 D1~D3).
+하니스 작업은 private 소유자 주소(``harness:<job>``)를 받아 잡·모니터·체크인의 통지가 자기
+메일함으로 오고, `wait` 는 런을 끝내는 대신 그 메일함에 통지가 올 때까지 막은 뒤 런을 잇는다.
+깨울 길이 없는 루프(스킬)는 `wait` 를 명시 거부한다. 끝날 때는 그 주소가 가진 것을 전부
+거둔다(사용자 결정 D1~D3). run 에이전트는 v10.141.0 부터 ``agent:<key>`` 다(마지막 절).
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 from rich.console import Console
 
-from agent_cli.constants import RUN_OWNER_PREFIX, is_private_owner
+from agent_cli.constants import is_private_owner
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get as get_dialect
 from agent_cli.jobs import JobRegistry
@@ -89,10 +89,9 @@ def _records(tmp_path):
 
 
 class TestAddresses:
-    def test_private_is_run_or_harness_only(self):
-        assert is_private_owner("run:run_task_1") and is_private_owner(
-            "harness:auditor"
-        )
+    def test_private_is_harness_only(self):
+        assert is_private_owner("harness:auditor")
+        assert not is_private_owner("run:run_task_1")  # v10.141.0: run 은 agent:<key>
         assert not is_private_owner("main") and not is_private_owner("agent:k")
         assert not is_private_owner("foo")  # 모르는 주소는 여전히 unroutable
 
@@ -104,15 +103,19 @@ class TestPrivateMailbox:
     def test_deliver_counts_and_take_empties(self, reg):
         assert (
             reg.deliver(
-                "run:x", mail=self._mail(), text="t", author="main", expects_reply=False
+                "harness:x",
+                mail=self._mail(),
+                text="t",
+                author="main",
+                expects_reply=False,
             )
             == ""
         )
-        assert reg.arrived_for("run:x") == 1
-        got = reg.take_mail("run:x")
+        assert reg.arrived_for("harness:x") == 1
+        got = reg.take_mail("harness:x")
         assert [m["output"] for m in got] == ["🧵 job #1 finished rc=0"]
         assert got[0]["item_id"].startswith("n-")  # main 메일과 같은 도장
-        assert reg.arrived_for("run:x") == 0 and reg.take_mail("run:x") == []
+        assert reg.arrived_for("harness:x") == 0 and reg.take_mail("harness:x") == []
 
     def test_harness_address_is_routable_now(self, reg):
         assert (
@@ -135,30 +138,34 @@ class TestPrivateMailbox:
     def test_wait_mail_wakes_on_arrival(self, reg):
         def later():
             reg.deliver(
-                "run:x", mail=self._mail(), text="t", author="main", expects_reply=False
+                "harness:x",
+                mail=self._mail(),
+                text="t",
+                author="main",
+                expects_reply=False,
             )
 
         threading.Timer(0.3, later).start()
         why = reg.wait_mail(
-            "run:x",
+            "harness:x",
             stop_event=threading.Event(),
             still_waiting=lambda: True,
             poll_s=0.05,
         )
-        assert why == "mail" and reg.arrived_for("run:x") == 1
+        assert why == "mail" and reg.arrived_for("harness:x") == 1
 
     def test_wait_mail_returns_on_stop_and_on_nothing_left(self, reg):
         ev = threading.Event()
         ev.set()
         assert (
             reg.wait_mail(
-                "run:x", stop_event=ev, still_waiting=lambda: True, poll_s=0.05
+                "harness:x", stop_event=ev, still_waiting=lambda: True, poll_s=0.05
             )
             == "stopped"
         )
         assert (
             reg.wait_mail(
-                "run:x",
+                "harness:x",
                 stop_event=threading.Event(),
                 still_waiting=lambda: False,
                 poll_s=0.05,
@@ -167,21 +174,21 @@ class TestPrivateMailbox:
         )
 
     def test_drop_mailbox_discards_and_cancels_checkin(self, reg, jobs):
-        jobs.start("sleep 30", owner="run:x")
-        assert reg.arm_checkin("run:x")
+        jobs.start("sleep 30", owner="harness:x")
+        assert reg.arm_checkin("harness:x")
         reg.deliver(
-            "run:x", mail=self._mail(), text="t", author="main", expects_reply=False
+            "harness:x", mail=self._mail(), text="t", author="main", expects_reply=False
         )
-        assert reg.drop_mailbox("run:x") == 1
-        assert reg.arrived_for("run:x") == 0
-        assert reg.fire_checkin("run:x") == ""  # 걸린 것이 풀렸다
+        assert reg.drop_mailbox("harness:x") == 1
+        assert reg.arrived_for("harness:x") == 0
+        assert reg.fire_checkin("harness:x") == ""  # 걸린 것이 풀렸다
 
     def test_checkin_lands_in_the_private_mailbox(self, reg, jobs):
-        jobs.start("sleep 30", owner="run:x")
-        assert reg.arm_checkin("run:x")
-        text = reg.fire_checkin("run:x")
+        jobs.start("sleep 30", owner="harness:x")
+        assert reg.arm_checkin("harness:x")
+        text = reg.fire_checkin("harness:x")
         assert "still running" in text
-        got = reg.take_mail("run:x")
+        got = reg.take_mail("harness:x")
         assert (
             len(got) == 1 and got[0]["kind"] == "checkin" and got[0]["ledger"] == "none"
         )
@@ -293,7 +300,7 @@ class TestWakeItemsForPrivateOwners:
         set_schedule_registry(Sched())
         assert "a schedule" in wake_sources("main", agents=get_agent_registry())
         assert (
-            wake_sources("run:x", agents=get_agent_registry()) == []
+            wake_sources("harness:x", agents=get_agent_registry()) == []
         )  # 빼지 않으면 잡 없이도 wait 가 영원히 막힌다
 
 
@@ -301,14 +308,14 @@ class TestWaitInPlace:
     def test_oneshot_wait_blocks_until_its_job_reports_then_continues(
         self, jobs, tmp_path
     ):
-        jobs.start("sleep 1", owner="run:t1")
+        jobs.start("sleep 1", owner="harness:t1")
         ctx = ContextManager(tmp_path / "s", max_context_tokens=10000)
         loop = _loop(
             _provider(
                 {"action": "wait", "reason": "job"},
                 {"action": "complete", "result": "done"},
             ),
-            PrivateLoop.make_ports("run:t1"),
+            PrivateLoop.make_ports("harness:t1"),
             ctx=ctx,
         )
         assert "wait" in loop.tools_list  # 깨울 길이 있으니 광고된다
@@ -324,11 +331,11 @@ class TestWaitInPlace:
         assert ctx.take_parked_requests() == []
 
     def test_job_killed_from_outside_ends_the_wait_with_a_fact(self, jobs, tmp_path):
-        job = jobs.start("sleep 30", owner="run:t2")
+        job = jobs.start("sleep 30", owner="harness:t2")
         ctx = ContextManager(tmp_path / "s", max_context_tokens=10000)
         loop = _loop(
             _provider({"action": "wait"}, {"action": "complete", "result": "done"}),
-            PrivateLoop.make_ports("run:t2"),
+            PrivateLoop.make_ports("harness:t2"),
             ctx=ctx,
         )
         threading.Timer(0.4, lambda: jobs.kill(job)).start()
@@ -359,27 +366,31 @@ class TestInlineLoopsRefuseWait:
 
 class TestReleaseOwner:
     def test_leftover_job_is_stopped_and_named(self, jobs, reg):
-        jobs.start("sleep 30", owner="run:z")
+        jobs.start("sleep 30", owner="harness:z")
         reg.deliver(
-            "run:z",
+            "harness:z",
             mail={"kind": "job", "output": "x"},
             text="x",
             author="main",
             expects_reply=False,
         )
-        note = release_owner("run:z", registry=reg).note
+        note = release_owner("harness:z", registry=reg).note
         assert (
             note
             == "[1 background job still running was stopped when this agent finished: `sleep 30`]"
         )
-        assert jobs.running("run:z") == [] and reg.arrived_for("run:z") == 0
+        assert jobs.running("harness:z") == [] and reg.arrived_for("harness:z") == 0
 
     def test_nothing_left_is_silent(self, jobs, reg):
-        assert release_owner("run:empty", registry=reg).note == ""
+        assert release_owner("harness:empty", registry=reg).note == ""
 
 
-class TestOneShotHasItsOwnAddress:
-    def test_run_single_uses_a_run_address_and_cleans_up(self, monkeypatch, jobs, reg):
+class TestRunAgentHasAnAgentAddress:
+    def test_run_agent_is_agent_key_and_its_leftovers_go_when_it_comes_down(
+        self, monkeypatch, jobs, reg
+    ):
+        """v10.141.0: run 에이전트도 ``agent:<key>`` — 받은편지함으로 통지를 받고, 과제를 마치고
+        내려오면(워커의 정리) 남긴 잡이 거둬진다."""
         from tests.binding_support import make_binding
 
         seen = {}
@@ -392,6 +403,7 @@ class TestOneShotHasItsOwnAddress:
             return ToolResult(True, output="done")
 
         monkeypatch.setattr("agent_cli.loop.run.run_loop", fake_run_loop)
+        reg._runner = None  # 가짜 러너 말고 엔진(패치한 run_loop)으로
         caps = ModelCapabilities(
             context_window=32768, max_output_tokens=4096, supports_thinking=False
         )
@@ -401,10 +413,9 @@ class TestOneShotHasItsOwnAddress:
                 binding=make_binding(provider=object(), model="m", capabilities=caps)
             ),
         )
-        assert result.success
-        assert seen["owner"].startswith(RUN_OWNER_PREFIX) and seen["inbox"] is True
+        assert result.success and result.output == "done"
+        assert seen["owner"].startswith("agent:agt-") and seen["inbox"] is True
         assert jobs.running(seen["owner"]) == []
-        assert "1 background job still running was stopped" in result.output
 
 
 class TestAgentLineMarkup:

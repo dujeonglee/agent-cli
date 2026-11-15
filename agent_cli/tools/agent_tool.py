@@ -1,21 +1,18 @@
-"""agent 도구 스키마 (docs/agent-unification/DESIGN.md §3).
+"""agent 도구 스키마 (docs/agent-unification/DESIGN.md §3, docs/agent-engine/DESIGN.md §1).
 
-실행은 :func:`agent_cli.subagent.agents_live.tool_agent` — delegate 처럼
-루프(tool_bridge)가 인터셉트해 registry/provider 배선을 주입한다. 이
-모듈은 스키마·의미론 검증(C7 ``validate``)·over-cap 표면만 소유한다.
-레지스트리가 없는 루프(서브에이전트·headless)에서는 상주 모드가
-디스패치에서 거부되고 프롬프트는 SUBLOOP_DESCRIPTION(run 만 문서화)으로
-렌더된다 (§3.2 모드 축소 노출 — 도구 인스턴스는 하나).
+실행은 :func:`agent_cli.subagent.agents_live.tool_agent` — 루프(tool_bridge)가 인터셉트해
+호출자·배선을 주입한다. 이 모듈은 스키마·의미론 검증(C7 ``validate``)만 소유한다.
+모든 루프가 같은 표면이다(v10.141.0) — 서브루프용 축소 스키마는 없다. 에이전트에게 일을
+주고받는 말은 `message`/`reply` 한 쌍이고, 이 도구는 에이전트를 띄우고(run·spawn) 다룬다.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import ClassVar
 
 from agent_cli.constants import has_words
-from agent_cli.tools.base import RunContext, Tool
+from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 
@@ -23,38 +20,23 @@ from agent_cli.tools.result import ToolResult
 class AgentMode:
     """agent 도구 모드 1종의 선언 (모드 테이블화 — 리뷰 §4.4 T3).
 
-    스키마 enum·validate 필수 필드·병렬 배치 합류·tool_bridge 라우팅이
-    전부 이 테이블에서 파생된다 — 종전엔 5곳(enum/validate 재나열/
-    parallel_batchable/브리지 분기/agents_live if-체인)에 각자 나열돼
-    새 모드 추가 시 동기 수정 누락이 조용한 폴스루로 새던 구조.
+    스키마 enum·validate 필수 필드가 이 테이블에서 파생되고, 실행은 같은 이름의
+    `agents_live._MODE_HANDLERS` 항목이다(정합은 테스트가 고정).
 
     - ``required``: 모드별 필수 필드 (C7 의미론 검증).
-    - ``engine``: "run"=run 에이전트(tool_bridge 가 `subagent.run_agent.run_agents`
-      로 라우팅 — 과제 하나의 회신을 막힌 채 받는다) / "registry"=상주 레지스트리
-      (agents_live.tool_agent 의 핸들러 테이블로 라우팅).
-    - ``batchable``: 같은 턴 연속 op 의 병렬 배치 합류 여부 (설계 §3.6 —
-      run 만; 상주 모드는 즉시 반환이라 병렬 이득 없음).
     """
 
     required: tuple[str, ...] = ()
-    engine: str = "registry"
-    batchable: bool = False
 
 
 # 삽입 순서 = 스키마 enum 노출 순서 (프롬프트 렌더 안정성).
 AGENT_MODES: dict[str, AgentMode] = {
-    "run": AgentMode(required=("task",), engine="run", batchable=True),
+    "run": AgentMode(required=("task",)),
     "spawn": AgentMode(),
-    "request": AgentMode(required=("key", "task")),
     "status": AgentMode(),
     "resume": AgentMode(required=("key",)),
     "kill": AgentMode(required=("key",)),
 }
-
-# 상주(registry) 모드 이름들 — 에러 문구·핸들러 커버리지 검증용 파생.
-REGISTRY_MODES: tuple[str, ...] = tuple(
-    m for m, spec in AGENT_MODES.items() if spec.engine == "registry"
-)
 
 
 class AgentTool(Tool):
@@ -64,39 +46,30 @@ class AgentTool(Tool):
     deferred = True
     summary = "Hand a task to another agent that works in its own context; the profiles are listed under `## Agent Profiles`."
     depth_gated = True  # 결합 깊이 상한에서 제거 (T3 선언화 — run 도 불가)
-    # run 의 설명 — 메인·서브루프 두 설명이 같은 문장을 쓴다 (v9.24.1).
-    # 초점은 동시성이 아니라 **분리된 컨텍스트**: 종전 "fan out … in
-    # PARALLEL" 은 속도로 읽혔고, 로컬 모델 서버 하나에서 run 둘은 처리량을
-    # 반씩 나눠(실측 11+11 tok/s vs 단독 20) 빨라지지 않은 채 부모만 10분
-    # 멈췄다 (Harbor v4 extract-elf). context 는 none(기본)·fork 둘 다 가능 —
-    # "empty" 로 단정하지 않는다.
+    # run 의 설명 (v9.24.1) — 초점은 동시성이 아니라 **분리된 컨텍스트**: 종전 "fan out
+    # … in PARALLEL" 은 속도로 읽혔고, 로컬 모델 서버 하나에서 run 둘은 처리량을 반씩
+    # 나눠(실측 11+11 tok/s vs 단독 20) 빨라지지 않았다 (Harbor v4 extract-elf). context 는
+    # none(기본)·fork 둘 다 가능 — "empty" 로 단정하지 않는다. v10.141.0: 결과는 회신이다 —
+    # run 은 바로 돌아오고, 기다리는 법은 꼬리(`## Open Items`·`## Live Agents`)가 말한다.
     RUN_DESCRIPTION = (
-        '`mode` "run" gives one task to a sub-agent and you get back only its '
-        "summary: whatever it read stays in its window, both handoffs drop "
-        "detail, and its mistakes return in the same confident tone as its "
-        "findings. Delegate when answering would mean reading across many "
+        '`mode` "run" gives one task to a new sub-agent that ends after it replies, '
+        "and you get back only its reply: whatever it read stays in its window, both "
+        "handoffs drop detail, and its mistakes return in the same confident tone as "
+        "its findings. Delegate when answering would mean reading across many "
         "files and you want the conclusion, not the file dumps. Do it "
         "yourself when it is a handful of calls or a lookup whose target you "
         'already know; when in doubt, do it yourself. Several "run" calls in one '
         "turn are for independent parts that would each flood your context — "
-        "not for speed: on a single local model server they share throughput, "
-        "and you are blocked until all of them finish."
-    )
-    # 서브루프(레지스트리 없는 루프)용 축소 설명 — run 만 문서화 (설계
-    # §3.2 모드 축소 노출: 도구 인스턴스는 하나, 프롬프트 렌더만 분기).
-    SUBLOOP_DESCRIPTION = (
-        'Work with a one-shot sub-agent (`mode` "run" only here). '
-        + RUN_DESCRIPTION
-        + " Optional `profile`/`instructions` give the sub-agent a role."
+        "not for speed: on a single local model server they share throughput."
     )
     description = (
-        "Work with sub-agents, one-shot or persistent. "
+        "Start and manage sub-agents, one-shot or persistent. "
         + RUN_DESCRIPTION
         + ' Spawn (`mode` "spawn") only when the same area will take several '
         "rounds of questions — an agent that has studied one area answers "
-        "follow-ups from full detail. One agent per area (disjoint "
-        "files/subsystems). Once you have handed work to an agent, do not "
-        "also do it yourself; how to wait for its reply is in the `## Live "
+        "follow-ups from full detail; send it work with `message`. One agent per "
+        "area (disjoint files/subsystems). Once you have handed work to an agent, "
+        "do not also do it yourself; how to wait for its reply is in the `## Live "
         "Agents` section at the end of the prompt."
     )
     # v10.85.0 (agent 검토 PR B, T2): "기다리는 법" 네 문장(finish what is yours, then
@@ -111,14 +84,13 @@ class AgentTool(Tool):
                 "type": "string",
                 "enum": list(AGENT_MODES),
                 "description": (
-                    '"run": one task, blocking — the result returns in this '
-                    'turn. "spawn": create a persistent agent that keeps its '
-                    'context between requests (returns its key). "request": '
-                    "send it a message — returns immediately; the reply is "
-                    'delivered to you as an observation when ready. "status": '
-                    'list live agents and their state. "resume": bring a dead '
-                    'agent back with its full prior context. "kill": terminate '
-                    "one."
+                    '"run": one task for a new agent that ends after its reply — '
+                    "returns at once; the reply comes to you later as a message. "
+                    '"spawn": create a persistent agent that keeps its context '
+                    "between requests (returns its key; send it work with "
+                    '`message`). "status": list live agents and their state. '
+                    '"resume": bring a dead agent back with its full prior '
+                    'context. "kill": terminate one.'
                 ),
             },
             "profile": {
@@ -141,9 +113,8 @@ class AgentTool(Tool):
             "task": {
                 "type": "string",
                 "description": (
-                    '"run": the task (required); "request": the message '
-                    '(required); "spawn"/"resume": optional first request. Brief '
-                    "it like a peer: the goal, what you already ruled out, and "
+                    '"run": the task (required); "spawn"/"resume": optional first '
+                    "request. Brief it like a peer: the goal, what you already ruled out, and "
                     "which files to read — point at them, do not retype them. "
                     "Give it the code, not your conclusion: an agent handed "
                     "your hypothesis tends to return it confirmed."
@@ -162,8 +133,8 @@ class AgentTool(Tool):
             "key": {
                 "type": "string",
                 "description": (
-                    'agent key returned by "spawn" (required for "request"/'
-                    '"resume"/"kill"; optional filter for "status")'
+                    'agent key returned by "run"/"spawn" (required for "resume"/'
+                    '"kill"; optional filter for "status")'
                 ),
             },
             "tools": {
@@ -188,71 +159,6 @@ class AgentTool(Tool):
         "required": ["mode"],
     }
 
-    # 서브루프용 스키마 — 설명만 run 전용이고 스키마는 여섯 모드를 전부 나열하던
-    # 불일치를 없앤다 (v10.13.0). 프롬프트와 디코딩 문법이 같은 스키마를 보므로
-    # 서브에이전트는 spawn/request 를 배우지도, 낼 수도 없다. 상주 전용 인자
-    # (name·key)는 빠지고 나머지 설명은 run 기준으로 다시 쓴다.
-    SUBLOOP_PARAMETERS: ClassVar[dict] = {
-        "type": "object",
-        "properties": {
-            "mode": {
-                "type": "string",
-                "enum": ["run"],
-                "description": (
-                    '"run": one task, blocking — the result returns in this turn.'
-                ),
-            },
-            "profile": {
-                "type": "string",
-                "description": (
-                    "profile from .agent-cli/agents/{profile}.md (loaded into "
-                    "the sub-agent's system prompt; omit for a generalist)."
-                ),
-            },
-            "task": {
-                "type": "string",
-                "description": (
-                    "the task (required). Brief it like a peer: the goal, what "
-                    "you already ruled out, and which files to read — point at "
-                    "them, do not retype them. Give it the code, not your "
-                    "conclusion: an agent handed your hypothesis tends to "
-                    "return it confirmed."
-                ),
-            },
-            "instructions": {
-                "type": "string",
-                "description": (
-                    "inline role text that becomes part of the "
-                    "sub-agent's system prompt. Use alone for an ad-hoc "
-                    "specialist, or with `profile` to append task-specific "
-                    "directions."
-                ),
-            },
-            "tools": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": (
-                    "tools the sub-agent may use. Omit for the profile's set; "
-                    "without a profile the sub-agent has every tool. With a "
-                    "profile it can only narrow that set."
-                ),
-            },
-            "context": {
-                "type": "string",
-                "enum": ["none", "fork"],
-                "description": (
-                    '"none" (default) — the agent starts fresh and knows only '
-                    'the task text; "fork" — it gets a copy of your conversation '
-                    "so far."
-                ),
-            },
-        },
-        "required": ["mode"],
-    }
-
-    # run fan-out 용 — 배치 합류 여부는 parallel_batchable(mode-aware)이 결정.
-    parallel_safe = True
-
     def validate(self, args: dict) -> str | None:
         # 모드 유효성·필수 필드는 AGENT_MODES 테이블에서 파생 (C7 의미론
         # 검증 훅 — shape 는 중앙 1~5단계).
@@ -262,7 +168,7 @@ class AgentTool(Tool):
             return f'unknown `mode` "{mode}" — must be one of {modes}'
         if "message" in args:
             # 통일 어휘 (v8.0.0): 지시는 모든 모드에서 ``task`` 하나다. 과거
-            # request 만 ``message`` 를 써서, 모델이 spawn/resume 에도 그 습관을
+            # 한 모드만 ``message`` 를 써서, 모델이 spawn/resume 에도 그 습관을
             # 이어가면 **조용히 유실**됐다(라이브 재현). 별칭 수용(v7.29.1)은
             # 이중 어휘를 영구화하므로 철회 — 정밀 에러를 A5 로 되먹여 다음
             # 턴에 자가 교정시킨다(도구-입력 의미론은 엄격, wire 문법만 관용).
@@ -284,12 +190,6 @@ class AgentTool(Tool):
             )
         return None
 
-    def parallel_batchable(self, action_input: dict) -> bool:
-        # mode-aware 배칭 — AGENT_MODES.batchable 파생 (설계 §3.6: run 만).
-        args = self.strip_prefix(action_input) if isinstance(action_input, dict) else {}
-        spec = AGENT_MODES.get(args.get("mode"))
-        return spec is not None and spec.batchable
-
     def touched_paths(self, action_input: dict) -> list[str]:
         # 파일 경로가 없는 도구 — compaction file-list 에 스폰/요청 흔적 마커.
         args = self.strip_prefix(action_input)
@@ -302,22 +202,8 @@ class AgentTool(Tool):
         target = args.get("key") or args.get("profile") or ""
         return f"{mode} {target}".strip()
 
-    oversized_retry_hint = (
-        "re-run a narrower task — the sub-agent's scope was too broad, so it "
-        "returned everything instead of an answer."
-    )
-
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
-
-    def oversized_source_path(self, result, args, ctx: RunContext) -> str:
-        """run 모드는 run 결과 어댑터가 이미 전문을 ``<run_dir>/result.md``
-        (상대경로 = ``result.artifact``)에 영속했다 — 사본 대신 그 파일을
-        가리킨다. artifact 가 없는 모드/경로는 "" (seam 이 저장)."""
-        artifact = getattr(result, "artifact", "") or ""
-        if ctx.session_dir and artifact:
-            return str(Path(ctx.session_dir) / artifact / "result.md")
-        return ""
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # 루프가 인터셉트 (registry/provider 필요) — 직접/테스트 호출자용.

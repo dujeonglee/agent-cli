@@ -90,6 +90,10 @@ class WaitTool(Tool):
     #: 깨울 길이 있는 루프에만 (`LoopPorts.wakeable`) — 스킬·일회성 런은 결과가
     #: 호출자에게 돌아가므로 "기다린다" 가 성립하지 않는다.
     requires_handler = "wake"
+    #: 깨울 길이 있는 루프면 프로파일 allowed-tools 와 무관하게 붙는다 (v10.141.0) — `message`
+    #: (강제 탑재)로 요청을 보내면 기다리는 회신이 장부에 서고 `complete` 가 되돌아온다. 그
+    #: 자리의 대안(`wait`)이 없는 루프가 생기면 안 된다(docs/agent-engine/DESIGN.md §3).
+    force_mount = True
     #: 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6)는 한 문장 — 간격(5분부터 두
     #: 배씩)은 받아들일 때의 결과에 적는다(`dispatch._op_wait`), 설명엔 숫자가 없다.
     description = (
@@ -169,14 +173,14 @@ class MessageTool(Tool):
     #: 전문은 `tool_help`.
     deferred = True
     summary = 'Send a request or a notice to another running agent, or to "main".'
-    # Present ONLY for resident (persistent) sub-agents — the loop injects a
-    # ``message_handler`` and force-adds this tool for them, and strips it
-    # everywhere else (the main agent talks to agents via the ``agent`` tool).
-    # 이 정책은 아래 두 선언에서 파생된다 (T3 선언화).
+    # main 과 모든 에이전트(run·spawn)에 붙는다 (v10.141.0, docs/agent-engine/DESIGN.md §1) —
+    # 루프가 ``message_handler``(`AgentRegistry.message_handler`)를 꽂고 이 도구를 강제
+    # 탑재한다. 레지스트리가 없는 루프(스킬·하니스 작업)엔 없다. 이 정책은 아래 두 선언에서
+    # 파생된다 (T3 선언화). 종전 main 의 `agent` ``mode`` "request" 가 이 도구로 왔다.
     requires_handler = "message_handler"
     force_mount = True
     description = (
-        'Message another running agent (a peer, or "main"). By default it is a request:'
+        'Message another running agent (by its key or name), or "main". By default it is a request:'
         " you need something from them — a decision, an answer, their next move. The "
         "result names its id (e.g. r-17); they owe you a `reply` for it, which comes "
         "back to you as a new message marked with that id, and you are not blocked. "
@@ -235,7 +239,7 @@ class ReplyTool(Tool):
 
     summary = "Answer a request someone is waiting on — another agent's `message` or the request you were given."
     # v10.56.0 (장부 P3 §11.3): main 에도 붙는다 — 빚을 갚는 도구는 루프와 무관하게
-    # 하나다. 종전엔 상주 전용(``message_handler``)이었고 main 은 `agent request`
+    # 하나다. 종전엔 상주 전용(``message_handler``)이었고 main 은 `agent` 의 옛 요청 모드
     # 로 "가장 오래된 빚" 을 갚았다. 질문 포트가 있는 루프(main·상주)에 붙는다.
     requires_handler = "questions"
     force_mount = True
@@ -244,9 +248,8 @@ class ReplyTool(Tool):
         "an answer, or the request you were given. `id` is the request's `r-…` from "
         "`## Open Items`; it alone says where the reply goes, and each request gets "
         "its own reply. Nothing is expected back, so this ends that exchange cleanly. "
-        'Use `message` (or `agent` with `mode` "request") instead when you need '
-        "something from them. `complete` alone reports to no one: reply before you "
-        "complete. Refused when nothing is owed."
+        "Use `message` instead when you need something from them. `complete` alone "
+        "reports to no one: reply before you complete. Refused when nothing is owed."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
