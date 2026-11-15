@@ -892,7 +892,7 @@
    ]
   },
   "files": [
-   "(subagent returned no result)\n\n[Subagent activity]\n- iter 1: read_file a.txt\n\n[Last actions before failure]\n- iter 1: read_file a.txt → Observation: read_file failed: [Errno 2] No such file or directory: 'a.txt'\n\n[Duration: <s>] [Subagent used 1 iterations]"
+   "(subagent returned no result)\n\n[Duration: <s>] [Subagent used 1 iterations]"
   ],
   "final": {
    "artifact": "",
@@ -903,7 +903,7 @@
   "results": [
    {
     "artifact": "run_task_<hex>_<ts>/",
-    "error": "STATUS: error\nERROR: Subagent did not complete\n(subagent returned no result)\n\n[Subagent activity]\n- iter 1: read_file a.txt\n\n[Last actions before failure]\n- iter 1: read_file a.txt → Observation: read_file failed: [Errno 2] No such file or directory: 'a.txt'\n\n[Duration: <s>] [Subagent used 1 iterations]",
+    "error": "STATUS: error\nERROR: Subagent did not complete\n(subagent returned no result)\n\n[Duration: <s>] [Subagent used 1 iterations]",
     "output": "",
     "success": false
    }

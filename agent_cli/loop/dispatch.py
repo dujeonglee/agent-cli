@@ -727,6 +727,8 @@ class TurnDispatcher:
         # normal tool, so several ``ask`` ops batch (each prompts in turn) just
         # like a read/shell batch.
         if len(turn.ops) == 1:
+            if self._stopped_before(turn.ops[0]):
+                return _CONTINUE  # 런 루프가 다음 경계에서 interrupt 로 끝낸다
             return self._dispatch_op(llm_text, turn, turn.ops[0], outcome)
 
         results: list[dict] = []
@@ -734,6 +736,9 @@ class TurnDispatcher:
         i = 0
         while i < len(ops):
             op = ops[i]
+            if self._stopped_before(op):
+                self._note_not_run_after_stop(ops[i:], len(ops), i, results)
+                break
             tool = TOOLS.get(op.action) if op.action else None
             # Turn-ending actions (complete/run_skill): flush accumulated
             # results BEFORE the branch runs so its observation lands after
@@ -831,6 +836,34 @@ class TurnDispatcher:
             i += 1
         self._flush_op_results(turn.record, results)
         return _CONTINUE
+
+    def _stopped_before(self, op) -> bool:
+        """이 op 를 실행하기 직전에 런이 멈췄는가 — main·상주·run 공통 규칙: **멈춘 뒤엔 도구를
+        실행하지 않는다**. 응답을 받는 사이에 선 정지(웹 ■·Ctrl+C·호출자의 정지)는 스트리밍
+        도중이 아니면 응답이 끝난 뒤에야 보이므로 여기서 본다. ``complete`` 는 아무것도
+        실행하지 않으므로 막지 않는다(이미 쓴 답을 버리지 않는다). 읽기만 한다."""
+        if op.action == "complete":
+            return False
+        stop = self.state.stop_event
+        return bool(stop is not None and stop.is_set())
+
+    def _note_not_run_after_stop(
+        self, skipped: list, total: int, first: int, results: list[dict]
+    ) -> None:
+        """여러 op 중 멈춘 뒤의 것들은 실행하지 않았다고 결과에 한 줄 남긴다 — 앞서 실행한
+        것이 있을 때만(없으면 관찰 자체가 없다). 다음은 interrupt 기록이다."""
+        if not results:
+            return
+        names = ", ".join(
+            f"[{first + 1 + k}/{total}] {o.action or '?'}"
+            for k, o in enumerate(skipped)
+        )
+        self.tools.accumulate_raw(
+            results,
+            "batch",
+            f"Not executed — the user stopped the run: {names}.",
+            False,
+        )
 
     def _emit_obs(
         self, record, accumulate, tool_name: str, obs: str, ok: bool, *, render=True
