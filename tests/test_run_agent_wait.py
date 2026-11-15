@@ -173,6 +173,30 @@ class TestPrivateMailbox:
             == "nothing"
         )
 
+    def test_mail_landing_just_after_the_waited_thing_ends_is_mail_not_nothing(
+        self, reg
+    ):
+        """회신을 갚는 쪽은 빚을 닫고 나서 배달한다 — 그 틈에 기다릴 것이 사라져 보여도, 곧 온
+        메일이면 "mail" 이다 (v10.141.0, 제자리 대기의 "nothing you were waiting on" 오판)."""
+
+        def later():
+            reg.deliver(
+                "harness:x",
+                mail=self._mail(),
+                text="t",
+                author="main",
+                expects_reply=False,
+            )
+
+        threading.Timer(0.02, later).start()
+        why = reg.wait_mail(
+            "harness:x",
+            stop_event=threading.Event(),
+            still_waiting=lambda: False,
+            poll_s=0.2,
+        )
+        assert why == "mail"
+
     def test_drop_mailbox_discards_and_cancels_checkin(self, reg, jobs):
         jobs.start("sleep 30", owner="harness:x")
         assert reg.arm_checkin("harness:x")

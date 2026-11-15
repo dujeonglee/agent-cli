@@ -59,6 +59,20 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
 
+def is_reply_or_notice(mail: dict) -> bool:
+    """에이전트의 **회신**(명시 `reply`·런 끝 폴백 요약 — 요청 id ``re`` 를 단다) 또는
+    **통지**(`message` 의 ``expects_reply`` false)인가 (v10.141.0, 사용자 결정).
+
+    둘 다 장부 항목을 만들지 않는다: 회신은 보낸 쪽의 "기다리는 회신" 을 닫는 것으로 끝이고
+    (그 기록은 레지스트리가 지운다 — `AgentRegistry._close_sent`), 통지는 읽으면 끝이다. 종전엔
+    main 앞의 이 메일도 ``n-`` 항목이 되어 `complete` 의 ``answers`` 로 닫아야 했다 — 기다리던
+    ``r-`` 가 닫힌 뒤 같은 회신이 ``n-`` 으로 다시 서는 이중 회계. 작업·모니터·사망·체크인·
+    하니스(감사) 메일은 여기 들지 않는다(그 규칙은 그대로)."""
+    if mail.get("kind") not in ("peer_message", "reply"):
+        return False
+    return bool(mail.get("re") or mail.get("notice"))
+
+
 def mail_item(reply: dict) -> tuple[str, str] | None:
     """main 앞 메일 1건 → 장부 항목 ``(id, "mail")``, 또는 None(장부 밖).
 
@@ -66,14 +80,18 @@ def mail_item(reply: dict) -> tuple[str, str] | None:
     목록(Owed Replies), 없으면 Open Requests, 이미 열린 것의 재알림이면 장부 밖.**
     어느 갈래인지는 메일을 **만드는 쪽**이 말한다(§14, v10.78.1): 회신을 기대하면
     ``expects_reply``(빚 — `_stamp_mail` 이 ``r-`` 를 찍는다), 장부 밖이면
-    ``ledger: "none"``. 둘 다 아니면 열린 항목이다 — 회신·답·통지·모니터·작업·
-    감사·사망이 여기 오른다. id 는 메일박스가 찍은 ``item_id``(``n-<k>``).
+    ``ledger: "none"``. 회신·통지도 장부 밖이다(`is_reply_or_notice`, v10.141.0). 그 밖은
+    열린 항목이다 — 모니터·작업·감사·사망이 여기 오른다. id 는 메일박스가 찍은 ``item_id``(``n-<k>``).
 
     종전엔 여기서 ``kind`` 문자열 목록(``question``·``reminder``)으로 장부 밖을
     가렸다 — 그 kind 로 메일을 만드는 곳은 없었고(질문은 질문 목록·트레이로 간다),
     종류를 더할 때마다 이 목록·렌더·영속 세 곳에 문자열을 덧붙여야 했다."""
     if reply.get("expects_reply") or reply.get("ledger") == "none":
         return None
+    if is_reply_or_notice(reply):
+        return (
+            None  # 회신·통지는 읽으면 끝 — 장부 항목이 아니다 (v10.141.0, 사용자 결정)
+        )
     # 작성자 칸은 "mail" 하나 — 무엇에서 왔는지는 머리줄이 말한다
     # (`🧵 job #1 finished …`, `agent agt-x reply (success)`).
     # 메일박스가 찍지 않은 것(직접 만든 배달)은 처음 보는 여기서 받는다 —

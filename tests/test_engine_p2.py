@@ -586,6 +586,130 @@ class TestComeDown:
         assert "K done" in contents(s["ctx"])
 
 
+class TestRepliesAndNoticesAreNotItems:
+    """사용자 결정 (v10.141.0): 회신(명시 `reply`·런 끝 폴백)과 통지는 장부 항목을 만들지 않는다 —
+    회신은 기다리던 항목을 닫고 내용만 전한다. 요청만 받는 쪽에 빚을 만든다. 그 밖의 메일 종류는
+    그대로(tests/test_ledger_mail.py)."""
+
+    def _main_completes_once(self, p, s):
+        result = s["run"]()
+        assert result.success and "not closed" not in result.output
+        assert "had not arrived" not in result.output
+        text = contents(s["ctx"])
+        assert "still open" not in text  # complete 가 한 번도 되돌아오지 않았다
+        assert "(mail)" not in text  # 메일 항목 줄이 꼬리·되돌림 어디에도 없다
+        return result
+
+    def test_explicit_reply_closes_the_wait_and_adds_no_item(self, session):
+        p = Provider(
+            {
+                "MAIN": [
+                    call("agent", mode="run", task="TASK-P answer"),
+                    call("wait"),
+                    # 회신의 id 를 answers 에 넣지 않는다 — 넣을 항목이 없다
+                    call("complete", result="ok", answers=["u-0"]),
+                ],
+                "TASK-P": reply_then_complete("P-ANSWER"),
+            }
+        )
+        s = session(p)
+        self._main_completes_once(p, s)
+        assert "P-ANSWER" in contents(s["ctx"])  # 내용은 그대로 전해진다
+        assert s["reg"].awaited_replies("main") == []
+        assert len(p.calls["MAIN"]) == 3
+
+    def test_fallback_summary_reply_is_the_same(self, session):
+        p = Provider(
+            {
+                "MAIN": [
+                    call("agent", mode="run", task="TASK-Q summary"),
+                    call("wait"),
+                    call("complete", result="ok", answers=["u-0"]),
+                ],
+                "TASK-Q": [call("complete", result="Q-SUMMARY")] * 9,
+            }
+        )
+        s = session(p)
+        self._main_completes_once(p, s)
+        text = contents(s["ctx"])
+        assert "(no explicit reply — this is the agent's run summary)" in text
+        assert "Q-SUMMARY" in text
+
+    def test_notice_to_main_adds_no_item(self, session):
+        """통지는 읽으면 끝 — main 의 꼬리에 항목이 서지 않고 `complete` 는 사람 요청만 닫는다.
+        (빚진 요청자에게 보낸 통지는 그 빚을 갚는다 — 그건 종전 규칙이라 여기선 동료가 보낸다.)"""
+        p = Provider({"MAIN": [call("complete", result="ok", answers=["u-0"])]})
+        s = session(p)
+        reg = s["reg"]
+        key, _ = reg.spawn()
+        out = reg.message_handler(f"agent:{key}")(
+            "main", "S-FYI halfway", expects_reply=False
+        )
+        assert out.startswith('delivered as notice "n-')
+        self._main_completes_once(p, s)
+        assert "── notice [" in contents(s["ctx"])
+        first_tail = str(p.calls["MAIN"][0][-1]["content"])
+        assert "## Open Items" in first_tail and "(mail)" not in first_tail
+        assert len(p.calls["MAIN"]) == 1
+
+    def test_request_to_main_is_still_a_debt(self, session):
+        """요청(`expects_reply` true)만 받는 쪽에 빚을 만든다 — main 의 꼬리에 `reply owed`."""
+        p = Provider(
+            {
+                "MAIN": [
+                    lambda msgs: call(
+                        "reply",
+                        id=re.search(
+                            r'`reply` with `id` "(r-\d+)"', contents_of(msgs)
+                        ).group(1),
+                        text="use src/ only",
+                    ),
+                    call("complete", result="ok", answers=["u-0"]),
+                ],
+            }
+        )
+        s = session(p)
+        reg = s["reg"]
+        key, _ = reg.spawn()
+        out = reg.message_handler(f"agent:{key}")("main", "T-QUESTION which dirs?")
+        assert out.startswith('delivered as request "r-')
+        result = s["run"]()
+        assert result.success
+        first_tail = str(p.calls["MAIN"][0][-1]["content"])
+        assert "reply owed:" in first_tail and "T-QUESTION" in first_tail
+        assert reg.reply_debts("main") == []  # 갚았다
+
+    def test_agent_runs_started_by_a_reply_or_notice_carry_no_items(self, tmp_path):
+        """에이전트(run·spawn)도 같다 — 회신·통지로 시작한 런엔 장부 요청이 없다."""
+        from tests.test_agents_live import make_registry
+
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        from agent_cli.subagent.resident_loop import ResidentLoop
+
+        kind = ResidentLoop(reg.get(key), reg, disp="anon")
+        for item in (
+            {
+                "id": "n-9",
+                "text": "x",
+                "author": "main",
+                "expects_reply": False,
+                "kind": "reply",
+                "re": "r-1",
+            },
+            {
+                "id": "n-10",
+                "text": "y",
+                "author": "main",
+                "expects_reply": False,
+                "kind": "notice",
+            },
+        ):
+            start = kind.start([item])
+            assert start.user_requests == [] and start.request_id == ""
+        reg.shutdown_all()
+
+
 class TestResume:
     def _entry(self, key, **kw):
         base = {

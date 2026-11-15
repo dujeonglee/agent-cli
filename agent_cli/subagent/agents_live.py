@@ -2524,6 +2524,13 @@ class AgentRegistry:
             if stop_event is not None and stop_event.is_set():
                 return "stopped"
             if not still_waiting():
+                # 회신을 갚는 쪽은 빚을 닫은 **뒤** 배달한다 — 그 틈에 "기다릴 것 없음" 으로 보이는
+                # 회신이 곧 도착한다. 한 번 더 보고 판정한다.
+                with self._cv:
+                    if not self.arrived_for(addr):
+                        self._cv.wait(timeout=poll_s)
+                    if self.arrived_for(addr):
+                        return "mail"
                 return "nothing"
 
     def take_reply(self, rid: str, *, stop_event, poll_s: float = 0.5) -> dict | None:
