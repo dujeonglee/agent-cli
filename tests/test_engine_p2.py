@@ -54,6 +54,22 @@ def complete_all(result: str):
     return step
 
 
+def main_waits_in_place(reg) -> bool:
+    """main 이 지금 제자리 대기 중인가 — `_wait_in_place` 가 막기 직전에 체크인을 건다. 회신·사람
+    입력의 도착을 테스트가 이 뒤로 미뤄 "wait 보다 먼저 도착" 경주를 없앤다."""
+    return "main" in reg._checkin_armed
+
+
+def reply_after_main_waits(holder: dict, text: str):
+    """main 이 제자리 대기에 들어간 **뒤** 회신하고 끝내는 대본 — ``holder["reg"]`` 는 세션의 것."""
+
+    def step(msgs):
+        assert wait_until(lambda: main_waits_in_place(holder["reg"]))
+        return call("reply", id=owed_id(msgs), text=text)
+
+    return [step, call("complete", result="replied")]
+
+
 def reply_then_complete(text: str):
     return [
         lambda msgs: call("reply", id=owed_id(msgs), text=text),
@@ -172,6 +188,7 @@ class TestResultIsAReply:
     def test_main_runs_waits_in_place_and_reads_the_reply_in_the_same_run(
         self, session
     ):
+        holder: dict = {}
         p = Provider(
             {
                 "MAIN": [
@@ -179,10 +196,12 @@ class TestResultIsAReply:
                     call("wait", reason="agent"),
                     complete_all("main finished"),
                 ],
-                "TASK-A": reply_then_complete("3 callers: a.py, b.py, c.py"),
+                # 회신은 main 이 제자리 대기에 든 뒤에 — 먼저 오면 wait 가 "이미 도착" 으로 돌아간다
+                "TASK-A": reply_after_main_waits(holder, "3 callers: a.py, b.py, c.py"),
             }
         )
         s = session(p)
+        holder["reg"] = s["reg"]
         result = s["run"]()
         assert result.success and result.output.startswith("main finished")
         assert not getattr(result, "waiting", False)  # 제자리 — 런을 끝내지 않았다
@@ -272,15 +291,7 @@ class TestResultIsAReply:
         )
 
     def test_parallel_runs_each_reply_wakes_main(self, session):
-        go = threading.Event()
-
-        def held_reply(text):
-            return [
-                lambda msgs: (go.wait(10), call("reply", id=owed_id(msgs), text=text))[
-                    1
-                ],
-                call("complete", result="x"),
-            ]
+        holder: dict = {}
 
         def until_both(msgs):
             seen = contents_of(msgs)
@@ -297,16 +308,18 @@ class TestResultIsAReply:
                             {"action": "agent", "mode": "run", "task": "TASK-F two"},
                         ]
                     ),
-                    lambda msgs: (go.set(), call("wait"))[1],
+                    until_both,
                     until_both,
                     until_both,
                     until_both,
                 ],
-                "TASK-E": held_reply("E-reply"),
-                "TASK-F": held_reply("F-reply"),
+                # 회신은 main 이 제자리에서 기다리는 동안에만 — 순서·시각에 기대지 않는다
+                "TASK-E": reply_after_main_waits(holder, "E-reply"),
+                "TASK-F": reply_after_main_waits(holder, "F-reply"),
             }
         )
         s = session(p)
+        holder["reg"] = s["reg"]
         result = s["run"]()
         assert result.success and result.output.startswith("both")
         assert not getattr(result, "waiting", False)
@@ -372,8 +385,7 @@ class TestWaitInPlaceWakes:
             assert wait_until(lambda: len(s["reg"]._agents) == 1)
             holder["key"] = next(iter(s["reg"]._agents))
             # main 이 제자리 대기에 들어간 뒤 사람이 친다
-            assert wait_until(lambda: len(p.calls["MAIN"]) >= 2)
-            time.sleep(0.3)
+            assert wait_until(lambda: main_waits_in_place(s["reg"]))
             item = s["queue"].enqueue(None, "Skip tests/ — only src/ matters")
             holder["u"] = item["id"]
 
@@ -403,7 +415,15 @@ class TestWaitInPlaceWakes:
                     call("agent", mode="run", task="TASK-H slow"),
                     call("wait"),
                     lambda msgs: (gate.set(), call("wait"))[1],
-                    complete_all("ok"),
+                    # 회신이 올 때까지 기다린다 — 체크인이 한 번 더 와도 같은 자리로
+                    *[
+                        lambda msgs: (
+                            complete_all("ok")(msgs)
+                            if "after checkin" in contents_of(msgs)
+                            else call("wait")
+                        )
+                    ]
+                    * 6,
                 ],
                 "TASK-H": [blocked, call("complete", result="x")],
             }
@@ -445,7 +465,12 @@ class TestWaitInPlaceWakes:
             }
         )
         s = session(p)
-        threading.Timer(0.8, stop.set).start()
+
+        def stop_when_waiting():
+            assert wait_until(lambda: main_waits_in_place(s["reg"]))
+            stop.set()  # 방 ■ — main 이 제자리에서 기다리는 중에
+
+        threading.Thread(target=stop_when_waiting, daemon=True).start()
         s["run"](stop_event=stop)
         (tm,) = s["reg"]._agents.values()
         # 묶인 정지(LinkedStop) — 부른 런의 ■ 가 run 을 멈춘다
