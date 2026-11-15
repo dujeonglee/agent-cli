@@ -57,6 +57,7 @@ class Stage:
         self.absorb: dict[str, threading.Event] = {}
         self.absorbed: dict[str, threading.Event] = {}
         self.ran: list[str] = []
+        self.absorbed_by: dict[str, list] = {}
         self.stopped: list[str] = []
 
     def _ev(self, d, tag):
@@ -67,6 +68,8 @@ class Stage:
         tag = m.group(1) if m else ""
         if not tag.startswith("HOLD"):
             self.ran.append(tag)
+            # 그 런의 첫 흡수가 읽은 것 — 들고 있던 항목(``opens_run`` 거짓)이 여기서 보인다
+            self.absorbed_by.setdefault(tag, []).extend(kind.intake())
             return ToolResult(True, output=f"{tag} done")
         ctx.add(
             {
@@ -504,3 +507,53 @@ class TestNoHiddenSideEffects:
             "Last activity: shell ls ✓\n"
             "Do not redo this work unless the user asks."
         )
+
+
+class TestStopEverythingAgentRequesters:
+    """사용자 결정 B 의 짝: "Stop everything" 의 정지 회신은 살아 남은 상주의 런도 열지 않는다(``opens_run``
+    거짓) — 그 상주가 다음에 일을 받는 런이 함께 읽는다. Stop all agents·채널 ■/✕ 는 지금처럼 깨운다."""
+
+    def _resident_with_sub_run(self, reg, stage):
+        res = spawn(reg)
+        sub = spawn(reg, parent=f"agent:{res.key}", run=True)
+        busy_with(reg, stage, sub, "HOLD20", "r-120", author=f"agent:{res.key}")
+        return res, sub
+
+    def test_everything_leaves_the_resident_asleep_until_its_next_request(
+        self, reg, stage
+    ):
+        res, sub = self._resident_with_sub_run(reg, stage)
+        assert reg.stop_all_runs(wakes_requesters=False) == [sub.key]
+        assert until(lambda: sub.state == "dead")
+        assert until(lambda: len(res.held_items) == 1)
+        (held,) = res.held_items
+        assert held["opens_run"] is False and held["re"] == "r-120"
+        assert held["mark"] == "stopped by user"
+        assert (
+            stage.ran == [] and res.handled == 0 and res.state == "idle"
+        )  # 상주 런 0회
+        assert [i["id"] for i in res.inbox_items] == [held["id"]]  # 미러에 남는다
+        assert not reg.has_active_work()  # 들고 있는 항목은 일이 아니다
+        assert reg.awaited_replies(f"agent:{res.key}") == []
+        # 다음 요청의 런이 함께 읽는다
+        assert not reg.request(res.key, "NEXT go on", item_id="r-121")
+        assert until(lambda: "NEXT" in stage.ran and res.state == "idle")
+        (rec,) = stage.absorbed_by["NEXT"]
+        assert "· stopped by user ──" in rec["record"]["content"]
+        assert "your request [r-120]" in rec["record"]["content"]
+        assert res.held_items == [] and res.inbox_items == []
+
+    def test_stop_all_agents_wakes_the_resident(self, reg, stage):
+        res, sub = self._resident_with_sub_run(reg, stage)
+        assert reg.stop_all_runs() == [sub.key]
+        # 회신이 런을 열었다(인용된 과제 글의 표지로 가짜 엔진이 그 런을 붙잡는다)
+        assert until(lambda: res.state == "busy" and res.held_items == [])
+
+    def test_held_items_survive_a_restart(self, reg, stage, tmp_path):
+        res, _sub = self._resident_with_sub_run(reg, stage)
+        reg.stop_all_runs(wakes_requesters=False)
+        assert until(lambda: len(res.held_items) == 1)
+        reg._save_state()
+        data = json.loads((reg.session_dir / "agents.json").read_text())
+        (e,) = [x for x in data["agents"] if x["key"] == res.key]
+        assert [i.get("opens_run") for i in e["inbox"]] == [False]
