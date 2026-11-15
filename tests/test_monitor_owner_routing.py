@@ -150,18 +150,26 @@ class TestOwnerIsDecidedByTheKind:
             Caller(owner="agent:p")  # type: ignore[call-arg]
 
     def test_skill_inherits_and_oneshot_owns_and_harness_is_labelled(self, tmp_path):
+        from types import SimpleNamespace
+
         from agent_cli.harness.jobs import HarnessLoop
         from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
-        from agent_cli.subagent.oneshot import OneShotLoop
+        from agent_cli.subagent.run_agent import RunAgentLoop
         from tests.binding_support import make_binding
         from tests.loop_kinds import make_caller
 
         caller = make_caller(owner="agent:p", binding=make_binding(model="m"))
         skill = Skill(name="s", description="", prompt_template="x")
         assert SkillLoop(skill, "", caller).owner == "agent:p"
-        one = OneShotLoop({"task": "t", "agent": "w"}, caller)
-        assert one.owner == f"run:{one.run_dir_name}" and one.depth == 1
+        one = RunAgentLoop(
+            {"task": "t", "agent": "w"},
+            caller,
+            tm=SimpleNamespace(key="agt-w"),
+            run_dir=tmp_path / "run_w_x",
+            caller_task="",
+        )
+        assert one.owner == "run:run_w_x" and one.depth == 1
         from agent_cli.context.manager import ContextManager
 
         harness = HarnessLoop(

@@ -45,9 +45,9 @@
   --on-accent: #ffffff;
   --user-bg: #3c4456; --user-code-bg: #2b313e; --user-time: #aab4cc; --focus-ring: #7e8db0;
   --ok: #3fb950; --fail: #f85149; --warn: #d29922; --cyan: #3bc9db;
-  /* 중첩 블록 레일 — 보라=skill(🪄), amber=inline agent(🦀). 팔레트 테마가
+  /* 중첩 블록 레일 — 보라=skill(🪄). 팔레트 테마가
      덮지 않는 의미색이라 여기 한 번만 둔다(docs/chat-ui §3). */
-  --scope-skill: #a78bfa; --scope-inline: #e0a458;
+  --scope-skill: #a78bfa;
   /* 코너 시각 배지가 차지하는 폭 — 고정폭 포맷 `260918 22:53:21` 기준.
      행이 없어 시각을 그리드로 들일 수 없는 산문 블록이 이만큼 자리를 비운다. */
   --time-w: 104px;
@@ -668,7 +668,11 @@ body.multi-viewer .card-user .who {
    좌측 레일로 **담김**을 보이고, 상주 agent 는 채널 칩이 있으니 레일을 주지
    않는다(주면 중첩처럼 보여 거짓말이 된다). */
 .card-task-group.scope-skill { border-left: 2px solid var(--scope-skill); }
-.card-task-group.scope-inline { border-left: 2px solid var(--scope-inline); }
+/* run 에이전트의 한 줄 카드 — 부른 자리에, 런은 그 채널에 */
+.card-run-link .run-link-tail { display: inline-flex; align-items: center; gap: 2px; color: var(--text-2); font-size: 12px; white-space: nowrap; }
+.card-run-link.run-ok .run-link-state { color: var(--ok); }
+.card-run-link.run-fail .run-link-state { color: var(--fail); }
+.run-link-open { font: inherit; font-size: 12px; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
 /* 하니스 작업(🔎 감사) — main 의 일이 아니라 하니스의 일: 차분한 회색 레일 */
 .card-task-group.scope-harness { border-left: 2px solid var(--muted); }
 
@@ -1687,6 +1691,9 @@ footer {
 .ov-ch:hover { border-color: var(--border); color: var(--text); }
 .ov-ch.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .ov-ch.dead { opacity: 0.5; }
+/* run 에이전트 칩 — 끝나면 회색(지운 줄이 아니다: 과제를 마치고 내려왔다) */
+.ov-ch.run.done { opacity: 0.55; filter: grayscale(1); }
+.ov-ch-run { font-size: 10px; padding: 0 4px; border-radius: 4px; border: 1px solid currentColor; opacity: 0.7; }
 /* ❓ 트레이의 **주소 라벨** — 누구에게 물은 질문인지. 사람은 peer 가 아니라
    운영자라 어느 질문에든 답할 수 있지만, 그게 대리 응답인지는 알아야 한다. */
 

@@ -37,7 +37,7 @@ from agent_cli.recovery.recursion import (
     format_recursion_error,
 )
 from tests.binding_support import make_binding
-from tests.loop_kinds import make_caller
+from tests.loop_kinds import make_caller, run_task
 from tests.loop_ports import TEST_PORTS
 from tests.loopkit import make_loop
 
@@ -290,9 +290,8 @@ class TestDelegateDispatchDepthCheck:
         return MagicMock()
 
     def test_depth_at_limit_returns_depth_limit_error(self):
-        from agent_cli.subagent.oneshot import OneShotLoop
 
-        result = OneShotLoop(
+        result = run_task(
             {"task": "do x", "agent": "reviewer"},
             make_caller(
                 agent_stack=["main_agent"],
@@ -302,18 +301,17 @@ class TestDelegateDispatchDepthCheck:
                     provider=self._make_provider(), capabilities=_caps(), model="m"
                 ),
             ),
-        ).run()
+        )
         assert result.success is False
         assert "depth" in result.error.lower()
         assert "--max-depth" in result.error
 
     def test_anonymous_delegate_at_limit_also_blocked(self):
-        from agent_cli.subagent.oneshot import OneShotLoop
 
         # Anonymous delegates aren't on ``agent_stack`` so the cycle
         # check can't help. The depth check is the only thing
         # standing between an anonymous delegate and a runaway nest.
-        result = OneShotLoop(
+        result = run_task(
             {"task": "do x", "agent": ""},
             make_caller(
                 agent_stack=[],
@@ -323,16 +321,15 @@ class TestDelegateDispatchDepthCheck:
                     provider=self._make_provider(), capabilities=_caps(), model="m"
                 ),
             ),
-        ).run()
+        )
         assert result.success is False
         assert "depth" in result.error.lower()
 
     def test_cycle_check_still_fires_independently(self):
-        from agent_cli.subagent.oneshot import OneShotLoop
 
         # Within depth limit but the named agent is already on the
         # stack — cycle, not depth.
-        result = OneShotLoop(
+        result = run_task(
             {"task": "do x", "agent": "reviewer"},
             make_caller(
                 agent_stack=["main", "reviewer"],
@@ -342,7 +339,7 @@ class TestDelegateDispatchDepthCheck:
                     provider=self._make_provider(), capabilities=_caps(), model="m"
                 ),
             ),
-        ).run()
+        )
         assert result.success is False
         assert "Recursive" in result.error
         assert "reviewer" in result.error
@@ -552,9 +549,7 @@ class TestExistingRecursionPathsUnchanged:
     def test_named_agent_cycle_still_blocked(self):
         from unittest.mock import MagicMock
 
-        from agent_cli.subagent.oneshot import OneShotLoop
-
-        result = OneShotLoop(
+        result = run_task(
             {"task": "x", "agent": "reviewer"},
             make_caller(
                 agent_stack=["main", "reviewer"],
@@ -564,7 +559,7 @@ class TestExistingRecursionPathsUnchanged:
                     provider=MagicMock(), capabilities=_caps(), model="m"
                 ),
             ),
-        ).run()
+        )
         assert result.success is False
         assert "reviewer" in result.error
 

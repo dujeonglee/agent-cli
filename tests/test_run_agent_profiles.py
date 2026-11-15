@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from agent_cli.subagent.oneshot import OneShotLoop
 from agent_cli.subagent.profiles import _PROFILE_NAME_PATTERN, load_profile
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
-from tests.loop_kinds import make_caller
+from tests.loop_kinds import make_caller, run_task
 
 
 def _validate_agent_name(name: str) -> bool:
@@ -226,14 +225,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = OneShotLoop(
+        result = run_task(
             {"task": "Write tests", "agent": "tester"},
             make_caller(
                 binding=make_binding(
                     provider=FakeProvider(), model="test", capabilities=caps
                 )
             ),
-        ).run()
+        )
 
         assert result.success
         assert captured_kwargs["kind"].agent_role == "You are a test engineer."
@@ -262,7 +261,7 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        OneShotLoop(
+        run_task(
             {"task": "Do work"},
             make_caller(
                 binding=make_binding(
@@ -270,7 +269,7 @@ class TestRunSingleWithAgent:
                 ),
                 compaction_enabled=False,
             ),
-        ).run()
+        )
         assert captured_kwargs["kind"].compaction_enabled is False
 
     def test_compaction_defaults_enabled(self, monkeypatch):
@@ -296,14 +295,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        OneShotLoop(
+        run_task(
             {"task": "Do work"},
             make_caller(
                 binding=make_binding(
                     provider=FakeProvider(), model="test", capabilities=caps
                 )
             ),
-        ).run()
+        )
         assert captured_kwargs["kind"].compaction_enabled is True
 
     def test_agent_not_found_returns_error(self, tmp_path, monkeypatch):
@@ -324,14 +323,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = OneShotLoop(
+        result = run_task(
             {"task": "Review code", "agent": "nonexistent"},
             make_caller(
                 binding=make_binding(
                     provider=FakeProvider(), model="test", capabilities=caps
                 )
             ),
-        ).run()
+        )
 
         assert not result.success
         assert "not found" in result.error
@@ -367,14 +366,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = OneShotLoop(
+        result = run_task(
             {"task": "Read files", "agent": "reader"},
             make_caller(
                 binding=make_binding(
                     provider=FakeProvider(), model="test", capabilities=caps
                 )
             ),
-        ).run()
+        )
 
         assert result.success
         assert captured_kwargs["kind"].tools == ["read_file"]
@@ -412,14 +411,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = OneShotLoop(
+        result = run_task(
             {"task": "Run shell", "agent": "reader", "tools": ["shell"]},
             make_caller(
                 binding=make_binding(
                     provider=FakeProvider(), model="test", capabilities=caps
                 )
             ),
-        ).run()
+        )
 
         assert not result.success
         assert "Delegation rejected" in result.error
@@ -457,14 +456,14 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = OneShotLoop(
+        result = run_task(
             {"task": "Think hard", "agent": "smart"},
             make_caller(
                 binding=make_binding(
                     provider=FakeProvider(), model="default-model", capabilities=caps
                 )
             ),
-        ).run()
+        )
 
         assert result.success
         assert captured_kwargs["kind"].binding.model == "special-model"
@@ -492,170 +491,118 @@ class TestRunSingleWithAgent:
         class FakeProvider:
             pass
 
-        result = OneShotLoop(
+        result = run_task(
             {"task": "Do something", "agent": ""},
             make_caller(
                 binding=make_binding(
                     provider=FakeProvider(), model="test", capabilities=caps
                 )
             ),
-        ).run()
+        )
 
         assert result.success
         assert captured_kwargs["kind"].agent_role == ""
 
 
-class TestToolDelegatePassesAgent:
-    def test_passes_agent_name(self, monkeypatch):
-        """AG-21: tool_delegate passes spec['agent'] to the OneShotLoop."""
-        from agent_cli.subagent.oneshot import tool_delegate
+class TestRunAgentsPassAgent:
+    """호스트(`run_agents`)가 과제의 ``agent`` 를 그 run 에이전트의 종류에 넘긴다 — 엔진은
+    가짜(`agent_cli.loop.run.run_loop`), 프로파일은 내장(실제 로드)."""
 
-        captured_kwargs = {}
-
-        from agent_cli.subagent.oneshot import OneShotLoop
-        from tests.loop_kinds import fake_oneshot_run
-
-        def mock_run(kind):
-            captured_kwargs["agent_name"] = kind.agent_name
-            return ToolResult(True, output="done")
-
-        monkeypatch.setattr(OneShotLoop, "run", fake_oneshot_run(mock_run))
-
+    @staticmethod
+    def _caller():
         from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
-            context_window=32768,
-            max_output_tokens=4096,
-            supports_thinking=False,
+            context_window=32768, max_output_tokens=4096, supports_thinking=False
         )
 
         class FakeProvider:
             pass
 
-        tool_delegate(
-            {"tasks": [{"task": "Review", "agent": "reviewer"}]},
-            make_caller(
-                binding=make_binding(
-                    provider=FakeProvider(), model="test", capabilities=caps
-                )
-            ),
+        return make_caller(
+            binding=make_binding(
+                provider=FakeProvider(), model="test", capabilities=caps
+            )
         )
 
-        assert captured_kwargs["agent_name"] == "reviewer"
+    def test_passes_agent_name(self, monkeypatch):
+        """AG-21: the spec's ``agent`` reaches the run agent's kind."""
+        from tests.loop_kinds import run_tasks
+
+        captured = []
+
+        def fake_engine(kind, start, ctx):
+            captured.append(kind.agent_name)
+            return ToolResult(True, output="done")
+
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", fake_engine)
+        run_tasks(
+            {"tasks": [{"task": "Review", "agent": "code-reviewer"}]}, self._caller()
+        )
+        assert captured == ["code-reviewer"]
 
     def test_parallel_with_different_agents(self, monkeypatch):
         """AG-22: Parallel tasks can use different agents."""
-        from agent_cli.subagent.oneshot import _run_parallel
+        from tests.loop_kinds import run_tasks
 
-        captured_agents = []
+        captured = []
+        lock = __import__("threading").Lock()
 
-        from agent_cli.subagent.oneshot import OneShotLoop
-        from tests.loop_kinds import fake_oneshot_run
-
-        def mock_run(kind):
-            captured_agents.append(kind.agent_name)
+        def fake_engine(kind, start, ctx):
+            with lock:
+                captured.append(kind.agent_name)
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr(OneShotLoop, "run", fake_oneshot_run(mock_run))
-
-        from agent_cli.providers.capabilities import ModelCapabilities
-
-        caps = ModelCapabilities(
-            context_window=32768,
-            max_output_tokens=4096,
-            supports_thinking=False,
+        monkeypatch.setattr("agent_cli.loop.run.run_loop", fake_engine)
+        run_tasks(
+            {
+                "tasks": [
+                    {"task": "Review code", "agent": "code-reviewer"},
+                    {"task": "Write code", "agent": "code-writer"},
+                ]
+            },
+            self._caller(),
         )
+        assert sorted(captured) == ["code-reviewer", "code-writer"]
 
-        class FakeProvider:
-            pass
+    def test_parallel_run_agents_unique_across_calls(self, monkeypatch):
+        """AG-23: run agent keys (and so their channel blocks ``<key>#run``) stay
+        unique across consecutive parallel calls — a recycled id would make the
+        web frontend reuse a stale block and never draw the new one."""
+        from tests.loop_kinds import run_tasks
 
-        _run_parallel(
-            [
-                {"task": "Review code", "agent": "reviewer"},
-                {"task": "Check security", "agent": "security"},
-            ],
-            make_caller(
-                binding=make_binding(
-                    provider=FakeProvider(), model="test", capabilities=caps
-                )
-            ),
-        )
-
-        assert sorted(captured_agents) == ["reviewer", "security"]
-
-    def test_parallel_task_ids_unique_across_calls(self, monkeypatch):
-        """AG-23: worker ``task_id``s stay unique across consecutive
-        parallel delegate calls.
-
-        Regression for the missing-worker-card bug: the id used to embed
-        ``threading.get_ident()``, which the OS recycles once a worker
-        thread exits — so a later call's workers could be handed an
-        earlier call's id, and the web frontend's ``ensureTaskGroup``
-        would short-circuit on the stale entry and never draw the new
-        cards. uuid4 ids are unique regardless of thread lifecycle.
-        """
-        from agent_cli.providers.capabilities import ModelCapabilities
-        from agent_cli.subagent.oneshot import _run_parallel
-
-        captured_ids = []
+        keys = []
 
         class CapturingRenderer:
-            def current_scope(self):
-                return ""  # spawned from main, no enclosing scope
+            def current_task_id(self):
+                return ""
 
-            def begin_scope(
-                self,
-                *,
-                task_id,
-                kind="run",
-                label="",
-                agent="",
-                index=0,
-                parent=None,
-                ts=None,
-                ctx_dir=None,
-            ):
-                captured_ids.append(task_id)
+            def begin_prompt_scope(self, *a, **k):
+                pass
 
-            def end_scope(self, **kwargs):
+            def end_prompt_scope(self, *a, **k):
+                pass
+
+            def note_scope_ctx(self, ctx):
+                pass
+
+            def agent_roster(self, roster):
+                pass
+
+            def begin_agent_work(self, *, key, **kw):
+                keys.append(key)
+
+            def end_agent_work(self, **kw):
                 pass
 
         monkeypatch.setattr(
             "agent_cli.render.get_renderer", lambda: CapturingRenderer()
         )
-
-        from agent_cli.subagent.oneshot import OneShotLoop
-        from tests.loop_kinds import fake_oneshot_run
-
         monkeypatch.setattr(
-            OneShotLoop,
-            "run",
-            fake_oneshot_run(lambda kind: ToolResult(True, output="done")),
+            "agent_cli.loop.run.run_loop",
+            lambda kind, start, ctx: ToolResult(True, output="done"),
         )
-
-        caps = ModelCapabilities(
-            context_window=32768,
-            max_output_tokens=4096,
-            supports_thinking=False,
-        )
-
-        class FakeProvider:
-            pass
-
-        specs = [{"task": "A"}, {"task": "B"}]
-        # Several consecutive parallel calls: worker threads from earlier
-        # calls have exited, so their OS idents are eligible for reuse —
-        # the exact condition that produced colliding ids before.
         for _ in range(5):
-            _run_parallel(
-                specs,
-                make_caller(
-                    binding=make_binding(
-                        provider=FakeProvider(), model="test", capabilities=caps
-                    )
-                ),
-            )
-
-        # 5 calls x 2 workers = 10 ids, all distinct.
-        assert len(captured_ids) == 10
-        assert len(set(captured_ids)) == 10
+            run_tasks({"tasks": [{"task": "A"}, {"task": "B"}]}, self._caller())
+        assert len(keys) == 10
+        assert len(set(keys)) == 10

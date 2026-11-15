@@ -225,11 +225,11 @@ class WebRenderer(Renderer):
         self._prompt_view_dir = (
             (self._status_dir / "prompt_views") if self._status_dir else None
         )
-        # Per-thread delegate-task routing. Worker threads spawned by
-        # ``_run_parallel`` register their ``task_id`` here via
-        # ``begin_delegate_task``; ``_emit`` then auto-attaches
-        # ``task_id`` to every event the worker fires so the frontend
-        # can route into the right collapsible group instead of
+        # Per-thread routing. A thread inside a scope (``begin_scope`` — skill,
+        # harness job) or an agent's run (``begin_agent_work`` — run·resident
+        # agents) registers its ``task_id`` here; ``_emit`` then auto-attaches
+        # ``task_id`` to every event that thread fires so the frontend can
+        # route it into the right card / channel block instead of
         # interleaving on the main timeline.
         self._thread_to_task: dict[int, str] = {}
         # During ``replay_from_history`` (resume), holds the history record's
@@ -498,7 +498,7 @@ class WebRenderer(Renderer):
         ctx_dir: str | None = None,
     ) -> None:
         """Enter a nested scope (``kind`` = "skill" | "run") — the SINGLE path
-        for skill subloops AND delegate/one-shot workers. Registers the current
+        for skill subloops AND harness jobs. Registers the current
         thread so the scope's inner events route to ONE card, and emits a
         persistent ``scope_start`` (frontend opens the card; kind styles it).
 
@@ -617,6 +617,9 @@ class WebRenderer(Renderer):
     # request 1건 = 접이식 카드 1개. _thread_prompt_scopes 는 건드리지
     # 않으므로 시스템/동적 스냅샷은 계속 teammate key 스코프에 쌓인다.
 
+    def current_task_id(self) -> str:
+        return self._current_task_id() or ""
+
     def begin_agent_work(
         self,
         *,
@@ -626,6 +629,8 @@ class WebRenderer(Renderer):
         message: str,
         req_ts: float | str | None = None,
         items: list[str] | None = None,
+        ctx_dir: str | None = None,
+        caller_task: str | None = None,
     ) -> None:
         tid = threading.get_ident()
         task_id = f"{key}#{item}"
@@ -651,11 +656,14 @@ class WebRenderer(Renderer):
             # has one shape, and so the timeline keeps its card at the root.
             "parent": "",
             "depth": 0,
-            # The agent's turns accumulate in agents/<key>/history.jsonl —
+            # 이 스코프가 곧 채널이다 — 프런트가 이 키의 채널에 런 블록을 연다.
+            "channel": key,
+            # A resident agent's turns accumulate in agents/<key>/history.jsonl —
             # ONE continuous file across requests, so the resume replay
             # slices it by this scope's [start, end] timestamps to put each
-            # request's turns into its own card.
-            "ctx_dir": f"agents/{key}",
+            # request's turns into its own card. A run agent's live in its own
+            # ``run_…`` directory (one task) and replay whole.
+            "ctx_dir": ctx_dir or f"agents/{key}",
             # 이 런이 처리하는 inbox 항목들 (v9.23.0). 프론트의 런 블록이 큐에서
             # 먼저 도착한 수신 줄을 이걸로 머리로 끌어온다. scopes.jsonl 에
             # 박혀 resume 재생에서도 같은 블록이 선다.
@@ -669,6 +677,11 @@ class WebRenderer(Renderer):
         # → the arrow falls back to the "no card" notice (as before).
         if req_ts is not None:
             payload["nav_ts"] = req_ts
+        if caller_task is not None:
+            # run 에이전트: 부른 자리(부모의 카드·런 블록, main 이면 "")에 한 줄 카드 —
+            # 사이드카에 같이 실려 resume 재생도 같은 자리에 같은 카드를 놓는다.
+            payload["run"] = True
+            payload["caller_task"] = caller_task
         self._emit("scope_start", payload, persistent=True)
 
     def end_agent_work(

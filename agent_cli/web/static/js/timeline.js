@@ -7,7 +7,13 @@ import { es } from "./sse.js";
 import { attachCopy } from "./copy.js";
 import { applyChannelFilter } from "./channels.js";
 import { ctxApplyToCard, frameForCard, frameOfScope, frames, frameTouch } from "./frames.js";
-import { closeRunBlock, ensureRunBlock, runBlocks } from "./runs.js";
+import {
+  closeRunBlock,
+  closeRunLink,
+  ensureRunBlock,
+  ensureRunLink,
+  runBlocks,
+} from "./runs.js";
 
 // ── Card timestamps ────────────────────────
 // Server stamps every event with `ts` (epoch seconds) at emit time; the
@@ -137,8 +143,9 @@ function noteScopeEnd(taskId) {
 
 /** 스코프의 **채널 귀속**을 등록하고, 이 스코프가 곧 채널인지 돌려준다.
  *
- * 상주 에이전트 작업은 `ctx_dir="agents/<key>"` 로 자기를 밝힌다(서버의
- * `begin_agent_work`). 그런 스코프는 **채널 자체**라 카드를 만들지 않는다
+ * 에이전트(run·상주)의 런은 `channel` 로 자기 채널(키)을 밝힌다(서버의
+ * `begin_agent_work`). 이 필드가 없는 옛 사이드카는 `ctx_dir="agents/<key>"` 로
+ * 알아본다. 그런 스코프는 **채널 자체**라 카드를 만들지 않는다
  * (v9.7.0) — 채널이 이미 묶어 주는데 그 안에서 또 묶으면 아무 정보도 더하지
  * 않으면서 기본 접힘 뒤로 투명성을 숨기고, main 창은 평평한데 agent 창만 한
  * 겹 들어가 "같은 컨셉으로 통일"이 깨진다. 요청의 경계는 왕래 줄(`← 받음` /
@@ -149,16 +156,18 @@ function noteScopeEnd(taskId) {
  * 동작이다. 그 스코프 **안에서** 열리는 skill/inline 은 자기 카드를 그대로
  * 갖고, 부모 그룹이 없으니 `channelOf(parent)` = 그 에이전트 채널의 루트에
  * 붙는다 — 중첩 블록은 살아 있다. */
-function noteScopeChannel(taskId, parent, ctxDir) {
+function noteScopeChannel(taskId, parent, ctxDir, channel) {
   const m = /^agents\/(.+)$/.exec(ctxDir || "");
-  scopeChannel[taskId] = m ? m[1] : channelOf(parent);
-  return !!m;
+  const key = channel || (m ? m[1] : "");
+  scopeChannel[taskId] = key || channelOf(parent);
+  return !!key;
 }
 
 /** 스코프 카드를 연다. 중첩 블록의 종류는 `kind` 가 가른다 (docs/chat-ui §3):
- * `skill` → 🪄 보라 레일, 그 외 → 🦀 inline agent · amber 레일.
- * 상주 에이전트는 여기 오지 않는다 (``noteScopeChannel`` 참조). */
-function ensureTaskGroup(taskId, index, agent, taskText, kind, parent, depth, hidx) {
+ * `skill` → 🪄 보라 레일, `harness` → 🔎 하니스 작업. 에이전트(run·상주)는 여기
+ * 오지 않는다 (``noteScopeChannel`` 참조) — 채널의 런 블록이다. 그 밖의 종류
+ * (채널이 생기기 전 세션의 run 기록)는 레일 없는 카드 `agent: task` 로 재생한다. */
+function ensureTaskGroup(taskId, agent, taskText, kind, parent, depth, hidx) {
   if (taskGroups[taskId]) return taskGroups[taskId];
 
   const card = el("div", ["card", "card-task-group"]);
@@ -168,15 +177,14 @@ function ensureTaskGroup(taskId, index, agent, taskText, kind, parent, depth, hi
   if (hidx != null) card.dataset.hidx = String(hidx);
   card.dataset.kind = kind || "run";
   card.dataset.depth = String(depth || 0);
-  card.classList.add(
-    kind === "skill" ? "scope-skill" : kind === "harness" ? "scope-harness" : "scope-inline"
-  );
+  if (kind === "skill") card.classList.add("scope-skill");
+  else if (kind === "harness") card.classList.add("scope-harness");
 
   const header = el("div", ["task-header"]);
   const chevron = el("span", ["task-chevron"], "▶");
   const title = el("span", ["task-title"]);
-  // Scope card title adapts to kind: a skill subloop (🪄 label) vs a
-  // delegate/one-shot worker (🦀 [n] agent: task).
+  // Scope card title adapts to kind: a skill subloop (🪄 label), a harness
+  // job (🔎), or a recorded scope of another kind (agent: task).
   if (kind === "skill") {
     title.textContent = "🪄 " + taskText;
   } else if (kind === "harness") {
@@ -184,8 +192,7 @@ function ensureTaskGroup(taskId, index, agent, taskText, kind, parent, depth, hi
     // 펼치면 그 런이 실제로 한 일. 종전엔 스코프가 없어 main 타임라인에 섞였다.
     title.textContent = "🔎 " + (agent || "harness") + " · seq " + taskText;
   } else {
-    const label = agent ? agent + ": " + taskText : taskText;
-    title.textContent = "🦀 [" + (index + 1) + "] " + label;
+    title.textContent = agent ? agent + ": " + taskText : taskText;
   }
   const statusEl = el("span", ["task-status"], "starting…");
   const subEl = el("span", ["task-sub"]);
@@ -347,9 +354,8 @@ export function finishCard(cardEl, ev, channel) {
 //   scope_start   → open card (default collapsed); kind = skill | run
 //   scope_status  → update live status line (transient)
 //   scope_end     → close card with ✓/✗ + duration
-// Unified path: a skill subloop (e.g. /orchestrate) and a delegate/one-shot
-// worker now BOTH arrive as scope_start — previously skills emitted an
-// un-handled group_start and drew no card.
+// Unified path: a skill subloop (e.g. /orchestrate), a harness job and an
+// agent's run (run·resident — its channel block) all arrive as scope_start.
 es.addEventListener("scope_start", function (e) {
   const d = JSON.parse(e.data);
   // NOTE: a resume-replayed scope (``d.replay``) builds its card too. It used
@@ -364,11 +370,12 @@ es.addEventListener("scope_start", function (e) {
   // 채널 자체인 스코프(상주 에이전트의 런)는 접히는 카드가 아니라 **런
   // 블록**이다 (v9.23.0, docs/chat-ui §12): 받은 항목이 머리, 단계가 몸통,
   // 결과가 꼬리. 왕래 줄(보냄/받음)이 하던 "요청 경계" 를 이 블록이 긋는다.
-  const grp = noteScopeChannel(d.task_id, d.parent || "", d.ctx_dir || "")
-    ? (ensureRunBlock(d), null)
+  // run 에이전트(`d.run`)는 부른 자리(`caller_task`)에 한 줄 카드도 놓는다 — 그
+  // 자리는 부른 스레드의 것(main 의 맨 위, 또는 부른 에이전트의 런 블록)이다.
+  const grp = noteScopeChannel(d.task_id, d.parent || "", d.ctx_dir || "", d.channel || "")
+    ? (ensureRunBlock(d), d.run && ensureRunLink(d), null)
     : ensureTaskGroup(
         d.task_id,
-        d.index || 0,
         d.agent || "",
         d.label || "",
         d.kind || "run",
@@ -391,6 +398,7 @@ es.addEventListener("scope_end", function (e) {
   noteScopeEnd(d.task_id);
   if (runBlocks[d.task_id]) {
     closeRunBlock(d);
+    closeRunLink(d);
     frameTouch(frameOfScope(d.task_id));
     return;
   }

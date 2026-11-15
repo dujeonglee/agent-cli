@@ -185,6 +185,20 @@ def full_tool_text(monkeypatch):
             monkeypatch.setattr(tool, "deferred", False)
 
 
+@pytest.fixture
+def agent_registry_slot():
+    """세션처럼 세션 슬롯에 에이전트 레지스트리를 둔다(세션 디렉터리 없음) — `agent` run 은
+    레지스트리에 오르는 에이전트라, 실제 세션(`runtime.build_agent_registry`)처럼 슬롯이
+    서 있어야 돈다. 끝나면 비운다."""
+    from agent_cli.session_slots import set_agent_registry
+    from agent_cli.subagent.agents_live import AgentRegistry
+
+    registry = AgentRegistry(None)
+    set_agent_registry(registry)
+    yield registry
+    set_agent_registry(None)
+
+
 @pytest.fixture(autouse=True)
 def _force_json_fc_dialect(monkeypatch):
     """스위트 전체를 ``--dialect json_fc`` 로 띄운 것과 같게 둔다.

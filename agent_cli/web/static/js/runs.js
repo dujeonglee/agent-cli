@@ -8,6 +8,7 @@ import { scheduleScroll } from "./scroll.js";
 import {
   cssEsc,
   ovActiveChannel,
+  ovJump,
   ovAgentLabel,
   ovAgentLabelHtml,
   ovBack,
@@ -18,7 +19,7 @@ import {
   setOvBack,
   syncChannelView,
 } from "./channels.js";
-import { finishCard, scopeChannel, stampCard } from "./timeline.js";
+import { channelOf, finishCard, scopeChannel, stampCard } from "./timeline.js";
 import { miniThumbs, thumbStrip } from "./thumbs.js";
 import { makeRow, peerLabel } from "./cards.js";
 
@@ -90,6 +91,8 @@ export function ensureRunBlock(d) {
   card.appendChild(body);
   var blk = { card: card, head: head, body: body, key: key, items: items, closed: false };
   runBlocks[d.task_id] = blk;
+  // run 에이전트는 받은편지함이 없다 — 머리는 과제 원문과 부른 쪽(부른 자리의 채널)
+  if (d.run) head.appendChild(runItem({ text: d.label, author: channelOf(d.caller_task || "") }));
   var byItem = runByItem[key] || (runByItem[key] = {});
   // 큐에서 먼저 도착한 수신 줄 → 머리 (배치는 받은 순서대로).
   var q = queuedIn[key] || {};
@@ -106,6 +109,46 @@ export function ensureRunBlock(d) {
   // 루트에, 자기 채널로. 시각은 첫 수신 줄이 아니라 런 시작이다.
   finishCard(card, { task_id: "", ts: d.ts }, key);
   return blk;
+}
+
+// ── run 에이전트의 한 줄 카드 (docs/agent-engine/DESIGN.md §2.5) ─────────
+// run 에이전트의 런은 자기 채널의 런 블록이다. 부른 자리(`caller_task` — main 의
+// 맨 위, 또는 부른 에이전트의 런 블록)에는 한 줄만 남는다:
+//   → 🦊 explorer (agt-3a1b2c4d) · find every caller…   working · open channel
+// 같은 `scope_start`/`scope_end` 가 사이드카에서 재생되므로 resume 도 같은 카드다.
+const runLinks = {}; // run 블록의 task_id → {card, state}
+
+export function ensureRunLink(d) {
+  if (runLinks[d.task_id]) return runLinks[d.task_id];
+  var key = scopeChannel[d.task_id] || "";
+  var task = firstLineOf(d.label);
+  var summary = (d.agent || key) + " (" + key + ")" + (task ? " · " + task : "");
+  var state = el("span", ["run-link-state"], "working");
+  var open = el("button", ["run-link-open"], "open channel");
+  open.type = "button";
+  open.addEventListener("click", function (e) {
+    e.stopPropagation();
+    ovJump(key);
+  });
+  var tail = el("span", ["run-link-tail"]);
+  tail.appendChild(state);
+  tail.appendChild(document.createTextNode(" · "));
+  tail.appendChild(open);
+  var card = el("div", ["card", "card-run-link"]);
+  card.dataset.runKey = key;
+  card.appendChild(makeRow("→", "Run", summary, null, null, tail));
+  var link = { card: card, state: state };
+  runLinks[d.task_id] = link;
+  finishCard(card, { task_id: d.caller_task || "", ts: d.ts });
+  return link;
+}
+
+export function closeRunLink(d) {
+  var link = runLinks[d.task_id];
+  if (!link) return;
+  var ok = !!d.success;
+  link.state.textContent = ok ? "done" : "failed";
+  link.card.classList.add(ok ? "run-ok" : "run-fail");
 }
 
 /** 꼬리 — 최종답이 있으면 **그 카드가 꼬리**(같은 말을 두 번 하지 않는다),
@@ -268,7 +311,8 @@ export function ovSyncChannels() {
   );
   ovRoster.forEach(function (t) {
     html += ovChanChip(
-      t.key, ovAgentLabelHtml(t.key), t.state, ovActiveChannel === t.key
+      t.key, ovAgentLabelHtml(t.key), t.state, ovActiveChannel === t.key,
+      !!t.ends_after_task
     );
   });
   bar.innerHTML = html;
@@ -281,7 +325,9 @@ export function ovSyncChannels() {
 }
 // `labelHtml` 은 **이스케이프된 HTML** — 흐린 key 병기(`ovAgentLabelHtml`)를
 // 담기 위해 평문이 아니다. 호출부가 이스케이프 책임을 진다.
-function ovChanChip(key, labelHtml, state, active) {
+// `run` — run 에이전트(과제 하나): 끝나면 지운 줄이 아니라 회색 칩이고, ✕/↻ 가 없다
+// (에이전트별 정지는 P3). 채널은 읽기 전용이다(`ovApplyChannelInput`).
+function ovChanChip(key, labelHtml, state, active, run) {
   var dead = state === "dead";
   // main 은 상태 dot 없음(항상 LLM). agent 는 상태색 dot.
   var dot = "";
@@ -294,13 +340,15 @@ function ovChanChip(key, labelHtml, state, active) {
   // 알린다 (비동기라 질문 중에도 에이전트는 busy 거나 idle 이다).
   var badges = "";
   var ctrl = "";
-  if (key !== "main") {
+  if (key !== "main" && !run) {
     ctrl = dead
       ? '<button type="button" class="ov-ch-ctl" data-act="resume" title="Revive">↻</button>'
       : '<button type="button" class="ov-ch-ctl" data-act="kill" title="Kill">✕</button>';
   }
+  if (run) badges = '<span class="ov-ch-run">run</span>';
+  var cls = run ? (dead ? " run done" : " run") : dead ? " dead" : "";
   return (
-    '<span class="ov-ch' + (active ? " on" : "") + (dead ? " dead" : "") +
+    '<span class="ov-ch' + (active ? " on" : "") + cls +
     '" data-key="' + escapeHtml(key) + '" role="tab" aria-selected="' +
     (active ? "true" : "false") + '">' + dot + '<span class="ov-ch-lb">' +
     labelHtml + "</span>" + badges + ctrl + "</span>"
@@ -311,13 +359,22 @@ function ovActiveDead() {
   var t = ovRoster.filter(function (x) { return x.key === ovActiveChannel; })[0];
   return !!(t && t.state === "dead");
 }
-// 입력창 placeholder/disabled 를 현재 채널(+busy·dead)에 맞게. 입력창은 chat 전용.
+// run 에이전트 채널은 읽기 전용이다 — 과제 하나만 받는다(살아 있어도).
+function ovActiveRun() {
+  if (ovActiveChannel === "main") return false;
+  var t = ovRoster.filter(function (x) { return x.key === ovActiveChannel; })[0];
+  return !!(t && t.ends_after_task);
+}
+// 입력창 placeholder/disabled 를 현재 채널(+busy·dead·run)에 맞게. 입력창은 chat 전용.
 export function ovApplyChannelInput() {
   if (!$input) return;
   var dead = ovActiveDead();
-  $input.disabled = dead;
-  if ($send) $send.disabled = dead;
-  if (dead) {
+  var run = ovActiveRun();
+  $input.disabled = dead || run;
+  if ($send) $send.disabled = dead || run;
+  if (run) {
+    $input.placeholder = "This run agent takes no messages — it ends with its task";
+  } else if (dead) {
     $input.placeholder = "✕ This agent has exited — pick another channel or revive it with ↻";
   } else if (ovActiveChannel !== "main") {
     $input.placeholder = "To " + ovAgentLabel(ovActiveChannel) + "… (Enter to send)";

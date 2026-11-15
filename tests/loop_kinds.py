@@ -52,21 +52,23 @@ def make_kind(*, ports=None, **attrs) -> LoopKind:
     return k
 
 
-def fake_oneshot_run(body):
-    """`OneShotLoop.run` 대역 — 카드(스코프)는 진짜로 열고 닫되 ctx·엔진 대신 ``body(self)``
-    를 돈다. 종전 테스트가 `_run_single` 을 가짜로 바꾸던 자리: 카드 수명과 호출자 인자는
-    보고, 루프는 돌리지 않는다."""
-    import time
+def run_tasks(args: dict, caller: Caller):
+    """`agent` ``mode`` "run" 을 호스트(`run_agents`)로 돌린다 — ``args`` 는 ``{"tasks": [...]}``.
+    run 에이전트는 레지스트리의 것이라 세션 슬롯이 비어 있으면 이 호출 동안만 세션 디렉터리
+    없는 레지스트리를 둔다(실제 세션은 늘 슬롯에 레지스트리가 있다)."""
+    from agent_cli.session_slots import get_agent_registry, set_agent_registry
+    from agent_cli.subagent.agents_live import AgentRegistry
+    from agent_cli.subagent.run_agent import run_agents
 
-    def run(self, start=None):
-        start = start or self.start()
-        handle = self.open_scope(start)
-        t0 = time.monotonic()
-        result = None
-        try:
-            result = body(self)
-            return result
-        finally:
-            self.close_scope(handle, result, time.monotonic() - t0)
+    if get_agent_registry() is not None:
+        return run_agents(args, caller)
+    set_agent_registry(AgentRegistry(None))
+    try:
+        return run_agents(args, caller)
+    finally:
+        set_agent_registry(None)
 
-    return run
+
+def run_task(spec: dict, caller: Caller):
+    """과제 하나 — 종전 테스트가 `OneShotLoop(spec, caller).run()` 을 부르던 자리."""
+    return run_tasks({"tasks": [spec]}, caller)

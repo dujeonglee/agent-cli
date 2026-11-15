@@ -763,8 +763,8 @@ def try_dispatch_agent_or_skill(
     ``stop_event`` is threaded into BOTH paths so the web Stop button can
     halt either at a turn boundary, same as a plain conversation turn:
       - ``/skill`` → ``_dispatch_skill`` → ``SkillLoop.run`` → ``run_loop``
-      - ``@agent`` → ``_dispatch_agent`` → ``tool_delegate`` → the delegate
-        worker's ``run_loop`` (shared Event across parallel workers).
+      - ``@agent`` → ``_dispatch_agent`` → ``run_agents`` → the run agent's
+        ``run_loop`` on its own thread (the caller's Event is the run's stop).
 
     Returns ``True`` when the message was handled (caller skips its
     LLM path); ``False`` when nothing matched and the caller should
@@ -889,7 +889,7 @@ def _dispatch_agent(
     분기. success 는 run 엔진의 실제 성공 여부 (``--result-file`` 이 실패
     텍스트를 성공 답변처럼 기록하지 않기 위한 신호, 5.6.0).
     """
-    from agent_cli.subagent.oneshot import tool_delegate
+    from agent_cli.subagent.run_agent import run_agents
 
     parts = query.split(maxsplit=1)
     # ``-run`` 접미사 허용 (기본 모드의 명시 표기) — 실존 프로파일 우선.
@@ -909,7 +909,7 @@ def _dispatch_agent(
 
     _parent_hooks = _load_hooks() or None
     render_status("running", f"Running agent: {agent_name}...")
-    result = tool_delegate(
+    result = run_agents(
         {"tasks": [{"task": task, "agent": agent_name, "context": "fork"}]},
         # 루프 **밖**의 디스패치 — 감싸는 루프가 없으니 main 세션이 호출자다.
         Caller.main_session(

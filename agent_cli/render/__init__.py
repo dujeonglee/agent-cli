@@ -381,8 +381,8 @@ def render_begin_scope(
     index: int = 0,
     ctx_dir: str | None = None,
 ) -> None:
-    """Enter a nested scope (skill/run) — single path for skill subloops and
-    delegate/one-shot workers. See ``Renderer.begin_scope``."""
+    """Enter a nested scope — single path for skill subloops and harness jobs.
+    See ``Renderer.begin_scope``."""
     _flush_thought()
     _renderer.begin_scope(
         task_id=task_id,

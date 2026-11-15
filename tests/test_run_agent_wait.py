@@ -36,7 +36,7 @@ from agent_cli.wake import (
     release_owner,
     wake_sources,
 )
-from tests.loop_kinds import make_caller
+from tests.loop_kinds import make_caller, run_task
 from tests.loop_ports import TEST_PORTS
 from tests.loopkit import make_loop
 from tests.test_agents_live import make_registry
@@ -380,7 +380,6 @@ class TestReleaseOwner:
 
 class TestOneShotHasItsOwnAddress:
     def test_run_single_uses_a_run_address_and_cleans_up(self, monkeypatch, jobs, reg):
-        from agent_cli.subagent.oneshot import OneShotLoop
         from tests.binding_support import make_binding
 
         seen = {}
@@ -396,22 +395,26 @@ class TestOneShotHasItsOwnAddress:
         caps = ModelCapabilities(
             context_window=32768, max_output_tokens=4096, supports_thinking=False
         )
-        result = OneShotLoop(
+        result = run_task(
             {"task": "go"},
             make_caller(
                 binding=make_binding(provider=object(), model="m", capabilities=caps)
             ),
-        ).run()
+        )
         assert result.success
         assert seen["owner"].startswith(RUN_OWNER_PREFIX) and seen["inbox"] is True
         assert jobs.running(seen["owner"]) == []
         assert "1 background job still running was stopped" in result.output
 
 
-class TestParallelPanelMarkup:
+class TestAgentLineMarkup:
     def test_task_text_with_rich_tags_does_not_raise(self):
-        r = MinimalRenderer(Console(file=io.StringIO(), force_terminal=False))
-        r.begin_scope(task_id="t1", index=0, agent="", label="print [/red] and [b]")
-        r.end_scope(
-            task_id="t1", success=True, duration_s=0.1
-        )  # MarkupError 였다 (v10.65.0 벤치)
+        # 에이전트 줄은 마크업으로 읽지 않는다 — 과제 글의 `[/red]` 가 MarkupError 였다
+        # (v10.65.0 벤치, 옛 병렬 패널)
+        out = io.StringIO()
+        r = MinimalRenderer(Console(file=out, force_terminal=False, width=200))
+        r.begin_agent_work(
+            key="agt-1", item="run", profile="", message="print [/red] and [b]"
+        )
+        r.end_agent_work(key="agt-1", item="run", success=True, duration_s=0.1)
+        assert "print [/red] and [b]" in out.getvalue()

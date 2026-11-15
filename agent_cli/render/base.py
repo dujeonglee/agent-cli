@@ -286,15 +286,15 @@ class Renderer(ABC):
         MinimalRenderer overrides to print a colored block.
         """
 
-    # ── Parallel delegate lifecycle ──────────────────
+    # ── Nested scope lifecycle ───────────────────────
     #
-    # Out-of-band surfaces (web) need to know when a worker thread
-    # enters / leaves a delegate-parallel context so they can route
-    # the thread's subsequent emits into a dedicated UI group instead
-    # of interleaving them on the main timeline. CLI renderers don't
-    # need this — ``rich.Live`` polls ``get_thread_status`` directly
-    # — so the base implementations are concrete no-ops. WebRenderer
-    # overrides to map ``thread_id → task_id`` and emit SSE markers.
+    # Out-of-band surfaces (web) need to know when a thread enters /
+    # leaves a nested scope (skill, harness job) so they can route the
+    # thread's subsequent emits into a dedicated UI group instead of
+    # interleaving them on the main timeline. The base implementations
+    # are concrete no-ops. WebRenderer overrides to map
+    # ``thread_id → task_id`` and emit SSE markers. Agents (run·resident)
+    # use ``begin_agent_work`` instead — their runs are channels.
 
     def begin_scope(
         self,
@@ -308,12 +308,11 @@ class Renderer(ABC):
         ts: float | None = None,
         ctx_dir: str | None = None,
     ) -> None:
-        """Enter a nested execution scope — the single path for BOTH a skill
-        subloop (``kind="skill"``) and a delegate / one-shot worker
-        (``kind="run"``). On web this opens ONE ``scope_start`` card + routes
+        """Enter a nested execution scope — a skill subloop (``kind="skill"``)
+        or a harness job (``kind="harness"``). On web this opens ONE ``scope_start`` card + routes
         the scope's inner events to it (fixes: ``/orchestrate`` used to emit a
         different, un-handled event and drew no card). CLI branches on ``kind``
-        (skill bracket vs delegate Live panel). No-op default.
+        (skill bracket vs harness one-liner). No-op default.
 
         ``parent`` — the ENCLOSING scope's ``task_id``, or ``""`` for a
         top-level scope under main. Leave it ``None`` (the default) when the
@@ -359,6 +358,14 @@ class Renderer(ABC):
         is what the CLI renders anyway (depth comes from push_depth)."""
         return ""
 
+    def current_task_id(self) -> str:
+        """호출 스레드가 지금 그리는 자리의 ``task_id`` (``""`` = main 의 맨 위).
+
+        run 에이전트를 띄우는 쪽이 **자기 스레드에서** 읽어 넘긴다 — 에이전트는 자기 스레드에서
+        돌므로 부른 자리(부모의 카드·런 블록)를 스스로 알 수 없다. 기본 ``""`` — 자리를 추적하는
+        것은 WebRenderer 뿐이다."""
+        return ""
+
     def begin_agent_work(
         self,
         *,
@@ -368,6 +375,8 @@ class Renderer(ABC):
         message: str,
         req_ts: float | str | None = None,
         items: list[str] | None = None,
+        ctx_dir: str | None = None,
+        caller_task: str | None = None,
     ) -> None:
         """teammate worker 가 request 1건 처리를 시작 (teammate P1).
 
@@ -378,10 +387,14 @@ class Renderer(ABC):
         큐에 넣을 때 나가 런보다 앞서므로, 이 목록 없이는 어느 항목이 이
         런의 것인지 알 수 없다(배치가 특히 그렇다).
 
-        delegate 의 begin_delegate_task 와 달리 **프롬프트 스코프를
-        건드리지 않는다** — 스코프는 worker 가 begin_prompt_scope(key) 로
-        상시 보유. 이 표면은 요청별 표시(웹 SSE 카드 라우팅 / CLI 출력
-        캡처)만 담당. 기본 no-op."""
+        ``ctx_dir`` — 이 에이전트의 대화가 사는 곳(세션 기준 상대 경로, 기본
+        ``agents/<key>``). run 에이전트는 ``run_…`` 이다(결과 파일 자리와 같다).
+        ``caller_task`` — run 에이전트만: 부른 자리(`current_task_id`, main 이면 ``""``).
+        웹은 그 자리에 한 줄 카드를 놓는다. 상주는 ``None``.
+
+        **프롬프트 스코프를 건드리지 않는다** — 스코프는 에이전트 스레드가
+        begin_prompt_scope(key) 로 상시 보유. 이 표면은 런별 표시(웹 SSE 채널
+        블록 라우팅 / CLI 에이전트 줄)만 담당. 기본 no-op."""
 
     def end_agent_work(
         self,
@@ -809,7 +822,7 @@ class Renderer(ABC):
         any output that would clash with it.
 
         Default no-op. ``MinimalRenderer`` overrides it to pause an active
-        Rich ``Live`` region (spinner / parallel-delegate panel) that would
+        Rich ``Live`` region (the spinner) that would
         otherwise repaint over the prompt; ``WebRenderer`` needs nothing
         (its prompt is an out-of-band SSE event).
         """

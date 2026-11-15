@@ -29,9 +29,9 @@ class AgentMode:
     새 모드 추가 시 동기 수정 누락이 조용한 폴스루로 새던 구조.
 
     - ``required``: 모드별 필수 필드 (C7 의미론 검증).
-    - ``engine``: "oneshot"=일회성 병렬 엔진(tool_bridge 가 tool_delegate
-      로 라우팅) / "registry"=상주 레지스트리(agents_live.tool_agent 의
-      핸들러 테이블로 라우팅).
+    - ``engine``: "run"=run 에이전트(tool_bridge 가 `subagent.run_agent.run_agents`
+      로 라우팅 — 과제 하나의 회신을 막힌 채 받는다) / "registry"=상주 레지스트리
+      (agents_live.tool_agent 의 핸들러 테이블로 라우팅).
     - ``batchable``: 같은 턴 연속 op 의 병렬 배치 합류 여부 (설계 §3.6 —
       run 만; 상주 모드는 즉시 반환이라 병렬 이득 없음).
     """
@@ -43,7 +43,7 @@ class AgentMode:
 
 # 삽입 순서 = 스키마 enum 노출 순서 (프롬프트 렌더 안정성).
 AGENT_MODES: dict[str, AgentMode] = {
-    "run": AgentMode(required=("task",), engine="oneshot", batchable=True),
+    "run": AgentMode(required=("task",), engine="run", batchable=True),
     "spawn": AgentMode(),
     "request": AgentMode(required=("key", "task")),
     "status": AgentMode(),
@@ -311,7 +311,7 @@ class AgentTool(Tool):
         return flat
 
     def oversized_source_path(self, result, args, ctx: RunContext) -> str:
-        """run 모드는 일회성 엔진이 이미 전문을 ``<run_dir>/result.md``
+        """run 모드는 run 결과 어댑터가 이미 전문을 ``<run_dir>/result.md``
         (상대경로 = ``result.artifact``)에 영속했다 — 사본 대신 그 파일을
         가리킨다. artifact 가 없는 모드/경로는 "" (seam 이 저장)."""
         artifact = getattr(result, "artifact", "") or ""

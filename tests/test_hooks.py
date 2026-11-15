@@ -601,8 +601,8 @@ class TestDelegateHooksWiring:
         from unittest.mock import patch
 
         from agent_cli.providers.capabilities import ModelCapabilities
-        from agent_cli.subagent.oneshot import tool_delegate
         from agent_cli.tools.result import ToolResult
+        from tests.loop_kinds import run_tasks
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -623,7 +623,7 @@ class TestDelegateHooksWiring:
         # break the circular dependency with loop.py), so patch at the
         # source module — the inline import picks up the patched value.
         with patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop):
-            tool_delegate(
+            run_tasks(
                 {"tasks": [{"task": "trivial"}]},
                 make_caller(
                     binding=make_binding(
@@ -646,8 +646,8 @@ class TestDelegateHooksWiring:
         from unittest.mock import patch
 
         from agent_cli.providers.capabilities import ModelCapabilities
-        from agent_cli.subagent.oneshot import tool_delegate
         from agent_cli.tools.result import ToolResult
+        from tests.loop_kinds import run_tasks
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -664,7 +664,7 @@ class TestDelegateHooksWiring:
         # break the circular dependency with loop.py), so patch at the
         # source module — the inline import picks up the patched value.
         with patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop):
-            tool_delegate(
+            run_tasks(
                 {"tasks": [{"task": "trivial"}]},
                 make_caller(
                     binding=make_binding(
@@ -705,8 +705,8 @@ class TestAgentFrontmatterHooks:
     def test_agent_frontmatter_hooks_merged_with_parent(self):
         """Parent hook matchers fire first, then agent-local matchers —
         matching the merge_hooks_configs ordering contract."""
-        from agent_cli.subagent.oneshot import tool_delegate
         from agent_cli.tools.result import ToolResult
+        from tests.loop_kinds import run_tasks
 
         parent_hooks = {
             "PreToolUse": [HookMatcher(matcher="", hooks=[HookEntry("echo parent")])]
@@ -728,12 +728,12 @@ class TestAgentFrontmatterHooks:
 
         with (
             patch(
-                "agent_cli.subagent.oneshot.load_profile",
+                "agent_cli.subagent.run_agent.load_profile",
                 return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
             ),
             patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop),
         ):
-            tool_delegate(
+            run_tasks(
                 {"tasks": [{"task": "t", "agent": "probe"}]},
                 make_caller(
                     binding=make_binding(
@@ -755,8 +755,8 @@ class TestAgentFrontmatterHooks:
     def test_agent_hooks_only_when_parent_has_none(self):
         """With no parent hooks_config, the agent's own hooks still
         reach run_loop — agents aren't gated on parent presence."""
-        from agent_cli.subagent.oneshot import tool_delegate
         from agent_cli.tools.result import ToolResult
+        from tests.loop_kinds import run_tasks
 
         agent_hooks_raw = {
             "PreToolUse": [
@@ -775,12 +775,12 @@ class TestAgentFrontmatterHooks:
 
         with (
             patch(
-                "agent_cli.subagent.oneshot.load_profile",
+                "agent_cli.subagent.run_agent.load_profile",
                 return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
             ),
             patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop),
         ):
-            tool_delegate(
+            run_tasks(
                 {"tasks": [{"task": "t", "agent": "probe"}]},
                 make_caller(
                     binding=make_binding(
@@ -796,8 +796,8 @@ class TestAgentFrontmatterHooks:
     def test_agent_without_hooks_passes_parent_through_unchanged(self):
         """An agent whose frontmatter has no `hooks:` field must leave
         the parent's hooks_config intact — not wipe it to None."""
-        from agent_cli.subagent.oneshot import tool_delegate
         from agent_cli.tools.result import ToolResult
+        from tests.loop_kinds import run_tasks
 
         parent_hooks = {
             "PreToolUse": [HookMatcher(matcher="", hooks=[HookEntry("echo parent")])]
@@ -811,12 +811,12 @@ class TestAgentFrontmatterHooks:
 
         with (
             patch(
-                "agent_cli.subagent.oneshot.load_profile",
+                "agent_cli.subagent.run_agent.load_profile",
                 return_value=self._stubload_profile(hooks_raw=None),
             ),
             patch("agent_cli.loop.run.run_loop", side_effect=fake_run_loop),
         ):
-            tool_delegate(
+            run_tasks(
                 {"tasks": [{"task": "t", "agent": "probe"}]},
                 make_caller(
                     binding=make_binding(
@@ -841,7 +841,7 @@ class TestAgentFrontmatterHooks:
 
         from agent_cli.context.manager import ContextManager
         from agent_cli.providers.base import LLMResponse
-        from agent_cli.subagent.oneshot import tool_delegate
+        from tests.loop_kinds import run_tasks
 
         log_file = tmp_path / "hook.log"
 
@@ -880,7 +880,7 @@ class TestAgentFrontmatterHooks:
         )
 
         try:
-            tool_delegate(
+            run_tasks(
                 {"tasks": [{"task": "Go.", "agent": "probe"}]},
                 make_caller(
                     ctx=parent_ctx,

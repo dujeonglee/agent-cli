@@ -154,8 +154,8 @@ class WebDispatchOutput:
         )
 
     def agent_result(self, result, *, ok: bool = True) -> None:
-        # No-op. The delegate path (``_dispatch_agent`` →
-        # ``tool_delegate``) already emits the final answer through
+        # No-op. The run path (``_dispatch_agent`` →
+        # ``run_agents``) already emits the final answer through
         # the renderer's observation channel — re-emitting here would
         # surface the same body twice in the chat thread. ``ok`` is the
         # console adapter's --result-file signal; the web has no file.
