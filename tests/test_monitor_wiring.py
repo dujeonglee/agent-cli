@@ -404,7 +404,7 @@ class TestDeliveryToTheInstallingAddress:
     def test_delivery_carries_the_observation_record_shape(self, reg, tmp_path):
         """메일박스 아이템이 `build_reply_record` 의 monitor 분기로 간다 —
         종전 `_deliver_monitor_reports` 가 만들던 레코드와 **같은 것**."""
-        from agent_cli.subagent.agents_live import build_reply_record
+        from agent_cli.subagent.agent_mail import build_reply_record
 
         _, log = _watch(reg, tmp_path)
         log.write_text("X boom\n")

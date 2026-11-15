@@ -19,12 +19,9 @@ from agent_cli.loop.core import mail_item
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.session_slots import get_agent_registry, set_agent_registry
 from agent_cli.subagent import agent_stop
-from agent_cli.subagent.agents_live import (
-    AgentInstance,
-    AgentRegistry,
-    build_reply_record,
-    tool_agent,
-)
+from agent_cli.subagent.agent_mail import build_reply_record
+from agent_cli.subagent.agent_modes import tool_agent
+from agent_cli.subagent.agents_live import AgentInstance, AgentRegistry
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller

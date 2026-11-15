@@ -532,7 +532,7 @@ class TestRunEnded:
         assert reg.pending_for("main") == []
 
     def test_a_normal_end_sends_the_labelled_summary_and_clears(self, reg):
-        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg.note_owes("agent:a", "main", "일감", id="r-1")
         assert reg.run_ended("agent:a", "요약", run="r-1", success=True) == 1

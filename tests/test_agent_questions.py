@@ -27,12 +27,9 @@ from unittest.mock import MagicMock
 import pytest
 
 import agent_cli.render as render_mod
-from agent_cli.subagent.agents_live import (
-    AgentRegistry,
-    Question,
-    QuestionPort,
-    build_reply_record,
-)
+from agent_cli.subagent.agent_mail import build_reply_record
+from agent_cli.subagent.agents_live import AgentRegistry, Question
+from agent_cli.subagent.question_port import QuestionPort
 from tests.loop_ports import make_ports, split_ports
 from tests.test_agents_live import (
     RecordingRenderer,
@@ -440,7 +437,7 @@ class TestSurfaces:
         """v10.77.0: §3.7 억제는 없다 — 사람에게 물은 런도 요청자(main)에게
         결과가 간다(회신이 없으면 라벨 붙은 런 요약). 사람의 답은 사람 런으로
         따로 오고 main 에게 두 번째 회신을 만들지 않는다."""
-        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg = mkreg()
         ran = []
@@ -1231,7 +1228,7 @@ class TestTrafficRowsAreRealSendsOnly:
         return reg, b, outs
 
     def test_unpaid_request_yields_one_labelled_fallback_row(self, mkreg, renderer):
-        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         _, _, outs = self._run_one(mkreg, renderer, author="agent:agt-x")
         assert len(outs) == 1
@@ -1446,7 +1443,7 @@ class TestCompleteIsLocal:
         assert to_a[0]["expects_reply"] is True
 
     def test_message_to_a_third_party_leaves_the_debt(self, mkreg, renderer):
-        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg = mkreg()
         a, b, c = spawn_idle(reg), spawn_idle(reg), spawn_idle(reg)
@@ -1460,7 +1457,7 @@ class TestCompleteIsLocal:
         )
 
     def test_unpaid_debt_falls_back_to_a_labelled_summary(self, mkreg, renderer):
-        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
@@ -1478,7 +1475,7 @@ class TestCompleteIsLocal:
         에이전트 질문을 런 끝에 사유와 함께 닫았다. 이제 에이전트에게 묻는
         길은 `message` 요청이고, 상대가 끝내 `reply` 하지 않으면 그 r- 빚이
         라벨 붙은 런 요약으로 묻는 쪽에 돌아온다 — 봉투가 그 요청을 가리킨다."""
-        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg = mkreg()
         got, box = [], {}
@@ -1625,7 +1622,7 @@ class TestMainRunEnd:
         assert reg.question_port(None).debts() == []
 
     def test_unsettled_debt_falls_back_to_a_labelled_summary(self, mkreg, renderer):
-        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg = mkreg()
         a = spawn_idle(reg)
@@ -1923,7 +1920,7 @@ class TestAskKeepsTheRequesterDebt:
     사람에게만 가면서 그 근거가 사라졌다."""
 
     def test_asking_the_person_keeps_the_requester_debt(self, mkreg, renderer):
-        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg = mkreg()
         b = spawn_idle(reg)
@@ -2104,7 +2101,7 @@ class TestPerRequestDebts:
         assert [d.id for d in reg.reply_debts("main")] == [d1.id, d2.id]
 
     def test_run_end_falls_back_once_per_unpaid_request(self, mkreg, renderer):
-        from agent_cli.subagent.agents_live import _NO_REPLY_LABEL
+        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)

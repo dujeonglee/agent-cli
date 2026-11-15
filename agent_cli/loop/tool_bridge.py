@@ -349,7 +349,7 @@ class ToolBridge:
         # 함수-로컬 import — 호출 시점에 agents_live 모듈 attr 을 읽는 테스트 DI seam.
         from agent_cli.loop.kind import Caller
         from agent_cli.runtime import AgentRuntime
-        from agent_cli.subagent.agents_live import tool_agent
+        from agent_cli.subagent.agent_modes import tool_agent
 
         args = tool_input if isinstance(tool_input, dict) else {"mode": str(tool_input)}
         return tool_agent(

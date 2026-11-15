@@ -931,7 +931,8 @@ def _dispatch_agent(
     sentinel 로 분기. success 는 그 런의 실제 성공 여부(``--result-file`` 이 실패 텍스트를
     성공 답변처럼 기록하지 않기 위한 신호, 5.6.0).
     """
-    from agent_cli.subagent.agents_live import _NO_REPLY_LABEL, NO_REGISTRY
+    from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
+    from agent_cli.subagent.agent_modes import NO_REGISTRY
     from agent_cli.subagent.run_agent import launch_run
 
     parts = query.split(maxsplit=1)
@@ -2224,7 +2225,7 @@ def _agent_mail_notice(reply: dict, busy: bool) -> None:
     (종전엔 사망 통지가 기본 문구 "회신 도착" 으로 떨어졌다). v10.77.0: 에이전트가
     main 에게 묻는 질문 메일은 없어졌다(질문은 사람에게만)."""
     from agent_cli.render import get_renderer
-    from agent_cli.subagent.agents_live import mail_queue_item
+    from agent_cli.subagent.agent_mail import mail_queue_item
 
     if not busy:
         return

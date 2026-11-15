@@ -183,7 +183,7 @@ agent_cli/
 │   ├── schedule.py          `schedule` — 이 세션의 반복 프롬프트 (docs/schedule/DESIGN.md)
 │   ├── snapshot_tool.py     `snapshot` — 워크스페이스 스냅샷에서 파일 복구
 │   ├── browser_tool.py      `browser` — 헤드리스 브라우저 도구 표면(엔진은 `browser.py`)
-│   ├── agent_tool.py        `agent` — 스키마·의미 검증(실행은 `subagent/agents_live.py`)
+│   ├── agent_tool.py        `agent` — 스키마·의미 검증(실행은 `subagent/agent_modes.py`)
 │   ├── history.py           `history` — 세션 기록을 SQL 로 조회
 │   ├── memory_tool.py       `memory` — 세션 메모리 add·get·update·delete
 │   ├── code_index.py        `code_index` — `agent_cli.code_index` 패키지의 도구 표면
@@ -205,7 +205,12 @@ agent_cli/
 │   ├── agent_stop.py        사람의 정지(■ 런 정지·✕ 제거) 규칙 한 장 `STOP_RULES`·런의 정지 `LinkedStop`·stopped/removed 회신 문장
 │   ├── delegation_checks.py 에이전트를 띄우기 전 거부 판정(빈 과제·provider·순환·깊이) — run·spawn 공통
 │   ├── resident_loop.py     에이전트(run·spawn)의 루프 종류 `ResidentLoop`
-│   ├── agents_live.py       `AgentRegistry`·`AgentInstance` — 명단·상한·스레드·agents.json, spawn·`message` 라우팅·메일함·질문 포트·회신 배달·보낸 쪽 기록(기다리는 회신)
+│   ├── agents_live.py       `AgentRegistry`·`AgentInstance` — 명단·상한·스레드·agents.json 저장 시점, spawn·`message` 라우팅·메일함·회신 배달(`pay_debt`)·보낸 쪽 기록(기다리는 회신)
+│   ├── agent_modes.py       `agent` 도구의 실행 — 모드 표 `_MODE_HANDLERS`·`tool_agent`·모드 결과 문구
+│   ├── agent_mail.py        에이전트 메일의 글 — 봉투 `envelope`·main 관찰 레코드 `build_reply_record`·대기열 한 줄
+│   ├── question_port.py     루프의 질문·회신 seam `QuestionPort` — `reply(id)` 의 거부 규칙
+│   ├── agents_state.py      상태 어휘 `state_is_active`·`agents.json` 의 모양 — 항목 ↔ 에이전트, 버전·읽기
+│   ├── mail_waker.py        `MailWaker` — 한가한 main 을 메일이 깨운다
 │   └── report.py            세션 하위 디렉터리 이름(`generate_subdir_name` — 스킬 런)
 ├── harness/                 하니스가 자기 몫으로 돌리는 일회성 작업 — 팀원이 아니다 (docs/auditor/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
@@ -661,7 +666,7 @@ fork 모드 서브에이전트는 부모 history.jsonl 을 복사해 이어 쓴�
 | `ask` | `tools/virtual.py` | 가상 · `ctx` |
 | `message` | `tools/virtual.py` | 가상 · 지연 설명 · `message_handler` — main·에이전트 모두(요청·통지) |
 | `reply` | `tools/virtual.py` | 가상 · 지연 설명 · `questions` |
-| `agent` | `tools/agent_tool.py` | 지연 설명 — 모드 run·spawn·status·resume·kill, 실행은 `subagent/agents_live.py::tool_agent`(run 은 `subagent/run_agent.py`) |
+| `agent` | `tools/agent_tool.py` | 지연 설명 — 모드 run·spawn·status·resume·kill, 실행은 `subagent/agent_modes.py::tool_agent`(run 은 `subagent/run_agent.py`) |
 | `run_skill` | `tools/virtual.py` | 가상 · `skills` — 실행은 `loop/skill_invoke.py` |
 | `wait` | `tools/virtual.py` | 가상 · `wake` · 강제 탑재 — 깨울 것이 있을 때만. 기다리는 회신이 있는 main 은 제자리에서 |
 | `tool_help` | `tools/tool_help.py` | `deferred` — 지연 도구가 남은 루프에만 |
@@ -686,7 +691,7 @@ frontmatter: description · allowed-tools · model · hooks · disable-model-inv
 op 에 준 `tools`·`model` 이 프로파일 값보다 우선한다(`subagent/runner.apply_role_overrides`).
 
 run 은 레지스트리의 에이전트다(값 `ends_after_task`, docs/agent-engine/DESIGN.md). `agent` 의 모든 모드가 `tool_agent`
-(`subagent/agents_live.py`)의 모드 표로 가고, run 은 `subagent/run_agent.py` 가 거부 판정(`subagent/delegation_checks.py`) →
+(`subagent/agent_modes.py`)의 모드 표로 가고, run 은 `subagent/run_agent.py` 가 거부 판정(`subagent/delegation_checks.py`) →
 `AgentRegistry.spawn(ends_after_task=True)` → 과제 요청(`request`, 요청자 = 부른 루프의 주소) 순으로 띄우고 **바로 돌아온다**.
 결과는 그 에이전트의 회신이다 — 명시 `reply`, 없으면 런 끝 폴백(라벨 붙은 런 요약). 런이 `complete` 로 끝나면 워커가 내려온다(dead, 채널은 회색) — `wait` 로 끝난 런은 깨어 계속하고, 런 중간의 `reply` 는 끝이 아니다.
 깊이·순환은 호출자(`loop.kind.Caller`)의 것으로 센다 — 에이전트가 띄운 에이전트는 한 단계 깊다(`AgentInstance.caller_runtime`).

@@ -25,7 +25,7 @@
 ## 2. 구조
 
 ```
-tool_bridge._invoke_agent ─▶ agents_live.tool_agent(args, registry, caller=Caller.from_loop(…), runtime)
+tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=Caller.from_loop(…), runtime)
                                  │ 모드 표 _MODE_HANDLERS: run · spawn · status · resume · kill
                                  ├─ run   ─▶ run_agent.start_run → launch_run
                                  │            ├─ delegation_checks.run_refusal  (빈 과제·provider·순환·깊이)
@@ -44,7 +44,10 @@ tool_bridge._invoke_agent ─▶ agents_live.tool_agent(args, registry, caller=C
 | `subagent/run_agent.py` | `agent` run 의 진입 — 거부 판정 → spawn(`ends_after_task`) → 과제 요청. 묶인 정지 `LinkedStop`. run 의 훅. 레지스트리를 import 하지 않는 잎 |
 | `subagent/delegation_checks.py` | 에이전트를 띄우기 전 거부 판정 — `run_refusal`(run), `depth_or_recursion_refusal`(run·spawn 공통). 쓰지도 띄우지도 않는다 |
 | `subagent/resident_loop.py` | 에이전트(run·spawn)의 루프 종류 `ResidentLoop` — 주소 `agent:<key>`, 깊이 = 띄운 쪽 +1, 스택 = 띄운 쪽 것 |
-| `subagent/agents_live.py` | 레지스트리 — 명단·상한·스레드·agents.json, `message` 라우팅(`message_handler(sender)`), 회신 배달, 보낸 쪽 기록(`_sent`)·`awaited_replies` |
+| `subagent/agents_live.py` | 레지스트리 — 명단·상한·스레드·agents.json, `message` 라우팅(`message_handler(sender)`), 회신 배달(`pay_debt`), 보낸 쪽 기록(`_sent`)·`awaited_replies` |
+| `subagent/agent_modes.py` | `agent` 도구의 실행 — 모드 표·모드별 처리·결과 문구. 레지스트리의 공개 표면만 부르는 잎 |
+| `subagent/question_port.py` | 루프의 질문·회신 seam — `reply(id)` 의 거부 규칙, 배달은 `AgentRegistry.pay_debt` |
+| `subagent/agent_mail.py` · `agents_state.py` · `mail_waker.py` | 메일의 글(봉투·관찰 레코드) · `agents.json` 직렬화 · 한가한 main 깨우기 — 레지스트리를 import 하지 않는 잎 |
 
 ### 2.1 도구 표면 — 보내는 길 하나, 갚는 길 하나
 

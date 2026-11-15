@@ -31,12 +31,8 @@ from agent_cli.session_slots import (
     set_job_registry,
     set_monitor_registry,
 )
-from agent_cli.subagent.agents_live import (
-    AgentInstance,
-    Question,
-    ReplyDebt,
-    build_reply_record,
-)
+from agent_cli.subagent.agent_mail import build_reply_record
+from agent_cli.subagent.agents_live import AgentInstance, Question, ReplyDebt
 from agent_cli.wake import wake_source_ids, wake_sources
 from tests.loop_ports import make_ports
 from tests.loopkit import make_loop

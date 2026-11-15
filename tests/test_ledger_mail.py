@@ -20,7 +20,8 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.loop.core import mail_item
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.pump import RunRequest
-from agent_cli.subagent.agents_live import AgentRegistry, MailWaker
+from agent_cli.subagent.agents_live import AgentRegistry
+from agent_cli.subagent.mail_waker import MailWaker
 from tests.loop_ports import make_ports
 from tests.loopkit import make_loop
 

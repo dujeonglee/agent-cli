@@ -19,7 +19,8 @@ from rich.console import Console
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.session_slots import get_agent_registry, set_agent_registry
 from agent_cli.subagent import run_agent
-from agent_cli.subagent.agents_live import AgentInstance, AgentRegistry, tool_agent
+from agent_cli.subagent.agent_modes import tool_agent
+from agent_cli.subagent.agents_live import AgentInstance, AgentRegistry
 from agent_cli.subagent.delegation_checks import (
     depth_or_recursion_refusal,
     run_refusal,
@@ -289,7 +290,7 @@ class TestAtAgent:
 
     def test_at_agent_without_a_registry_says_so(self, tmp_path):
         from agent_cli.main import _dispatch_agent
-        from agent_cli.subagent.agents_live import NO_REGISTRY
+        from agent_cli.subagent.agent_modes import NO_REGISTRY
 
         answer, ok = _dispatch_agent(
             "@general look", make_binding(provider=object(), capabilities=CAPS)
@@ -330,7 +331,7 @@ class TestListedAndAddressable:
         assert reg._duplicate_label("code-reviewer", "x") == ""
 
     def test_dead_run_is_not_a_same_profile_hint_on_spawn(self, reg, monkeypatch):
-        from agent_cli.subagent.agents_live import _agent_spawn
+        from agent_cli.subagent.agent_modes import _agent_spawn
 
         self._with_run(reg, state="dead", profile="code-writer")
         monkeypatch.setattr(reg, "spawn", lambda **kw: ("agt-new00001", ""))
