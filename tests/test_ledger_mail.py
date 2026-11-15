@@ -74,16 +74,16 @@ class TestWhichMailBecomesAnItem:
     @pytest.mark.parametrize(
         "reply",
         [
-            {"kind": "reply", "key": "agt-a"},
+            {"kind": "reply", "key": "agt-a"},  # 요청 id 가 없는 옛 모양
             {"kind": "answer", "key": "agt-a"},
-            {"kind": "peer_message", "key": "agt-a", "notice": True},
             {"kind": "monitor"},
             {"kind": "job"},
             {"kind": "harness", "job": "auditor"},
             {"kind": "died", "key": "agt-a"},
+            {"kind": "checkin"},
         ],
     )
-    def test_seven_kinds_are_items(self, reply):
+    def test_other_kinds_are_items(self, reply):
         assert mail_item({**reply, "item_id": "n-4"}) == ("n-4", "mail")
 
     @pytest.mark.parametrize(
@@ -92,9 +92,15 @@ class TestWhichMailBecomesAnItem:
             {"kind": "peer_message", "key": "agt-a", "expects_reply": True},  # 회신 빚
             {"kind": "monitor", "ledger": "none"},  # 만드는 쪽이 장부 밖이라 했다
             {"kind": "reply", "key": "agt-a", "ledger": "none"},
+            # v10.141.0 (사용자 결정): 회신·통지는 읽으면 끝 — 항목이 아니다
+            {"kind": "reply", "key": "agt-a", "re": "r-2"},  # 런 끝 폴백 요약
+            {"kind": "peer_message", "key": "agt-a", "re": "r-2"},  # 명시 `reply`
+            {"kind": "peer_message", "key": "agt-a", "notice": True},  # 통지
         ],
     )
-    def test_debts_and_declared_out_of_ledger_mail_stay_out(self, reply):
+    def test_debts_replies_notices_and_declared_out_of_ledger_mail_stay_out(
+        self, reply
+    ):
         assert mail_item({**reply, "item_id": "n-4"}) is None
 
     @pytest.mark.parametrize("kind", ["question", "reminder"])

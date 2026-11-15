@@ -693,6 +693,8 @@ run 의 정지는 부른 런의 정지에 묶인다(`LinkedStop`); spawn 의 정
 보낸 쪽 기록(`AgentRegistry._sent`)이 장부의 "기다리는 회신"(`Ledger.awaited`)이다 — 요청이 받은편지함에 들어갈 때 적히고 받는 쪽의
 빚이 끝날 때(갚음·폴백·버림) 지워진다. 남아 있으면 `complete` 가 되돌아오고, main 의 `wait` 는 런을 끝내지 않고 제자리에서
 회신·사람 입력(`InputQueue.wait_for_arrival`, run 은 터미널 줄도)·체크인을 기다린다(`MainLoop.wait_policy`, `dispatch._wait_in_place`).
+회신·통지 메일은 장부 항목을 만들지 않는다(`loop/core.py::is_reply_or_notice` — 회신은 기다리던 항목을 닫을 뿐, 통지는 읽으면 끝);
+요청만 받는 쪽에 빚을 만든다.
 
 ### 6.3 run_skill 결과
 

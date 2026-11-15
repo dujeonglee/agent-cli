@@ -73,6 +73,11 @@ tool_bridge._invoke_agent ─▶ agents_live.tool_agent(args, registry, caller=C
   "the wait was interrupted — the user wrote to you; … still awaited, so `wait` again when you are done" 를 남긴다.
   같은 런이라 감사(auditor)의 구간이 회신까지 덮는다. 기다리는 회신 없이 작업·모니터만 기다리면 지금처럼 런을 끝낸다.
   에이전트의 `wait` 는 그대로다(런 끝, 메일로 깸).
+- **회신·통지는 항목이 아니다 (사용자 결정).** 내가 보낸 요청의 회신(명시 `reply`·런 끝 폴백 요약)은 도착하면 그 기다리는
+  회신 항목을 닫고(보낸 쪽 기록이 지워진다) 내용만 전한다 — 새 장부 항목(`n-`)을 만들지 않는다. 통지(`expects_reply` false)도
+  읽으면 끝이다. 요청(`expects_reply` true)만 받는 쪽에 빚을 만든다. main 은 `core.mail_item` 이 `is_reply_or_notice` 를 장부
+  밖으로 두고, 에이전트(run·spawn)는 종전부터 회신·통지를 항목으로 올리지 않았다(시작 항목·흡수 항목 모두). 작업·모니터·
+  사망·체크인·하니스 메일의 규칙은 그대로다.
 - **내려옴 (사용자 결정).** run 에이전트는 런이 `complete` 로 끝날 때 내려온다 — `complete` 는 모든 루프에서 런을 끝내는
   동사이고, run 에이전트에게는 그게 곧 수명 끝이다(`_run_ended_by_wait` 가 아니면 `_come_down`; 턴 상한·오류로 끝난 런도
   끝이다). `wait` 로 끝난 런(자기 하위 run 을 기다림)은 내려오지 않고 깨어 계속하다 `complete` 때 내려온다. 런 중간에

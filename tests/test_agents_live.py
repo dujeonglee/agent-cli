@@ -1060,13 +1060,12 @@ class TestLoopWiring:
 
         assert len(fake_self.messages) == 1
         assert "done:job" in fake_self.messages[0]["content"]
-        assert fake_self.noted == [added[0]["request_id"]]  # 장부 항목 = 그 레코드
         assert len(added) == 1
         assert added[0]["tool"] == "agent"
-        # 장부 항목 (v10.55.0): 회신은 `answers` 로 닫는 열린 항목, 레코드에 id
-        (item,) = fake_self._state.ledger.requests
-        assert item["id"].startswith("n-") and item["author"] == "mail"
-        assert added[0]["request_id"] == item["id"]
+        # v10.141.0 (사용자 결정): 회신(여기선 런 끝 폴백 요약)은 장부 항목이 아니다 — 읽으면
+        # 끝, 레코드에 항목 id 도 없다
+        assert fake_self._state.ledger.requests == []
+        assert "request_id" not in added[0] and fake_self.noted == []
         assert not is_format_intervention(added[0])
         assert not reg.has_pending_replies()  # 소비 완료
         # 레지스트리 없는 종류는 받을 메일이 없다
