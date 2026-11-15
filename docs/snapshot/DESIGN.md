@@ -86,7 +86,9 @@ git 은 작업 트리 안의 `.git` 디렉터리를 gitlink(커밋 sha)로만 �
 하위 저장소마다 `HEAD` 와 `status --porcelain`(수정·untracked)을 기록하고:
 - 깨끗한 tracked 파일 → 그 저장소 자신이 복원(`git -C <sub> checkout -- <path>`)
 - dirty·untracked 파일 → 그림자 저장소에 **직접** 담는다(`add --force` 로 경로 지정)
-복구 안내는 매니페스트를 보고 경로별로 어느 쪽인지 말한다. (웹 Changes 패널이 하위 저장소 안을 세는 방식은 §8.) 재귀는 없다 — 그림자는
+복구 안내는 매니페스트를 보고 경로별로 어느 쪽인지 말한다. (웹 Changes 패널이 하위 저장소 안을 세는 방식은 §8.)
+하위 저장소의 경계는 디스크를 따른다(§9): 커밋 없는 저장소는 담지 않고(`add` 가 거부한 경로를 그 호출에서만 뺀다),
+`.git` 을 지운 폴더는 안 파일을 일반 파일로 담고, 일반 파일로 담던 폴더가 커밋 있는 저장소가 되면 그 저장소 몫으로 넘긴다. 재귀는 없다 — 그림자는
 워크스페이스당 하나, `.agent-cli` 는 제외라 자기 자신을 담지 않으며 bare 라 작업 트리가 없다.
 
 ### 3.4 훅 — 붙이는 자리
@@ -220,3 +222,43 @@ list→at 우회 시퀀스 수, db-wal·financial 통과(35B 가 민감). 테스
 - 웹: `/api/changes` 에 `files[].repo`·`summary`, `repos`(그룹 머리), `notices`(안내 줄), `POST /api/changes/notices/dismiss`.
   테스트 `tests/test_snapshot_nested.py`(하위 `.git` 지문 불변 검사 포함), `TestChangesEndpoints`, `tests/browser/test_changes_panel.py`.
 
+
+## 9. 스냅샷 빈틈 — 저장소 경계와 조용한 실패 (v10.139.1, 2026-11-15)
+
+하위 저장소 작업 중 찾은 기존 문제 넷. 넷 다 조용히 망가져 모델의 `snapshot` 복구와 Changes 패널이 함께 영향을 받았다.
+모델이 받는 바이트는 바뀌지 않는다(시작 안내는 이미 커밋 없는 저장소도 나열한다) — 실패하던 체크포인트·restore 가 성공할 뿐이다.
+
+- **커밋 없는 하위 저장소**: `add` 가 `'<p>/' does not have a commit checked out` 으로 **통째로** 실패했다 — 세션 시작 커밋부터
+  없어 restore 는 "no snapshot contains …", 패널은 "Snapshots are off". 이제 `GitSnapshot._stage_workspace` 가 그 줄(`LC_ALL=C`
+  로 띄워 언어 무관)을 읽어 그 경로를 **그 호출에서만** `:(exclude,literal)P` 로 빼고 다시 한다(git 은 한 번에 하나씩 거부한다 —
+  상한 `ADD_RETRY_MAX`). 실패 메시지가 곧 목록이라 미리 걷지 않는다(평소 비용 0). 체크포인트·세션 시작·Changes 임시 색인이 같은
+  함수를 쓴다. 판정 `Verdict.UNBORN` — 기록에 없거나 기록 때도 커밋이 없던 저장소가 지금도 커밋이 없으면; 첫 커밋 뒤 `NEW`
+  ("first seen" 흐름). 패널 안내 줄 "P is a git repository with no commits yet — its files are not part of the list until its
+  first commit." 은 셀 때마다(뺀 경로에서) 정하고 기록에 남기지 않는다(`dismissable: false`).
+  - 이미 일반 파일로 담던 폴더에 `git init` 만 한 경우는 실측으로 `add` 가 실패하지 않는다 — 색인에 그 아래 항목이 있으면 git 은
+    그 폴더를 저장소가 아닌 디렉터리로 내려간다. 그래서 넘기지 않고 계속 담는다(빼는 것이 없으니 얼어 붙는 파일도 없다).
+    판정도 `plain` + 커밋 없음 → `PLAIN`.
+- **`.git` 을 지운 폴더**: 스냅샷 색인에 gitlink 가 남아 `add -A` 가 그 아래를 담지 않았다(체크포인트에 안 파일이 영영 없음).
+  이제 체크포인트·Changes 셈 직전 `GitSnapshot._align_index_with_repos` 가 그 gitlink 를 색인에서 뺀다 — 그러면 `add` 가 안 파일을
+  일반 파일로 담는다. 그 자리가 지우고 다시 `git init` 만 한 저장소여도 뺀다(남은 gitlink 는 옛 커밋을 가리킨 채 그대로 담긴다 —
+  실측); 그러면 위의 커밋 없는 저장소 길로 간다. 실제 색인은 체크포인트의 `_lock` 안에서만, HEAD·히스토리 불변.
+  v10.139.0 의 Changes 쪽 임시 처리(`_disk_tree(drop)`·Clear 의 일반 폴더 기록)는 이 길로 합쳤다 — Clear 의 새 기준점 트리에 그
+  폴더가 일반 파일로 담기므로 일반 폴더 기록이 따로 필요 없다.
+- **저장소가 된 폴더**: 일반 파일로 담던 폴더에 커밋 있는 저장소가 생기면(`git init` + 첫 커밋, 또는 그 자리에 clone) 같은
+  `_align_index_with_repos` 가 그 아래 항목을 스냅샷 색인에서만 뺀다(디스크·그 저장소 불변) → `add` 가 gitlink 하나로 담는다.
+  발견은 색인에 있는 디렉터리마다 `<dir>/.git` 확인(바깥부터, 찾은 저장소 안은 묻지 않는다), 커밋 유무는 찾은 것만 하위 git 에
+  묻는다. 무엇을 뺄지는 `snapshot_nested.index_paths_to_untrack`(읽는 함수는 주입). 예전 체크포인트에는 넘기기 전 판이 남으므로
+  모델의 `restore` 는 그 판으로 계속 된다.
+  Changes 연속성: `sync_nested_records` 가 지금 트리의 새 gitlink 를 발견했을 때 기준점 트리의 그 자리가 일반 폴더였으면
+  `NestedRepos.record_adopted` 로 기록한다 — 기준 HEAD = 지금 HEAD, dirty 덮어쓰기 = 기준점 폴더 트리의 blob 중 HEAD 와 다른 것
+  (이미 우리 저장소에 있는 blob 을 가리킨다 — 복사 없음)과 HEAD 에만 있는 경로("그때 없었음"). 그래서 목록은 "기준점 이후 실제로
+  바뀐 파일" 로 이어진다(요약 한 줄이 아님, 출처 `adopted`, 그룹 머리는 평소). 기준점에 그 폴더가 없었으면 기존 "first seen".
+  일반 폴더 기록(§8 탭 6 뒤)이 다시 커밋 있는 저장소가 되면 그 기록의 트리로 같은 방법을 쓰고, 낡은 ".git was removed" 안내는 거둔다.
+- **조용한 실패**: `checkpoint()` 가 "변경 없음" 과 "실패" 를 둘 다 None 으로 돌려 구별이 없었다. 이제 실패(`add`·`commit`)면
+  `stats.failing_since`(첫 실패 시각)·`failure`(짧은 이유, `git add: <첫 오류 줄>`)를 남기고, 성공(변경 없음 포함)하면 지운다.
+  `report()` 는 그 동안 빨간 안내 줄 "Snapshots have been failing since HH:MM (<이유>). Files changed after that may be missing from
+  this list and cannot be restored."(`cause` `snapshot_failing`, `repo` null, `dismissable: false`)을 맨 앞에 싣는다. 이번 셈의
+  `add` 도 실패하면(그래서 예전엔 목록이 None → "Snapshots are off") 마지막 스냅샷(HEAD)까지의 목록 + 그 안내. 모델에게 알릴지는
+  별개 결정이라 이번엔 안 한다.
+- 테스트 `tests/test_snapshot_gaps.py`(모든 호출 앞뒤 하위 `.git` 지문 불변), `TestChangesEndpoints`, 브라우저
+  `test_unborn_repo_and_failing_snapshots_notices`.

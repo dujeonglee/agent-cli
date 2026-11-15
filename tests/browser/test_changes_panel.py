@@ -878,3 +878,64 @@ def test_nested_repo_summary_lines(stack, page, tmp_path):
     assert mark == "●" and tip.startswith("New repository since session start · ")
     assert "git-proj" not in _tree(page)
     assert errors == []
+
+
+# ── 스냅샷 빈틈 (v10.139.1, docs/snapshot/DESIGN.md §9) ──
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads unreadable files")
+def test_unborn_repo_and_failing_snapshots_notices(stack, page, tmp_path):
+    """커밋 없는 하위 저장소 안내(✕ 없음) · 스냅샷 실패 안내(빨강, ✕ 없음) — 패널은
+    "Snapshots are off" 가 아니라 안내 + 마지막 스냅샷까지의 목록."""
+    w = tmp_path / "ws"
+    w.mkdir()
+    (w / "a.txt").write_text("1\n")
+    scratch = w / "scratch"
+    scratch.mkdir()
+    subprocess.run(["git", "init", "-q", str(scratch)], check=True)
+    (scratch / "x.txt").write_text("x\n")
+    reset_snapshot()
+    store = get_snapshot(w, create=True, session_id="sess-gaps")
+    assert store.enabled and store.head(), store.reason
+    stack.server.workspace = w.resolve()
+    (w / "a.txt").write_text("2\n")
+    assert store.checkpoint("before shell (turn 1)", force=True)
+    bad = (
+        w / "zz-locked.bin"
+    )  # add 는 경로 순 — 커밋 없는 저장소를 먼저 만나 뺀 뒤 실패
+    bad.write_text("s\n")
+    os.chmod(bad, 0)
+    try:
+        assert store.checkpoint("before shell (turn 2)", force=True) is None
+        errors = _open(page, stack)
+        page.wait_for_function(f"() => {_BADGE_EXPR} === '1'", timeout=8000)
+        page.click("#changes-badge")
+        page.wait_for_selector("#changes-drawer.open .chg-row", timeout=8000)
+        rows = page.evaluate(_LIST)
+        assert rows[0][0] == "notice"
+        assert "Snapshots have been failing since " in rows[0][1]
+        assert "cannot be restored." in rows[0][1]
+        assert rows[1][0] == "notice"
+        assert "scratch is a git repository with no commits yet" in rows[1][1]
+        assert rows[2:] == [["row", "M", "a.txt", "+1 −1"]]
+        notes = page.locator("#changes-list .chg-notice")
+        assert notes.nth(0).evaluate("n => n.classList.contains('chg-notice-err')")
+        assert not notes.nth(1).evaluate("n => n.classList.contains('chg-notice-err')")
+        assert page.locator("#changes-list .chg-notice-x").count() == 0
+        assert page.inner_text("#changes-list .chg-notice b") == "scratch"
+        # 색은 실패 토큰 — 경고 줄과 다르다
+        bg = notes.nth(0).evaluate("n => getComputedStyle(n).backgroundColor")
+        assert bg != notes.nth(1).evaluate("n => getComputedStyle(n).backgroundColor")
+        # 실패가 풀리면(다음 체크포인트 성공) 빨간 줄이 사라진다
+        os.chmod(bad, 0o644)
+        assert store.checkpoint("before shell (turn 3)", force=True)
+        page.click("#changes-refresh")
+        page.wait_for_function(
+            "() => !document.querySelector('#changes-list .chg-notice-err')",
+            timeout=8000,
+        )
+        assert page.locator("#changes-list .chg-notice").count() == 1
+        assert errors == []
+    finally:
+        os.chmod(bad, 0o644)
+        reset_snapshot()

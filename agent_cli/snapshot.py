@@ -43,13 +43,17 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 from agent_cli.snapshot_nested import (
     Manifest,
     NestedRepos,
+    Notice,
     Verdict,
     entries,
+    index_paths_to_untrack,
     notice_text,
+    parse_index,
     parse_numstat,
     parse_raw,
 )
@@ -81,6 +85,16 @@ NESTED_BASELINE_PREV_REF = NESTED_REFS + "baseline-prev"
 #: 넉넉하다. 그 모듈의 상수는 못 쓴다 — `tools` 패키지는 import 하면 도구 레지스트리를
 #: 통째로 싣고, 이 모듈은 0층이다.
 CHANGE_DIFF_MAX_LINES = 1000
+#: ``add`` 가 커밋 없는 하위 저장소를 거부하는 줄(``LC_ALL=C`` 로 띄워 언어와 무관) — 경로는
+#: 워크스페이스 기준. 한 번에 하나씩 거부하므로 그 경로를 빼고 다시 하되 이만큼까지만.
+_UNBORN_ADD_RE = re.compile(
+    r"^error: '(.+)/' does not have a commit checked out$", re.MULTILINE
+)
+ADD_RETRY_MAX = 32
+#: 패널 안내 줄에 싣는 git 오류의 상한(문자)
+FAILURE_REASON_CHARS = 120
+#: 체크포인트가 실패하고 있을 때의 패널 안내 줄 원인(``/api/changes`` ``notices[].cause``)
+SNAPSHOT_FAILING = "snapshot_failing"
 
 
 def _ref_key(session_id: str) -> str:
@@ -127,6 +141,42 @@ class SnapshotStats:
     files: int = 0
     seconds: float = 0.0
     commits: int = 0
+    #: 체크포인트가 실패하고 있으면 첫 실패 시각(epoch 초)과 마지막 이유 — 성공하면 지운다
+    failing_since: int = 0
+    failure: str = ""
+
+
+class DiskTree(NamedTuple):
+    """지금 디스크의 트리(:meth:`GitSnapshot._disk_tree`) — ``unborn`` 은 커밋이 없어 뺀 하위
+    저장소, ``error`` 는 트리를 못 만든 이유(그때 ``tree`` 는 None)."""
+
+    tree: str | None
+    unborn: list[str]
+    error: str
+
+
+def git_error_line(what: str, r: subprocess.CompletedProcess) -> str:
+    """git 실패의 짧은 이유 — ``"git add: <첫 오류 줄>"``(``error:``·``fatal:`` 머리는 뗀다)."""
+    for ln in r.stderr.splitlines():
+        ln = ln.strip()
+        if ln:
+            for head in ("error: ", "fatal: "):
+                if ln.startswith(head):
+                    ln = ln[len(head) :]
+                    break
+            if len(ln) > FAILURE_REASON_CHARS:
+                ln = ln[: FAILURE_REASON_CHARS - 1] + "…"
+            return f"{what}: {ln}"
+    return f"{what}: exit {r.returncode}"
+
+
+def failing_notice_text(since: int, why: str) -> str:
+    """체크포인트가 실패하고 있을 때의 패널 안내 줄(사용자 표면 — 영어)."""
+    at = time.strftime("%H:%M", time.localtime(since))
+    return (
+        f"Snapshots have been failing since {at} ({why}). Files changed after that "
+        "may be missing from this list and cannot be restored."
+    )
 
 
 def git_available() -> tuple[bool, str]:
@@ -235,6 +285,63 @@ class GitSnapshot:
             spec.append(f":(exclude){f}")
         return spec
 
+    def _align_index_with_repos(self, env: dict[str, str] | None = None) -> None:
+        """스냅샷 색인(``env`` 의 ``GIT_INDEX_FILE`` — 없으면 실제 색인)의 저장소 경계를 디스크와
+        맞춘다(docs/snapshot/DESIGN.md §9): ``.git`` 이 사라진 gitlink 를 빼고(그러면 ``add`` 가
+        안 파일을 담는다), 일반 파일로 담던 폴더가 커밋 있는 저장소가 됐으면 그 아래 항목을
+        뺀다(그러면 ``add`` 가 gitlink 로 담는다 — 디스크·그 저장소는 그대로). 색인만 고친다 —
+        HEAD·히스토리 불변. 실제 색인이면 부르는 쪽이 ``_lock`` 을 쥔다."""
+        r = self._git("ls-files", "--stage", "-z", env=env)
+        if r.returncode != 0:
+            return
+        drop = index_paths_to_untrack(
+            parse_index(r.stdout),
+            self._nested.is_repo,
+            lambda rel: self._nested.head(rel) is not None,
+        )
+        if drop:
+            self._git(
+                "update-index",
+                "--force-remove",
+                "-z",
+                "--stdin",
+                env=env,
+                input="".join(p + "\0" for p in drop),
+            )
+
+    def _stage_workspace(
+        self, env: dict[str, str] | None = None
+    ) -> tuple[str, list[str]]:
+        """``add -A --force`` — 커밋 없는 하위 저장소(``'<p>/' does not have a commit checked
+        out``)는 **그 호출에서만** pathspec 에서 빼고 다시 한다. 실패 메시지가 곧 목록이라 미리
+        걷지 않는다(평소 비용 0). 반환 ``(실패 이유 또는 "", 뺀 경로)``."""
+        unborn: list[str] = []
+        for _ in range(ADD_RETRY_MAX + 1):
+            r = self._git(
+                "add",
+                "-A",
+                "--force",
+                *self._pathspec(),
+                *(f":(exclude,literal){p}" for p in unborn),
+                env={**(env or {}), "LC_ALL": "C"},
+            )
+            if r.returncode == 0:
+                return "", unborn
+            new = [p for p in _UNBORN_ADD_RE.findall(r.stderr) if p not in unborn]
+            if not new:
+                break
+            unborn += new
+        return git_error_line("git add", r), unborn
+
+    def _note_checkpoint(self, failure: str) -> None:
+        """체크포인트 결과를 ``stats`` 에 — 실패면 이유와 첫 실패 시각, 성공(변경 없음 포함)이면 지운다."""
+        if failure:
+            self.stats.failure = failure
+            if not self.stats.failing_since:
+                self.stats.failing_since = int(time.time())
+        else:
+            self.stats.failure, self.stats.failing_since = "", 0
+
     # ── lifecycle ────────────────────────────────────────────
 
     def init(self, session_id: str | None = None) -> bool:
@@ -329,7 +436,8 @@ class GitSnapshot:
         self, label: str, *, force: bool = False, allow_empty: bool = False
     ) -> str | None:
         """변경 도구 직전 커밋. 변경이 없으면 None(커밋 없음) — ``allow_empty`` 면 변경이
-        없어도 찍는다(세션 시작 경계). 최소 간격 안이면 건너뜀."""
+        없어도 찍는다(세션 시작 경계). 최소 간격 안이면 건너뜀. 실패도 None 이지만 "변경
+        없음" 과 달리 ``stats.failing_since``·``failure`` 에 남는다(성공하면 지운다)."""
         if not self.enabled:
             return None
         if not force and not self.per_turn:
@@ -339,21 +447,27 @@ class GitSnapshot:
             if not force and now - self._last_checkpoint < self.min_interval_s:
                 return None
             self._last_checkpoint = now
-            r = self._git("add", "-A", "--force", *self._pathspec())
-            if r.returncode != 0:
+            self._align_index_with_repos()
+            failure, _ = self._stage_workspace()
+            if failure:
+                self._note_checkpoint(failure)
                 return None
             if not allow_empty:
                 if self.head() is None:
                     staged = self._git("ls-files", "--cached").stdout.strip()
                     if not staged:
+                        self._note_checkpoint("")
                         return None
                 else:
                     q = self._git("diff", "--cached", "--quiet")
                     if q.returncode == 0:
+                        self._note_checkpoint("")
                         return None  # 변화 없음
             c = self._git("commit", "-q", "--allow-empty", "-m", label)
             if c.returncode != 0:
+                self._note_checkpoint(git_error_line("git commit", c))
                 return None
+            self._note_checkpoint("")
             self.stats.commits += 1
             return self.head()
 
@@ -593,29 +707,28 @@ class GitSnapshot:
         r = self._git("update-ref", "--stdin", input="\n".join(lines) + "\n")
         return r.returncode == 0
 
-    def _disk_tree(self, drop: list[str] | tuple[str, ...] = ()) -> str | None:
-        """지금 디스크의 트리 sha — 체크포인트와 같은 pathspec 으로, 임시 색인에서.
+    def _disk_tree(self) -> DiskTree:
+        """지금 디스크의 트리 — 체크포인트와 같은 길(저장소 경계 맞춤 + ``add``)로, 임시 색인에서.
         실제 색인을 복사해 시작한다(stat 캐시라 바뀌지 않은 파일은 다시 해시하지 않는다;
         git 은 색인을 lock 파일 + rename 으로 쓰므로 복사는 늘 온전한 판을 읽는다).
         복사는 **mtime 까지**(``copy2``) — git 은 색인보다 늦지 않은 mtime 의 항목만 내용을
         다시 보므로(racy-git), 새 mtime 의 복사본은 같은 초·같은 크기로 바뀐 파일을
         "그대로" 로 믿는다(실측: `one\ntwo` → `one\nTWO` 가 목록에서 빠졌다).
 
-        ``drop`` 은 임시 색인에서 먼저 지울 항목 — ``.git`` 이 지워진 하위 저장소 자리
-        (일반 폴더 기록). 색인에 gitlink 가 남아 있으면 ``add -A`` 가 그 아래 파일을 담지
-        않는다(실측). 실제 색인은 건드리지 않는다."""
+        저장소 경계 맞춤(:meth:`_align_index_with_repos`)과 커밋 없는 저장소 빼기
+        (:meth:`_stage_workspace`)는 임시 색인에만 — 실제 색인은 건드리지 않는다."""
         tmp = self.git_dir / f"index.changes-{os.getpid()}-{threading.get_ident()}"
         env = {"GIT_INDEX_FILE": str(tmp)}
         try:
             real = self.git_dir / "index"
             if real.is_file():
                 shutil.copy2(real, tmp)
-            if drop and tmp.is_file():
-                self._git("update-index", "--force-remove", "--", *drop, env=env)
-            r = self._git("add", "-A", "--force", *self._pathspec(), env=env)
-            if r.returncode != 0:
-                return None
-            return self._git("write-tree", env=env).stdout.strip() or None
+            self._align_index_with_repos(env)
+            failure, unborn = self._stage_workspace(env)
+            if failure:
+                return DiskTree(None, unborn, failure)
+            tree = self._git("write-tree", env=env).stdout.strip() or None
+            return DiskTree(tree, unborn, "" if tree else "git write-tree failed")
         finally:
             for p in (tmp, tmp.with_name(tmp.name + ".lock")):
                 try:
@@ -650,10 +763,7 @@ class GitSnapshot:
             if ref is None or record is None:
                 return False
             verdicts = {r.path: self._nested.observe(r, r.path) for r in record.repos}
-            drop = [
-                p for p, v in verdicts.items() if v in (Verdict.PLAIN, Verdict.DEGIT)
-            ]
-            tree = self._disk_tree(drop)
+            tree = self._disk_tree().tree
             ws = self._workspace_diff(base[0], tree, record) if tree else None
             if tree is None or ws is None:
                 return False
@@ -663,7 +773,9 @@ class GitSnapshot:
                 if mode == "160000" and not record.find(p)
             )
             now = int(time.time())
-            new, changed = self._nested.reconcile(record, tree, found, now, verdicts)
+            new, changed = self._nested.reconcile(
+                record, tree, found, now, verdicts, base[0]
+            )
             if not changed:
                 return False
             c = self._nested.save(new)
@@ -677,25 +789,34 @@ class GitSnapshot:
     def report(self) -> ChangeReport | None:
         """기준점 ↔ 지금 디스크 — 워크스페이스 파일 + 기록이 있는 하위 저장소 안의 파일,
         하위 저장소 그룹 머리와 안내 줄. 읽기만 한다(기록·ref·실제 색인 불변) — 기록을
-        지금과 맞추는 것은 :meth:`sync_nested_records`. 비교할 수 없으면 None."""
+        지금과 맞추는 것은 :meth:`sync_nested_records`. 비교할 수 없으면 None.
+
+        안내 줄은 기록에 남은 것(기준 잃음 — ✕ 로 닫는다) 앞에 셀 때마다 정하는 것
+        (``dismissable: False`` — 닫을 수 없다): 체크포인트가 실패하고 있음
+        (``snapshot_failing``), 커밋 없는 하위 저장소.
+        지금 디스크를 못 읽으면(``add`` 실패) 마지막 스냅샷(HEAD)까지의 목록 + 실패 안내."""
         base = self.baseline()
         if not base:
             return None
         _, _, record = self._active_record(base)
-        drop = [r.path for r in record.repos if r.kind == "plain"] if record else []
-        tree = self._disk_tree(drop)
+        disk = self._disk_tree()
+        tree = disk.tree or self.head()
         ws = self._workspace_diff(base[0], tree, record) if tree else None
         if tree is None or ws is None:
             return None
+        live = self._live_notices(disk)
         files = entries(*ws)
         if record is None:
-            return ChangeReport(files)
-        for r in record.repos:
+            return ChangeReport(files, notices=live)
+        unborn = set(disk.unborn)
+        shown = [r for r in record.repos if r.path not in unborn]
+        for r in shown:
             files += self._nested.listing(r, tree)
         return ChangeReport(
             files=sorted(files, key=lambda f: f["path"]),
-            repos=[self._nested.group(r) for r in record.repos if r.kind == "repo"],
-            notices=[
+            repos=[self._nested.group(r) for r in shown if r.kind == "repo"],
+            notices=live
+            + [
                 {
                     "repo": n.repo,
                     "cause": n.cause,
@@ -705,6 +826,37 @@ class GitSnapshot:
                 for n in record.notices
             ],
         )
+
+    def _live_notices(self, disk: DiskTree) -> list[dict]:
+        """셀 때마다 정하는 안내 줄 — 체크포인트(또는 이번 셈의 ``add``)가 실패하고 있음,
+        커밋 없는 하위 저장소. 기록에 남지 않으므로 닫을 수 없다(``dismissable`` False)."""
+        out = []
+        since, why = self.stats.failing_since, self.stats.failure
+        if not since and disk.error:
+            since, why = int(time.time()), disk.error
+        if since:
+            out.append(
+                {
+                    "repo": None,
+                    "cause": SNAPSHOT_FAILING,
+                    "text": failing_notice_text(since, why),
+                    "when": since,
+                    "dismissable": False,
+                }
+            )
+        now = int(time.time())
+        for p in disk.unborn:
+            n = Notice(p, Verdict.UNBORN.value, now)
+            out.append(
+                {
+                    "repo": p,
+                    "cause": n.cause,
+                    "text": notice_text(n),
+                    "when": now,
+                    "dismissable": False,
+                }
+            )
+        return out
 
     def changes(self) -> list[dict] | None:
         """기준점 ↔ 지금 디스크의 바뀐 파일 — ``{path, status, added, deleted}``.
@@ -729,11 +881,10 @@ class GitSnapshot:
             return None, self.reason if not self.enabled else "nothing to compare"
         _, _, record = self._active_record(base)
         hit = record.find(rel) if record else None
-        drop = [r.path for r in record.repos if r.kind == "plain"] if record else []
         if hit is not None and hit.kind == "repo":
             text, err = self._nested.diff(hit, rel, None)
         else:
-            tree = self._disk_tree(drop)
+            tree = self._disk_tree().tree
             if not tree:
                 return None, "nothing to compare"
             if hit is not None:
@@ -759,13 +910,9 @@ class GitSnapshot:
             return None
         with self._lock:  # Clear·Undo 끼리의 순서 — ref 들을 함께 옮긴다
             prev = self.baseline()
-            _, _, record = self._active_record(prev)
-            plain = [
-                r.path
-                for r in (record.repos if record else [])
-                if r.kind == "plain" and not self._nested.is_repo(r.path)
-            ]
-            tree = self._disk_tree(plain)
+            # .git 이 지워진 폴더는 새 기준점 트리에 일반 파일로 담긴다(_disk_tree 의 경계 맞춤)
+            # — 일반 폴더 기록이 따로 필요 없다
+            tree = self._disk_tree().tree
             if not tree:
                 return None
             head = self.head()
@@ -779,12 +926,6 @@ class GitSnapshot:
             m = self._nested.snapshot(
                 [(n.path, n.dirty) for n in self._scan_nested()], when
             )
-            # 일반 폴더가 된 자리는 그 아래를 이 기준점으로 — 실제 색인의 gitlink 가 남아
-            # 있어 기록 없이는 그 아래가 다시 안 보인다(_disk_tree 의 drop)
-            for p in plain:
-                if (self.workspace / p).is_dir():
-                    m.repos.append(self._nested.record_plain(p, when, tree))
-            m.repos.sort(key=lambda r: r.path)
             rec = self._nested.save(m)
             keep_prev = prev is not None and prev[1] == "cleared"
             ops = [

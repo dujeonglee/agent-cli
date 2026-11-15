@@ -1336,7 +1336,8 @@ def create_app(server: WebServer) -> FastAPI:
         """바뀐 파일 목록과 기준점 — ``{enabled, baseline:{kind, when, commit}, files,
         repos, notices}``. ``files`` 의 하위 저장소 항목은 ``repo``(그 경로)·요약 줄은
         ``summary``, ``repos`` 는 하위 저장소 그룹 머리, ``notices`` 는 기준을 잃은 저장소의
-        안내 줄(docs/snapshot/DESIGN.md §8). 스냅샷이 꺼진 방은 ``{enabled: false}``.
+        안내 줄(docs/snapshot/DESIGN.md §8)과 셀 때마다 정하는 안내(커밋 없는 저장소·스냅샷
+        실패 — ``dismissable: false``, §9). 스냅샷이 꺼진 방은 ``{enabled: false}``.
         다시 셀 때 하위 저장소 기록을 지금과 맞춘다(기준 잃음·새 저장소)."""
         return await _in_executor(_changes_payload, _changes_store())
 

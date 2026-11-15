@@ -4001,6 +4001,45 @@ class TestChangesEndpoints:
         assert client.get("/api/changes" + q).json()["notices"] == []
         assert client.post(url + q, json={"repo": "git-proj"}).status_code == 404
 
+    def test_unborn_repo_and_failing_snapshots(self, ws):
+        """v10.139.1 — 커밋 없는 하위 저장소는 안내 줄(닫을 수 없음), ``add`` 가 실패하면
+        "꺼짐" 이 아니라 실패 안내 + 마지막 스냅샷까지의 목록."""
+        import os
+        import subprocess
+
+        if os.geteuid() == 0:
+            pytest.skip("root reads unreadable files")
+        w, client, store = ws
+        q = "?token=testtoken"
+        subprocess.run(["git", "init", "-q", str(w / "empty")], check=True)
+        (w / "empty/x").write_text("x\n")
+        (w / "a.py").write_text("one\nTWO\n")
+        got = client.get("/api/changes" + q).json()
+        assert got["enabled"] is True
+        assert [f["path"] for f in got["files"]] == ["a.py"]
+        (n,) = got["notices"]
+        assert n["repo"] == "empty" and n["cause"] == "unborn"
+        assert n["dismissable"] is False
+        url = "/api/changes/notices/dismiss"
+        assert client.post(url + q, json={"repo": "empty"}).status_code == 404
+        assert store.checkpoint("before shell (turn 1)", force=True)
+        bad = w / "zz.bin"
+        bad.write_text("s\n")
+        os.chmod(bad, 0)
+        try:
+            assert store.checkpoint("before shell (turn 2)", force=True) is None
+            (w / "b.txt").write_text("after the failure\n")
+            got = client.get("/api/changes" + q).json()
+            assert got["enabled"] is True  # "Snapshots are off" 가 아니다
+            assert [f["path"] for f in got["files"]] == ["a.py"]  # 마지막 스냅샷까지
+            fail, unborn = got["notices"]
+            assert fail["cause"] == "snapshot_failing" and fail["repo"] is None
+            assert fail["dismissable"] is False
+            assert fail["text"].startswith("Snapshots have been failing since ")
+            assert unborn["cause"] == "unborn"
+        finally:
+            os.chmod(bad, 0o644)
+
     def test_dismiss_needs_a_store(self, server_and_client):
         from agent_cli.snapshot import reset_snapshot
 
