@@ -47,18 +47,29 @@ MAIN_IDLE = "main is idle — press Ctrl+C again within 2s to stop all agents"
 STOPPING_ALL = "■ stopping everything — main and {n} working agent{s}"
 
 
-def stop_for_ctrl_c(scope: str, *, main_stop, registry, say: Callable[[str], None]):
+def stop_for_ctrl_c(
+    scope: str,
+    *,
+    main_stop,
+    registry,
+    say: Callable[[str], None],
+    awaiting_input: bool = False,
+):
     """누름 하나의 범위대로 멈춘다 — 멈출 것이 없으면 ``KeyboardInterrupt``.
 
     ``main_stop`` 은 지금 main 런의 stop Event(한가하면 None), ``registry`` 는 에이전트 레지스트리(없으면
     None), ``say`` 는 사람에게 한 줄. 에이전트 각자의 결과 줄(``■ agt-3 │ stopped by user — …``)은 레지스트리의
-    정지가 따로 찍는다."""
+    정지가 따로 찍는다. ``awaiting_input`` — `ask`·확인 프롬프트가 사람의 입력을 기다리는 중
+    (`Renderer.is_awaiting_input`)이면 종전대로 ``KeyboardInterrupt``: 그 입력 대기는 정지 검사에 닿지 않는다.
+    "전부"(두 번)는 main 을 먼저 멈추고, 그 정지 회신들은 main 을 깨우지 않는다(사용자 결정 — 다음 입력 런에)."""
+    if awaiting_input:
+        raise KeyboardInterrupt
     working = bool(registry is not None and registry.working_agents())
     main_running = main_stop is not None and not main_stop.is_set()
     if scope == ALL and (working or main_running):
-        n = len(registry.stop_all_runs()) if registry is not None else 0
         if main_stop is not None:
             main_stop.set()
+        n = len(registry.stop_all_runs(wakes_main=False)) if registry is not None else 0
         say(STOPPING_ALL.format(n=n, s="" if n == 1 else "s"))
         return
     if main_running:

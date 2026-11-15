@@ -237,7 +237,8 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice=None, parent_ctx=N
     노브가 restore/auto_spawn 의 게이트이기 때문이다 (v10.43.0)."""
     from agent_cli.subagent.agents_live import MailWaker
 
-    waker = MailWaker(enqueue_wake, registry.has_pending_replies)
+    # 깨울 메일만 센다 — "Stop everything" 의 정지 회신(``wakes_main`` 거짓)은 다음 사람 입력 런에 (v10.142.0)
+    waker = MailWaker(enqueue_wake, registry.has_mail_that_wakes_main)
 
     def _on_agent_mail(reply: dict) -> None:
         # ``on_mail_notice(reply, busy)`` — CLI 만 건다(v10.51.0): main 이 바쁠
@@ -245,7 +246,8 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice=None, parent_ctx=N
         # 대기열에 사용자 요청과 같은 줄로 선다(`registry.on_pending_change`).
         if on_mail_notice is not None:
             on_mail_notice(reply, not waker.idle.is_set())
-        waker.on_mail()
+        if reply.get("wakes_main", True):
+            waker.on_mail()
 
     registry.on_reply = _on_agent_mail
     # P3 (D7): resume 세션이면 이전 에이전트 자동 재생성 + 미배달 회신

@@ -134,10 +134,15 @@ Do not redo this work unless the user asks.
 
 - 웹: 채널 머리(`#ov-chhead`)의 `■ Stop run` · `✕ Remove`(끝난 run 은 머리 없음). 입력창 옆 정지 버튼은 하나 — main 만 바쁘면
   `Stop`, 에이전트도 일하면 `Stop ▾`(본체 = main, ▾ = Stop main · Stop all agents · Stop everything), main 이 한가하고
-  에이전트만 일하면 `Send` 그대로 + 채널 줄 끝 `■ all`. API: `POST /api/agent/<key>/stop`, `POST /api/stop` 의 `scope`
+  에이전트만 일하면 `Send` 그대로 + 채널 줄 끝 `■ all`. **Stop everything 의 정지 회신만은 main 을 깨우지 않는다**
+  (사용자 결정 — 메일 단위 표시 `wakes_main: false`, `MailWaker`·`run` 의 정지 판정은 `has_mail_that_wakes_main` 을
+  본다): main 메일함에 쌓였다가 사람의 다음 입력 런에 함께 배달되고, `run` 은 조용해지면 끝난다(회신은 agents.json 미러에
+  남는다). Stop all agents·채널 ■/✕ 의 회신은 main 을 깨운다. API: `POST /api/agent/<key>/stop`, `POST /api/stop` 의 `scope`
   (`main`·`agents`·`all`), ✕ 는 종전 `POST /api/agent/<key>/kill`.
 - CLI: `/stop <key|name>`·`/stop all`(main 은 멈추지 않는다), Ctrl+C 한 번 = main 의 런, 2초 안에 두 번 = 전부(`ctrl_c.py`,
-  주입 시계). 멈출 것이 없으면 종전처럼 중단(130), main 이 멈추는 중에 창 밖에서 또 누르면 강제 종료(긴 도구의 탈출구).
+  주입 시계). 두 번은 Stop everything 과 같다(회신이 main 을 깨우지 않는다). 멈출 것이 없으면 종전처럼 중단(130),
+  `ask`·확인 프롬프트가 입력을 기다리는 중이면 종전대로 그 입력을 끊고(`Renderer.is_awaiting_input`), main 이 멈추는
+  중에 창 밖에서 또 누르면 강제 종료(긴 도구의 탈출구).
   정지마다 한 줄: `■ agt-3 │ stopped by user — reply sent to main (r-21)`.
 - `@agent` 명령을 기다리다 main 이 멈추면 run 은 계속하고 명령의 답은 "stopped waiting — agent … keeps working; its reply
   [r-…] arrives as mail" 이다.
