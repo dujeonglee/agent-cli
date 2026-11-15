@@ -477,6 +477,15 @@ body.multi-viewer .card-user .who {
   overflow-wrap: anywhere;
   min-width: 0;
 }
+/* 접힘·펼침이 같은 글자로 (v10.143.0) — 펼칠 본문이 있는 줄의 요약은 **그 본문의 서식**을 쓴다. 종전엔 요약이
+   시스템 글꼴 13px·흐린 색이고 펼친 관찰은 고정폭 12px·본문 색이라, 눌러 펴면 같은 첫 줄이 다른 글자로 바뀌었다.
+   색은 둘 다 본문 색(읽으려고 펴는 것이라 흐리게 하지 않는다). 고정폭 본문(관찰 <pre>·행동 상세)이면 요약도 고정폭
+   12px, 마크다운 본문이면 시스템 글꼴 그대로. 생각 줄의 흐림·기울임은 아래 `.row.think .s` 가 그대로 지킨다. */
+.row:has(> .row-body) > .s { color: var(--text); }
+.row:has(> pre.row-body, > .action-detail.row-body, > .row-body > pre.obs-body) > .s {
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+}
 /* ▸ 는 **펼칠 게 있는 줄에만**. 없는 줄에 뜨면 눌러도 아무 일이 없어
    고장난 버튼으로 읽힌다. */
 .row .x { font: 10px "Jetendard", ui-monospace, monospace; color: var(--muted); opacity: 0; }
@@ -502,7 +511,7 @@ body.multi-viewer .card-user .who {
 .card-assistant.step.open > .step-why { display: none; }
 /* 최종답 카드의 생각은 펼쳐 두되 답보다 흐리게 — 답이 먼저 읽힌다. 펼친 동안
    요약 칸이 숨는 것은 모든 줄의 규칙이다(아래 `.row.open:has(> .row-body)`). */
-.row.final-think .row-body { color: var(--muted); font-size: .94em; }
+.row.final-think .row-body, .row.final-think > .s { color: var(--muted); font-size: .94em; }
 /* 머리 행의 펼침 표시는 **항상 보인다**(`.row.can` 은 hover 에만 보인다).
    스텝 카드의 존재 이유가 '펼치면 더 있다' 라서, 표시가 hover 에만 있으면
    그냥 한 줄로 읽히고 아무도 펼치지 않는다. */
