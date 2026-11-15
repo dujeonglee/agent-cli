@@ -1,6 +1,6 @@
 """서브에이전트 공용 러너 (teammate P0, v4.53.0).
 
-종류들(`OneShotLoop`·`ResidentLoop`·`SkillLoop`·`HarnessLoop`)이 공유하는 두 단계를 소유한다
+종류들(`RunAgentLoop`·`ResidentLoop`·`SkillLoop`·`HarnessLoop`)이 공유하는 두 단계를 소유한다
 (셋째 단계였던 ``run_subagent_message`` 는 v10.87.0 에 `LoopKind.run` 으로 들어갔다):
 
 1. :func:`apply_role_overrides` — 역할 md 의 config(frontmatter)를 명시

@@ -6,11 +6,6 @@ output format, persistence, iterations, and integration.
 
 from __future__ import annotations
 
-from agent_cli.subagent.oneshot import (  # noqa: F401
-    OneShotLoop,
-    _run_parallel,
-    tool_delegate,
-)
 from agent_cli.subagent.report import (
     DelegateResult,
     _extract_activity_log,
@@ -19,7 +14,7 @@ from agent_cli.subagent.report import (
     _summarize_action,
 )
 from tests.binding_support import make_binding
-from tests.loop_kinds import make_caller
+from tests.loop_kinds import make_caller, run_task
 
 # ── Test helpers ─────────────────────────────────────────────
 # Fixtures produce the REAL on-disk assistant record shapes the extractors
@@ -525,7 +520,7 @@ class TestIterationsAreTurnsRun:
 
             from agent_cli.providers.capabilities import ModelCapabilities
 
-            r = OneShotLoop(
+            r = run_task(
                 {"task": "t"},
                 make_caller(
                     binding=make_binding(
@@ -536,8 +531,7 @@ class TestIterationsAreTurnsRun:
                     ctx=None,
                     session=None,
                 ),
-                run_dir_name="run_x",
-            ).run()
+            )
         text = r.error or r.output
         assert "... and 40 more" in text  # 로그는 여전히 20줄로 잘린다
         assert "[Subagent used 60 iterations]" in text

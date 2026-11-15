@@ -29,7 +29,7 @@ class TestCodeAnalystAgent:
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
         """@code-analyst reads a file and explains it."""
-        from agent_cli.subagent.oneshot import tool_delegate
+        from tests.loop_kinds import run_tasks
 
         test_file = tmp_path / "calculator.py"
         test_file.write_text(
@@ -37,7 +37,7 @@ class TestCodeAnalystAgent:
             "def multiply(a, b):\n    return a * b\n"
         )
 
-        result = tool_delegate(
+        result = run_tasks(
             {
                 "tasks": [
                     {
@@ -67,12 +67,12 @@ class TestCodeAnalystAgent:
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
         """code-analyst agent should only use read_file and shell (no writes)."""
-        from agent_cli.subagent.oneshot import tool_delegate
+        from tests.loop_kinds import run_tasks
 
         test_file = tmp_path / "data.txt"
         test_file.write_text("Hello World")
 
-        result = tool_delegate(
+        result = run_tasks(
             {
                 "tasks": [
                     {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
 from contextlib import contextmanager
@@ -192,10 +193,8 @@ _THINK_FRAMES = _pad_to_width(_THINK_FRAMES_RAW)
 class FrameClock:
     """Time-throttled cyclic frame advancer.
 
-    Single source of truth for the animation cadence: both
-    `spinner_start()` (single-task thinking spinner) and the
-    parallel-delegate Live panel call this so they advance frames at
-    exactly the same rate. `current()` is meant to be called from a
+    Single source of truth for the animation cadence of
+    `spinner_start()` (the thinking spinner). `current()` is meant to be called from a
     repaint callback — it returns the frame to draw *now*, advancing
     only if `_FRAME_INTERVAL` has elapsed since the last advance.
     """
@@ -237,6 +236,45 @@ def _truncate_to_width(text: str, max_width: int) -> str:
     return "…" + text
 
 
+_AGENT_LINE_WIDTH = 72  # 에이전트 줄 한 칸의 글자 상한 (요약·과제 첫 줄)
+
+
+def _one_line(text: str) -> str:
+    """여러 줄 글 → 첫 줄(공백 정리) 하나, 상한에서 자른다."""
+    first = next((ln.strip() for ln in str(text or "").splitlines() if ln.strip()), "")
+    first = " ".join(first.split())
+    return (
+        first
+        if len(first) <= _AGENT_LINE_WIDTH
+        else first[: _AGENT_LINE_WIDTH - 1] + "…"
+    )
+
+
+def _step_summary(tool_input: str) -> str:
+    """도구 호출 입력(JSON 글) → 한 줄 요약. 사람이 고른 값 하나(명령·경로·URL·과제…)가
+    있으면 그것, 없으면 JSON 그대로를 한 줄로."""
+    try:
+        args = json.loads(tool_input) if tool_input else {}
+    except (TypeError, ValueError):
+        return _one_line(tool_input)
+    if isinstance(args, dict):
+        for k in (
+            "command",
+            "path",
+            "url",
+            "query",
+            "pattern",
+            "task",
+            "message",
+            "to",
+        ):
+            v = args.get(k)
+            if isinstance(v, str) and v.strip():
+                return _one_line(v)
+        return _one_line(json.dumps(args, ensure_ascii=False)) if args else ""
+    return _one_line(str(args))
+
+
 class MinimalRenderer(Renderer):
     """Clean indented output with icons, no boxes or color-dependent structure.
 
@@ -267,38 +305,10 @@ class MinimalRenderer(Renderer):
         self._think_buf = ""
         self._tool_buf = ""  # v10.70.0: 호출 조각(native_fc) 채널
         self._last_frame_time = 0.0
-        # Parallel-delegate orchestration. Owned entirely by
-        # MinimalRenderer (was previously driven from tool_delegate
-        # via the parallel_live_panel context manager). The Live
-        # region starts when the first ``begin_delegate_task`` fires
-        # and stops when the last ``end_delegate_task`` fires; the
-        # delegate tool only signals lifecycle via begin/end markers
-        # now, not the panel context manager or the capture pair.
-        #
-        # Why ``RLock`` instead of ``Lock``: ``begin_delegate_task``
-        # constructs a ``rich.Live(get_renderable=...)`` while
-        # holding this lock, and rich.Live's constructor invokes
-        # ``get_renderable()`` once SYNCHRONOUSLY to seed the first
-        # paint. That callable is ``_render_parallel_panel``, which
-        # itself re-acquires the same lock to snapshot per-task
-        # state. With a non-reentrant ``threading.Lock`` the same
-        # thread blocks on its own held lock — a self-deadlock that
-        # surfaces immediately on real terminals (the bug the user
-        # reported with 8 parallel delegate tasks hanging). A
-        # reentrant ``RLock`` lets the same thread re-acquire, so
-        # the constructor's synchronous probe completes and rich
-        # gets its initial renderable.
-        self._parallel_lock = threading.RLock()
-        self._parallel_live: Live | None = None
-        self._parallel_clock: FrameClock | None = None
-        # task_id → dict with keys: index, agent, task, tid, done,
-        # success, duration_s, captured (list[str])
-        self._parallel_tasks: dict[str, dict] = {}
-        # Registration order for the post-completion dump — the
-        # ``_parallel_tasks`` dict's insertion order matches but we
-        # keep an explicit list for clarity and stability across
-        # future dict-mutation refactors.
-        self._parallel_order: list[str] = []
+        # 에이전트 줄 (docs/agent-engine/DESIGN.md §6) — 에이전트 스레드 → 그 키와 지금
+        # 실행 중인 도구 호출 하나. `begin_agent_work`/`end_agent_work` 가 쌍으로 쓴다.
+        self._agent_lines: dict[int, dict] = {}
+        self._agent_lock = threading.Lock()
         # 직전 장부 스냅샷 (v10.119.0) — 같은 것이 연달아 오면 줄을 다시 찍지 않는다.
         self._last_open_items: dict | None = None
         # 마지막으로 찍은 제자리 고리 발화 수 (v10.120.0) — 발화마다 한 줄, N 갱신엔 안 찍는다.
@@ -387,6 +397,7 @@ class MinimalRenderer(Renderer):
 
     def action(self, tool_name: str, tool_input: str, turn: int) -> None:
         self.note_action(tool_name, tool_input)
+        self._note_agent_step(tool_name, tool_input)
         display = tool_input[:200] + "..." if len(tool_input) > 200 else tool_input
         self._p(f"  ⚡ {tool_name} → {display}", highlight=False, markup=False)
 
@@ -399,6 +410,7 @@ class MinimalRenderer(Renderer):
         images: list[dict] | None = None,
     ) -> None:
         # ``images`` 는 쓰지 않는다 — 콘솔은 content 의 자리표시 줄을 🖼 로 찍는다.
+        self._print_agent_step(tool_name, success)
         status = "success" if success else "error"
         icon = "✓" if success else "✗"
         tool_label = f" {tool_name}" if tool_name else ""
@@ -617,8 +629,7 @@ class MinimalRenderer(Renderer):
             # `_THINK_FRAMES` are self-describing (face + thought bubble
             # progression), so a `message` is optional — only prepended
             # when callers want to add context (e.g. "loading model").
-            # `FrameClock` enforces the shared `_FRAME_INTERVAL` cadence
-            # used here AND by the parallel-delegate Live panel.
+            # `FrameClock` enforces the shared `_FRAME_INTERVAL` cadence.
             clock = FrameClock(_THINK_FRAMES)
 
             def get_renderable():
@@ -658,8 +669,9 @@ class MinimalRenderer(Renderer):
     ) -> None:
         """Enter a nested scope. Same abstraction surface as web; CLI display
         adapts to ``kind`` — a skill draws a ``┌─ 🪄`` bracket at the current
-        depth (caller then push_depth); a delegate/one-shot ``run`` drives the
-        rich.Live worker panel.
+        depth (caller then push_depth); a harness job captures its thread and
+        prints one line at the end. Agents (run·resident) do not come here —
+        they print agent lines (`begin_agent_work`).
 
         ``parent``/``ts``/``ctx_dir`` are accepted and ignored: the CLI already encodes
         nesting as depth indentation (``_prefix``) and prints in arrival order,
@@ -676,10 +688,6 @@ class MinimalRenderer(Renderer):
             self._scope_labels[task_id] = f"{agent} · {label}" if agent else label
             self.start_capture()
             self.set_thread_agent(agent or label)
-        else:
-            self._begin_delegate_panel(
-                task_id=task_id, index=index, agent=agent, task_text=label
-            )
 
     def end_scope(
         self,
@@ -690,8 +698,8 @@ class MinimalRenderer(Renderer):
         duration_s: float = 0.0,
         error: str = "",
     ) -> None:
-        """Leave a scope. Skill prints ``└─ ✓`` (call AFTER pop_depth); a run
-        finalises the Live panel."""
+        """Leave a scope. Skill prints ``└─ ✓`` (call AFTER pop_depth); a harness
+        job prints its one line."""
         label = getattr(self, "_scope_labels", {}).pop(task_id, "")
         if kind == "skill":
             status = "✓" if success else "✗"
@@ -703,10 +711,6 @@ class MinimalRenderer(Renderer):
             status = "✓" if success else "✗"
             dur = f" ({duration_s:.1f}s)" if duration_s > 0 else ""
             self._p(f"🔎 {label} {status}{dur}", highlight=False)
-        else:
-            self._end_delegate_panel(
-                task_id=task_id, success=success, duration_s=duration_s, error=error
-            )
 
     def _erase_reflowed_marquee(self) -> None:
         """If the terminal shrank since the last paint, the previous
@@ -929,12 +933,12 @@ class MinimalRenderer(Renderer):
 
     @contextmanager
     def _prompt_display_guard(self):
-        """Pause an active Live region (spinner / parallel-delegate panel)
+        """Pause an active Live region (the spinner)
         for the duration of a user read, then resume — otherwise Rich's
         repaint loop overwrites the prompt and the user sees a frozen panel
         with no question. Used by both ``confirm`` and ``prompt_user`` via
         ``_guarded_read``."""
-        live = self._parallel_live or self._live
+        live = self._live
         paused = False
         if live is not None:
             try:
@@ -1024,215 +1028,11 @@ class MinimalRenderer(Renderer):
         # user's intent surfaces upstream (e.g. tool result observation).
         return (default_key, raw)
 
-    # ── Parallel delegate panel (begin/end-driven) ────
-
-    def _render_parallel_panel(self) -> Text:
-        """Build the multi-task progress region for the Live refresh.
-
-        Reads ``_parallel_tasks`` under ``_parallel_lock`` so a
-        mid-frame mutation (worker finishing) can't corrupt the
-        drawn state. The per-task status line is fetched from the
-        base ``_thread_status`` dict via ``get_thread_status(tid)``
-        — same source the previous panel implementation polled, so
-        no behavioural change.
-
-        ``_parallel_clock.current()`` advances the animation frame
-        at the throttled cadence shared with ``spinner_start``.
-        """
-        with self._parallel_lock:
-            snapshot = [
-                (tid, dict(self._parallel_tasks[tid])) for tid in self._parallel_order
-            ]
-        lines = [Text(f"Running {len(snapshot)} tasks in parallel:", style="grey46")]
-        frame = self._parallel_clock.current() if self._parallel_clock else "..."
-        for _tid, t in snapshot:
-            label = (
-                f"[{t['index'] + 1}] {t['agent']}: {t['task']}"
-                if t["agent"]
-                else f"[{t['index'] + 1}] {t['task']}"
-            )
-            if t["done"]:
-                icon = "✓" if t["success"] else "✗"
-                lines.append(
-                    Text(
-                        f"  {icon} {label} ({t['duration_s']:.1f}s)",
-                        style="grey46",
-                    )
-                )
-            else:
-                status = self.get_thread_status(t["tid"])
-                lines.append(Text(f"  {frame} {label}", style="grey46"))
-                lines.append(Text(f"       {status}", style="grey46"))
-        return Text("\n").join(lines)
-
-    def _begin_delegate_panel(
-        self,
-        *,
-        task_id: str,
-        index: int,
-        agent: str,
-        task_text: str,
-    ) -> None:
-        """Register a worker thread into the live panel + start
-        capturing its output. First call starts the ``rich.Live``
-        region; subsequent calls just register their card.
-
-        Called from inside the worker thread (i.e. the thread that
-        will run ``OneShotLoop.run`` next), so ``start_capture()`` here
-        attaches the capture buffer to the correct thread without
-        the caller needing a separate ``render_start_capture()``.
-        """
-        # The Live region's ``start()`` synchronously calls
-        # ``get_renderable`` once to seed the first paint —
-        # ``_render_parallel_panel`` then tries to acquire
-        # ``_parallel_lock`` to snapshot state. If we did
-        # ``live.start()`` while STILL holding ``_parallel_lock``,
-        # the same thread would block on its own non-reentrant
-        # ``threading.Lock`` and the whole worker would hang. So we
-        # construct the Live + register state under the lock, but
-        # release the lock BEFORE calling ``start()``.
-        new_live: Live | None = None
-        with self._parallel_lock:
-            if self._parallel_live is None and self.con.is_terminal:
-                # First task on a real terminal — bring the panel up.
-                # ``transient=True`` so the live region clears on stop
-                # and the captured output dump owns the terminal space
-                # afterwards. When ``is_terminal`` is False (unit tests
-                # with StringIO, headless redirected runs) we skip the
-                # Live region entirely: the panel would have nowhere
-                # to render and rich's refresh thread can hang on
-                # output-blocking writes against a non-tty backend.
-                # Task state and capture machinery still run so the
-                # captured-output dump in ``end_delegate_task`` works
-                # the same way.
-                self._parallel_clock = FrameClock(_THINK_FRAMES)
-                # Static placeholder as the initial renderable —
-                # ``get_renderable`` (the callable below) is the
-                # source of truth on every refresh tick. ``start()``
-                # below will fire ``get_renderable`` once
-                # synchronously to draw frame 0; the lock is
-                # released by then so re-acquisition is safe.
-                new_live = Live(
-                    Text(""),
-                    console=self.con,
-                    refresh_per_second=8,
-                    transient=True,
-                    get_renderable=self._render_parallel_panel,
-                )
-                self._parallel_live = new_live
-            if not self._parallel_order:
-                # Fresh dump order for this parallel set (first task
-                # of a new fan-out, regardless of whether the Live
-                # region is active).
-                self._parallel_order = []
-            self._parallel_tasks[task_id] = {
-                "index": index,
-                "agent": agent,
-                "task": task_text,
-                "tid": threading.get_ident(),
-                "done": False,
-                "success": None,
-                "duration_s": 0.0,
-                "status": "",
-                "captured": [],
-            }
-            self._parallel_order.append(task_id)
-        # Outside the lock: ``start()`` does a synchronous first-
-        # paint via ``get_renderable``, which re-acquires the
-        # ``_parallel_lock``. Calling it after the ``with`` block
-        # avoids the self-deadlock.
-        if new_live is not None:
-            new_live.start()
-        # ``start_capture`` writes to ``self._captures`` under the
-        # base lock; safe to call outside the panel lock.
-        self.start_capture()
-        # Tag this worker thread so a confirm/ask it triggers can name it.
-        self.set_thread_agent(agent or f"task #{index + 1}")
-
-    def _end_delegate_panel(
-        self,
-        *,
-        task_id: str,
-        success: bool,
-        duration_s: float,
-        error: str = "",
-    ) -> None:
-        """Finalise a worker thread: stop its capture, mark its card
-        done. When this is the LAST outstanding task, tear down the
-        Live region and dump the captured output in registration
-        order so the user sees per-task transcripts after the panel
-        clears.
-        """
-        captured = self.stop_capture()
-        self.set_thread_agent("")  # worker's prompt label no longer applies
-        should_stop = False
-        with self._parallel_lock:
-            state = self._parallel_tasks.get(task_id)
-            if state is not None:
-                state["done"] = True
-                state["success"] = success
-                state["duration_s"] = duration_s
-                state["captured"] = captured
-                if error:
-                    state["error"] = error
-            # All tasks in this set are done?
-            if all(self._parallel_tasks[tid]["done"] for tid in self._parallel_order):
-                should_stop = True
-        if not should_stop:
-            return
-        # Tear down outside the lock — ``Live.stop`` joins the
-        # refresh thread, which could otherwise contend with our
-        # lock if it's mid-render.
-        live = self._parallel_live
-        self._parallel_live = None
-        self._parallel_clock = None
-        if live is not None:
-            live.stop()
-        # Replay each task's captured output wrapped in the group
-        # framing the user would have seen if the worker ran live —
-        # ``[N] agent: task`` opening header, indented body, closing
-        # header with ✓/✗ and duration. This was previously the
-        # delegate tool's job after the parallel_live_panel exited;
-        # now the renderer owns the whole presentation so the tool
-        # layer only needs to signal begin/end.
-        with self._parallel_lock:
-            order_snapshot = list(self._parallel_order)
-            task_snapshot = {
-                tid: dict(self._parallel_tasks[tid]) for tid in order_snapshot
-            }
-        for tid in order_snapshot:
-            t = task_snapshot[tid]
-            task_text = (t["task"] or "")[:40]
-            agent = t["agent"]
-            label = (
-                f"[{t['index'] + 1}] {agent}: {task_text}"
-                if agent
-                else f"[{t['index'] + 1}] {task_text}"
-            )
-            # Frame each captured task dump with ┌─/└─ brackets (was
-            # group_start/group_end before the scope unification — inlined here
-            # since this per-task dump framing is internal to the panel, not a
-            # scope boundary).
-            self._p(f"┌─ 🦀 {label}", highlight=False, markup=False)
-            self.push_depth()
-            prefix = self._prefix
-            for line in t["captured"]:
-                self.con.print(f"{prefix}{line}", highlight=False, markup=False)
-            self.pop_depth()
-            _status = "✓" if t["success"] else "✗"
-            _dur = f" ({t['duration_s']:.1f}s)" if t["duration_s"] > 0 else ""
-            self._p(f"└─ {_status} {label}{_dur}", highlight=False, markup=False)
-        # Reset registration state for the next parallel set.
-        with self._parallel_lock:
-            for tid in order_snapshot:
-                self._parallel_tasks.pop(tid, None)
-            self._parallel_order = []
-
-    # ── teammate 요청별 표시 (P1) ────────────────────
-    # CLI 에서 teammate worker 는 main run 과 동시에(또는 main idle 중에)
-    # 돌 수 있어 라이브 출력을 그대로 흘리면 터미널이 섞인다 — per-thread
-    # 캡처로 억제하고 버린다. 상주 에이전트 활동은 회신 배달(관찰 카드)과
-    # 📨 도착 알림·agents/<key>/ 세션 기록으로만 표면화 (P1 결정).
+    # ── 에이전트 줄 (docs/agent-engine/DESIGN.md §6) ─────────────
+    # 에이전트(run·상주)는 자기 스레드에서 main 과 동시에 돈다. 그 스레드의 평소 출력은
+    # 캡처해 버리고(전문은 그 에이전트의 세션 디렉터리에), 런의 시작·끝과 끝난 도구 호출마다
+    # 한 줄씩 **오는 순서대로** 섞어 찍는다 — 모았다가 통째로 찍지 않는다:
+    #   ``  agt-3a1b2c4d │ shell  rg -n parse_tokens src/  ✓``
 
     def begin_agent_work(
         self,
@@ -1243,9 +1043,15 @@ class MinimalRenderer(Renderer):
         message: str,
         req_ts: float | str | None = None,
         items: list[str] | None = None,
+        ctx_dir: str | None = None,
+        caller_task: str | None = None,
     ) -> None:
         self.start_capture()
         self.set_thread_agent(profile or key)
+        with self._agent_lock:
+            self._agent_lines[threading.get_ident()] = {"key": key, "step": None}
+        who = f"{profile} · " if profile else ""
+        self._print_agent_line(key, f"▶ {who}{_one_line(message)}")
 
     def end_agent_work(
         self,
@@ -1256,8 +1062,39 @@ class MinimalRenderer(Renderer):
         duration_s: float,
         error: str = "",
     ) -> None:
-        self.stop_capture()  # 캡처 폐기 — 전문은 teammate 세션 디렉토리에
+        self.stop_capture()  # 캡처 폐기 — 전문은 에이전트 세션 디렉토리에
         self.set_thread_agent("")
+        with self._agent_lock:
+            self._agent_lines.pop(threading.get_ident(), None)
+        dur = f" ({duration_s:.1f}s)" if duration_s > 0 else ""
+        tail = "done" if success else (_one_line(error) or "failed")
+        self._print_agent_line(key, f"{'✓' if success else '✗'} {tail}{dur}")
+
+    def _note_agent_step(self, tool_name: str, tool_input: str) -> None:
+        """에이전트 스레드면 지금 시작한 도구 호출을 적어 둔다 — 결과가 오면 한 줄이 된다."""
+        with self._agent_lock:
+            line = self._agent_lines.get(threading.get_ident())
+            if line is not None:
+                line["step"] = (tool_name, _step_summary(tool_input))
+
+    def _print_agent_step(self, tool_name: str | None, success: bool) -> None:
+        """에이전트 스레드의 도구 결과 → ``key │ 도구  요약  ✓`` 한 줄(캡처를 거치지 않는다)."""
+        with self._agent_lock:
+            line = self._agent_lines.get(threading.get_ident())
+            if line is None:
+                return
+            name, summary = line["step"] or (tool_name or "", "")
+            line["step"] = None
+            key = line["key"]
+        if not name:
+            return
+        body = f"{name}  {summary}" if summary else name
+        self._print_agent_line(key, f"{body}  {'✓' if success else '✗'}")
+
+    def _print_agent_line(self, key: str, text: str) -> None:
+        self.con.print(
+            f"  {key} │ {text}", markup=False, highlight=False, soft_wrap=True
+        )
 
     def agent_message(
         self,

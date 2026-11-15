@@ -949,11 +949,11 @@ class TurnDispatcher:
         """Dispatch a run of ≥2 consecutive parallel_safe ops concurrently,
         appending ONE combined result to *accumulate*.
 
-        Only ``delegate`` is wired today (the sole ``parallel_safe`` tool): each
-        op's flat input becomes one task spec → ``tool_delegate({tasks:[...]})``
-        → ``_run_parallel`` (real threading). This is what makes the prompt's
-        "several delegate ops in one turn run in parallel" actually true (the
-        N-op loop is otherwise sequential).
+        Only ``agent`` run is wired today (the sole ``parallel_safe`` tool): each
+        op's flat input becomes one task spec → ``run_agents({tasks:[...]})``
+        → one run agent per task, each on its own thread. This is what makes
+        the prompt's "several run ops in one turn run in parallel" actually
+        true (the N-op loop is otherwise sequential).
 
         A future read-only ``parallel_safe`` tool with no internal concurrent
         engine would fan its ops over a thread-pool of per-op ``run()`` calls

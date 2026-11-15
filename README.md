@@ -119,7 +119,7 @@ agent-cli web --resume <id>                          # 그 세션을 브라우�
 | `agent-cli run /help` | 채팅에서 쓰는 명령 목록 ([레퍼런스](docs/REFERENCE.md#run--단발-실행)) |
 | `agent-cli run "/sh ls -la"` | 모델을 거치지 않고 셸 명령을 바로 실행 ([레퍼런스](docs/REFERENCE.md#run--단발-실행)) |
 | `/skills`, `/plan <기능>` | 저장해 둔 프롬프트 스킬을 보고 부르기 ([레퍼런스](docs/REFERENCE.md#스킬-prompt-skills)) |
-| `@agents`, `@<에이전트> <작업>` | 전문 에이전트에게 일을 맡기기 ([레퍼런스](docs/REFERENCE.md#agent--서브에이전트-일회성-run--상주-spawn)) |
+| `@agents`, `@<에이전트> <작업>` | 전문 에이전트에게 일을 맡기기 ([레퍼런스](docs/REFERENCE.md#agent--서브에이전트-run--상주-spawn)) |
 | 웹 방의 ⏰ | 정해진 시각마다 요청을 자동으로 넣기 ([레퍼런스](docs/REFERENCE.md#-schedule--예약-실행)) |
 | `agent-cli stats` | 턴 기록을 숫자로만 요약 ([레퍼런스](docs/REFERENCE.md#stats--본문-없는-집계-v101300)) |
 | `agent-cli knobs` | 세션 노브의 플래그·환경변수·웹 칩을 한 표로 ([레퍼런스](docs/REFERENCE.md#knobs--노브-표)) |

@@ -894,7 +894,8 @@ class TestNestedBlocks:
             return page.locator(f'[data-task-id="{tid}"]').get_attribute("class")
 
         assert "scope-skill" in cls("sk1")
-        assert "scope-inline" in cls("in1")
+        # run 은 채널이 됐다(v10.140.0) — 채널 표식 없는 옛 run 기록은 레일 없는 카드
+        assert "scope-" not in cls("in1") and "card-task-group" in cls("in1")
         # 상주 에이전트의 런은 접히는 스코프 카드가 아니라 **런 블록**이다
         # (v9.23.0) — 레일은 있되 카드 종류가 다르다.
         run = page.locator(f'[data-task-id="{AGT}#u-1"]')

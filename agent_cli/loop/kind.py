@@ -13,8 +13,8 @@
   묻는다 — PR 1 의 엔진은 종전 플래그를 그대로 읽는다.
 
 다섯 구현은 각자의 영역에 있다: `runtime.MainLoop` · `subagent.resident_loop.ResidentLoop` ·
-`subagent.oneshot.OneShotLoop` · `skills.executor.SkillLoop` · `harness.jobs.HarnessLoop`.
-스레드와 수명(펌프·워커·작업 스레드·병렬 one-shot)은 종류 밖 — 호스트의 것이다. 주소는
+`subagent.run_agent.RunAgentLoop` · `skills.executor.SkillLoop` · `harness.jobs.HarnessLoop`.
+스레드와 수명(펌프·에이전트 스레드·작업 스레드)은 종류 밖 — 호스트의 것이다. 주소는
 문자열 그대로라 레지스트리의 라우팅(`deliver`·`fire_checkin`·`arrived_for`)은 바뀌지 않는다.
 
 엔진 호출은 ``engine(kind, start, ctx) -> (ToolResult, secs)`` 한 모양 (v10.132.0) — 엔진이

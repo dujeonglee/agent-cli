@@ -133,7 +133,7 @@ class ToolBridge:
         each stage owns.
         """
         # Wire keys are namespaced ``{tool}_{param}``. Strip to standard
-        # keys once here so delegate's direct ``tool_delegate()`` call and
+        # keys once here so the run host (``run_agents``) and
         # the hooks all see standard keys; ``_execute_tool``'s own strip is
         # then a no-op on the already-stripped result.
         if tool_name in TOOLS and isinstance(tool_input, dict):
@@ -354,10 +354,10 @@ class ToolBridge:
         배선이 필요해 여기서 가로챈다.
 
         - ``{"tasks":[...]}`` : 배치 디스패처가 조립한 run fan-out →
-          일회성 병렬 엔진(tool_delegate 경로)으로. OnAgentStart/End 훅이
-          엔진 실행을 감싼다 (구 delegate 훅 승계 — run 에만 발화;
+          run 에이전트 여럿(`subagent.run_agent.run_agents`). OnAgentStart/End
+          훅이 그 실행을 감싼다 (구 delegate 훅 승계 — run 에만 발화;
           상주 모드는 일반 PreToolUse/PostToolUse 로 충분).
-        - ``engine="oneshot"`` 모드(run) 단건 : 같은 엔진의 단건 경로.
+        - ``engine="run"`` 모드 단건 : 같은 호스트의 단건.
         - 그 외(상주 모드) : tool_agent(레지스트리) — 레지스트리 없는
           루프에서는 tool_agent 가 "main 전용" 에러로 거부 (모드 축소).
 
@@ -367,17 +367,17 @@ class ToolBridge:
         (루프 경로에서는 validate 가 A5 로 먼저 거른다 — 여기 도달은
         직접 호출자/테스트뿐).
         """
-        # 함수-로컬 import — 호출 시점에 oneshot 모듈 attr 을 읽는 테스트
+        # 함수-로컬 import — 호출 시점에 run_agent 모듈 attr 을 읽는 테스트
         # DI seam (모듈-레벨 바인딩이면 monkeypatch 가 안 닿는다).
         from agent_cli.loop.kind import Caller
         from agent_cli.subagent.agents_live import tool_agent
-        from agent_cli.subagent.oneshot import tool_delegate
+        from agent_cli.subagent.run_agent import run_agents
         from agent_cli.tools.agent_tool import AGENT_MODES
 
         args = tool_input if isinstance(tool_input, dict) else {"mode": str(tool_input)}
 
         spec = AGENT_MODES.get(args.get("mode"))
-        if "tasks" in args or (spec is not None and spec.engine == "oneshot"):
+        if "tasks" in args or (spec is not None and spec.engine == "run"):
             raw = (
                 {"tasks": args["tasks"]}
                 if "tasks" in args
@@ -392,9 +392,7 @@ class ToolBridge:
                     mcp_manager=self.cfg.kind.ports.mcp_manager,
                 )
             # 돌고 있는 이 루프가 호출자다 (v10.87.0 `Caller`) — 깊이·스택·훅·중단·ctx 전부
-            result = tool_delegate(
-                raw, Caller.from_loop(self.cfg, self.state, self.ctx)
-            )
+            result = run_agents(raw, Caller.from_loop(self.cfg, self.state, self.ctx))
             if self.cfg.kind.ports.hook_runner:
                 self.cfg.kind.ports.hook_runner.fire(
                     "OnAgentEnd",

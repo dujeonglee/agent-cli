@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.subagent.oneshot import (
+from agent_cli.subagent.report import (
     DelegateResult,
     _format_delegate_output,
     _format_parallel_results,

@@ -196,13 +196,15 @@ agent_cli/
 │   ├── cron.py              5필드 cron 식 엔진(의존성 0)
 │   ├── registry.py          `ScheduleRegistry` — 예약 소유·발화 스레드, `schedules.json`, 놓친 발화는 질문으로
 │   └── view.py              예약의 화면용 뷰(web API·SSE 공용)
-├── subagent/                서브에이전트 — 일회성·상주 실행 (docs/teammate/DESIGN.md · docs/agent-unification/DESIGN.md)
+├── subagent/                서브에이전트 — run·상주 에이전트, 레지스트리 하나 (docs/agent-engine/DESIGN.md · docs/teammate/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── runner.py            종류들이 공유하는 두 단계 — 역할 오버레이(`apply_role_overrides`)·ctx 생성
 │   ├── profiles.py          에이전트 프로파일 카탈로그 로더(`agents/` 하나)
-│   ├── oneshot.py           일회성 서브에이전트 `OneShotLoop` 와 호스트 `tool_delegate`(병렬 과제)
+│   ├── run_agent.py         run 에이전트 — 호스트 `run_agents`(레지스트리에 올리고 회신을 막힌 채 받음)·루프 종류 `RunAgentLoop`
+│   ├── run_result.py        P1 결과 어댑터 — run 의 회신을 `STATUS: …`·`[Task i]`·result.md 로 (P2 에서 지운다)
+│   ├── delegation_checks.py 에이전트를 띄우기 전 거부 판정(빈 과제·provider·순환·깊이) — run·spawn 공통
 │   ├── resident_loop.py     상주 에이전트의 루프 종류 `ResidentLoop`
-│   ├── agents_live.py       상주 에이전트 `AgentRegistry`·`AgentInstance` — spawn·메일함·질문 포트·회신 배달·agents.json
+│   ├── agents_live.py       `AgentRegistry`·`AgentInstance` — run·상주 에이전트의 명단·상한·스레드·agents.json, spawn·메일함·질문 포트·회신 배달
 │   └── report.py            서브에이전트 결과 포장 `DelegateResult`·런 디렉터리 이름·본문 역추출
 ├── harness/                 하니스가 자기 몫으로 돌리는 일회성 작업 — 팀원이 아니다 (docs/auditor/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
@@ -486,7 +488,7 @@ class ParsedAction:            # 단수 투영 — thought·action·action_input
 |------|------|------|
 | `MainLoop` | `runtime.py` | 세션의 main — 펌프가 요청마다 `run(start)` |
 | `ResidentLoop` | `subagent/resident_loop.py` | 상주 에이전트 — 받은편지함 묶음마다 |
-| `OneShotLoop` | `subagent/oneshot.py` | `agent` `run` 의 일회성 서브에이전트 (`PrivateLoop`) |
+| `RunAgentLoop` | `subagent/run_agent.py` | `agent` `run` 의 run 에이전트 — 과제 하나 (`PrivateLoop`) |
 | `SkillLoop` | `skills/executor.py` | `run_skill`·`/skill` |
 | `HarnessLoop` | `harness/jobs.py` | 하니스 작업(감사자) (`PrivateLoop`) |
 
@@ -626,7 +628,7 @@ assistant 턴 하나는 세 형태를 지난다 — (A) 모델이 낸 원문 · 
 ├── turns.jsonl · failures.jsonl · verbose.jsonl   ← §7.6·§7.7
 ├── memory.jsonl             ← 세션 메모리
 ├── agents/<key>/            ← 상주 에이전트
-├── run_<name>_<hash>_<ts>/  ← 일회성 서브에이전트 (history.jsonl + result.md, 중첩 가능)
+├── run_<name>_<hash>_<ts>/  ← run 에이전트의 집 (history.jsonl + result.md, 중첩 가능)
 ├── skill_<name>_<hash>_<ts>/← 스킬 런
 └── harness/<job>/<label>/   ← 하니스 작업 (세션 대화가 아니다)
 ```
@@ -659,7 +661,7 @@ fork 모드 서브에이전트는 부모 history.jsonl 을 복사해 이어 쓴�
 | `ask` | `tools/virtual.py` | 가상 · `ctx` |
 | `message` | `tools/virtual.py` | 가상 · 지연 설명 · `message_handler` |
 | `reply` | `tools/virtual.py` | 가상 · 지연 설명 · `questions` |
-| `agent` | `tools/agent_tool.py` | 지연 설명 — 실행은 `subagent/agents_live.py`(상주)·`subagent/oneshot.py`(`run`) |
+| `agent` | `tools/agent_tool.py` | 지연 설명 — 실행은 `subagent/agents_live.py`(상주)·`subagent/run_agent.py`(`run`) |
 | `run_skill` | `tools/virtual.py` | 가상 · `skills` — 실행은 `loop/skill_invoke.py` |
 | `wait` | `tools/virtual.py` | 가상 · `wake` — 깨울 것이 있을 때만 끝내지 않고 기다린다 |
 | `tool_help` | `tools/tool_help.py` | `deferred` — 지연 도구가 남은 루프에만 |
@@ -669,7 +671,7 @@ MCP 도구는 `mcp/adapter.py` 가 `Tool` 로 감싸 `TOOLS` 에 등록한다.
 
 ### 6.2 agent 프로파일 로딩
 
-`agent` 의 `profile` 은 `subagent/profiles.py` 가 찾는다 — 일회성(`run`)과 상주(`spawn`)가 같은 카탈로그를 쓴다.
+`agent` 의 `profile` 은 `subagent/profiles.py` 가 찾는다 — run 과 상주(`spawn`)가 같은 카탈로그를 쓴다.
 
 ```
 검색 경로 (우선순위 순):
@@ -683,7 +685,7 @@ frontmatter: description · allowed-tools · model · hooks · disable-model-inv
 하니스 작업 프로파일(`agents/harness/`)은 이 카탈로그 밖이다(`harness/jobs.py`).
 op 에 준 `tools`·`model` 이 프로파일 값보다 우선한다(`subagent/runner.apply_role_overrides`).
 
-일회성 run 의 결과(`subagent/report.py::_format_delegate_output`, `OneShotLoop` 이 `STATUS: success|error` 로 감싼다):
+run 의 결과(`subagent/report.py::_format_delegate_output`, 어댑터 `subagent/run_result.py` 가 `STATUS: success|error` 로 감싼다):
 1. 서브에이전트 출력(없으면 `(subagent returned no result)`)
 2. `[Subagent activity]` — 턴별 액션 요약
 3. `[Last actions before failure]` — 실패 시
@@ -691,6 +693,12 @@ op 에 준 `tools`·`model` 이 프로파일 값보다 우선한다(`subagent/ru
 
 `DelegateResult` 필드: `output`, `iterations`(루프가 실제로 돈 턴 수), `duration_secs`, `activity_log`, `last_actions`.
 run 디렉터리(`run_<name>_<hash>_<ts>/`)에 history.jsonl 과 result.md 가 남는다.
+
+run 은 레지스트리에 오르는 에이전트다(`ends_after_task`, docs/agent-engine/DESIGN.md). `run_agents`(`subagent/run_agent.py`)가 과제마다
+거부 판정(`subagent/delegation_checks.py`) → `AgentRegistry.start_run_agent`(명단·상한·agents.json·로스터, 자기 스레드 `agent-<key>`) →
+회신을 막힌 채 기다림 → 결과 어댑터(`subagent/run_result.py`) 순으로 돈다. 런은 호출자의 stop Event 를 따른다. 레지스트리는 세션 슬롯에서 얻는다
+(서브루프 포트의 `agent_registry=None` 은 상주 모드 권한의 경계라 별개다). 모델 대면 명단(`## Live Agents`·`status`·주소 해석·중복 이름)에는
+run 에이전트가 없고 상한 계산에만 든다. 화면은 상주와 같은 채널(웹)·에이전트 줄(CLI)이며, resume 은 run 에이전트를 되살리지 않는다(회색 채널만 남는다).
 
 ### 6.3 run_skill 결과
 

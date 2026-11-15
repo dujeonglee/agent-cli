@@ -1,5 +1,6 @@
 """Tests for the pluggable renderer system."""
 
+import io
 from unittest.mock import MagicMock
 
 from rich.console import Console
@@ -60,13 +61,13 @@ class TestMinimalCanPrompt:
 
 
 class TestMinimalConfirmPausesLive:
-    """Inside a parallel-delegate Live panel the prompt would be painted
+    """Inside a Live region (the spinner) the prompt would be painted
     over; ``confirm`` must stop the Live for the read and restart it."""
 
-    def test_active_parallel_live_paused_and_resumed(self, monkeypatch):
+    def test_active_live_paused_and_resumed(self, monkeypatch):
         r = MinimalRenderer(Console())
         live = MagicMock()
-        r._parallel_live = live
+        r._live = live
         monkeypatch.setattr("builtins.input", lambda prompt="": "y do it")
 
         key, comment = r.confirm(
@@ -110,10 +111,10 @@ class TestMinimalConfirmPausesLive:
 
     def test_prompt_user_pauses_active_live(self, monkeypatch):
         """``ask`` shares the same guard — prompt_user must also pause the
-        Live panel so a delegate-worker question isn't painted over."""
+        Live region so an agent's question isn't painted over."""
         r = MinimalRenderer(Console())
         live = MagicMock()
-        r._parallel_live = live
+        r._live = live
         monkeypatch.setattr("builtins.input", lambda prompt="": "the answer")
 
         value = r.prompt_user("Q: ", multiline=False)
@@ -131,7 +132,7 @@ class TestMinimalConfirmPausesLive:
 
         r = MinimalRenderer(Console())
         live = MagicMock()
-        r._parallel_live = live
+        r._live = live
         monkeypatch.setattr("builtins.input", _raise)
 
         try:
@@ -203,18 +204,18 @@ class TestPromptProvenance:
         r.confirm("Allow? ", [ConfirmOption(key="y", label="yes")], default_key="n")
         assert "main agent reasoning" not in buf.getvalue()
 
-    def test_delegate_begin_sets_agent_end_clears(self):
-        r = MinimalRenderer(Console())
-        r.begin_scope(task_id="t1", index=0, agent="explorer", label="x")
+    def test_agent_work_sets_agent_end_clears(self):
+        r = MinimalRenderer(Console(file=io.StringIO()))
+        r.begin_agent_work(key="agt-1", item="run", profile="explorer", message="x")
         assert r.prompt_meta()["agent"] == "explorer"
-        r.end_scope(task_id="t1", success=True, duration_s=0.1)
+        r.end_agent_work(key="agt-1", item="run", success=True, duration_s=0.1)
         assert r.prompt_meta()["agent"] == ""
 
-    def test_delegate_unnamed_falls_back_to_task_index(self):
-        r = MinimalRenderer(Console())
-        r.begin_scope(task_id="t1", index=2, agent="", label="x")
-        assert r.prompt_meta()["agent"] == "task #3"
-        r.end_scope(task_id="t1", success=True, duration_s=0.1)
+    def test_unnamed_agent_falls_back_to_its_key(self):
+        r = MinimalRenderer(Console(file=io.StringIO()))
+        r.begin_agent_work(key="agt-3", item="run", profile="", message="x")
+        assert r.prompt_meta()["agent"] == "agt-3"
+        r.end_agent_work(key="agt-3", item="run", success=True, duration_s=0.1)
 
 
 class TestMinimalInNestedRender:
@@ -326,7 +327,7 @@ class TestApplyStyle:
 
 
 class TestDispatchAgent:
-    def test_dispatch_agent_not_found(self):
+    def test_dispatch_agent_not_found(self, agent_registry_slot):
         from unittest.mock import MagicMock
 
         from agent_cli.main import _AGENT_NOT_FOUND, _dispatch_agent

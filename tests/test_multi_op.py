@@ -541,25 +541,24 @@ class TestMultiOpDispatch:
 
 
 class TestMultiOpDelegateParallel:
-    """delegate is flat-native + ``parallel_safe`` (Step 3): a run of ≥2
-    consecutive delegate ops in one turn is batched by the loop into ONE
-    ``tool_delegate({tasks:[...]})`` call → ``_run_parallel`` (real
-    concurrency). This is what makes the prompt's "several delegate ops run in
+    """agent run is flat-native + ``parallel_safe`` (Step 3): a run of ≥2
+    consecutive run ops in one turn is batched by the loop into ONE
+    ``run_agents({tasks:[...]})`` call → one run agent per task, each on its
+    own thread. This is what makes the prompt's "several run ops run in
     parallel" actually true — the N-op loop is otherwise sequential."""
 
     def _patch(self, monkeypatch):
-        # 5.0.0: 브리지가 oneshot.tool_delegate 를 함수-내부 import 하므로
-        # 소유 모듈을 patch 한다.
-        import agent_cli.subagent.oneshot as oneshot_mod
+        # 브리지가 run_agent.run_agents 를 함수-내부 import 하므로 소유 모듈을 patch 한다.
+        import agent_cli.subagent.run_agent as run_agent_mod
         from agent_cli.tools.result import ToolResult
 
         calls = []
 
-        def fake_tool_delegate(args, caller):
+        def fake_run_agents(args, caller):
             calls.append(args.get("tasks"))
             return ToolResult(True, output="STATUS: success\nRESULT:\nok")
 
-        monkeypatch.setattr(oneshot_mod, "tool_delegate", fake_tool_delegate)
+        monkeypatch.setattr(run_agent_mod, "run_agents", fake_run_agents)
         return calls
 
     def test_two_delegate_ops_batched_into_one_parallel_call(
@@ -589,7 +588,7 @@ class TestMultiOpDelegateParallel:
             tmp_path,
         )
         assert result.success
-        # ONE tool_delegate call carrying BOTH tasks → _run_parallel path.
+        # ONE run_agents call carrying BOTH tasks.
         assert len(calls) == 1
         assert len(calls[0]) == 2
         assert {t["task"] for t in calls[0]} == {"Analyze A", "Analyze B"}

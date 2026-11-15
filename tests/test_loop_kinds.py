@@ -239,12 +239,14 @@ class TestKindsStateTheirPolicy:
     같은 답을 유도한다(종전 엔진의 플래그 추측과 같은 규칙, 한 곳에)."""
 
     def _kinds(self, tmp_path):
+        from types import SimpleNamespace
+
         from agent_cli.context.manager import ContextManager
         from agent_cli.harness.jobs import HarnessLoop
         from agent_cli.runtime import MainLoop
         from agent_cli.skills.executor import SkillLoop
         from agent_cli.skills.models import Skill
-        from agent_cli.subagent.oneshot import OneShotLoop
+        from agent_cli.subagent.run_agent import RunAgentLoop
         from tests.binding_support import make_binding
 
         reg = object()
@@ -268,7 +270,13 @@ class TestKindsStateTheirPolicy:
         skill = SkillLoop(
             Skill(name="s", description="", prompt_template="x"), "", caller
         )
-        one = OneShotLoop({"task": "t"}, caller)
+        one = RunAgentLoop(
+            {"task": "t"},
+            caller,
+            tm=SimpleNamespace(key="agt-t"),
+            run_dir=tmp_path / "run_task_x",
+            caller_task="",
+        )
         harness = HarnessLoop(
             "auditor",
             "1-2",

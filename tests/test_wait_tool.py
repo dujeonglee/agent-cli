@@ -285,7 +285,10 @@ class TestAlreadyArrived:
 
         reg = self._registry(tmp_path)
         reg._agents["k"] = SimpleNamespace(
-            key="k", state="idle", inbox_items=[{"author": "main", "text": "x"}]
+            key="k",
+            state="idle",
+            inbox_items=[{"author": "main", "text": "x"}],
+            ends_after_task=False,
         )
         assert reg.arrived_for("agent:k") == 1
         assert reg.arrived_for("main") == 0

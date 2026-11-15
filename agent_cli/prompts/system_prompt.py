@@ -903,7 +903,13 @@ def build_live_agents_section(
         snapshot = agent_registry.roster_snapshot()
     except Exception:
         return ""
-    rows = [s for s in snapshot if s.get("key") != exclude_key]
+    # run 에이전트(과제 하나, docs/agent-engine/DESIGN.md)는 모델 대면 명단에 없다 — 부를 수도
+    # 되살릴 수도 없는 개체이고, P1 은 모델 바이트를 바꾸지 않는다. 화면 로스터에는 있다.
+    rows = [
+        s
+        for s in snapshot
+        if s.get("key") != exclude_key and not s.get("ends_after_task")
+    ]
     # 죽은 개체는 **main 로스터에만** 남긴다 (v9.6.0).
     #
     # 종전엔 무조건 걸러냈는데, 이 섹션이 모델의 "누가 이미 있나"를 아는 유일한

@@ -3836,8 +3836,8 @@ class TestRunMode:
         assert enum == list(AGENT_MODES)
         # registry 모드 ↔ 핸들러 1:1 (순서 무관)
         assert set(_MODE_HANDLERS) == set(REGISTRY_MODES)
-        # run 은 oneshot 엔진 — 핸들러 테이블 밖 (tool_bridge 가 라우팅)
-        assert AGENT_MODES["run"].engine == "oneshot"
+        # run 은 run 에이전트 호스트 — 핸들러 테이블 밖 (tool_bridge 가 라우팅)
+        assert AGENT_MODES["run"].engine == "run"
         assert "run" not in _MODE_HANDLERS
         # batchable 은 run 만 (설계 §3.6)
         assert [m for m, s in AGENT_MODES.items() if s.batchable] == ["run"]
@@ -3880,7 +3880,9 @@ class TestRunMode:
         assert "requires" in tool.validate({"mode": "run"})
         assert tool.validate({"mode": "run", "task": "do"}) is None
 
-    def test_run_single_through_full_loop(self, tmp_path, renderer):
+    def test_run_single_through_full_loop(
+        self, tmp_path, renderer, agent_registry_slot
+    ):
         # main 이 run op → 같은 provider 로 서브루프가 돌아 결과가 그 턴
         # 관찰(STATUS/RESULT)로 — 구 delegate 의미 그대로.
         import json
@@ -3917,7 +3919,9 @@ class TestRunMode:
         assert obs and "STATUS: success" in obs[0]["content"]
         assert "1 2 3" in obs[0]["content"]
 
-    def test_run_carries_instructions_to_subagent(self, tmp_path, renderer):
+    def test_run_carries_instructions_to_subagent(
+        self, tmp_path, renderer, agent_registry_slot
+    ):
         # instant + run: 인라인 지시가 서브루프 system 의 Role 로.
         import json
         from unittest.mock import MagicMock
@@ -3955,7 +3959,9 @@ class TestRunMode:
         # main(1·3번째)에는 없음
         assert "MARKER-ROLE-9" not in provider.call.call_args_list[0].kwargs["system"]
 
-    def test_run_fanout_multiop_parallel_batch(self, tmp_path, renderer):
+    def test_run_fanout_multiop_parallel_batch(
+        self, tmp_path, renderer, agent_registry_slot
+    ):
         # 멀티-op run ×2 = 한 배치(병렬 엔진) → [1/2][2/2] 결합 관찰.
         import json
         from unittest.mock import MagicMock

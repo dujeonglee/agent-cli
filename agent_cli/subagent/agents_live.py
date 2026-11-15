@@ -53,6 +53,7 @@ from agent_cli.constants import (
 from agent_cli.loop.kind import LoopKindError
 from agent_cli.session.store import AGENTS_DIR
 from agent_cli.session_slots import get_job_registry
+from agent_cli.subagent.delegation_checks import depth_or_recursion_refusal
 from agent_cli.terminate import wait_left
 from agent_cli.token_estimator import estimate_tokens
 from agent_cli.tools.result import ToolResult
@@ -465,9 +466,14 @@ class AgentInstance:
         instance_name: str = "",
         description: str = "",
         instructions: str = "",
+        ends_after_task: bool = False,
     ):
         self.key = key
         self.profile_name = profile_name
+        #: run 에이전트(`agent` ``mode`` "run", docs/agent-engine/DESIGN.md §2) — 과제 하나의
+        #: 회신을 보내면 내려온다. 모델 대면 명단·주소 해석에서 빠지고(P1 — 모델 바이트
+        #: 불변), 상한 계산·화면 로스터·agents.json 에는 든다. resume 이 되살리지 않는다.
+        self.ends_after_task = ends_after_task
         self.role_prompt = role_prompt
         # 다중 인스턴스 구분 라벨 (예: 같은 code-writer 역할의 "ui"/"api") — 주소는
         # 항상 key, name 은 표시·광고용.
@@ -530,6 +536,7 @@ class AgentInstance:
             "pending_requests": self.inbox.qsize(),
             "est_tokens": est_tokens,
             "error": self.error,
+            "ends_after_task": self.ends_after_task,
         }
 
 
@@ -805,6 +812,11 @@ class AgentRegistry:
     def get(self, key: str) -> AgentInstance | None:
         return self._agents.get(key)
 
+    def _residents(self) -> list[AgentInstance]:
+        """모델이 부를 수 있는 에이전트 — run 에이전트(``ends_after_task``)를 뺀 명단.
+        주소 해석·status·중복 이름·깨울 관계가 본다(P1: run 은 모델에게 보이지 않는다)."""
+        return [t for t in list(self._agents.values()) if not t.ends_after_task]
+
     def resolve_key(self, addr: str) -> str | None:
         """주소 → 에이전트 키 (v10.1.0). 키 그대로, ``agent:<key>`` 접두, 또는
         인스턴스 이름(대소문자 무시; 산 것 우선, 유일할 때만). 없으면 None.
@@ -816,13 +828,14 @@ class AgentRegistry:
         a = (addr or "").strip().removeprefix("agent:")
         if not a:
             return None
-        if a in self._agents:
+        tm = self._agents.get(a)
+        if tm is not None and not tm.ends_after_task:
             return a
         low = a.lower()
         with self._cv:
             hits = [
-                k
-                for k, t in list(self._agents.items())
+                t.key
+                for t in self._residents()
                 if t.instance_name and t.instance_name.lower() == low
             ]
             alive = [k for k in hits if self._agents[k].state != "dead"]
@@ -898,6 +911,13 @@ class AgentRegistry:
         """True when a new spawn/resume would exceed the cap. 0 = unlimited."""
         return bool(self.max_agents) and self.alive_count() >= self.max_agents
 
+    def agent_limit_refusal(self) -> str:
+        """상한에 걸린 새 에이전트(spawn·run)의 거부문 — 한 문장을 둘이 쓴다."""
+        return (
+            f"agent limit reached ({self.max_agents} alive). "
+            f'Kill one first (`mode` "kill") or raise the limit in the web UI.'
+        )
+
     def pending_for(self, addr: str, exclude: frozenset = frozenset()) -> list[str]:
         """``addr`` 를 **깨울** 에이전트 활동 (v10.65.0, `wait` 의 판정 재료) —
         사람이 읽을 한 줄씩. 세션 전체의 `has_active_work` 가 아니라 **요청자별**:
@@ -947,7 +967,7 @@ class AgentRegistry:
                 )
                 if owes and not self._debtor_is_parked(debtor):
                     out.append(("owes", debtor))
-        for tm in list(self._agents.values()):
+        for tm in self._residents():
             me = f"agent:{tm.key}"
             if me == addr or me in exclude:
                 continue
@@ -1605,7 +1625,7 @@ class AgentRegistry:
         """
         if not profile and not name:
             return ""  # 익명 즉석 에이전트끼리는 겹칠 이름이 없다
-        for tm in list(self._agents.values()):
+        for tm in self._residents():
             if (tm.profile_name, tm.instance_name) != (profile, name):
                 continue
             label = " · ".join(p for p in (profile, name) if p)
@@ -1634,10 +1654,17 @@ class AgentRegistry:
             self.runtime = runtime
 
         if self._at_agent_limit():
-            return "", (
-                f"agent limit reached ({self.max_agents} alive). "
-                f'Kill one first (`mode` "kill") or raise the limit in the web UI.'
-            )
+            return "", self.agent_limit_refusal()
+        # 깊이·순환 — run 과 같은 장치(`delegation_checks`). spawn 은 main 에서만 오므로 스택은
+        # 비어 있고 깊이는 레지스트리 런타임의 것(main = 0).
+        refusal = depth_or_recursion_refusal(
+            profile,
+            [],
+            self.runtime.get("depth", 0),
+            self.runtime.get("max_depth", 2),
+        )
+        if refusal:
+            return "", refusal
 
         if name and not re.match(r"^[a-zA-Z0-9_-]{1,24}$", name):
             return "", (f'invalid instance name "{name}": [a-zA-Z0-9_-], max 24 chars')
@@ -1725,6 +1752,92 @@ class AgentRegistry:
         self._save_state()
         self._notify_roster()
         return key, ""
+
+    # ── run 에이전트 (docs/agent-engine/DESIGN.md §2) ──
+    # 수명은 상주와 같은 자리(명단·상한·agents.json·로스터·스레드)에서, 런의 정책(루프 종류·
+    # 결과 모양)은 부르는 쪽(`subagent.run_agent`)이 ``body`` 로 준다 — 레지스트리는 그
+    # 종류를 모른다.
+
+    def start_run_agent(
+        self,
+        *,
+        profile: str,
+        task: str,
+        context_mode: str,
+        home_dir: Path,
+        body: Callable[[AgentInstance], None],
+    ) -> tuple[AgentInstance | None, str]:
+        """run 에이전트 하나를 명단에 올리고 자기 스레드에서 ``body(tm)`` 를 돌린다 —
+        ``(개체, "")`` 또는 상한에 걸리면 ``(None, 거부문)``. 스레드가 끝나면 내려온다
+        (`_run_agent_worker`). 개체는 처음부터 ``busy`` 다(받을 것이 과제 하나뿐)."""
+        if self._at_agent_limit():
+            return None, self.agent_limit_refusal()
+        key = f"agt-{uuid.uuid4().hex[:8]}"
+        tm = AgentInstance(
+            key,
+            profile_name=profile,
+            role_prompt="",
+            allowed_tools=None,
+            model="",
+            hooks_config=None,
+            context_mode=context_mode,
+            home_dir=home_dir,
+            description=first_sentence(task),
+            ends_after_task=True,
+        )
+        tm.state = "busy"
+        tm.revivable = False  # 과제가 곧 수명 — resume 이 되살리지 않는다 (P1)
+        self._agents[key] = tm
+        tm.worker = threading.Thread(
+            target=self._run_agent_worker,
+            args=(tm, body),
+            daemon=True,
+            name=f"agent-{key}",
+        )
+        tm.worker.start()
+        self._save_state()
+        self._notify_roster()
+        return tm, ""
+
+    def _run_agent_worker(self, tm: AgentInstance, body) -> None:
+        """run 에이전트의 전 생애 — 프롬프트 스코프(인스펙터, 상주와 같은 키) 안에서
+        ``body`` 한 번, 끝나면 dead 로 내려와 저장·로스터. 예외는 ``body`` 의 것이다."""
+        from agent_cli.render import get_renderer
+
+        renderer = get_renderer()
+        disp = tm.profile_name or "anon"
+        renderer.begin_prompt_scope(tm.key, label=f"agent:{disp}")
+        try:
+            body(tm)
+        finally:
+            tm.handled = 1  # 과제 하나 — 화면 숫자
+            tm.state = "dead"
+            tm.ctx = None  # 내려온 run 은 대화를 쥐지 않는다(회신이 따로 들고 간다)
+            renderer.end_prompt_scope(tm.key)
+            self._save_state()
+            self._notify_roster()
+
+    def _run_agent_tombstone(self, e: dict) -> AgentInstance:
+        """agents.json 의 run 에이전트 → 되살리지 않는 dead 개체(화면 로스터·채널 재생용).
+        끝나기 전에 프로세스가 죽은 것도 같다 — 회신을 받을 막힌 호출이 이미 없다."""
+        tm = AgentInstance(
+            e["key"],
+            profile_name=e.get("profile", ""),
+            role_prompt=e.get("role_prompt", ""),
+            allowed_tools=e.get("allowed_tools"),
+            model=e.get("model", ""),
+            hooks_config=e.get("hooks_config"),
+            context_mode=e.get("context_mode", "none"),
+            home_dir=self.session_dir / Path(str(e.get("home") or e["key"])).name,
+            description=e.get("description", ""),
+            ends_after_task=True,
+        )
+        if isinstance(e.get("created_at"), (int, float)):
+            tm.created_at = e["created_at"]
+        tm.state = "dead"
+        tm.revivable = False
+        tm.error = e.get("error", "")
+        return tm
 
     # ── request / 회신 ──────────────────────────
 
@@ -2398,17 +2511,19 @@ class AgentRegistry:
     # ── status / kill / 종료 ────────────────────
 
     def format_status(self, key: str = "") -> str:
+        residents = self._residents()
         if key:
             tm = self._agents.get(key)
-            if tm is None:
+            if tm is None or tm.ends_after_task:
                 return f'unknown agent "{key}"'
             items = [tm]
         else:
-            items = list(self._agents.values())
+            items = residents
         if not items:
             return 'no live agents. Spawn one with `mode` "spawn".'
         cap = self.max_agents or "∞"
-        lines = [f"agents ({self.alive_count()}/{cap} alive):"]
+        alive = sum(1 for t in residents if t.state != "dead")
+        lines = [f"agents ({alive}/{cap} alive):"]
         for tm in items:
             s = tm.snapshot()
             role = s["profile"] or "anon"
@@ -2441,9 +2556,10 @@ class AgentRegistry:
         return "\n".join(lines)
 
     def kill(self, key: str) -> str:
-        """종료 요청 — 성공 시 빈 문자열. 멱등 (이미 dead 여도 성공)."""
+        """종료 요청 — 성공 시 빈 문자열. 멱등 (이미 dead 여도 성공). run 에이전트는 과제와
+        함께 끝나고 정지는 부른 쪽의 것이라(P1) 여기 대상이 아니다 — 모르는 키와 같다."""
         tm = self._agents.get(key)
-        if tm is None:
+        if tm is None or tm.ends_after_task:
             return f'unknown agent "{key}"'
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
         self._cancel_checkins(f"agent:{key}")  # 죽은 에이전트에게 알림이 가지 않게
@@ -2491,7 +2607,7 @@ class AgentRegistry:
         의 자동 재생성 대상으로도 복귀한다 (revivable=True).
         """
         tm = self._agents.get(key)
-        if tm is None:
+        if tm is None or tm.ends_after_task:
             return f'unknown agent "{key}"'
         if tm.state != "dead":
             return (
@@ -2540,9 +2656,7 @@ class AgentRegistry:
         teammate(재생성분)가 이미 있으면 중복 스폰하지 않는다. 스폰 수 반환."""
         from agent_cli.subagent.profiles import available_profiles
 
-        live_roles = {
-            tm.profile_name for tm in list(self._agents.values()) if tm.state != "dead"
-        }
+        live_roles = {tm.profile_name for tm in self._residents() if tm.state != "dead"}
         spawned = 0
         for name, meta in available_profiles(include_meta=True):
             if not meta.get("auto-spawn"):
@@ -2612,6 +2726,12 @@ class AgentRegistry:
                     # 않는다 (docs/ledger/DESIGN.md §14).
                     "inbox": [dict(i) for i in list(tm.inbox_items) if _persists(i)],
                     "in_flight": [dict(i) for i in list(tm.in_flight)],
+                    # run 에이전트: 집은 세션 디렉터리의 ``run_…`` (결과 파일 자리와 같다)
+                    **(
+                        {"ends_after_task": True, "home": tm.home_dir.name}
+                        if tm.ends_after_task
+                        else {}
+                    ),
                 }
             )
         with self._cv:
@@ -2687,6 +2807,9 @@ class AgentRegistry:
         for e in data.get("agents", []):
             key = e.get("key")
             if not key or key in self._agents or self.session_dir is None:
+                continue
+            if e.get("ends_after_task"):
+                self._agents[key] = self._run_agent_tombstone(e)
                 continue
             tm = AgentInstance(
                 key,
@@ -3179,7 +3302,7 @@ def _agent_spawn(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
     if profile_arg:
         dead_same_role = [
             tm.key
-            for tm in registry._agents.values()
+            for tm in registry._residents()
             if tm.profile_name == profile_arg and tm.state == "dead" and tm.key != key
         ]
         if dead_same_role:
@@ -3255,8 +3378,8 @@ def _agent_kill(registry, args: dict, *, parent_ctx, runtime) -> ToolResult:
 
 
 # 상주 모드 → 핸들러. agent_tool.AGENT_MODES 의 engine="registry" 모드와
-# 1:1 — 정합은 tests 의 커버리지 테스트가 고정 (run 은 oneshot 엔진이라
-# tool_bridge 가 tool_delegate 로 라우팅, 여기 없음).
+# 1:1 — 정합은 tests 의 커버리지 테스트가 고정 (run 은 engine "run" 이라
+# tool_bridge 가 `run_agent.run_agents` 로 라우팅, 여기 없음).
 _MODE_HANDLERS = {
     "spawn": _agent_spawn,
     "request": _agent_request,

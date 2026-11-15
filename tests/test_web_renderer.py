@@ -3117,84 +3117,61 @@ class TestCtxDirWiring:
             supports_thinking=False,
         )
 
-    def test_run_single_honours_the_prenamed_dir(self, tmp_path, monkeypatch):
-        """OneShotLoop 이 받은 이름 그대로 디렉토리를 만든다 — 전달돼도
-        내부에서 재생성하면 사이드카와 어긋난다 (뮤테이션이 잡은 갭)."""
-        from agent_cli.subagent.oneshot import OneShotLoop
-
-        class LR:
-            success = True
-            output = "ok"
-
-        monkeypatch.setattr(
-            "agent_cli.loop.run.run_loop", lambda kind, start, ctx: LR()
-        )
+    def test_run_agent_scope_is_its_channel_and_names_its_dir(
+        self, tmp_path, monkeypatch
+    ):
+        """run 에이전트의 스코프는 그 키의 채널이고(``channel``), ``ctx_dir`` 은 실제로
+        쓴 ``run_…`` 디렉터리다(결과 파일 자리) — 사이드카의 이름과 디스크가 어긋나면
+        resume 재생이 빈 채널을 그린다. 부른 자리는 ``caller_task`` (main = "")."""
         from agent_cli.context.manager import ContextManager
+        from agent_cli.tools.result import ToolResult
+        from tests.loop_kinds import run_tasks
 
+        r = WebRenderer()
+        monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
+        monkeypatch.setattr(
+            "agent_cli.loop.run.run_loop",
+            lambda kind, start, ctx: ToolResult(True, output="done"),
+        )
         parent = ContextManager(tmp_path, max_context_tokens=10000)
-        OneShotLoop(
-            {"task": "do"},
+        out = run_tasks(
+            {"tasks": [{"task": "t", "agent": "code-analyst"}]},
             make_caller(
                 ctx=parent,
                 binding=make_binding(provider=object(), capabilities=self._caps()),
             ),
-            run_dir_name="run_task_PINNED_9",
-        ).run()
-        assert (tmp_path / "run_task_PINNED_9").is_dir()
-        assert (tmp_path / "run_task_PINNED_9" / "result.md").exists()
-
-    def test_single_run_scope_dir_matches_run_single_arg(self, monkeypatch):
-        from agent_cli.subagent.oneshot import tool_delegate
-        from agent_cli.tools.result import ToolResult
-
-        r = WebRenderer()
-        monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
-        captured = {}
-
-        from agent_cli.subagent.oneshot import OneShotLoop
-        from tests.loop_kinds import fake_oneshot_run
-
-        def fake_run(kind):
-            captured["run_dir_name"] = kind.run_dir_name
-            return ToolResult(True, output="done")
-
-        monkeypatch.setattr(OneShotLoop, "run", fake_oneshot_run(fake_run))
-        tool_delegate(
-            {"tasks": [{"task": "t", "agent": "explorer"}]},
-            make_caller(binding=make_binding(capabilities=self._caps())),
         )
         start = next(dict(d) for e, d in r.hub.events if e == "scope_start")
-        assert captured["run_dir_name"]
-        assert start.get("ctx_dir") == captured["run_dir_name"]
-        assert start["ctx_dir"].startswith("run_explorer_")
+        assert start["ctx_dir"].startswith("run_code-analyst_")
+        assert out.artifact == start["ctx_dir"] + "/"
+        assert (tmp_path / start["ctx_dir"] / "result.md").exists()
+        assert start["channel"] == start["task_id"].split("#")[0]
+        assert start["run"] is True and start["caller_task"] == ""
 
-    def test_parallel_run_scope_dirs_match_each_worker(self, monkeypatch):
-        from agent_cli.subagent.oneshot import _run_parallel
+    def test_parallel_run_agents_each_have_their_own_dir(self, tmp_path, monkeypatch):
+        from agent_cli.context.manager import ContextManager
         from agent_cli.tools.result import ToolResult
+        from tests.loop_kinds import run_tasks
 
         r = WebRenderer()
         monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
-        captured = []
-
-        from agent_cli.subagent.oneshot import OneShotLoop
-        from tests.loop_kinds import fake_oneshot_run
-
-        def fake_run(kind):
-            captured.append(kind.run_dir_name)
-            return ToolResult(True, output="done")
-
-        monkeypatch.setattr(OneShotLoop, "run", fake_oneshot_run(fake_run))
-        _run_parallel(
-            [{"task": "a", "agent": "w0"}, {"task": "b", "agent": "w1"}],
-            make_caller(binding=make_binding(capabilities=self._caps())),
+        monkeypatch.setattr(
+            "agent_cli.loop.run.run_loop",
+            lambda kind, start, ctx: ToolResult(True, output="done"),
         )
-        starts = {
-            dict(d)["ctx_dir"]
-            for e, d in r.hub.events
-            if e == "scope_start" and dict(d).get("ctx_dir")
-        }
-        assert starts == set(captured)
-        assert len(starts) == 2  # 워커별 고유 dir
+        parent = ContextManager(tmp_path, max_context_tokens=10000)
+        run_tasks(
+            {"tasks": [{"task": "a"}, {"task": "b"}]},
+            make_caller(
+                ctx=parent,
+                binding=make_binding(provider=object(), capabilities=self._caps()),
+            ),
+        )
+        starts = [dict(d) for e, d in r.hub.events if e == "scope_start"]
+        dirs = {s["ctx_dir"] for s in starts}
+        assert len(dirs) == 2  # 에이전트마다 고유 dir
+        assert {p.name for p in tmp_path.glob("run_task_*")} == dirs
+        assert len({s["channel"] for s in starts}) == 2
 
 
 # ── Complete attribution (v8.2.0 — team view user lane) ──────────
