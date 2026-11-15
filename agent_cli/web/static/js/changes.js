@@ -40,6 +40,8 @@
 // 한 목록이다. 요약 줄(`summary` — 지워진 저장소 `D P/`·기준점 뒤에 생긴 저장소 `A P/`)은
 // 줄 수 없이 서고 diff 자리에 서버의 요약 문장이 온다. 기준을 잃은 저장소의 안내 줄
 // (`notices`)은 목록 맨 위에 ⚠ 문장 ✕ — ✕ 는 서버 기록에서 닫는다(재접속에도 닫힌 채).
+// 서버가 셀 때마다 정하는 안내(v10.139.1 — 커밋 없는 저장소·스냅샷 실패)는 `dismissable`
+// false 라 ✕ 가 없고, 스냅샷 실패(`cause` `snapshot_failing`)는 색만 빨갛다.
 // 📁 트리의 하위 저장소 폴더 행에는 작은 `git` 배지를 단다(`data-rel` 로, 표시와 같은 길).
 //
 // 다시 세는 때: 페이지 로드(스냅샷 재생 끝), 패널을 열 때, ↻, 런 끝. 런 끝은 기존 SSE 로
@@ -309,27 +311,30 @@ if ($badge && $drawer) {
     if (r.commits) t += " (+" + r.commits + (r.commits === 1 ? " commit)" : " commits)");
     return t;
   }
-  // 안내 줄 — 기준을 잃은 하위 저장소. 문장이 저장소 이름으로 시작하면 그 이름을 굵게
+  // 안내 줄 — 기준을 잃은·커밋 없는 하위 저장소, 스냅샷 실패. 문장이 저장소 이름으로 시작하면 그 이름을 굵게
   function renderNotices() {
     (data.notices || []).forEach(function (n) {
       const box = el("div", ["chg-notice"]);
       box.setAttribute("role", "status");
-      box.dataset.repo = n.repo;
+      if (n.cause === "snapshot_failing") box.classList.add("chg-notice-err");
+      if (n.repo) box.dataset.repo = n.repo;
       box.appendChild(el("span", [], "⚠"));
       const text = el("span", []);
-      if (n.text.indexOf(n.repo) === 0) {
+      if (n.repo && n.text.indexOf(n.repo) === 0) {
         text.appendChild(el("b", [], n.repo));
         text.appendChild(document.createTextNode(n.text.slice(n.repo.length)));
       } else {
         text.textContent = n.text;
       }
       box.appendChild(text);
-      const x = el("button", ["chg-notice-x"], "✕");
-      x.type = "button";
-      x.title = "Dismiss";
-      x.setAttribute("aria-label", "Dismiss");
-      x.addEventListener("click", function () { dismiss(n.repo); });
-      box.appendChild(x);
+      if (n.dismissable !== false) {
+        const x = el("button", ["chg-notice-x"], "✕");
+        x.type = "button";
+        x.title = "Dismiss";
+        x.setAttribute("aria-label", "Dismiss");
+        x.addEventListener("click", function () { dismiss(n.repo); });
+        box.appendChild(x);
+      }
       $list.appendChild(box);
     });
   }

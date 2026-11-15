@@ -80,7 +80,7 @@ agent_cli/
 ├── memory.py                세션 메모리 `memory.jsonl` — 압축·resume 를 넘기는 노트와 꼬리 색인 (docs/session-memory/DESIGN.md)
 ├── jobs.py                  백그라운드 작업 `JobRegistry` — `shell` `background` 의 자식 프로세스·로그·종료 통지 (docs/jobs/DESIGN.md)
 ├── snapshot.py              워크스페이스 git 그림자 저장소 스냅샷 `GitSnapshot` (docs/snapshot/DESIGN.md)
-├── snapshot_nested.py       하위 git 저장소의 기준점 기록·판정·비교 `NestedRepos` — `snapshot` 만 import (§8)
+├── snapshot_nested.py       하위 git 저장소의 기준점 기록·판정·비교 `NestedRepos`, 스냅샷 색인의 저장소 경계 — `snapshot` 만 import (§8·§9)
 ├── browser.py               헤드리스 브라우저 세션 — `browser` 도구의 엔진(접근성 트리·ref·전용 스레드) (docs/browser/DESIGN.md)
 ├── web_sources.py           꼬리 `## Web Sources` 정보원 목록 — 패키지 기본값 + 프로젝트의 바꾼 것만 (docs/web-sources/DESIGN.md)
 ├── thinking_tags.py         content 안 사고 태그를 걷어내는 `strip_think_blocks` 단일 소스
@@ -1123,6 +1123,7 @@ You are a code reviewer. Read $ARGUMENTS and analyze for bugs.
 - 내장 훅 `10_snapshot.py`: 세션 시작 안내와 변경 도구(`snapshot.MUTATING_TOOLS`) 직전 체크포인트 (docs/snapshot/DESIGN.md).
 - 웹 Changes 패널의 기준점은 같은 저장소의 ref `refs/agent-cli/baseline`(없으면 이 세션 id 의 가장 이른 시작 커밋) — HEAD 는 옮기지 않고, 지금 디스크는 임시 색인으로 읽는다(`GitSnapshot.baseline`·`changes`·`clear`, `web/server.py` `/api/changes*`, docs/snapshot/DESIGN.md §7).
 - 하위 git 저장소 안의 변경은 `snapshot_nested.NestedRepos` 가 그 저장소의 git 으로(읽기만, `GIT_OPTIONAL_LOCKS=0`) 센다 — 기준점마다 기록(HEAD·첫 커밋·dirty 내용)을 ref `refs/agent-cli/nested/{start/<sid>,baseline,baseline-prev}` 에 두고 기준점 ref 와 짝으로 옮긴다. 판정은 순수 함수 `judge`, 스냅샷 저장소 git 은 주입받는다. 기록을 고치는 것은 `GitSnapshot.sync_nested_records` 뿐이고 목록·diff 는 읽기만 한다(docs/snapshot/DESIGN.md §8).
+- 스냅샷 색인과 디스크의 저장소 경계: 체크포인트(`_lock` 안, 실제 색인)와 Changes 셈(임시 색인)이 같은 두 단계를 거친다 — `GitSnapshot._align_index_with_repos`(`.git` 이 사라진 gitlink·커밋 있는 저장소가 된 일반 폴더를 색인에서 뺀다; 무엇을 뺄지는 `snapshot_nested.index_paths_to_untrack`) 뒤 `_stage_workspace`(`add` 가 커밋 없는 하위 저장소를 거부하면 그 호출에서만 빼고 다시). 체크포인트 실패는 `stats.failing_since`·`failure` 에 남고 Changes 안내 줄이 된다(docs/snapshot/DESIGN.md §9).
 
 ### 14.2 라이프사이클 이벤트 (`hooks/events.py`)
 

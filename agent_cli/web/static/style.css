@@ -2007,6 +2007,7 @@ body.loading #messages { visibility: hidden; }
   background: var(--warn-soft-bg); color: var(--warn-soft-fg); font-size: 12.5px; line-height: 1.5;
 }
 .chg-notice b { color: var(--text); font-weight: 600; }
+.chg-notice-err { border-color: var(--fail-soft-border); background: var(--fail-soft-bg); color: var(--fail-soft-fg); }
 .chg-notice-x {
   border: 0; background: none; color: var(--text-2); cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 4px;
 }

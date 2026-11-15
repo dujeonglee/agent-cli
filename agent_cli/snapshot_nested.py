@@ -21,8 +21,12 @@ porcelain ``git diff <commit>`` 은 ``GIT_OPTIONAL_LOCKS=0`` 이어도 stat 이 
 기록을 만들고·저장하고·읽고·비교한다.
 
 판정(:func:`judge`)은 관찰값 → :class:`Verdict` 의 순수 함수다. 판정별 처리는
-:meth:`NestedRepos.reconcile` 의 작은 분기 — 판정은 일곱 가지로 닫혀 있어 상태 클래스 계층은
+:meth:`NestedRepos.reconcile` 의 작은 분기 — 판정은 여덟 가지로 닫혀 있어 상태 클래스 계층은
 과하다.
+
+스냅샷 색인의 저장소 경계(§9)도 여기서 정한다(:func:`index_paths_to_untrack` — 무엇을 뺄지만;
+색인을 고치는 것은 ``snapshot.py``): ``.git`` 이 사라진 gitlink, 일반 파일로 담던 폴더가 커밋 있는
+저장소가 된 자리. 넘긴 폴더의 Changes 연속성은 :meth:`NestedRepos.record_adopted`.
 """
 
 from __future__ import annotations
@@ -72,6 +76,7 @@ class Verdict(str, Enum):
     DEGIT = "degit"  # 6 폴더는 있는데 저장소가 아니다(.git 만 지움)
     NEW = "new"  # 7 기록에 없는 저장소(또는 일반 폴더였던 것이 저장소가 됨)
     PLAIN = "plain"  # 6 뒤 — 일반 폴더 기록, 워크스페이스와 같은 비교
+    UNBORN = "unborn"  # 커밋이 하나도 없는 저장소 — 안내만, 첫 커밋 뒤 NEW
 
 
 def judge(
@@ -81,19 +86,27 @@ def judge(
     is_repo: bool,
     head_found: bool | None = None,
     roots_shared: bool | None = None,
+    has_commits: bool | None = None,
 ) -> Verdict | None:
     """관찰값 → 판정. ``kind`` 는 기록의 종류(``"repo"``·``"plain"``, 기록에 없으면 None).
     ``head_found`` 는 기록한 HEAD 가 지금 저장소에 있는지(기록 때 커밋이 없었으면 None),
-    ``roots_shared`` 는 기록한 첫 커밋과 지금 첫 커밋이 겹치는지(HEAD 가 없을 때만 본다).
+    ``roots_shared`` 는 기록한 첫 커밋과 지금 첫 커밋이 겹치는지(HEAD 가 없을 때만 본다),
+    ``has_commits`` 는 지금 저장소에 커밋이 있는지(모르면 None — 판정을 바꾸지 않는다).
+    커밋 없는 저장소는 기록에 없거나 기록 때도 커밋이 없었으면 UNBORN(첫 커밋 뒤 NEW), 일반
+    폴더 기록이면 PLAIN(``git init`` 만 한 폴더는 우리가 계속 담는다).
     판정할 것이 없으면(기록에 없고 저장소도 아님) None."""
     if kind is None:
-        return Verdict.NEW if is_repo else None
+        if not is_repo:
+            return None
+        return Verdict.UNBORN if has_commits is False else Verdict.NEW
     if kind == "plain":
-        return Verdict.NEW if is_repo else Verdict.PLAIN
+        return Verdict.NEW if is_repo and has_commits is not False else Verdict.PLAIN
     if not exists:
         return Verdict.REMOVED
     if not is_repo:
         return Verdict.DEGIT
+    if head_found is None and has_commits is not None:
+        return Verdict.NEW if has_commits else Verdict.UNBORN
     if head_found is None or head_found:
         return Verdict.SAME
     return Verdict.LOST if roots_shared else Verdict.RECLONE
@@ -113,15 +126,16 @@ class RepoRecord:
     dirty: list[str] = field(default_factory=list)
     tree: str | None = None
     since: int = 0  # 이 저장소의 기준 시각(epoch 초)
-    origin: str = "baseline"  # "baseline" | "new" | "reset"
+    origin: str = "baseline"  # "baseline" | "new" | "reset" | "adopted"(일반 폴더였다)
 
 
 @dataclass
 class Notice:
-    """패널 안내 줄 — 기준을 잃은 저장소. 문장은 :func:`notice_text` 가 만든다."""
+    """패널 안내 줄 — 기준을 잃은 저장소(기록에 남는다)·커밋 없는 저장소(셀 때마다 — 기록에
+    남지 않는다). 문장은 :func:`notice_text` 가 만든다."""
 
     repo: str
-    cause: str  # Verdict.LOST·RECLONE·DEGIT 의 값
+    cause: str  # Verdict.LOST·RECLONE·DEGIT·UNBORN 의 값
     when: int  # 다시 잡은 시각
     head: str | None = None  # 잃은 HEAD
     recorded: int = 0  # 잃은 기록의 시각
@@ -194,6 +208,11 @@ def notice_text(n: Notice) -> str:
             f"{_stamp(n.recorded)} no longer applies; changes in {p} are counted "
             f"from {now}."
         )
+    if n.cause == Verdict.UNBORN.value:
+        return (
+            f"{p} is a git repository with no commits yet — its files are not part of "
+            "the list until its first commit."
+        )
     return (
         f"{p} is no longer a git repository (.git was removed). Its files are now "
         f"tracked with the rest of the workspace, counted from {now}."
@@ -249,6 +268,17 @@ def parse_numstat(out: str) -> dict[str, tuple[int | None, int | None]]:
     return counts
 
 
+def parse_ls_tree(out: str) -> dict[str, tuple[str, str]]:
+    """``ls-tree -r -z`` → 경로 → (mode, sha)."""
+    got: dict[str, tuple[str, str]] = {}
+    for rec in out.split("\0"):
+        meta, _, path = rec.partition("\t")
+        f = meta.split(" ")
+        if path and len(f) == 3:
+            got[path] = (f[0], f[2])
+    return got
+
+
 def entries(
     status: dict[str, tuple[str, str]],
     counts: dict[str, tuple[int | None, int | None]],
@@ -278,6 +308,55 @@ def exclude_pathspec(exclude_dirs: tuple[str, ...]) -> list[str]:
 
 def _excluded(path: str, exclude_dirs: tuple[str, ...]) -> bool:
     return any(part in exclude_dirs for part in path.split("/")[:-1])
+
+
+# ── 스냅샷 색인의 저장소 경계 (§9) ────────────────────────────────
+
+
+def parse_index(out: str) -> list[tuple[str, str]]:
+    """``ls-files --stage -z`` → (경로, mode)."""
+    got = []
+    for rec in out.split("\0"):
+        meta, _, path = rec.partition("\t")
+        if path:
+            got.append((path, meta.split(" ", 1)[0]))
+    return got
+
+
+def index_paths_to_untrack(
+    index: list[tuple[str, str]],
+    is_repo: Callable[[str], bool],
+    has_commits: Callable[[str], bool],
+) -> list[str]:
+    """스냅샷 색인에서 뺄 경로 — 디스크의 저장소 경계와 어긋난 항목:
+
+    - gitlink(160000)인데 그 자리에 저장소가 없다(``.git`` 을 지웠다) → 그 gitlink. 빼면
+      ``add -A`` 가 안 파일을 일반 파일로 담는다(gitlink 가 남아 있으면 그 아래를 안 담는다).
+      그 자리가 커밋 없는 저장소여도(지우고 ``git init``) 뺀다 — 남은 gitlink 는 옛 커밋을
+      가리킨 채 그대로 담기고(실측), 빼면 ``add`` 가 커밋 없는 저장소로 거부해 그 호출에서
+      빠진다(Changes 안내).
+    - 일반 파일로 담던 폴더에 커밋 있는 저장소가 생겼다 → 그 아래 항목 전부(가장 바깥 저장소만
+      보고 그 안은 묻지 않는다). 빼면 ``add -A`` 가 gitlink 하나로 담는다 — 그 저장소 몫.
+      ``git init`` 만 한 폴더(커밋 없음)는 그대로 우리가 담는다.
+
+    ``is_repo``·``has_commits`` 는 디스크·하위 git 을 읽는 함수(주입) — 묻는 횟수는 색인의
+    폴더 수(stat)와 새로 생긴 저장소 수(하위 git)."""
+    gitlinks = [p for p, mode in index if mode == "160000"]
+    out = [p for p in gitlinks if not (is_repo(p) and has_commits(p))]
+    dirs: set[str] = set()
+    for path, _ in index:
+        parts = path.split("/")[:-1]
+        for i in range(1, len(parts) + 1):
+            dirs.add("/".join(parts[:i]))
+    adopted: list[str] = []
+    for d in sorted(dirs, key=lambda p: (p.count("/"), p)):  # 바깥부터
+        if any(d.startswith(a + "/") for a in adopted):
+            continue
+        if is_repo(d) and has_commits(d):
+            adopted.append(d)
+    if adopted:
+        out += [p for p, _ in index if any(p.startswith(a + "/") for a in adopted)]
+    return out
 
 
 # ── 기록·비교 ─────────────────────────────────────────────────
@@ -488,14 +567,7 @@ class NestedRepos:
     def _tree_items(self, tree: str | None) -> dict[str, tuple[str, str]]:
         if not tree or tree == EMPTY_TREE:
             return {}
-        out = self.ours("ls-tree", "-r", "-z", tree).stdout
-        got: dict[str, tuple[str, str]] = {}
-        for rec in out.split("\0"):
-            meta, _, path = rec.partition("\t")
-            f = meta.split(" ")
-            if path and len(f) == 3:
-                got[path] = (f[0], f[2])
-        return got
+        return parse_ls_tree(self.ours("ls-tree", "-r", "-z", tree).stdout)
 
     def _import_head_blob(self, rel: str, head: str, q: str) -> tuple[str, str] | None:
         """하위 저장소 커밋의 파일 하나를 우리 저장소로 — ``git rm --cached`` 처럼 추적에서
@@ -576,6 +648,25 @@ class NestedRepos:
             path=rel, kind="plain", tree=self._subtree(disk_tree, rel), since=now
         )
 
+    def record_adopted(self, rel: str, now: int, folder_tree: str) -> RepoRecord:
+        """일반 파일로 담던 폴더가 커밋 있는 저장소가 된 자리 — 기준은 그 폴더의 기준 트리
+        (``folder_tree``, 우리 저장소). 기록 HEAD 는 지금 HEAD, dirty 덮어쓰기는 기준 트리의
+        blob 중 HEAD 와 다른 것(이미 우리 저장소에 있는 blob 을 가리킨다 — 복사 없음)과 HEAD
+        에만 있는 경로("그때 없었음"). 그래서 셈은 "기준점 이후 실제로 바뀐 파일" 로 이어진다."""
+        r = self.record_repo(rel, now, origin="adopted", dirty=[])
+        out = self.sub(rel, "ls-tree", "-r", "-z", r.head).stdout if r.head else ""
+        base, head = (
+            {p: v for p, v in items.items() if not _excluded(p, self.exclude_dirs)}
+            for items in (self._tree_items(folder_tree), parse_ls_tree(out))
+        )
+        dirty = sorted(
+            {p for p, v in base.items() if head.get(p) != v}
+            | {p for p in head if p not in base}
+        )
+        tree = self._tree({p: base[p] for p in dirty if p in base})
+        r.dirty, r.tree = dirty, tree
+        return r
+
     def _subtree(self, tree: str, rel: str) -> str:
         """트리 안 폴더의 트리 — 없거나 폴더가 아니면(gitlink·파일) 빈 트리."""
         # `<tree>:<path>^{tree}` 는 안 된다 — 콜론 뒤는 전부 경로다
@@ -635,7 +726,9 @@ class NestedRepos:
             self.workspace / rel
         ).is_symlink()
         repo = self.is_repo(rel)
-        head_found = roots_shared = None
+        head_found = roots_shared = has_commits = None
+        if repo and (r is None or r.kind != "repo" or not r.head):
+            has_commits = self.head(rel) is not None
         if r is not None and r.kind == "repo" and repo and r.head:
             head_found = (
                 self.sub(rel, "cat-file", "-e", f"{r.head}^{{commit}}").returncode == 0
@@ -651,6 +744,7 @@ class NestedRepos:
             is_repo=repo,
             head_found=head_found,
             roots_shared=roots_shared,
+            has_commits=has_commits,
         )
 
     def reconcile(
@@ -660,11 +754,15 @@ class NestedRepos:
         found: list[str],
         now: int,
         verdicts: dict[str, Verdict | None],
+        base: str | None = None,
     ) -> tuple[Manifest, bool]:
         """기록을 지금과 맞춘다 — 기준을 잃은 저장소만 지금으로(안내 줄과 함께), 저장소가
         아니게 된 폴더는 일반 폴더 기록으로(``disk_tree`` 는 그 자리 gitlink 를 뺀 트리),
-        ``found``(기록에 없는 새 저장소)는 그 순간으로. 다른 기록은 그대로. ``verdicts`` 는
-        기록 경로마다 :meth:`observe` 한 판정. 바뀌었으면 (새 기록, True)."""
+        ``found``(기록에 없는 새 저장소)는 그 순간으로 — 기준점(``base`` 커밋)에 그 자리가
+        일반 폴더로 있었으면 그 폴더 트리를 기준으로 넘겨받는다(:meth:`record_adopted`).
+        일반 폴더 기록이 저장소가 된 것도 그 기록의 트리로 넘겨받는다. 커밋 없는 저장소
+        (UNBORN)는 그대로 — 안내는 셀 때마다. 다른 기록은 그대로. ``verdicts`` 는 기록
+        경로마다 :meth:`observe` 한 판정. 바뀌었으면 (새 기록, True)."""
         repos: list[RepoRecord] = []
         notices = list(m.notices)
         changed = False
@@ -680,14 +778,23 @@ class NestedRepos:
                 notices = [n for n in notices if n.repo != r.path]
                 notices.append(Notice(r.path, v.value, now, r.head, r.since))
                 changed = True
-            elif v is Verdict.NEW:  # 일반 폴더 기록이 다시 저장소가 됐다
+            elif v is Verdict.NEW and r.kind == "plain":
+                # 일반 폴더가 다시 저장소가 됐다 — "no longer a git repository" 안내는 낡았다
+                repos.append(self.record_adopted(r.path, now, r.tree or EMPTY_TREE))
+                notices = [n for n in notices if n.repo != r.path]
+                changed = True
+            elif v is Verdict.NEW:  # 기록 때 커밋이 없던 저장소의 첫 커밋
                 repos.append(self.record_repo(r.path, now, origin="new"))
                 changed = True
             else:
                 repos.append(r)
         for rel in found:
             if m.find(rel) is None and self.observe(None, rel) is Verdict.NEW:
-                repos.append(self.record_repo(rel, now, origin="new"))
+                folder = self._subtree(base, rel) if base else EMPTY_TREE
+                if folder != EMPTY_TREE:
+                    repos.append(self.record_adopted(rel, now, folder))
+                else:
+                    repos.append(self.record_repo(rel, now, origin="new"))
                 changed = True
         if not changed:
             return m, False
