@@ -456,7 +456,8 @@ class TestWaitInPlaceWakes:
             jobs.stop_all()
             set_job_registry(None)
 
-    def test_stop_during_the_wait_ends_the_run_and_the_run_agent(self, session):
+    def test_stop_during_the_wait_ends_main_only(self, session):
+        """방 ■ 는 main 만 (v10.142.0, 사용자 결정) — run 은 계속 일하고 자기 ■ 로 멈춘다."""
         stop = threading.Event()
         p = Provider(
             {
@@ -471,11 +472,12 @@ class TestWaitInPlaceWakes:
             stop.set()  # 방 ■ — main 이 제자리에서 기다리는 중에
 
         threading.Thread(target=stop_when_waiting, daemon=True).start()
-        s["run"](stop_event=stop)
+        result = s["run"](stop_event=stop)
+        assert not result.success  # main 의 런은 interrupt 로 끝났다
         (tm,) = s["reg"]._agents.values()
-        # 묶인 정지(LinkedStop) — 부른 런의 ■ 가 run 을 멈춘다
+        assert tm.state != "dead" and not tm.stop_event.is_set()  # run 은 계속
+        assert s["reg"].stop_run(tm.key) == ""
         assert wait_until(lambda: tm.state == "dead")
-        assert tm.stop_event.is_set()
 
 
 class TestAgentToAgent:

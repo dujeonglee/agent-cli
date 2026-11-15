@@ -7,19 +7,20 @@ main 이든 에이전트든)의 요청으로 받아(`request`), 런이 `complete
 빚이 남으면 `complete` 가 되돌아오고, 그래도 남으면 런 끝 폴백이 런 요약으로 회신한다. **결과는 그 회신이다**: 여기는 기다리지 않고 바로 돌아오고, 부른 쪽의 장부에
 "기다리는 회신" 이 선다(레지스트리가 안다 — `AgentRegistry.awaited_replies`).
 
-이 모듈이 정하는 run 만의 것 셋:
+이 모듈이 정하는 run 만의 것 둘:
 
 - 앞 거부 판정 — `delegation_checks.run_refusal`(빈 과제·provider 없음·순환·깊이).
-- 정지 — 런의 정지가 부른 런의 정지에 묶인다(`LinkedStop`): 방 ■·Ctrl+C 가 run 을 멈춘다.
-  spawn 의 정지는 평생 것(kill·세션 종료)이다.
 - 훅 — ``OnAgentStart`` 는 띄울 때, ``OnAgentEnd`` 는 과제를 마치고 내려올 때(그 마지막 런의 결과).
+
+정지는 다른 에이전트와 같다(v10.142.0, `agent_stop`) — 부른 런의 정지에 묶이지 않는다: 방 ■·Ctrl+C 한 번은
+main 만 멈추고, run 은 자기 채널의 ■ 나 "모두 정지" 로 멈춘다(멈추면 요청자에게 stopped 회신). 띄운 쪽
+주소(``parent``)를 남겨 그 쪽이 ✕ 로 지워지면 함께 멈춘다.
 
 레지스트리를 import 하지 않는 잎이다 — 레지스트리의 모드 표가 `start_run` 을 핸들러로 부른다.
 """
 
 from __future__ import annotations
 
-import threading
 from typing import NamedTuple
 
 from agent_cli import item_ids
@@ -32,21 +33,6 @@ RUN_STARTED = (
     "[{rid}] and wakes you (if it completes without one you get its run summary "
     "instead); the agent ends when it completes."
 )
-
-
-class LinkedStop(threading.Event):
-    """run 에이전트의 정지 — 자기 정지(kill·세션 종료)와 부른 런의 정지 중 어느 쪽이 서도
-    ``is_set()`` 이 참이다. ``set()`` 은 자기 것만 세운다(부른 런을 멈추지 않는다).
-
-    ``wait()`` 은 부모를 보지 않는다 — 정지를 보는 쪽(엔진의 턴 경계·워커의 받은편지함)은
-    전부 ``is_set()`` 으로 짧게 다시 본다."""
-
-    def __init__(self, parent: threading.Event | None) -> None:
-        super().__init__()
-        self._parent = parent
-
-    def is_set(self) -> bool:
-        return super().is_set() or (self._parent is not None and self._parent.is_set())
 
 
 class RunLaunch(NamedTuple):
@@ -87,7 +73,7 @@ def launch_run(registry, args: dict, *, caller, runtime) -> RunLaunch:
         agent_stack=list(caller.agent_stack),
         ends_after_task=True,
         task_summary=task,
-        stop_event=LinkedStop(caller.stop_event),
+        parent=caller.owner,
     )
     if err:
         return RunLaunch("", "", f"Delegation rejected: {err}")
@@ -119,7 +105,7 @@ def launch_run(registry, args: dict, *, caller, runtime) -> RunLaunch:
         tm.on_task_end = on_task_end
     qerr = registry.request(key, task, author=caller.owner, item_id=rid)
     if qerr:
-        registry.kill(key)  # 과제 없는 run 은 남길 이유가 없다
+        registry.kill(key, by="")  # 과제 없는 run 은 남길 이유가 없다 — 알릴 빚도 없다
         return RunLaunch("", "", f"Delegation rejected: {qerr}")
     return RunLaunch(key, rid, "")
 

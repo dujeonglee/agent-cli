@@ -28,6 +28,7 @@ from agent_cli.loop.kind import (
     Start,
 )
 from agent_cli.session_slots import get_agent_registry
+from agent_cli.subagent import agent_stop
 from agent_cli.tools.result import ToolResult
 from agent_cli.wake import Mailbox
 
@@ -76,6 +77,10 @@ class ResidentLoop(LoopKind):
             agent_registry=registry,
         )
         self._items: list[dict] = []
+        #: 지금 런의 정지(■ — `AgentRegistry.stop_run`)와 그 런이 기록을 시작한 서수(멈췄을 때 회신에 실을
+        #: 마지막 호출·생각을 읽는다). 런마다 `start` 가 새로 세운다.
+        self._run_stop: agent_stop.LinkedStop | None = None
+        self._run_from = 0
 
     @staticmethod
     def make_ports(
@@ -187,6 +192,12 @@ class ResidentLoop(LoopKind):
         self._items = list(items)
         me = self.owner
         first = items[0]
+        # 이 런의 정지 — ■ 는 이것만, ✕·세션 종료는 평생 정지로 (`agent_stop.LinkedStop`)
+        self._run_stop = agent_stop.LinkedStop(tm.stop_event)
+        tm.run_stop = self._run_stop
+        if tm.stop_cause == agent_stop.STOPPED:
+            self._run_stop.set()  # ■ 가 꺼낸 뒤·시작 전에 왔다 — 이 런이 그 런이다
+        self._run_from = tm.ctx.next_ordinal if tm.ctx is not None else 0
         tm.state = "busy"
         # 화자 attribution — 회신/질문 라우팅 기준(D8); 묶음은 첫 발신자. 이 런의 이름은
         # 첫 항목의 id — 거는 질문의 asked_in (§3.2).
@@ -225,6 +236,7 @@ class ResidentLoop(LoopKind):
                     if human
                     else []
                 ),
+                stop_event=self._run_stop,
             )
         for it in items:  # 전부 user:* — 빚은 아니지만 `reply` 거부 사유가 이걸 본다
             reg.note_owes(me, it.get("author", ""), it["text"], id=it["id"])
@@ -245,6 +257,7 @@ class ResidentLoop(LoopKind):
             # 한 레코드에 여럿이 합쳐진다 — 첫 요청 id 로 찍는다(핀)
             request_id=user_requests[0]["id"],
             user_requests=user_requests,
+            stop_event=self._run_stop,
         )
 
     # ── ⑭ 스코프 — 작업 카드 ──
@@ -326,7 +339,11 @@ class ResidentLoop(LoopKind):
         output = reg._with_human_notice(tm, iid, output)
         reply_path = reg._persist_reply(tm, iid, output)
         human = _is_human_addr(author)
-        stopped = tm.stop_event.is_set()
+        run_stop = self._run_stop
+        stopped = run_stop.is_set() if run_stop is not None else tm.stop_event.is_set()
+        if stopped and tm.stop_cause:
+            # 사람(또는 모델)이 멈췄다 — 빚진 상대 모두에게 stopped 회신 (P3, `agent_stop`)
+            self._answer_stopped_run()
         owed = bool(reg.reply_debts(me)) and not waiting and not stopped
         if owed or human:
             out_payload = {
@@ -357,7 +374,24 @@ class ResidentLoop(LoopKind):
             reply_path=reply_path,
         )
         reg._close_run(tm, len(items))
+        if tm.stop_cause == agent_stop.STOPPED and not tm.stop_event.is_set():
+            if stopped:
+                # ■ — 에이전트는 남는다: 한 줄 알린다(대기 요청은 다음 차례)
+                reg.report_stop(tm, kept=len(reg._queued(tm)))
+            # 다음 런은 원인 없이 시작한다 — 멈추지 않고 끝난 런에 늦게 온 ■ 도 여기서 사라진다
+            tm.stop_cause = tm.stop_by = ""
         return result, secs
+
+    def _answer_stopped_run(self) -> None:
+        """멈춘 런의 빚에 회신한다 — 그 런의 마지막 호출과 생각을 실어(`agent_stop.run_activity`·
+        `partial_notes`). 회신은 레지스트리가 보낸다(`answer_debts_as_stopped`)."""
+        tm = self.tm
+        records = tm.ctx.records_since(self._run_from) if tm.ctx is not None else []
+        self.registry.answer_debts_as_stopped(
+            tm,
+            activity=agent_stop.run_activity(records),
+            notes=agent_stop.partial_notes(records),
+        )
 
     def crashed(self, exc: BaseException, secs: float) -> tuple[Any, float]:
         # worker 는 죽지 않는다 — 회신으로 보고하고 같은 후처리를 거친다

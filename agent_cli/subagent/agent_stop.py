@@ -1,0 +1,193 @@
+"""에이전트 정지 — 사람이 멈춘 에이전트가 빚진 상대 모두에게 알리는 규칙 (docs/agent-engine/DESIGN.md §2.3).
+
+정지는 둘이다. **■ 런 정지**(`AgentRegistry.stop_run`)는 지금 런만 끝내고 에이전트는 남는다. **✕ 제거**
+(`AgentRegistry.kill` — 모델의 `agent` `kill` 도 같다)는 에이전트를 없앤다. run 에이전트(``ends_after_task``)는
+맡은 일 하나가 수명이라 ■ 도 ✕ 와 같다 — 내려온다. 어느 쪽이든 그 에이전트가 들고 있던 빚은 조용히 버리지
+않는다: 요청자마다 "stopped by user" 회신이 간다. 무엇을 누구에게 알리는지는 아래 표(`STOP_RULES`) 한 장이다.
+
+| 들고 있던 것 | ■ (상주) | ✕ · run 에이전트 |
+|---|---|---|
+| 지금 하던 일의 요청자 · 그 밖의 빚 | stopped 회신 | 같음 |
+| 아직 시작 안 한 대기 요청 | 남김(다음 차례) | removed 회신 |
+| 자기가 맡긴 하위 일 | 그대로 | 하위 run 은 함께 멈춤 · 하위 상주는 남음 |
+
+세션 종료(`shutdown_all`)는 사람의 정지가 아니다 — 원인이 비어 있고, 빚은 지금처럼 버려 재시작이 되넣는다.
+
+회신은 회신이다(P2 규칙): 요청자의 기다리는 회신 항목을 닫고 새 장부 항목을 만들지 않는다. 글은 여기서
+짓는다 — 모델이 읽는 문장이라 모듈 상수다(`prompts.inventory` 표본). "Do not redo" 줄이 없으면 35B 가 멈춘
+일을 10/10 다시 돌렸다(E1).
+
+레지스트리를 import 하지 않는 잎이다 — 레지스트리(`agents_live`)와 에이전트 루프(`resident_loop`)가 부른다.
+"""
+
+from __future__ import annotations
+
+import threading
+from typing import NamedTuple
+
+#: 정지 원인 — 사람의 ■(런 정지)과 ✕(제거). 빈 문자열은 사람의 정지가 아니다(세션 종료).
+STOPPED = "stopped"
+REMOVED = "removed"
+
+#: 봉투 머리줄 끝의 표지 — ``── reply [n-7] from agt-3 re [r-21] · stopped by user ──``. ``by`` 는 멈춘
+#: 쪽 — 사람이면 ``user``, 모델의 `agent` `kill` 이면 ``main``·에이전트 키.
+STOPPED_MARK = "stopped by {by}"
+REMOVED_MARK = "removed by {by}"
+
+#: ``who`` 는 문장 주어 — 사람이면 "The user", 모델이면 그 주소(``main``·키).
+STOPPED_REPLY = (
+    '{who} stopped {agent} while it was working on your request [{rid}] ("{quote}").'
+)
+REMOVED_REPLY = (
+    "{who} removed {agent} before it started your request [{rid}] "
+    '("{quote}"). Nothing was done for it.'
+)
+LAST_ACTIVITY = "Last activity: {calls}"
+PARTIAL_NOTES = "Partial notes: {notes}"
+DO_NOT_REDO = "Do not redo this work unless the user asks."
+
+#: "Last activity" 에 싣는 호출 수(뒤에서부터)와 인용·메모 길이.
+ACTIVITY_CALLS = 3
+QUOTE_CHARS = 100
+NOTES_CHARS = 300
+
+
+class StopRule(NamedTuple):
+    """한 정지가 그 에이전트의 것들에 하는 일 — `STOP_RULES` 의 한 칸."""
+
+    ends_agent: bool  # 에이전트가 없어진다(내려옴·제거)
+    answers_queued: bool  # 시작 안 한 대기 요청에도 회신(removed)
+    stops_sub_runs: bool  # 그 에이전트가 띄운 run 에이전트도 멈춘다
+
+
+#: (원인, run 에이전트인가) → 규칙. 모든 원인에서 지금 일·그 밖의 빚은 stopped 회신이다.
+STOP_RULES: dict[tuple[str, bool], StopRule] = {
+    (STOPPED, False): StopRule(
+        ends_agent=False, answers_queued=False, stops_sub_runs=False
+    ),
+    (STOPPED, True): StopRule(
+        ends_agent=True, answers_queued=True, stops_sub_runs=True
+    ),
+    (REMOVED, False): StopRule(
+        ends_agent=True, answers_queued=True, stops_sub_runs=True
+    ),
+    (REMOVED, True): StopRule(
+        ends_agent=True, answers_queued=True, stops_sub_runs=True
+    ),
+}
+
+
+def stop_rule(cause: str, ends_after_task: bool) -> StopRule:
+    """정지 원인과 에이전트 종류의 규칙. 원인이 비면(세션 종료) KeyError — 사람의 정지만 묻는다."""
+    return STOP_RULES[(cause, bool(ends_after_task))]
+
+
+class LinkedStop(threading.Event):
+    """에이전트 런 하나의 정지 — 그 런만의 정지(■)와 에이전트의 평생 정지(✕·세션 종료) 중 어느 쪽이 서도
+    ``is_set()`` 이 참이다. ``set()`` 은 자기 것만 세운다(에이전트를 죽이지 않는다).
+
+    ``wait()`` 은 부모를 보지 않는다 — 정지를 보는 쪽(엔진의 턴 경계·도구 실행 직전)은 전부 ``is_set()`` 으로
+    본다."""
+
+    def __init__(self, parent: threading.Event | None) -> None:
+        super().__init__()
+        self._parent = parent
+
+    def is_set(self) -> bool:
+        return super().is_set() or (self._parent is not None and self._parent.is_set())
+
+
+def _one_line(text: str, cap: int) -> str:
+    flat = " ".join(str(text or "").split())
+    return flat if len(flat) <= cap else flat[: cap - 1].rstrip() + "…"
+
+
+#: 호출 한 줄 요약에 쓸 인자 — 사람이 고른 값 하나(명령·경로·URL·질의·패턴·상대·키).
+_SUMMARY_ARGS = ("command", "path", "url", "query", "pattern", "to", "key")
+
+
+def _call_summary(action: str, args) -> str:
+    """호출 하나 → 도구 이름은 백틱, 고른 인자 값은 큰따옴표 — 표기 규칙(v10.77.0)."""
+    if isinstance(args, dict):
+        for k in _SUMMARY_ARGS:
+            v = args.get(k)
+            if isinstance(v, str) and v.strip():
+                return f'`{action}` "{_one_line(v, 60)}"'
+    return f"`{action}`"
+
+
+def run_activity(records: list[dict]) -> list[str]:
+    """그 런이 기록한 레코드(`ContextManager.records_since`) → 실행된 호출 줄(도구 백틱·값 큰따옴표·✓/✗), 뒤에서
+    `ACTIVITY_CALLS` 개. 호출은 assistant 레코드의 op(``complete`` 제외), 결과는 그 뒤 관찰 레코드(묶음이면 op 별
+    조각 ``parts``)의 성공 여부 — 결과가 없는 op(멈춘 뒤라 실행되지 않음)는 뺀다. 읽기만 한다."""
+    calls: list[str] = []
+    pending: list[str] = []
+    for r in records:
+        if r.get("role") == "assistant":
+            pending = [
+                _call_summary(str(op.get("action")), op.get("action_input"))
+                for op in r.get("ops") or []
+                if isinstance(op, dict)
+                and op.get("action")
+                and op.get("action") != "complete"
+            ]
+            continue
+        if r.get("role") != "user" or not r.get("tool") or r.get("recovery"):
+            continue
+        if r.get("tool") == "interrupt":
+            pending = []  # 멈춘 자리 — 남은 op 는 실행되지 않았다
+            continue
+        parts = r.get("parts") or [r]
+        for p in parts:
+            if not pending:
+                break
+            calls.append(f"{pending.pop(0)} {'✓' if p.get('success') else '✗'}")
+    return calls[-ACTIVITY_CALLS:]
+
+
+def partial_notes(records: list[dict]) -> str:
+    """그 런의 마지막 생각(assistant 레코드의 ``thought``) 앞부분 한 줄 — 멈추기 직전까지 알아낸 것. 없으면 ""."""
+    for r in reversed(records):
+        if r.get("role") == "assistant" and str(r.get("thought") or "").strip():
+            return _one_line(r["thought"], NOTES_CHARS)
+    return ""
+
+
+def stop_actor(by: str) -> str:
+    """멈춘 쪽(``"user"``·``"main"``·키) → 회신 문장의 주어."""
+    return "The user" if not by or by == "user" else by
+
+
+def stopped_reply(
+    agent: str, rid: str, request: str, activity: list[str], notes: str, *, by: str
+) -> str:
+    """일하던(또는 빚진) 요청에 대한 stopped 회신의 본문 — 봉투 안쪽."""
+    lines = [
+        STOPPED_REPLY.format(
+            who=stop_actor(by),
+            agent=agent,
+            rid=rid,
+            quote=_one_line(request, QUOTE_CHARS),
+        )
+    ]
+    if activity:
+        lines.append(LAST_ACTIVITY.format(calls=" · ".join(activity)))
+    if notes:
+        lines.append(PARTIAL_NOTES.format(notes=notes))
+    lines.append(DO_NOT_REDO)
+    return "\n".join(lines)
+
+
+def removed_reply(agent: str, rid: str, request: str, *, by: str) -> str:
+    """시작 전에 제거된 요청에 대한 회신의 본문."""
+    return "\n".join(
+        [
+            REMOVED_REPLY.format(
+                who=stop_actor(by),
+                agent=agent,
+                rid=rid,
+                quote=_one_line(request, QUOTE_CHARS),
+            ),
+            DO_NOT_REDO,
+        ]
+    )

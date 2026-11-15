@@ -250,6 +250,23 @@ def _one_line(text: str) -> str:
     )
 
 
+def stop_summary(how: str, notified: list[tuple[str, str]], kept: int) -> str:
+    """정지 한 줄의 본문 — 회신을 보낸 상대를 받는 이별로 묶는다:
+    ``stopped by user — reply sent to main (r-21, r-22), agt-6 (r-31); 1 queued request kept``."""
+    by_to: dict[str, list[str]] = {}
+    for to, rid in notified:
+        by_to.setdefault(to, []).append(rid)
+    if by_to:
+        sent = ", ".join(f"{to} ({', '.join(ids)})" for to, ids in by_to.items())
+        n = len(notified)
+        text = f"{how} — repl{'ies' if n != 1 else 'y'} sent to {sent}"
+    else:
+        text = f"{how} — nobody was waiting on it"
+    if kept:
+        text += f"; {kept} queued request{'s' if kept != 1 else ''} kept"
+    return text
+
+
 def _step_summary(tool_input: str) -> str:
     """도구 호출 입력(JSON 글) → 한 줄 요약. 사람이 고른 값 하나(명령·경로·URL·과제…)가
     있으면 그것, 없으면 JSON 그대로를 한 줄로."""
@@ -511,6 +528,18 @@ class MinimalRenderer(Renderer):
         에이전트의 스레드에서 오고 그 스레드의 출력은 캡처해 버리므로(에이전트 줄), 캡처를 거치지
         않고 바로 찍는다 — 거치면 회신 줄이 통째로 사라진다."""
         self.con.print(f"  {text}", markup=False, highlight=False, soft_wrap=True)
+
+    def agent_stopped(
+        self, *, key: str, how: str, notified: list[tuple[str, str]], kept: int
+    ) -> None:
+        """``■ agt-3 │ stopped by user — reply sent to main (r-21), agt-6 (r-31); 1 queued request kept``
+        (v10.142.0, 설계 §6). 정지는 에이전트 스레드에서도 오므로 캡처를 거치지 않는다(`agent_mail_hint`)."""
+        self.con.print(
+            f"  ■ {key} │ {stop_summary(how, notified, kept)}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
 
     def wait_in_place(self, waiting: bool, awaited: list[dict]) -> None:
         """``⏳ waiting for N reply (r-21) — type to steer…`` 한 줄 (v10.141.0, 설계 §6) —
