@@ -98,7 +98,7 @@ class LinkedStop(threading.Event):
         return super().is_set() or (self._parent is not None and self._parent.is_set())
 
 
-def _one_line(text: str, cap: int) -> str:
+def one_line(text: str, cap: int) -> str:
     flat = " ".join(str(text or "").split())
     return flat if len(flat) <= cap else flat[: cap - 1].rstrip() + "…"
 
@@ -113,7 +113,7 @@ def _call_summary(action: str, args) -> str:
         for k in _SUMMARY_ARGS:
             v = args.get(k)
             if isinstance(v, str) and v.strip():
-                return f'`{action}` "{_one_line(v, 60)}"'
+                return f'`{action}` "{one_line(v, 60)}"'
     return f"`{action}`"
 
 
@@ -150,7 +150,7 @@ def partial_notes(records: list[dict]) -> str:
     """그 런의 마지막 생각(assistant 레코드의 ``thought``) 앞부분 한 줄 — 멈추기 직전까지 알아낸 것. 없으면 ""."""
     for r in reversed(records):
         if r.get("role") == "assistant" and str(r.get("thought") or "").strip():
-            return _one_line(r["thought"], NOTES_CHARS)
+            return one_line(r["thought"], NOTES_CHARS)
     return ""
 
 
@@ -168,7 +168,7 @@ def stopped_reply(
             who=stop_actor(by),
             agent=agent,
             rid=rid,
-            quote=_one_line(request, QUOTE_CHARS),
+            quote=one_line(request, QUOTE_CHARS),
         )
     ]
     if activity:
@@ -187,7 +187,7 @@ def removed_reply(agent: str, rid: str, request: str, *, by: str) -> str:
                 who=stop_actor(by),
                 agent=agent,
                 rid=rid,
-                quote=_one_line(request, QUOTE_CHARS),
+                quote=one_line(request, QUOTE_CHARS),
             ),
             NEXT_STEP,
         ]

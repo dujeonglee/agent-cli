@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from agent_cli.subagent.agent_stop import one_line
 from agent_cli.subagent.agents_state import state_is_active
 from agent_cli.token_estimator import estimate_tokens
 from agent_cli.wake import harness_record
@@ -56,6 +57,20 @@ _NO_REPLY_LABEL = "(no explicit reply — this is the agent's run summary)"
 def is_human_addr(addr: str) -> bool:
     """``user`` / ``user:<nick>`` — 사람 주소인가 (§0: 하나의 주체)."""
     return addr == "user" or addr.startswith("user:")
+
+
+#: 실패로 끝난 런의 회신(폴백 런 요약) 머리 한 줄. 원인은 엔진의 사유(턴 상한·provider 오류 — `ToolResult.error`)
+#: 다 — 실패한 런은 산출물이 비어 사유가 이 줄에만 남는다(v10.143.0; 종전엔 버려져 요청자가 "왜" 를 몰랐다).
+RUN_ERROR_LINE = "(the run ended with an error)"
+RUN_ERROR_CAUSE_LINE = "(the run ended with an error: {error})"
+#: 원인 한 줄의 길이 — provider 오류는 응답 본문을 통째로 실을 수 있다.
+RUN_ERROR_CHARS = 300
+
+
+def run_error_line(error: str) -> str:
+    """실패한 런의 머리 한 줄 — 원인이 있으면 한 줄로 접어 함께, 없으면(예외 — 사유가 산출물에 있다) 접두만."""
+    cause = one_line(error, RUN_ERROR_CHARS)
+    return RUN_ERROR_CAUSE_LINE.format(error=cause) if cause else RUN_ERROR_LINE
 
 
 def format_agent_label(key: str, profile: str = "", name: str = "") -> str:
@@ -201,7 +216,7 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         )
 
     if not reply.get("success"):
-        body = f"(the run ended with an error)\n{body}"
+        body = f"{run_error_line(str(reply.get('error') or ''))}\n{body}"
     # 런의 회신(라벨 붙은 런 요약 폴백 포함) — 그 런을 연 요청이 ``run``
     content = envelope("reply", mid, label, body, re=str(reply.get("run") or ""))
     tm = registry.get(key) if registry is not None else None

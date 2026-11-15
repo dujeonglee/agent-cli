@@ -375,6 +375,8 @@ class ResidentLoop(LoopKind):
             success=success,
             duration_s=secs,
             reply_path=reply_path,
+            # 실패한 런의 사유(턴 상한·provider 오류) — 산출물이 비어 회신 머리 한 줄에만 남는다
+            **({"error": str(result.error)} if not success and result.error else {}),
         )
         reg._close_run(tm, len(items))
         if tm.stop_cause == agent_stop.STOPPED and not tm.stop_event.is_set():
