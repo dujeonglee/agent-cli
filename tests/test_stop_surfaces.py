@@ -52,8 +52,8 @@ class FakeRegistry:
     def working_agents(self):
         return list(self.working)
 
-    def stop_all_runs(self, by="user", wakes_main=True):
-        self.calls.append(("all", by, wakes_main))
+    def stop_all_runs(self, by="user", wakes_requesters=True):
+        self.calls.append(("all", by, wakes_requesters))
         out, self.working = self.working, []
         return out
 
@@ -334,7 +334,7 @@ class TestStopEverythingDoesNotWakeMain:
         def stop_everything():
             reg = box["s"]["reg"]
             stop.set()  # main 먼저 (서버·Ctrl+C 와 같은 순서)
-            assert reg.stop_all_runs(wakes_main=False)
+            assert reg.stop_all_runs(wakes_requesters=False)
 
         p = Provider(
             {

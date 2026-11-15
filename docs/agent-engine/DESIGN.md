@@ -138,7 +138,9 @@ Do not redo this work unless the user asks.
   에이전트만 일하면 `Send` 그대로 + 채널 줄 끝 `■ all`. **Stop everything 의 정지 회신만은 main 을 깨우지 않는다**
   (사용자 결정 — 메일 단위 표시 `wakes_main: false`, `MailWaker`·`run` 의 정지 판정은 `has_mail_that_wakes_main` 을
   본다): main 메일함에 쌓였다가 사람의 다음 입력 런에 함께 배달되고, `run` 은 조용해지면 끝난다(회신은 agents.json 미러에
-  남는다). Stop all agents·채널 ■/✕ 의 회신은 main 을 깨운다. API: `POST /api/agent/<key>/stop`, `POST /api/stop` 의 `scope`
+  남는다). 살아 남은 상주에게 가는 그 회신도 런을 열지 않는다(받은편지함 항목 `opens_run: false` — 워커가 들고
+  있다가 그 상주가 다음에 일을 받는 런의 첫 흡수에 넣는다, `_release_held`; 미러에 남아 재시작에도 산다).
+  Stop all agents·채널 ■/✕ 의 회신은 main·상주를 깨운다. API: `POST /api/agent/<key>/stop`, `POST /api/stop` 의 `scope`
   (`main`·`agents`·`all`), ✕ 는 종전 `POST /api/agent/<key>/kill`.
 - CLI: `/stop <key|name>`·`/stop all`(main 은 멈추지 않는다), Ctrl+C 한 번 = main 의 런, 2초 안에 두 번 = 전부(`ctrl_c.py`,
   주입 시계). 두 번은 Stop everything 과 같다(회신이 main 을 깨우지 않는다). 멈출 것이 없으면 종전처럼 중단(130),

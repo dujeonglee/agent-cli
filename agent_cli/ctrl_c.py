@@ -69,7 +69,11 @@ def stop_for_ctrl_c(
     if scope == ALL and (working or main_running):
         if main_stop is not None:
             main_stop.set()
-        n = len(registry.stop_all_runs(wakes_main=False)) if registry is not None else 0
+        n = (
+            len(registry.stop_all_runs(wakes_requesters=False))
+            if registry is not None
+            else 0
+        )
         say(STOPPING_ALL.format(n=n, s="" if n == 1 else "s"))
         return
     if main_running:

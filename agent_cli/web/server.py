@@ -1639,7 +1639,9 @@ def create_app(server: WebServer) -> FastAPI:
             loop = asyncio.get_running_loop()
             agents = await loop.run_in_executor(
                 None,
-                functools.partial(registry.stop_all_runs, wakes_main=scope != "all"),
+                functools.partial(
+                    registry.stop_all_runs, wakes_requesters=scope != "all"
+                ),
             )
         return JSONResponse({"stopped": stopped, "agents": agents})
 
