@@ -961,7 +961,10 @@ class AgentRegistry:
             # (§3.9 가 되살리긴 하지만 걷히는 것 자체가 사용자에겐 사고다.)
             return True
         return any(
-            self.state_is_active(t.state) or t.inbox.qsize() > 0
+            self.state_is_active(t.state)
+            or (
+                t.state != "dead" and t.inbox.qsize() > 0
+            )  # 죽은 이의 남은 표식은 일이 아니다
             for t in list(self._agents.values())
         )
 
@@ -1237,8 +1240,10 @@ class AgentRegistry:
         질문을 건 에이전트도 계속 돌고, 답은 새 항목으로 온다."""
         if self.has_pending_replies():
             return True
+        # 죽은 에이전트의 받은편지함은 세지 않는다 — 런 도중 끝난(■·✕) 워커는 끝내라는 표식(`_SHUTDOWN`)을
+        # 꺼내지 않고 나간다; 세면 `run` 이 끝나지 않는다 (v10.142.0)
         return any(
-            tm.state == "busy" or tm.inbox.qsize() > 0
+            tm.state == "busy" or (tm.state != "dead" and tm.inbox.qsize() > 0)
             for tm in list(self._agents.values())
         )
 
@@ -2823,7 +2828,8 @@ class AgentRegistry:
                     "key": tm.key,
                     "profile": tm.profile_name,
                     "name": tm.instance_name,
-                    "success": False,
+                    # 배달된 회신이다(실패가 아니다) — 멈춤은 머리 표지가 말한다
+                    "success": True,
                     "output": text,
                     "answers": list(answers or []),
                     "expects_reply": False,

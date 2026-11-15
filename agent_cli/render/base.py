@@ -408,9 +408,10 @@ class Renderer(ABC):
         success: bool,
         duration_s: float,
         error: str = "",
+        stopped: bool = False,
     ) -> None:
-        """teammate request 1건 처리 종료 — begin_agent_work 과 짝.
-        기본 no-op."""
+        """teammate request 1건 처리 종료 — begin_agent_work 과 짝. ``stopped`` (v10.142.0): 사람(또는 모델)이
+        멈춘 런 — 실패가 아니라 정지로 그린다. 기본 no-op."""
 
     def agent_roster(self, roster: list) -> None:
         """teammate 목록/상태 스냅샷 (P4) — spawn/kill/상태 전이마다 호출.

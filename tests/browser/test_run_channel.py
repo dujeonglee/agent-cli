@@ -132,10 +132,15 @@ class TestRunChannel:
         chip = page.locator(f'.ov-ch[data-key="{key}"]')
         assert _wait(lambda: chip.count() == 1)
         assert "run" in chip.get_attribute("class")
-        # 일하는 동안: ✕ 가 있고(kill), 채널에 사람이 직접 쓸 수 있다 (시안 C)
-        assert chip.locator('.ov-ch-ctl[data-act="kill"]').count() == 1
+        # 일하는 동안: 채널 머리에 ■ Stop run · ✕ Remove 가 있고(v10.142.0 — 칩이 아니라 머리),
+        # 채널에 사람이 직접 쓸 수 있다 (시안 C)
+        assert chip.locator(".ov-ch-ctl").count() == 0
         chip.locator(".ov-ch-lb").click()
         assert _wait(lambda: "on" in (chip.get_attribute("class") or ""))
+        head = page.locator("#ov-chhead")
+        assert _wait(lambda: head.is_visible())
+        assert head.locator('.chh-btn[data-act="stop"]').count() == 1
+        assert head.locator('.chh-btn[data-act="kill"]').count() == 1
         assert not page.locator("#input").is_disabled()
         assert "To " in page.locator("#input").get_attribute("placeholder")
         page.locator('.ov-ch[data-key="main"]').click()

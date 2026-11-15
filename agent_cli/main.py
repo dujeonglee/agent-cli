@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -428,6 +429,10 @@ class _ConsoleSurface:
     def bind_stop(self, event: threading.Event | None) -> None:
         self._stop = event
 
+    def bound_stop(self) -> threading.Event | None:
+        """지금 런의 stop Event(한가하면 None) — Ctrl+C 처리기가 본다. 읽기만 한다."""
+        return self._stop
+
     def route(self, text: str) -> bool:
         if text.startswith("/sh"):
             return False
@@ -809,6 +814,10 @@ def try_dispatch_agent_or_skill(
         output.agent_result(result, ok=_ok)
         return True
 
+    if message.split(maxsplit=1)[0] == "/stop":
+        _dispatch_stop(message, output, agent_registry)
+        return True
+
     if message.startswith("/") and looks_like_slash_command(message):
         parts = message.split(maxsplit=1)
         cmd_name = parts[0][1:]
@@ -843,6 +852,32 @@ def try_dispatch_agent_or_skill(
     return False
 
 
+STOP_USAGE = "usage: /stop <agent key or name> | /stop all"
+STOP_NONE_WORKING = "no agent is working — nothing to stop"
+
+
+def _dispatch_stop(message: str, output: DispatchOutput, agent_registry) -> None:
+    """``/stop <key|name>`` — 그 에이전트의 ■(런 정지; run 에이전트는 내려온다), ``/stop all`` — 일하는 에이전트
+    모두 (v10.142.0, docs/agent-engine/DESIGN.md §2.3). main 은 멈추지 않는다(명령을 받은 것이 main 의 표면이다).
+    성공은 따로 말하지 않는다 — 멈춘 에이전트마다 레지스트리의 정지가 한 줄(``■ agt-3 │ stopped by user — …``)을
+    찍는다. 거부·오류만 ``output`` 으로."""
+    parts = message.split()
+    if agent_registry is None:
+        output.agent_dispatch_result("(no agent registry in this mode)", False)
+        return
+    if len(parts) != 2:
+        output.agent_dispatch_result(STOP_USAGE, False)
+        return
+    if parts[1] == "all":
+        if not agent_registry.stop_all_runs():
+            output.agent_dispatch_result(STOP_NONE_WORKING, False)
+        return
+    key = agent_registry.resolve_key(parts[1]) or parts[1]
+    error = agent_registry.stop_run(key)
+    if error:
+        output.agent_dispatch_result(f"/stop: {error}", False)
+
+
 def _command_dispatch(spec, owners, output, *, graceful_interrupt: bool):
     """펌프 표면의 명령 라우팅 — ``(text, stop_event) -> bool`` (run·web 공용, v10.131.0).
 
@@ -867,6 +902,12 @@ def _command_dispatch(spec, owners, output, *, graceful_interrupt: bool):
         )
 
     return dispatch
+
+
+#: ``@agent`` 명령을 기다리다 main 이 멈췄다 — run 은 자기 ■ 로만 멈춘다(v10.142.0).
+AT_AGENT_STOPPED = (
+    "stopped waiting — agent {key} keeps working; its reply [{rid}] arrives as mail"
+)
 
 
 def _dispatch_agent(
@@ -950,11 +991,17 @@ def _dispatch_agent(
         try:
             mail = agent_registry.take_reply(launched.rid, stop_event=stop_event)
         except BaseException:
-            # 기다리던 이 스레드가 끊겼다(CLI Ctrl+C) — 묶인 run 이 같이 멈추게 정지를 세운다
+            # 기다리던 이 스레드가 끊겼다 — 이 명령(main 의 런)의 정지를 세운다
             if stop_event is not None:
                 stop_event.set()
             raise
-        if mail is None:
+        if mail is None and stop_event is not None and stop_event.is_set():
+            # 방 ■·Ctrl+C 한 번은 main 만 (v10.142.0) — run 은 계속하고 회신은 main 메일로 온다
+            answer, ok = (
+                AT_AGENT_STOPPED.format(key=launched.key, rid=launched.rid),
+                False,
+            )
+        elif mail is None:
             answer, ok = f"agent {agent_name} ended without a reply", False
         else:
             body = str(mail.get("output") or "")
@@ -1899,7 +1946,10 @@ def run(
             surface=surface,
             policy=policy,
             on_mail_notice=_agent_mail_notice,
-            on_wait_input=_terminal_steer_input(input_queue),
+            # 대기 중에 친 명령(`/stop` 등)은 그 자리에서 라우팅한다 — 펌프는 아래에서 선다(늦은 바인딩)
+            on_wait_input=_terminal_steer_input(
+                input_queue, route=lambda text: wired.pump.route(text)
+            ),
         )
 
         agent_registry = owners.agent_registry
@@ -1940,6 +1990,7 @@ def run(
         input_queue.enqueue(None, query, images=query_images)
         warn_stuck = True
         prev_term = sigterm.install_unwind()
+        prev_int = _install_ctrl_c(surface, agent_registry)
         try:
             wired.pump.run()
             exit_code = surface.exit_code
@@ -1949,6 +2000,7 @@ def run(
         except Terminated:
             console.print(f"\n[{C['accent']}]⚡ Terminated — cleaning up.[/]")
         finally:
+            signal.signal(signal.SIGINT, prev_int)
             if not sigterm.received:
                 SigTerm.restore(
                     prev_term
@@ -2105,13 +2157,38 @@ def _announce_agent_boot(
         renderer.status("running", _auditor_boot_line(auditor))
 
 
-def _terminal_steer_input(queue):
+def _install_ctrl_c(surface, agent_registry):
+    """run 의 Ctrl+C 처리기를 건다 (v10.142.0, `agent_cli.ctrl_c`) — 한 번 = main 의 런만, 2초 안에 두 번 =
+    전부. 멈출 것이 없으면 종전처럼 ``KeyboardInterrupt``. 종전 처리기를 돌려준다(``finally`` 가 되돌린다)."""
+    from agent_cli.ctrl_c import CtrlCPresses, stop_for_ctrl_c
+
+    presses = CtrlCPresses()
+
+    def say(text: str) -> None:
+        console.print(f"\n  {text}", style=C["accent"], markup=False, highlight=False)
+
+    def on_sigint(signum, frame):
+        stop_for_ctrl_c(
+            presses.press(),
+            main_stop=surface.bound_stop(),
+            registry=agent_registry,
+            say=say,
+        )
+
+    return signal.signal(signal.SIGINT, on_sigint)
+
+
+def _terminal_steer_input(queue, route=None):
     """run: 제자리 대기를 깨울 사람 입력 (v10.141.0, docs/agent-engine/DESIGN.md §6) —
     ``(timeout) -> bool``. 입력 큐에 이미 온 것(예약 발화 등)이 있으면 참, 터미널이면 그 사이
     친 한 줄을 입력 큐에 넣고 참(꺼내는 것은 다음 턴 경계의 흡수다). 터미널이 아니면 큐만 본다.
 
     터미널 줄은 main 이 제자리에서 기다리는 동안에만 읽는다 — 그 밖의 시간엔 `ask`·확인
-    프롬프트가 같은 표준입력을 쓴다."""
+    프롬프트가 같은 표준입력을 쓴다.
+
+    ``route`` (v10.142.0): 명령(``/stop agt-3`` 등)이면 그 자리에서 처리하고 기다림을 깨우지 않는다 — 큐에
+    넣으면 main 이 "사용자가 썼다" 로 깨어 그 말이 없는 관찰을 읽는다(명령은 흡수 때 소비된다). 멈춘 에이전트의
+    회신이 따로 깨운다."""
     import select
 
     def wait(timeout: float) -> bool:
@@ -2127,6 +2204,8 @@ def _terminal_steer_input(queue):
             return False
         text = sys.stdin.readline().strip()
         if not text:
+            return False
+        if route is not None and text[:1] in "/@" and route(text):
             return False
         queue.enqueue(None, text)
         return True
@@ -2153,6 +2232,10 @@ def _agent_mail_notice(reply: dict, busy: bool) -> None:
     if re_id:
         # main 이 보낸 요청의 회신 (v10.141.0, 설계 §6) — 제자리 대기 중이면 곧바로 깬다
         body = " ".join(str(reply.get("output") or "").split())[:100]
+        if reply.get("mark"):
+            body = str(
+                reply["mark"]
+            )  # 멈춘 에이전트의 회신 — 자세한 것은 ■ 줄과 관찰이 말한다 (v10.142.0)
         line = f"↩ reply {re_id} ← {reply.get('key', '')}  {body}"
     else:
         it = mail_queue_item(reply)

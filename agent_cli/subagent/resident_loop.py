@@ -296,12 +296,15 @@ class ResidentLoop(LoopKind):
             if result is not None and result.output is not None
             else "(agent did not complete the request)"
         )
+        run_stop = self._run_stop
         renderer.end_agent_work(
             key=self.tm.key,
             item=self._items[0]["id"],
             success=success,
             duration_s=duration,
             error="" if success else output[:200],
+            # 정지로 끝난 런(■·✕·세션 종료) — 실패가 아니라 정지로 그린다 (v10.142.0)
+            stopped=bool(run_stop is not None and run_stop.is_set() and not success),
         )
 
     # ── ⑰ 결과 — 회신 계약·빚·run_ended (v10.89.0: 단건·사람 묶음 한 벌) ──

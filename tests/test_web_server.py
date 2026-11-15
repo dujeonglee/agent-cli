@@ -1071,9 +1071,12 @@ class TestStaticUI:
         assert "ovActiveDead()" in aci
         assert "$input.disabled = dead" in aci
         assert "has exited" in aci
-        # kill/resume 컨트롤(I-1) — 칩의 ✕/↻ → /api/agent/<key>/{kill,resume}
-        assert '"resume"' in chip and '"kill"' in chip
+        # resume 컨트롤(I-1) — 칩의 ↻ → /api/agent/<key>/resume. ✕(kill)·■(stop)은 v10.142.0 부터
+        # 칩이 아니라 채널 머리에 있다(`ovRenderChannelHead` → /api/agent/<key>/{stop,kill}).
+        assert '"resume"' in chip and '"kill"' not in chip
         assert '"/" +' in js and 'ctl.getAttribute("data-act")' in js
+        head = js_fn_body(js, "ovRenderChannelHead")
+        assert 'data-act="stop"' in head and 'data-act="kill"' in head
         # 채널 칩 상태 스타일
         assert ".ov-ch.dead" in css and ".ov-ch-ctl" in css
 

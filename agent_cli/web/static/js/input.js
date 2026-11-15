@@ -2,7 +2,7 @@
 // 입력 바인딩, abort 버튼과 input_required·worker_state 배선.
 // (v10.117.0, docs/web-modules/DESIGN.md §8 — 옛 main.js 의 절 [19]·[20]·[21]·[22]·[32])
 
-import { $abort, $chatStop, $input, $send, el } from "./dom.js";
+import { $abort, $chatStop, $chatStopMore, $input, $send, $stopMenu, el } from "./dom.js";
 import { session } from "./state.js";
 import { escapeHtml } from "./markdown.js";
 import { es } from "./sse.js";
@@ -13,8 +13,8 @@ import {
   attachReadyPaths,
   attachRefreshVision,
 } from "./attach.js";
-import { ovActiveChannel, ovRenderAskTray } from "./channels.js";
-import { ovApplyChannelInput } from "./runs.js";
+import { ovActiveChannel, ovRenderAskTray, postStop } from "./channels.js";
+import { ovSyncChannels } from "./runs.js";
 
 // True when the Send button is acting as a Stop button: chat mode +
 // worker busy. In that state a click POSTs /api/stop instead of
@@ -44,8 +44,9 @@ function updateSendEnabled() {
     $chatStop.disabled = stopping;
     $chatStop.textContent = stopping ? "Stopping…" : "Stop";
   }
-  // placeholder 는 채널(+busy) 인지형 — ovApplyChannelInput 단일 소유.
-  ovApplyChannelInput();
+  // placeholder 는 채널(+busy) 인지형 — ovApplyChannelInput 단일 소유. 채널 줄 끝 ■ all·Stop ▾ 도
+  // main 의 바쁨을 본다(v10.142.0) — 채널 동기화가 셋을 함께 다시 그린다.
+  ovSyncChannels();
 }
 
 // ── Input mode switching ───────────────────
@@ -212,24 +213,48 @@ export function ovSubmitMainConfirm(key, comment) {
 }
 
 // ── Input bindings ─────────────────────────
-function requestStop() {
+function requestStop(scope) {
   // Halt the in-flight chat turn at the next turn boundary. Fire and
   // forget — the worker's _on_interrupt path emits the observation and
   // flips back to worker_idle, which the SSE stream reflects.
   // Flip to "Stopping…" (disabled) immediately so the user gets
   // feedback and can't double-fire /api/stop.
-  session.stopRequested = true;
-  updateSendEnabled();
-  fetch("api/stop", {
-    method: "POST",
-  }).catch(function () {
-    /* network blip — ignore; the turn will end on its own anyway */
-  });
+  // ``scope`` (v10.142.0): "main"(본체) · "agents"(▾ Stop all agents — main 은 계속이라 Stopping… 없음) ·
+  // "all"(▾ Stop everything).
+  closeStopMenu();
+  if (scope !== "agents") {
+    session.stopRequested = true;
+    updateSendEnabled();
+  }
+  postStop(scope);
+}
+
+function closeStopMenu() {
+  if (!$stopMenu) return;
+  $stopMenu.hidden = true;
+  if ($chatStopMore) $chatStopMore.setAttribute("aria-expanded", "false");
 }
 
 if ($chatStop) {
   $chatStop.addEventListener("click", function () {
-    if (!$chatStop.disabled) requestStop();
+    if (!$chatStop.disabled) requestStop("main");
+  });
+}
+if ($chatStopMore && $stopMenu) {
+  $chatStopMore.addEventListener("click", function (e) {
+    e.stopPropagation();
+    var open = $stopMenu.hidden;
+    $stopMenu.hidden = !open;
+    $chatStopMore.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  $stopMenu.addEventListener("click", function (e) {
+    var item = e.target.closest ? e.target.closest("[data-scope]") : null;
+    if (item) requestStop(item.getAttribute("data-scope"));
+  });
+  document.addEventListener("click", function (e) {
+    if (!$stopMenu.hidden && !$stopMenu.contains(e.target) && e.target !== $chatStopMore) {
+      closeStopMenu();
+    }
   });
 }
 

@@ -691,6 +691,7 @@ class WebRenderer(Renderer):
         success: bool,
         duration_s: float,
         error: str = "",
+        stopped: bool = False,
     ) -> None:
         tid = threading.get_ident()
         with self._lock:
@@ -704,6 +705,10 @@ class WebRenderer(Renderer):
         }
         if error:
             payload["error"] = error
+        if stopped:
+            payload["stopped"] = (
+                True  # 사람이 멈춘 런 — 한 줄 카드가 "stopped" (v10.142.0)
+            )
         self._emit("scope_end", payload, persistent=True)
 
     def agent_roster(self, roster: list) -> None:

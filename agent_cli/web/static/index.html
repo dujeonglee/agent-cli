@@ -248,6 +248,9 @@
          맨 위 "맨 처음 받는 것" 은 Context 줄 아래 #ctx-head 에 선다(frames.js frameForChannel). -->
     <div id="ctx-tail"></div>
     <div id="ov-channels" role="tablist" aria-label="Conversation channels"></div>
+    <!-- 채널 머리 (v10.142.0, docs/agent-engine/DESIGN.md §2.3): 고른 에이전트의 ■ Stop run · ✕ Remove.
+         ■ 는 그 런만(상주는 남는다, run 은 내려온다), ✕ 는 에이전트를 없앤다 — 빚진 상대 모두에게 회신이 간다. -->
+    <div id="ov-chhead" hidden></div>
     <!-- 점프는 엿보기라 돌아가기는 **한 단계**만 — 새 점프가 이전 것을 덮는다
          (docs/chat-ui §5). 채널 칩이 항상 보이므로 스택일 이유가 없다. -->
     <button id="ch-back" type="button" hidden></button>
@@ -263,7 +266,15 @@
                 placeholder="Type a message — Enter to send, Shift+Enter for newline"
                 rows="3"></textarea>
       <button id="send" type="button" class="btn-primary">Send</button>
-      <button id="chat-stop" type="button" class="btn-danger" hidden title="Stop the current run">Stop</button>
+      <button id="chat-stop" type="button" class="btn-danger" hidden title="Stop main's current run">Stop</button>
+      <!-- Stop ▾ (v10.142.0): main 도 에이전트도 일할 때만 — 본체는 main 만, ▾ 는 범위 -->
+      <button id="chat-stop-more" type="button" class="btn-danger" hidden
+              aria-haspopup="menu" aria-expanded="false" title="Choose what to stop">▾</button>
+      <div id="stop-menu" role="menu" hidden>
+        <button type="button" role="menuitem" data-scope="main">Stop main<small>Ends main's current run. Agents keep working.</small></button>
+        <button type="button" role="menuitem" data-scope="agents">Stop all agents<small>Stops every agent's run and tells whoever was waiting.</small></button>
+        <button type="button" role="menuitem" data-scope="all">Stop everything<small>main + all agents.</small></button>
+      </div>
       <button id="abort" type="button" class="btn-danger" hidden>Stop</button>
     </div>
   </footer>

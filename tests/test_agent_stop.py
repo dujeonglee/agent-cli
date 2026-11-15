@@ -307,6 +307,16 @@ class TestRemove:
         assert m70["mark"] == "stopped by main"
         assert m70["output"].startswith(f"main stopped {tm.key} while it was working")
 
+    def test_a_dead_agents_leftover_shutdown_mark_is_not_work(self, reg, stage):
+        """런 도중 ✕ 로 끝난 워커는 끝내라는 표식을 꺼내지 않고 나간다 — 그 표식을 일로 세면 `run` 이 끝나지 않았다."""
+        tm = spawn(reg)
+        busy_with(reg, stage, tm, "HOLD17", "r-17")
+        threading.Thread(target=reg.kill, args=(tm.key,)).start()
+        assert until(lambda: tm.state == "dead")
+        assert tm.inbox.qsize() == 1  # 꺼내지 않은 표식
+        reg.drain_replies()
+        assert not reg.has_active_work() and not reg.any_activity()
+
     def test_kill_of_a_dead_agent_and_shutdown_send_nothing(self, reg, stage):
         tm = spawn(reg)
         busy_with(reg, stage, tm, "HOLD8", "r-80")
