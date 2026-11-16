@@ -26,7 +26,7 @@ _SCRIPT = """
 import sys
 import agent_cli.main as m
 
-def _boom(provider, model, base_url, api_key):
+def _boom(provider, model, base_url, api_key, config, source):
     resolved_key = api_key
     raise RuntimeError("forced failure for the traceback test")
 
@@ -42,7 +42,10 @@ def test_uncaught_exception_traceback_has_no_locals(tmp_path):
     (home / ".agent-cli").mkdir(parents=True)
     # 설정이 있어야 setup 마법사가 안 뜬다 — 닫힌 포트
     (home / ".agent-cli" / "config.json").write_text(
-        json.dumps({"base_url": "http://127.0.0.1:1/v1"}), encoding="utf-8"
+        json.dumps(
+            {"endpoint": "t", "endpoints": {"t": {"base_url": "http://127.0.0.1:1/v1"}}}
+        ),
+        encoding="utf-8",
     )
     env = {
         k: v

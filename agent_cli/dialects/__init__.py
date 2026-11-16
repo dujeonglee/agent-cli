@@ -170,11 +170,11 @@ class DialectUnbound(KeyError):
     """모델에 방언이 묶여 있지 않다 — 해석 체인의 두 소스가 모두 비었다."""
 
     def __init__(self, model: str):
-        from agent_cli.config import _GLOBAL_MODELS_PATH
+        from agent_cli.config import models_path_label
 
         super().__init__(
             f"No dialect for model '{model or '(none)'}'. Set \"dialect\" on its "
-            f"entry in {_GLOBAL_MODELS_PATH} (one of: {', '.join(list_names())}) "
+            f"entry in {models_path_label()} (one of: {', '.join(list_names())}) "
             f"or pass --dialect."
         )
 

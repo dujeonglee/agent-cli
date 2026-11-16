@@ -28,7 +28,6 @@ from agent_cli.dialects import (
     set_dialect_override as _set_dialect_override,
 )
 from agent_cli.knobs import knob_options
-from agent_cli.paths import user_dir
 from agent_cli.providers import (
     Credentials,
     UnsupportedModelError,
@@ -133,34 +132,25 @@ def _resolve_provider(
     model: str | None,
     base_url: str | None,
     api_key: str | None,
+    config: dict,
+    source: str,
 ):
-    """Resolve provider settings: CLI args > config.json > provider defaults.
+    """Resolve provider settings: CLI args > the chosen server's values > provider defaults.
+
+    ``config`` 는 고른 서버의 값(`config.endpoint_config`) 또는 서버가 골라지지 않은 실행의
+    env 값(`config.env_endpoint_config`)이다 — 고르기는 `_select_endpoint` 의 몫. ``source``
+    는 오류 문구의 "어디서 온 값" 이다.
 
     Returns ``(provider, base_url, model, credentials)`` — 키는 `Credentials` 로
     감싸 그 뒤로는 문자열로 흐르지 않는다(요청 헤더는 ``Credentials.headers``).
 
     ``provider`` is the ``-p`` flag value, or ``None`` when not passed.
-    Precedence: explicit flag → config's provider. A config (file or env)
-    that names no provider is an "openai" (OpenAI-compatible: OpenAI, vLLM,
-    omlx, LM Studio) config, so its URL·model·key apply to "openai".
+    Precedence: explicit flag → the server's provider. A server that names no
+    provider is an "openai" (OpenAI-compatible: OpenAI, vLLM, omlx, LM Studio)
+    server, so its URL·model·key apply to "openai".
     An unknown provider name exits with code 2 and the available names.
     """
-    from agent_cli.config import ConfigError, load_config
     from agent_cli.providers import available_providers
-
-    try:
-        config = load_config()
-    except ConfigError as e:
-        # 못 읽은 설정으로 계속 가면 기본값(공개 엔드포인트)이 된다 (v10.123.4)
-        console.print(
-            f"Could not read config {e}. Fix or delete the file, "
-            "or run 'agent-cli setup'.",
-            style=C["error"],
-            markup=False,
-            highlight=False,
-            soft_wrap=True,  # 경로를 rich 가 80칸에서 끊지 않게 — 복사해 쓸 수 있도록
-        )
-        raise typer.Exit(2) from None
 
     # provider 를 안 적은 설정은 openai 의 것이다 (v10.123.1). 종전엔 빈 문자열이라
     # 아래 "같은 provider 일 때만 설정 값" 검사에 늘 떨어져 사용자가 적은
@@ -211,8 +201,7 @@ def _resolve_provider(
             credentials = credentials_from_config(config, api_key=api_key)
         except ExtraHeaderError as e:
             console.print(
-                f"Invalid extra_headers in {user_dir() / 'config.json'}: {e}. "
-                "Fix the entry or remove it.",
+                f"Invalid extra_headers in {source}: {e}. Fix the entry or remove it.",
                 style=C["error"],
                 markup=False,
                 highlight=False,
@@ -235,22 +224,40 @@ def _flags_complete(base_url: str | None, model: str | None) -> bool:
     return bool(url and model)
 
 
-def _maybe_setup(base_url: str | None = None, model: str | None = None) -> None:
-    """설정이 없으면 마법사 — 단 대화형이고, 플래그로 다 주지 않았을 때만 (v10.125.0).
+def _maybe_setup(
+    base_url: str | None = None, model: str | None = None, *, named: bool = False
+) -> None:
+    """서버가 없으면 마법사 — 단 대화형이고, 플래그·env 로 다 주지 않았을 때만 (v10.125.0).
 
-    종전엔 설정이 없으면 무조건 마법사를 띄워, 플래그를 다 준 비대화식 첫 실행
-    (CI·컨테이너·스크립트)도 첫 질문에서 EOF → ``Aborted.`` rc=1 이었다.
-    벤치(harbor) 컨테이너는 config.json 이 없어도 ``AGENT_CLI_BASE_URL`` 환경변수가
-    `has_config` 를 참으로 만들어 이 길을 이미 지나갔다 — 그 조건은 그대로다."""
-    from agent_cli.config import has_config
+    ``named`` = ``--endpoint``·``AGENT_CLI_ENDPOINT`` 로 이름을 댄 실행 — 마법사 대신
+    `_select_endpoint` 가 "없는 이름" 으로 끝낸다. 서버가 골라지지 않은 실행은 env
+    (``AGENT_CLI_BASE_URL`` 등)가 이름 없는 서버라 그 env 가 있으면 지나간다 — 설정 파일
+    없는 벤치(harbor) 컨테이너가 이 길이다. 옛 모양 설정은 "서버 없음" 이다(읽지 않는다)."""
+    from agent_cli.config import (
+        ConfigError,
+        config_path,
+        env_endpoint_config,
+        has_endpoints,
+        legacy_config_present,
+    )
     from agent_cli.model_check import is_interactive
 
-    if has_config() or _flags_complete(base_url, model):
+    try:
+        if named or has_endpoints():
+            return
+    except ConfigError:
+        return  # 못 읽는 설정 — `_select_endpoint` 가 경로와 함께 알린다
+    if env_endpoint_config() or _flags_complete(base_url, model):
         return
     if not is_interactive():
+        legacy = (
+            " Settings saved before 10.144.0 are not read; setup keeps them as .v1 files."
+            if legacy_config_present()
+            else ""
+        )
         console.print(
-            f"No config file ({user_dir() / 'config.json'}). Run 'agent-cli setup' in a "
-            "terminal, or pass --base-url and -m.",
+            f"No model server is set up ({config_path()}). Run 'agent-cli setup' in a "
+            f"terminal, add a server in the board admin, or pass --base-url and -m.{legacy}",
             style=C["error"],
             markup=False,
             highlight=False,
@@ -260,9 +267,68 @@ def _maybe_setup(base_url: str | None = None, model: str | None = None) -> None:
     from agent_cli.setup import SetupWizard
 
     console.print(
-        f"[{C['accent']}]No configuration found. Starting setup wizard...[/]\n"
+        f"[{C['accent']}]No model server is set up. Starting setup wizard...[/]\n"
     )
     SetupWizard().run()
+
+
+def _select_endpoint(flag: str | None, recorded: str | None):
+    """이 실행의 서버를 고르고 이 프로세스에 세운다 — ``(이름 | None, 값, 출처 문구)``.
+
+    순서는 `config.pick_endpoint_name` 하나(``--endpoint`` > ``AGENT_CLI_ENDPOINT`` > 세션
+    기록 > config 기본). 없는 이름·못 읽는 설정은 그 자리에서 ``Exit(2)`` — 다른 서버로
+    넘어가지 않는다. 고른 서버가 없으면(서버 0개) env 세 개가 이름 없는 서버다."""
+    from agent_cli.config import (
+        ConfigError,
+        EndpointError,
+        config_path,
+        default_endpoint_name,
+        endpoint_config,
+        env_endpoint_config,
+        pick_endpoint_name,
+        use_endpoint,
+    )
+
+    try:
+        name = pick_endpoint_name(flag, os.environ, recorded, default_endpoint_name())
+        values = endpoint_config(name) if name else env_endpoint_config()
+    except ConfigError as e:
+        # 못 읽은 설정으로 계속 가면 기본값(공개 엔드포인트)이 된다 (v10.123.4)
+        console.print(
+            f"Could not read config {e}. Fix or delete the file, "
+            "or run 'agent-cli setup'.",
+            style=C["error"],
+            markup=False,
+            highlight=False,
+            soft_wrap=True,  # 경로를 rich 가 80칸에서 끊지 않게 — 복사해 쓸 수 있도록
+        )
+        raise typer.Exit(2) from None
+    except EndpointError as e:
+        console.print(
+            str(e), style=C["error"], markup=False, highlight=False, soft_wrap=True
+        )
+        raise typer.Exit(2) from None
+    use_endpoint(name)
+    source = (
+        f"server '{name}' in {config_path()}" if name else "the AGENT_CLI_* environment"
+    )
+    return name, values, source
+
+
+def _apply_endpoint(session, name: str | None) -> None:
+    """고른 서버 이름을 세션 기록에 — 기록과 다르면(``--resume`` + 다른 ``--endpoint``) 한 줄.
+
+    이름 없는 실행(서버 0개)은 기록을 건드리지 않는다."""
+    if not name or session.endpoint == name:
+        return
+    if session.endpoint:
+        console.print(
+            f"Session server changed: {session.endpoint} → {name}",
+            style=C["warn"],
+            markup=False,
+            highlight=False,
+        )
+    session.endpoint = name
 
 
 def _setup_mcp():
@@ -1176,7 +1242,7 @@ def _ask_dialect(renderer) -> str:
 
 def _prompt_model_capabilities(model: str):
     """Interactively ask user for model capabilities when detection fails."""
-    from agent_cli.config import save_model_entry
+    from agent_cli.config import models_path_label, save_model_entry
     from agent_cli.providers.capabilities import (
         DEFAULT_CAPABILITIES,
         ModelCapabilities,
@@ -1229,8 +1295,16 @@ def _prompt_model_capabilities(model: str):
 
         entry = caps_to_entry(caps)
         entry["dialect"] = dialect_input
-        save_model_entry(model, entry)
-        console.print(f"[{C['muted']}]Saved to ~/.agent-cli/models.json[/]\n")
+        saved = save_model_entry(model, entry)
+        console.print(
+            f"Saved to {models_path_label()}\n"
+            if saved
+            else "Not saved (no server is selected) — applies to this run only\n",
+            style=C["muted"],
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
         return caps
     except (EOFError, KeyboardInterrupt, ValueError):
         return None
@@ -1244,6 +1318,7 @@ def _verify_model_or_exit(
     *,
     explicit: bool,
     quiet: bool,
+    source: str,
 ) -> str:
     """해석된 모델이 서버에 실재하는지 확인하고, 확정된 이름을 돌려준다.
 
@@ -1264,7 +1339,7 @@ def _verify_model_or_exit(
         verify_model,
     )
 
-    origin = "--model" if explicit else str(user_dir() / "config.json")
+    origin = "--model" if explicit else source
     try:
         listing = verify_model(
             resolved_model, base_url, credentials, provider, origin=origin
@@ -1278,7 +1353,9 @@ def _verify_model_or_exit(
             e.listing, base_url, e, origin, quiet, interactive=is_interactive()
         )
     if listing.unreachable:
-        return _unreachable_or_exit(resolved_model, base_url, listing, quiet=quiet)
+        return _unreachable_or_exit(
+            resolved_model, base_url, listing, quiet=quiet, source=source
+        )
     if not quiet and not listing.available:
         console.print(
             f"⚠ Could not read /v1/models, so the model name was not "
@@ -1290,7 +1367,9 @@ def _verify_model_or_exit(
     return resolved_model
 
 
-def _unreachable_or_exit(model: str, base_url: str, listing, *, quiet: bool) -> str:
+def _unreachable_or_exit(
+    model: str, base_url: str, listing, *, quiet: bool, source: str
+) -> str:
     """서버에 닿지 못함 (v10.126.0) — "묻지 못함" 중에서 원인을 그 자리에서 말하는 갈래.
 
     - **등록된 모델**(models.json·패키지 기본 표에 엔트리) → 계속. 능력은 엔트리에서
@@ -1299,7 +1378,7 @@ def _unreachable_or_exit(model: str, base_url: str, listing, *, quiet: bool) -> 
       문맥 창 질문 → ``No dialect for model`` 까지 10~20초를 끌고 가 엉뚱한 원인으로 끝났다.
       ``quiet`` 여도 멈춘다(종전 그 길의 끝도 2였다).
     """
-    from agent_cli.config import _GLOBAL_MODELS_PATH, get_model_entry
+    from agent_cli.config import get_model_entry, models_path_label
 
     if get_model_entry(model) is not None:
         if not quiet:
@@ -1315,13 +1394,10 @@ def _unreachable_or_exit(model: str, base_url: str, listing, *, quiet: bool) -> 
     for line in (
         f"✗ Cannot connect to the server at {base_url} ({listing.reason}).",
         (
-            f"  Model '{model}' is not registered in {_GLOBAL_MODELS_PATH}, so its "
+            f"  Model '{model}' is not registered in {models_path_label()}, so its "
             "capabilities cannot be known without the server."
         ),
-        (
-            "  Fix: start the server, or check --base-url / the base_url in "
-            f"{user_dir() / 'config.json'}."
-        ),
+        (f"  Fix: start the server, or check --base-url / the base_url of {source}."),
     ):
         console.print(
             line, style=C["error"], markup=False, highlight=False, soft_wrap=True
@@ -1339,7 +1415,7 @@ def _choose_model_or_exit(
     interactive: bool,
 ) -> str:
     """검증 실패 지점. 대화형이면 고르게 하고 저장, 아니면 깔끔히 실패한다."""
-    from agent_cli.config import save_config_value
+    from agent_cli.config import current_endpoint, set_endpoint_value
 
     if err is not None:
         console.print(
@@ -1385,7 +1461,8 @@ def _choose_model_or_exit(
         console.print()
         raise typer.Exit(1) from None
     picked = listing.models[choice - 1]
-    if save_config_value("default_model", picked):
+    name = current_endpoint()
+    if name and set_endpoint_value(name, "default_model", picked):
         console.print(f"  [{C['ok']}]✓ Saved — this model from now on[/]\n")
     else:
         console.print(
@@ -1401,9 +1478,21 @@ def _setup_provider(
     api_key: str | None,
     quiet: bool = False,
     explicit: bool = False,
+    endpoint: str | None = None,
+    recorded_endpoint: str | None = None,
 ):
-    """Resolve settings + create provider + get capabilities. Returns tuple."""
-    _maybe_setup(base_url, model)
+    """Pick the server + resolve settings + create provider + get capabilities.
+
+    ``endpoint`` 는 ``--endpoint`` 값, ``recorded_endpoint`` 는 되살리는 세션의 기록.
+    Returns ``(llm_provider, capabilities, model, base_url, credentials, provider, 서버 이름)``."""
+    _maybe_setup(
+        base_url,
+        model,
+        named=bool(endpoint or os.environ.get("AGENT_CLI_ENDPOINT", "").strip()),
+    )
+    endpoint_name, endpoint_values, source = _select_endpoint(
+        endpoint, recorded_endpoint
+    )
     from agent_cli.providers.capabilities import (
         DEFAULT_CAPABILITIES,
         set_progress_callback,
@@ -1420,6 +1509,8 @@ def _setup_provider(
         model,
         base_url,
         api_key,
+        endpoint_values,
+        source,
     )
     # 이름을 **쓰기 전에** 확인한다 (v9.5.0). 없는 모델은 종전엔 첫 LLM 호출까지
     # 살아남아 404 로 터졌고, 에이전트에선 대화 한복판의 거부 카드로 보였다.
@@ -1430,6 +1521,7 @@ def _setup_provider(
         credentials,
         explicit=explicit or bool(model),
         quiet=quiet,
+        source=source,
     )
     llm_provider = create_provider(provider, resolved_url, credentials)
     # Surface runtime-detection probe steps to the user. Only emits
@@ -1463,10 +1555,10 @@ def _setup_provider(
 
     if not quiet:
         if was_runtime_detected():
-            from agent_cli.config import _GLOBAL_MODELS_PATH
+            from agent_cli.config import models_path_label
 
             render_model_detected(
-                resolved_model, capabilities, provider, str(_GLOBAL_MODELS_PATH)
+                resolved_model, capabilities, provider, models_path_label()
             )
         else:
             render_model_loaded(resolved_model, capabilities)
@@ -1478,6 +1570,7 @@ def _setup_provider(
         resolved_url,
         credentials,
         provider,
+        endpoint_name,
     )
 
 
@@ -1494,7 +1587,7 @@ def _bind_dialect_or_exit(model: str, unbound, *, quiet: bool):
     답을 쓸 수 없는 질문은 하지 않는다: 그 엔트리가 사용자 파일에 없으면(패키지 기본 표에만
     있거나 탐지 결과 저장이 실패) 묻기 **전에** 종전 오류 2. ``"dialect": ""``·``null`` 은
     "묶이지 않음" 이라 묻고 채운다. 판정·쓰기는 `config.bind_user_dialect` 한 곳."""
-    from agent_cli.config import _GLOBAL_MODELS_PATH, bind_user_dialect
+    from agent_cli.config import bind_user_dialect, models_path_label
     from agent_cli.model_check import is_interactive
 
     def _fail():
@@ -1510,7 +1603,7 @@ def _bind_dialect_or_exit(model: str, unbound, *, quiet: bool):
     if quiet or not is_interactive() or not bind_user_dialect(model):
         raise _fail() from unbound
     console.print(
-        f"\nModel '{model}' has no dialect bound in {_GLOBAL_MODELS_PATH}.",
+        f"\nModel '{model}' has no dialect bound in {models_path_label()}.",
         style=C["accent"],
         markup=False,
         highlight=False,
@@ -1528,7 +1621,7 @@ def _bind_dialect_or_exit(model: str, unbound, *, quiet: bool):
         # 물은 뒤의 쓰기 실패(디스크·권한) — 이번 런만의 바인딩은 만들지 않는다
         # (``--dialect`` 는 프로세스 전체 강제라 뜻이 다르다).
         console.print(
-            f'Could not save the dialect to {_GLOBAL_MODELS_PATH}. Set "dialect" '
+            f'Could not save the dialect to {models_path_label()}. Set "dialect" '
             f"on the '{model}' entry there, or pass --dialect {name}.",
             style=C["error"],
             markup=False,
@@ -1537,7 +1630,7 @@ def _bind_dialect_or_exit(model: str, unbound, *, quiet: bool):
         )
         raise typer.Exit(2)
     console.print(
-        f"Saved dialect '{name}' to {_GLOBAL_MODELS_PATH}",
+        f"Saved dialect '{name}' to {models_path_label()}",
         style=C["muted"],
         markup=False,
         highlight=False,
@@ -1556,17 +1649,35 @@ def _bootstrap_provider(
     *,
     quiet: bool = False,
     explicit_model: bool = False,
+    endpoint: str | None = None,
+    recorded_endpoint: str | None = None,
 ):
-    """provider 셋업 → dialect 해석 fail-fast → 세션의 `ModelBinding` 하나.
+    """서버 고르기 → provider 셋업 → dialect 해석 fail-fast → 세션의 `ModelBinding` 하나.
+
+    ``endpoint`` 는 ``--endpoint``, ``recorded_endpoint`` 는 되살리는 세션의 기록 —
+    고른 서버 이름은 바인딩의 ``endpoint`` 로 돌아온다(호출자가 세션에 기록).
 
     dialect 해석 체인 (v10.3.0): 명시 ``--dialect`` (프로세스 전체 강제)
     > models.json 모델 바인딩. 둘 다 없거나 unknown 이름이면 세션 생성
     전에 fail-fast (D2) — 기본값 없음, 사용자가 모델에 방언을 묶는다.
     """
-    llm_provider, capabilities, resolved_model, resolved_url, credentials, name = (
-        _setup_provider(
-            provider, model, base_url, api_key, quiet=quiet, explicit=explicit_model
-        )
+    (
+        llm_provider,
+        capabilities,
+        resolved_model,
+        resolved_url,
+        credentials,
+        name,
+        endpoint_name,
+    ) = _setup_provider(
+        provider,
+        model,
+        base_url,
+        api_key,
+        quiet=quiet,
+        explicit=explicit_model,
+        endpoint=endpoint,
+        recorded_endpoint=recorded_endpoint,
     )
     _set_dialect_override(dialect)
     try:
@@ -1604,6 +1715,7 @@ def _bootstrap_provider(
         capabilities=capabilities,
         dialect=dialect_plugin,
         context_budget_override=max(0, int(max_context_tokens or 0)),
+        endpoint=endpoint_name or "",
     )
 
 
@@ -1729,6 +1841,14 @@ _TITLE_OPTION = typer.Option(
     "startup banner and web.json; saved in the session so --resume keeps it "
     "(giving --title again replaces it). agent-board passes the post's topic.",
 )
+_ENDPOINT_OPTION = typer.Option(
+    None,
+    "--endpoint",
+    help="Model server to use — a name saved in ~/.agent-cli/config.json (list them "
+    "with 'agent-cli endpoints'). Default: AGENT_CLI_ENDPOINT, then the server "
+    "recorded in the resumed session, then the selected server. --provider, "
+    "--base-url and --api-key still override single fields.",
+)
 _IMAGE_OPTION = typer.Option(
     None,
     "--image",
@@ -1810,6 +1930,7 @@ def run(
     ),
     image: list[str] | None = _IMAGE_OPTION,
     title: str = _TITLE_OPTION,
+    endpoint: str | None = _ENDPOINT_OPTION,
     knob_args: dict | None = None,  # `@knob_options` 가 채운다 (v10.43.0)
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result.
@@ -1843,6 +1964,8 @@ def run(
         dialect,
         max_context_tokens,
         explicit_model="model" in (knob_args or {}),
+        endpoint=endpoint,
+        recorded_endpoint=session_resumed.endpoint if session_resumed else None,
     )
     if query_images:
         _require_vision(binding)
@@ -1858,10 +1981,13 @@ def run(
 
     session = session_resumed if session_resumed is not None else create_session()
     _apply_title(session, title)
+    _apply_endpoint(session, binding.endpoint)
     _claim_session(session)
     save_meta(session)
     if session.title:
         console.print(f"  Title:   {session.title}", markup=False, highlight=False)
+    if session.endpoint:
+        console.print(f"  Server:  {session.endpoint}", markup=False, highlight=False)
     ctx = _build_context(session, binding, resume=session_resumed is not None)
 
     from agent_cli.input_queue import InputQueue
@@ -2294,7 +2420,7 @@ def _finalize_run(spec, stores, owners, *, warn_stuck: bool, deadline=None) -> N
 
 @app.command()
 def setup():
-    """Configure provider, model, and connection. Runs automatically on first use. Re-run anytime to change settings."""
+    """Add or edit a model server (name, provider, connection, default model). Runs automatically when no server is saved."""
     from agent_cli.setup import SetupWizard
 
     SetupWizard().run()
@@ -2362,6 +2488,65 @@ def _knob_state(name: str, server) -> dict | None:
 
     knob = KNOB_BY_NAME.get(name)
     return web_state(knob, server.knob_session()) if knob else None
+
+
+@app.command()
+def endpoints():
+    """List the saved model servers (name, provider, host; the default is marked).
+
+    Keys and header values are never shown. Add or edit a server with
+    'agent-cli setup' or in the board admin."""
+    from agent_cli.config import (
+        ConfigError,
+        config_path,
+        default_endpoint_name,
+        endpoint_host,
+        legacy_config_present,
+        list_endpoints,
+    )
+
+    try:
+        saved = list_endpoints()
+        default = default_endpoint_name()
+    except ConfigError as e:
+        console.print(
+            f"Could not read config {e}. Fix or delete the file, "
+            "or run 'agent-cli setup'.",
+            style=C["error"],
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+        raise typer.Exit(2) from None
+    if not saved:
+        legacy = (
+            " Settings saved before 10.144.0 are not read; setup keeps them as .v1 files."
+            if legacy_config_present()
+            else ""
+        )
+        console.print(
+            f"No model server is saved in {config_path()}. Run 'agent-cli setup' "
+            f"or add one in the board admin.{legacy}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+        return
+    rows = [
+        (
+            name,
+            str(entry.get("provider") or "openai"),
+            endpoint_host(str(entry.get("base_url") or "")) or "(no base_url)",
+            "(default)" if name == default else "",
+        )
+        for name, entry in sorted(saved.items())
+    ]
+    widths = [max(len(r[i]) for r in rows) for i in range(3)]
+    for r in rows:
+        line = "  ".join(c.ljust(w) for c, w in zip(r[:3], widths, strict=True))
+        console.print(
+            f"{line}  {r[3]}".rstrip(), markup=False, highlight=False, soft_wrap=True
+        )
 
 
 @app.command()
@@ -2524,8 +2709,10 @@ def _print_session(s, indent: str = "  ") -> None:
     from agent_cli.session.lock import session_is_open
     from agent_cli.session.store import get_session_dir
 
+    # 서버 이름은 ENDPOINT_NAME_RE([a-z0-9-]) 라 마크업이 될 수 없다
+    server = f" · server {s.endpoint}" if s.endpoint else ""
     console.print(
-        f"{indent}[{C['accent']}]{s.session_id}[/] [{C['muted']}]{s.updated_at}[/]"
+        f"{indent}[{C['accent']}]{s.session_id}[/] [{C['muted']}]{s.updated_at}{server}[/]"
     )
     # 요청·결과는 사용자·모델이 쓴 글이라 마크업으로 읽지 않는다 (v10.127.8) — `[bold]` 가
     # 서식으로 먹히고 `[/x]` 는 MarkupError 로 `sessions`·resume 프롬프트를 죽였다. 80자로
@@ -2550,20 +2737,16 @@ def _print_session(s, indent: str = "  ") -> None:
         )
 
 
-def _maybe_resume_recent(workspace: str, prompt_fn) -> tuple:
+def _pick_recent_session(workspace: str, prompt_fn):
     """No ``--resume`` given: offer the most recent session (shown in the same
-    format as the ``sessions`` command) and ask [y/N]. 'y' resumes it; anything
-    else (incl. Enter) starts a new session.
+    format as the ``sessions`` command) and ask [y/N]. 'y' returns it; anything
+    else (incl. Enter) returns None — the caller starts a new session.
 
     ``prompt_fn`` is the y/N reader — ``input`` on a TTY, ``None`` when
-    non-interactive (pipes / cron), in which case we never prompt and always
-    start new. Returns ``(SessionMeta, is_resume)``.
+    non-interactive (pipes / cron), in which case we never prompt. 세션을 만들지
+    않는다 — 부트 전에 묻고, 새 세션은 부트가 끝난 뒤 호출자가 만든다(v10.144.0).
     """
-    from agent_cli.session.store import (
-        create_session,
-        list_sessions,
-        load_session,
-    )
+    from agent_cli.session.store import list_sessions, load_session
 
     if prompt_fn is not None:
         recent = list_sessions(workspace)
@@ -2572,10 +2755,8 @@ def _maybe_resume_recent(workspace: str, prompt_fn) -> tuple:
             console.print(f"\n[{C['muted']}]Most recent session:[/]")
             _print_session(last)
             if prompt_fn("\nResume it? [y/N] ").strip().lower() == "y":
-                resumed = load_session(last.session_id)
-                if resumed is not None:
-                    return resumed, True
-    return create_session(), False
+                return load_session(last.session_id)
+    return None
 
 
 _GH_REPO = "dujeonglee/agent-cli"
@@ -2809,6 +2990,7 @@ def web(
         "The UI's relative URLs resolve under it. Default '' = root.",
     ),
     title: str = _TITLE_OPTION,
+    endpoint: str | None = _ENDPOINT_OPTION,
 ) -> None:
     """Start a browser room for one agent session.
 
@@ -2848,11 +3030,25 @@ def web(
         )
         raise typer.Exit(code=1)
 
-    from agent_cli.render import set_renderer
-
     # C4: run/web 공용 부트스트랩. --resume pre-check(fail-fast)가 provider
     # 핸드셰이크보다 먼저 — 로드된 SessionMeta 를 그대로 재사용(재로드 제거).
-    session_resumed = _load_resume_session(resume) if resume else None
+    # ``--resume`` 이 없을 때 "최근 세션 이어가기" 도 부트 **전에** 묻는다 (v10.144.0) —
+    # 이어 가는 세션에 기록된 서버로 부트해야 하므로. 새 세션은 부트가 끝난 뒤 만든다
+    # (부트가 실패하면 빈 세션 디렉터리를 남기지 않는다).
+    import sys
+
+    from agent_cli.render import set_renderer
+
+    if resume:
+        session_resumed = _load_resume_session(resume)
+    else:
+        prompt_fn = input if sys.stdin.isatty() else None
+        session_resumed = _pick_recent_session(os.getcwd(), prompt_fn)
+        if session_resumed is not None:
+            _claim_session(session_resumed)
+            console.print(
+                f"[{C['accent']}]Resuming session {session_resumed.session_id}[/]"
+            )
     binding = _bootstrap_provider(
         provider,
         _boot_model(knob_args),
@@ -2862,6 +3058,8 @@ def web(
         max_context_tokens,
         quiet=True,
         explicit_model="model" in (knob_args or {}),
+        endpoint=endpoint,
+        recorded_endpoint=session_resumed.endpoint if session_resumed else None,
     )
 
     # MCP servers (v4.46.0: run 과 동형 배선 — 이전엔 web 만 미지원이었음)
@@ -2872,23 +3070,16 @@ def web(
         TOOLS.update(mcp_tools)
 
     # 2. Session + ContextManager.
-    import sys
-
     from agent_cli.session.store import (
+        create_session,
         get_session_dir,
         save_meta,
     )
 
-    if session_resumed is not None:
-        session = session_resumed
-        is_resume = True
-    else:
-        # No --resume: offer the most recent session ([y/N]) or start new.
-        prompt_fn = input if sys.stdin.isatty() else None
-        session, is_resume = _maybe_resume_recent(os.getcwd(), prompt_fn)
-        if is_resume:
-            console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
+    is_resume = session_resumed is not None
+    session = session_resumed if is_resume else create_session()
     _apply_title(session, title)
+    _apply_endpoint(session, binding.endpoint)
     _claim_session(session)
     save_meta(session)
     ctx = _build_context(session, binding, resume=is_resume)
@@ -2898,6 +3089,7 @@ def web(
         workspace=session.workspace,
         session_dir=str(get_session_dir(session)),  # writes status.json here
         title=session.title,
+        endpoint=session.endpoint,
     )
     set_renderer(renderer)
     # 모델 시점의 첫 뷰 (v10.6.0): resume 로 복원된 캐시(압축 경계·요약)를 첫
@@ -3108,6 +3300,8 @@ def web(
     )
     if session.title:
         console.print(f"  Title:   {session.title}", markup=False, highlight=False)
+    if session.endpoint:
+        console.print(f"  Server:  {session.endpoint}", markup=False, highlight=False)
     console.print(f"  UI:      [yellow]{escape(ui_url)}[/]", soft_wrap=True)
     console.print(f"  Token:   [yellow]{server.token}[/]")
     console.print(f"  Session: [{C['muted']}]{session.session_id}[/]\n")
@@ -3132,6 +3326,7 @@ def web(
         port=resolved_port,
         token=server.token,
         title=session.title,
+        endpoint=session.endpoint,
     )
     # Seed the live status sidecar so the board can read it immediately (before
     # the first viewer). The renderer rewrites it on each viewer/busy/awaiting

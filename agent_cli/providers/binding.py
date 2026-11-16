@@ -39,6 +39,9 @@ class ModelBinding:
     dialect: Any
     #: `--max-context-tokens` — 0 이면 창의 70% (`compute_token_budget`).
     context_budget_override: int = 0
+    #: 이 세션의 서버 이름(`config.use_endpoint` 가 세운 것) — 서버 없이 env·플래그로 돈 실행은 "".
+    #: 세션 도중 바뀌지 않는다(한 방 = 한 서버).
+    endpoint: str = ""
 
     @property
     def max_context_tokens(self) -> int:
@@ -66,8 +69,13 @@ class ModelBinding:
 
         entry = get_model_entry(model)
         if entry is None:
+            where = (
+                f"models.json (server '{self.endpoint}')"
+                if self.endpoint
+                else "models.json"
+            )
             return (
-                f"model '{model}' is not in models.json — register it (agent-cli "
+                f"model '{model}' is not in {where} — register it (agent-cli "
                 "setup / model detect) before switching to it mid-session"
             )
         try:

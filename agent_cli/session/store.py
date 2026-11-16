@@ -68,6 +68,10 @@ class SessionMeta:
     #: = 없음(메타에 키를 적지 않는다). 세션 도중 바꾸지 않는 정체 정보라 노브가 아니다;
     #: ``--resume`` 은 저장값을 되살리고, ``--title`` 이 같이 오면 그 값으로 갱신한다.
     title: str = ""
+    #: 서버 이름 (v10.144.0) — 이 세션이 쓰는 config.json 의 서버. 빈 문자열 = 기록 없음
+    #: (옛 세션·서버 없이 env 로 돈 실행). 되살릴 때 고르는 순서의 한 자리이고, 주소·키는
+    #: 복사하지 않는다(서버의 키를 바꾸면 다음에 뜰 때 새 키를 쓴다).
+    endpoint: str = ""
 
 
 def get_session_dir(meta: SessionMeta) -> Path:
@@ -125,6 +129,7 @@ def save_meta(meta: SessionMeta) -> None:
                 "updated_at": meta.updated_at,
                 # title 은 있을 때만 — 옛 리더(보드 sessions 조회)가 모르는 키를 보지 않게
                 **({"title": meta.title} if meta.title else {}),
+                **({"endpoint": meta.endpoint} if meta.endpoint else {}),
             }
         },
         ensure_ascii=False,

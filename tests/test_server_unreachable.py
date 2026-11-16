@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import socket
 import ssl
 import threading
@@ -23,13 +22,13 @@ import requests
 import typer
 from rich.console import Console
 
-import agent_cli.config as _config
 import agent_cli.dialects as _dialects
 import agent_cli.main as m
 from agent_cli import model_check
 from agent_cli.providers import capabilities as _caps
 from agent_cli.providers.credentials import Credentials
 from agent_cli.providers.http import classify_connection_error
+from tests.endpoint_files import point_config
 
 URL = "http://127.0.0.1:1/v1"
 
@@ -125,23 +124,18 @@ def no_proxy_env(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def registry(tmp_path, monkeypatch):
-    target = tmp_path / "models.json"
-    target.write_text(
-        json.dumps(
-            {"models": {"reg-model": {"context_window": 32768, "dialect": "json_fc"}}}
-        ),
-        encoding="utf-8",
+    monkeypatch.delenv("AGENT_CLI_ENDPOINT", raising=False)
+    point_config(
+        monkeypatch,
+        tmp_path,
+        endpoints={"home": {"provider": "openai"}},
+        models={"home": {"reg-model": {"context_window": 32768, "dialect": "json_fc"}}},
+        package=False,
     )
-    monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-    monkeypatch.setattr(_config, "_cached_registry", None)
     monkeypatch.setattr(_dialects, "_override", None)
-    monkeypatch.setattr(_config, "_CONFIG_PATHS", [tmp_path / "config.json"])
-    (tmp_path / "config.json").write_text('{"provider": "openai"}', encoding="utf-8")
-    _config.reload_config()
     model_check._cache.clear()
     yield
     model_check._cache.clear()
-    _config.reload_config()
 
 
 @pytest.fixture

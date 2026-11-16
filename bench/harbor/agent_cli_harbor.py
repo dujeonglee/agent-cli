@@ -9,7 +9,8 @@ agent-cli 를 import 하지 않는다). 사용법은 README.md.
         --agent agent_cli_harbor:AgentCli -m openai/<model>
 
 trial 흐름 (Harbor BaseInstalledAgent 계약, harbor 0.22.0 배포판 기준):
-  setup → install(): wheel 업로드 + uv 로 격리 파이썬에 설치, models.json 주입
+  setup → install(): wheel 업로드 + uv 로 격리 파이썬에 설치, 서버 하나짜리
+          config.json·models.json 주입(agent-cli ≥ 10.144.0 의 서버별 모양)
   run():  ``agent-cli run "$AGENT_CLI_TASK"`` 를 컨테이너 안에서 비대화형 실행
           (세션은 AGENT_CLI_SESSIONS_DIR=/logs/agent/sessions — 워크스페이스 무오염;
           종료 코드는 /logs/agent/exit-code.txt, 0·1 은 검증기로 — agent_command.py)
@@ -60,17 +61,52 @@ def _container_url(url: str) -> str:
     )
 
 
-class AgentCli(BaseInstalledAgent):
-    """``--ak`` kwargs: ``wheel``(기본 dist/ 최신), ``models_json``(기본
-    ``~/.agent-cli/models.json`` — 컨테이너 안 런타임 프로빙 생략용; 빈 문자열
-    이면 미주입), ``host_config``(기본 ``~/.agent-cli/config.json`` — 접속
-    정보 폴백), ``python``(uv 가 확보할 파이썬, 기본 3.12), ``extras``(wheel 의
-    extras, 기본 ``image`` — Pillow 축소; ``""`` 면 순정), 그리고 CLI_FLAGS 의
-    ``max_turns``·``response_format``·``max_depth``·``verbose``(``--ak verbose=true`` → ``--verbose``).
+def _host_endpoint(cfg: dict, name: str) -> tuple[str, dict]:
+    """호스트 config.json(agent-cli ≥ 10.144.0 모양)에서 서버 하나 — ``(이름, 값)``.
 
-    접속 정보 우선순위: ``--ae AGENT_CLI_BASE_URL/API_KEY`` (또는 호스트 env)
-    > 호스트 config.json(같은 provider 일 때; loopback 은 host.docker.internal
-    로 치환)."""
+    ``name`` 이 비면 그 파일의 선택된 서버. 옛 모양(최상위 ``endpoints`` 없음)·파일 없음은
+    ``("", {})`` — agent-cli 와 같이 옛 모양은 읽지 않는다. 이름을 댔는데 없으면 ValueError
+    (다른 서버로 넘어가지 않는다)."""
+    endpoints = cfg.get("endpoints")
+    endpoints = endpoints if isinstance(endpoints, dict) else {}
+    chosen = name or (
+        cfg.get("endpoint") if isinstance(cfg.get("endpoint"), str) else ""
+    )
+    if not chosen:
+        return "", {}
+    entry = endpoints.get(chosen)
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"agent-cli server {chosen!r} is not in the host config "
+            f"(saved: {', '.join(sorted(endpoints)) or 'none'})"
+        )
+    return chosen, entry
+
+
+def _endpoint_models(models: dict, name: str) -> dict:
+    """호스트 models.json 에서 서버 ``name`` 의 모델 칸 — 없거나 옛 모양이면 {}."""
+    section = models.get("endpoints")
+    section = section.get(name) if isinstance(section, dict) else None
+    found = section.get("models") if isinstance(section, dict) else None
+    return found if isinstance(found, dict) else {}
+
+
+class AgentCli(BaseInstalledAgent):
+    """``--ak`` kwargs: ``wheel``(기본 dist/ 최신), ``endpoint``(호스트의 agent-cli 서버
+    이름, 기본 호스트 config 의 선택된 서버), ``models_json``(기본
+    ``~/.agent-cli/models.json`` — 그 서버의 모델 칸을 주입해 컨테이너 안 런타임
+    프로빙을 생략하고 방언 바인딩을 준다; 빈 문자열이면 미주입), ``host_config``(기본
+    ``~/.agent-cli/config.json`` — 서버의 접속 정보), ``python``(uv 가 확보할 파이썬,
+    기본 3.12), ``extras``(wheel 의 extras, 기본 ``image`` — Pillow 축소; ``""`` 면
+    순정), 그리고 CLI_FLAGS 의 ``max_turns``·``response_format``·``max_depth``·
+    ``verbose``(``--ak verbose=true`` → ``--verbose``).
+
+    컨테이너에는 서버 하나짜리 config.json·models.json 을 올린다(이름은 호스트 서버의
+    이름) — 방언 바인딩이 models.json 의 그 서버 칸에서 오므로, 서버 없는(env 만) 실행으로는
+    벤치 모델이 뜨지 않는다. 접속 정보 우선순위: ``--ae AGENT_CLI_BASE_URL/API_KEY``
+    (또는 호스트 env) > 호스트 서버의 값(같은 provider 일 때; loopback 은
+    host.docker.internal 로 치환). 키·헤더 값은 파일(권한 600)로만 가고 env·명령줄·
+    예외 문구에는 싣지 않는다."""
 
     SUPPORTS_ATIF = (
         True  # populate_context_post_run 이 /logs/agent/trajectory.json 생성
@@ -91,6 +127,7 @@ class AgentCli(BaseInstalledAgent):
         logs_dir: Path,
         *args,
         wheel: str = "",
+        endpoint: str = "",
         models_json: str = "~/.agent-cli/models.json",
         host_config: str = "~/.agent-cli/config.json",
         python: str = "3.12",
@@ -104,8 +141,9 @@ class AgentCli(BaseInstalledAgent):
             else wheels.newest_wheel(_REPO_ROOT / "dist")
         )
         self._models_json = Path(models_json).expanduser() if models_json else None
-        self._host_cfg = (
-            _read_json(Path(host_config).expanduser()) if host_config else {}
+        self._endpoint, self._host_cfg = _host_endpoint(
+            _read_json(Path(host_config).expanduser()) if host_config else {},
+            endpoint,
         )
         self._python = python
         self._extras = extras
@@ -176,23 +214,69 @@ class AgentCli(BaseInstalledAgent):
             timeout_sec=330,
         )
 
-        if self._models_json and self._models_json.is_file():
-            result = await self.exec_as_agent(
-                environment, command='printf "%s" "$HOME"'
-            )
-            home = (result.stdout or "").strip() or "/root"
-            await self.exec_as_agent(environment, command=f"mkdir -p {home}/.agent-cli")
+        result = await self.exec_as_agent(environment, command='printf "%s" "$HOME"')
+        home = (result.stdout or "").strip() or "/root"
+        await self.exec_as_agent(environment, command=f"mkdir -p {home}/.agent-cli")
+        for filename, content in self._container_files().items():
             await self._upload_config_text(
                 environment,
-                content=self._models_json.read_text(encoding="utf-8"),
-                remote_path=f"{home}/.agent-cli/models.json",
-                filename="models.json",
+                content=content,
+                remote_path=f"{home}/.agent-cli/{filename}",
+                filename=filename,
             )
 
     # ----- run -------------------------------------------------------------
 
+    def _container_server(self) -> dict:
+        """컨테이너에 올릴 서버 하나의 값 — 주소·키는 ``--ae``(또는 호스트 env)가 호스트 서버의
+        값보다 앞선다. 호스트 서버의 값은 같은 provider 일 때만 쓴다. 주소가 없으면 ValueError
+        (문구에 값은 싣지 않는다)."""
+        cfg = self._host_cfg
+        same = (cfg.get("provider") or "openai") == self._provider
+        url = self._get_env("AGENT_CLI_BASE_URL") or (
+            _container_url(str(cfg["base_url"])) if same and cfg.get("base_url") else ""
+        )
+        if not url:
+            raise ValueError(
+                "AGENT_CLI_BASE_URL required (e.g. --ae "
+                "AGENT_CLI_BASE_URL=http://host.docker.internal:8000/v1), or pick an "
+                "agent-cli server with a base_url (--ak endpoint=<name>)"
+            )
+        server = {
+            "provider": self._provider,
+            "base_url": url,
+            "default_model": self._model,
+        }
+        key = self._get_env("AGENT_CLI_API_KEY") or (
+            str(cfg["api_key"]) if same and cfg.get("api_key") else ""
+        )
+        if key:
+            server["api_key"] = key
+        if same and isinstance(cfg.get("extra_headers"), list):
+            server["extra_headers"] = cfg["extra_headers"]
+        return server
+
+    def _container_files(self) -> dict[str, str]:
+        """컨테이너 ``~/.agent-cli/`` 에 올릴 파일 ``{이름: 내용}`` — 서버 하나짜리 config.json 과
+        (주입하면) 그 서버 칸만 든 models.json. 서버 이름은 호스트 서버의 이름, 없으면 ``bench``."""
+        name = self._endpoint or "bench"
+        files = {
+            "config.json": json.dumps(
+                {"endpoint": name, "endpoints": {name: self._container_server()}},
+                indent=2,
+            )
+        }
+        if self._models_json and self._models_json.is_file():
+            models = _endpoint_models(_read_json(self._models_json), self._endpoint)
+            files["models.json"] = json.dumps(
+                {"endpoints": {name: {"models": models}}}, ensure_ascii=False, indent=2
+            )
+        return files
+
     def _runtime_env(self, instruction: str) -> dict[str, str]:
-        env = {
+        # 접속 정보(주소·키)는 env 로 넘기지 않는다 — 컨테이너의 config.json 이 서버다
+        # (agent-cli 는 서버가 골라지면 AGENT_CLI_BASE_URL·API_KEY env 를 쓰지 않는다).
+        return {
             "AGENT_CLI_PROVIDER": self._provider,
             "AGENT_CLI_MODEL": self._model,
             # 세션을 워크스페이스 밖(/logs/agent — 호스트로 동기화)으로 (v8.50.0)
@@ -206,24 +290,6 @@ class AgentCli(BaseInstalledAgent):
             # 지시문은 env 로 (멀티라인·따옴표 안전; kimi_code 어댑터와 동형)
             "AGENT_CLI_TASK": instruction,
         }
-        for key in ("AGENT_CLI_BASE_URL", "AGENT_CLI_API_KEY"):
-            val = self._get_env(key)
-            if val:
-                env[key] = val
-        # 폴백: 호스트 config.json (같은 provider 일 때만; bench/swebench 컨테이너
-        # 스크립트의 host_provider_config 와 동형)
-        cfg = self._host_cfg
-        if cfg.get("provider", "openai") == self._provider:
-            if not env.get("AGENT_CLI_BASE_URL") and cfg.get("base_url"):
-                env["AGENT_CLI_BASE_URL"] = _container_url(str(cfg["base_url"]))
-            if not env.get("AGENT_CLI_API_KEY") and cfg.get("api_key"):
-                env["AGENT_CLI_API_KEY"] = str(cfg["api_key"])
-        if not env.get("AGENT_CLI_BASE_URL"):
-            raise ValueError(
-                "AGENT_CLI_BASE_URL required (e.g. --ae "
-                "AGENT_CLI_BASE_URL=http://host.docker.internal:8000/v1)"
-            )
-        return env
 
     @with_prompt_template
     async def run(

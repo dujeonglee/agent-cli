@@ -40,10 +40,12 @@ def write_instance_file(
     token: str,
     pid: int | None = None,
     title: str = "",
+    endpoint: str = "",
 ) -> Path:
     """Write (overwrite) the instance file. ``pid`` defaults to this process.
     Creates the session dir if missing. Returns the path. ``title`` (v10.71.0)
-    는 방 제목 — 있을 때만 적는다(외부 오케스트레이터용 거울)."""
+    는 방 제목, ``endpoint`` (v10.144.0) 는 서버 이름 — 있을 때만 적는다(외부
+    오케스트레이터용 거울; 보드는 서버 기록이 없던 옛 방의 이름을 여기서 배운다)."""
     info = {
         "session_id": session_id,
         "host": host,
@@ -53,6 +55,8 @@ def write_instance_file(
     }
     if title:
         info["title"] = title
+    if endpoint:
+        info["endpoint"] = endpoint
     path = instance_file_path(session_dir)
     # 보드가 읽는 상태 파일 — 원자 교체 (fsio 패턴; 이전엔 비원자라
     # 보드가 half-write 를 읽을 수 있었음).

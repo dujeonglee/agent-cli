@@ -7,12 +7,10 @@ effective-model 바인딩, 정적 바인딩의 ctx-우선 폴백(G2), 부트스�
 ``_override`` 를 None 으로 되돌린다.
 """
 
-import json
 from unittest.mock import MagicMock
 
 import pytest
 
-import agent_cli.config as _config
 import agent_cli.dialects as _dialects
 from agent_cli.dialects import (
     DialectUnbound,
@@ -23,24 +21,20 @@ from agent_cli.dialects import (
     get as get_wf,
 )
 from agent_cli.providers.capabilities import ModelCapabilities
+from tests.endpoint_files import point_config
 from tests.loop_ports import TEST_PORTS
 
 
 @pytest.fixture
 def models_file(tmp_path, monkeypatch):
     """바인딩이 있는/없는/깨진 모델 엔트리를 가진 임시 models.json."""
-    target = tmp_path / "models.json"
-    data = {
-        "models": {
-            "bound-md": {"context_window": 8192, "dialect": "json_fc"},
-            "bound-xml": {"context_window": 8192, "dialect": "xml_fc"},
-            "unbound": {"context_window": 8192},
-            "bad-bound": {"context_window": 8192, "dialect": "no_such_format"},
-        }
+    models = {
+        "bound-md": {"context_window": 8192, "dialect": "json_fc"},
+        "bound-xml": {"context_window": 8192, "dialect": "xml_fc"},
+        "unbound": {"context_window": 8192},
+        "bad-bound": {"context_window": 8192, "dialect": "no_such_format"},
     }
-    target.write_text(json.dumps(data), encoding="utf-8")
-    monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-    monkeypatch.setattr(_config, "_cached_registry", None)
+    point_config(monkeypatch, tmp_path, models={"t": models}, package=False, use="t")
     monkeypatch.setattr(_dialects, "_override", None)
 
 
@@ -71,12 +65,13 @@ class TestDialectForModel:
 
     def test_non_string_binding_ignored(self, tmp_path, monkeypatch):
         # 손상된 엔트리 (dialect 이 문자열 아님) — 조용히 None
-        target = tmp_path / "models.json"
-        target.write_text(
-            json.dumps({"models": {"weird": {"dialect": 42}}}), encoding="utf-8"
+        point_config(
+            monkeypatch,
+            tmp_path,
+            models={"t": {"weird": {"dialect": 42}}},
+            package=False,
+            use="t",
         )
-        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-        monkeypatch.setattr(_config, "_cached_registry", None)
         assert dialect_for_model("weird") is None
 
 
@@ -253,7 +248,7 @@ class TestBootstrapWiring:
             max_output_tokens=4096,
             supports_thinking=False,
         )
-        return (provider, caps, resolved_model, "http://x", "", "openai")
+        return (provider, caps, resolved_model, "http://x", "", "openai", "t")
 
     def _exit_code(self, ei):
         return getattr(ei.value, "exit_code", getattr(ei.value, "code", None))

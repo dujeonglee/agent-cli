@@ -78,8 +78,7 @@ def test_summary_lines_print_user_and_result_text_verbatim(out, tricky):
 
 def test_resume_prompt_shows_the_same_text_verbatim(out):
     _session_with("/ws", "ask [/nope] please", "done [bold]x[/bold] ok")
-    _session, is_resume = m._maybe_resume_recent("/ws", lambda _p: "n")
-    assert is_resume is False
+    assert m._pick_recent_session("/ws", lambda _p: "n") is None
     text = out.export_text()
     assert "↳ ask [/nope] please" in text
     assert "→ done [bold]x[/bold] ok" in text

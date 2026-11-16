@@ -12,6 +12,14 @@
 
 ## [Unreleased]
 
+> **⚠ v10.144.0 — 모델 서버 설정의 모양이 바뀌었습니다. 옛 설정은 읽지 않습니다.**
+> `~/.agent-cli/config.json` 은 서버 여러 개를 이름으로 저장하는 `{"endpoint", "endpoints": {이름: {…}}}`,
+> `models.json` 은 서버별 `{"endpoints": {이름: {"models": {…}}}}` 입니다. v10.143.0 까지의 파일은 옮기지 않고
+> "서버 없음" 으로 봅니다 — `agent-cli setup`(또는 보드 admin)으로 서버를 다시 추가하세요. 첫 서버를 저장할 때
+> 옛 파일은 `config.json.v1`·`models.json.v1` 로 이름만 바뀌어 남습니다. **agent-board v1.48.0 과 함께 올려야
+> 합니다.** 서버 고르기: `--endpoint` > `AGENT_CLI_ENDPOINT` > 세션 기록 > config 의 `endpoint`. 자세한 것은
+> docs/REFERENCE.md "설정".
+
 > **v9.0.0 이후 이 파일은 갱신되지 않습니다.** 릴리스 노트는 GitHub Release
 > 본문(`gh release view vX.Y.Z`)이 단일 소스이고, 그 재료는 커밋 메시지입니다.
 > 아래 8.x 기록은 그대로 보존합니다 — 되살리려면 v9.0.0~ 를 소급해 채워야

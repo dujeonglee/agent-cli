@@ -244,37 +244,34 @@ class TestExtraHeaders:
 
 
 class TestConfigFlow:
-    """config.json → `_resolve_provider` → `Credentials`."""
+    """config.json 의 서버 → `_resolve_provider` → `Credentials`."""
 
     @pytest.fixture
     def write_cfg(self, tmp_path, monkeypatch):
+        """서버 ``home`` 하나를 쓰고 그 값(`endpoint_config`)을 돌려주는 함수."""
         from agent_cli import config as config_mod
+        from tests.endpoint_files import point_config
 
-        path = tmp_path / "config.json"
-        monkeypatch.setattr(config_mod, "_CONFIG_PATHS", [path])
         for k in ("AGENT_CLI_PROVIDER", "AGENT_CLI_BASE_URL", "AGENT_CLI_API_KEY"):
             monkeypatch.delenv(k, raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
         def _w(data):
-            path.write_text(json.dumps(data))
-            config_mod.reload_config()
+            point_config(monkeypatch, tmp_path, endpoints={"home": data})
+            return config_mod.endpoint_config("home")
 
-        yield _w
-        config_mod.reload_config()
+        return _w
 
-    def test_load_config_keeps_the_list(self, write_cfg):
-        from agent_cli.config import load_config
-
+    def test_endpoint_config_keeps_the_list(self, write_cfg):
         hdrs = [{"name": "x-a", "value": _V1, "enabled": True}]
-        write_cfg({"base_url": "http://h/v1", "extra_headers": hdrs})
-        assert load_config()["extra_headers"] == hdrs
+        values = write_cfg({"base_url": "http://h/v1", "extra_headers": hdrs})
+        assert values["extra_headers"] == hdrs
 
     def test_resolve_provider_carries_enabled_headers(self, write_cfg):
         from agent_cli.main import _resolve_provider
 
-        write_cfg(
+        values = write_cfg(
             {
                 "base_url": "http://h/v1",
                 "api_key": _KEY,
@@ -284,24 +281,26 @@ class TestConfigFlow:
                 ],
             }
         )
-        _p, _u, _m, cred = _resolve_provider(None, None, None, None)
+        _p, _u, _m, cred = _resolve_provider(None, None, None, None, values, "home")
         assert cred.headers("openai") == {
             "Authorization": f"Bearer {_KEY}",
             "x-service-id": _V1,
         }
 
     def test_other_provider_does_not_get_config_headers(self, write_cfg):
-        """키와 같은 범위 — 설정의 provider 가 아닌 곳으로는 그 파일의 것이 안 간다."""
+        """키와 같은 범위 — 서버의 provider 가 아닌 곳으로는 그 서버의 것이 안 간다."""
         from agent_cli.main import _resolve_provider
 
-        write_cfg(
+        values = write_cfg(
             {
                 "provider": "openai",
                 "base_url": "http://h/v1",
                 "extra_headers": [{"name": "x-a", "value": _V1}],
             }
         )
-        _p, _u, _m, cred = _resolve_provider("anthropic", None, None, None)
+        _p, _u, _m, cred = _resolve_provider(
+            "anthropic", None, None, None, values, "home"
+        )
         assert cred.extra_headers == ()
 
     def test_invalid_headers_exit_2_naming_only_the_header(self, write_cfg, capsys):
@@ -309,36 +308,39 @@ class TestConfigFlow:
 
         from agent_cli.main import _resolve_provider
 
-        write_cfg(
+        values = write_cfg(
             {
                 "base_url": "http://h/v1",
                 "extra_headers": [{"name": "x-bad", "value": _V1 + "\r\nX: y"}],
             }
         )
         with pytest.raises(typer.Exit) as ei:
-            _resolve_provider(None, None, None, None)
+            _resolve_provider(None, None, None, None, values, "server 'home'")
         assert ei.value.exit_code == 2
         out = capsys.readouterr()
         text = out.out + out.err
-        assert "x-bad" in text
+        assert "x-bad" in text and "server 'home'" in text
         assert _V1 not in text
 
 
 class TestSetupKeepsExtraHeaders:
     def test_wizard_save_preserves_existing_extra_headers(self, tmp_path, monkeypatch):
+        """서버 하나를 고치는 마법사는 그 서버의 추가 헤더를 묻지 않고 그대로 둔다."""
         from unittest.mock import patch
 
-        from agent_cli import config as config_mod
         from agent_cli.setup import SetupWizard
+        from tests.endpoint_files import point_config
 
-        monkeypatch.setattr("agent_cli.setup.user_dir", lambda: tmp_path, raising=False)
-        monkeypatch.setattr("agent_cli.paths.user_dir", lambda: tmp_path)
         hdrs = [
             {"name": "x-service-id", "value": _V1, "enabled": True},
             {"name": "x-user-id", "value": _V2, "enabled": False},
         ]
-        (tmp_path / "config.json").write_text(
-            json.dumps({"provider": "openai", "api_key": "old", "extra_headers": hdrs})
+        cfg, _ = point_config(
+            monkeypatch,
+            tmp_path,
+            endpoints={
+                "home": {"provider": "openai", "api_key": "old", "extra_headers": hdrs}
+            },
         )
         seen = {}
 
@@ -350,7 +352,8 @@ class TestSetupKeepsExtraHeaders:
         with (
             patch("agent_cli.setup._list_models", fake_list),
             patch.object(wiz, "_welcome"),
-            patch.object(wiz, "_show_existing_configs"),
+            patch.object(wiz, "_show_existing"),
+            patch.object(wiz, "_select_name", return_value="home"),
             patch.object(wiz, "_select_provider", return_value="openai"),
             patch.object(
                 wiz, "_configure_connection", return_value=("http://h/v1", _KEY)
@@ -360,12 +363,11 @@ class TestSetupKeepsExtraHeaders:
             patch.object(wiz, "_done"),
         ):
             wiz.run()
-        saved = json.loads((tmp_path / "config.json").read_text())
+        saved = json.loads(cfg.read_text())["endpoints"]["home"]
         assert saved["extra_headers"] == hdrs
         assert saved["api_key"] == _KEY
         assert seen["headers"]["x-service-id"] == _V1
         assert "x-user-id" not in seen["headers"]
-        config_mod.reload_config()
 
 
 class TestSensitiveConfigText:

@@ -61,7 +61,7 @@ agent_cli/
 ├── wake.py                  한 주소를 무엇이 깨우나(`wake_sources`)·체크인 알림·메일 → 레코드·`release_owner`, 루프의 우편 창구 `Mailbox`(포트 `mailbox`)
 ├── pump.py                  세션 펌프 — 큐에서 꺼내 깨우기·라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
 ├── command_table.py         사용자 명령 표 하나 — 웹 `/help` 와 `run "/help"` 가 여기서 나온다
-├── config.py                config.json·models.json 레지스트리 읽기·저장, 프로바이더 기본값, 방언 바인딩(`bind_user_dialect`)
+├── config.py                config.json 의 서버(endpoint) 표·고르는 순서·이 프로세스의 서버, 서버별 models.json 읽기·저장, 옛 모양 판정·`.v1` 이름 바꾸기, 프로바이더 기본값, 방언 바인딩(`bind_user_dialect`)
 ├── setup.py                 첫 실행 설정 마법사 `SetupWizard` (Rich TUI — 프로바이더·연결·모델)
 ├── model_check.py           부팅 때 모델 이름 검증 — "없는 모델"(`ModelNotFound`)과 "확인할 수 없음"을 가른다
 ├── knobs.py                 세션 노브 선언 `KNOBS` 하나에서 env·CLI 플래그·web 칩 표면을 파생 (docs/knobs/DESIGN.md)
@@ -89,7 +89,7 @@ agent_cli/
 ├── ctrl_c.py                `run` 의 Ctrl+C — 한 번은 main 의 런만, 2초 안에 두 번은 전부(main + 모든 에이전트), 주입 시계
 ├── terminate.py             SIGTERM 을 받으면 정상 정리 경로로 — 표시·정리 기한(`TEARDOWN_BUDGET_S`)·정리 뒤 신호 15 로 죽기
 ├── verbose.py               `--verbose` 기록기 — 모든 루프의 LLM 호출을 `<session>/verbose.jsonl` 에
-├── default_models.json      패키지 기본 모델 정의 (models.json 검색 경로의 마지막)
+├── default_models.json      패키지 기본 모델 정의 (서버와 무관한 바닥 — 서버의 models.json 칸이 그 위에 덮인다)
 ├── default_web_sources.json 기본 정보원 목록 (`web_sources.py` 가 읽는다)
 ├── loop/                    루프 엔진 — `AgentLoop` 와 협력자들, 루프 종류 (docs/loop-kinds/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring) — 재수출하지 않는다, 서브모듈을 직접 import
@@ -627,7 +627,7 @@ assistant 턴 하나는 세 형태를 지난다 — (A) 모델이 낸 원문 · 
 
 ```
 .agent-cli/sessions/{session_id}/
-├── session.jsonl            ← 한 줄 메타
+├── session.jsonl            ← 한 줄 메타 (id·workspace·updated_at, 있으면 title·endpoint — 서버 이름, §8.0)
 ├── history.jsonl            ← main 대화
 ├── compaction.json          ← 압축 상태(요약·파일 목록·dynamic_start_index)
 ├── turns.jsonl · failures.jsonl · verbose.jsonl   ← §7.6·§7.7
@@ -861,23 +861,35 @@ OpenAIProvider 하나로 OpenAI·vLLM·LM Studio·omlx 를 `--base-url` 만 바�
 설정의 집은 하나씩이다 (`paths.py`, docs/config-scopes/DESIGN.md): 유저 `~/.agent-cli/` 에 `config.json`·`models.json`(머신 사실),
 프로젝트 `.agent-cli/` 에 `mcp.json`·`skills/`·`agents/`·`hooks/`·`hooks.json`·`DIRECTIVE.md`, 세션은 `paths.sessions_dir()`(`AGENT_CLI_SESSIONS_DIR` 로 옮길 수 있다).
 
-### 8.0 config.json (프로바이더/모델 설정)
+### 8.0 config.json (모델 서버 표)
 
 ```json
 {
-  "provider": "openai",
-  "base_url": "http://127.0.0.1:8000/v1",
-  "api_key": "",
-  "default_model": "<model>",
-  "extra_headers": [{"name": "x-service-id", "value": "…", "enabled": true}]
+  "endpoint": "home",
+  "endpoints": {
+    "home": {
+      "provider": "openai",
+      "base_url": "http://127.0.0.1:8000/v1",
+      "api_key": "",
+      "default_model": "<model>",
+      "extra_headers": [{"name": "x-service-id", "value": "…", "enabled": true}]
+    }
+  }
 }
 ```
 
-`load_config()` 는 env(`AGENT_CLI_PROVIDER`·`AGENT_CLI_BASE_URL`·`AGENT_CLI_API_KEY`, 최저) 위에 `~/.agent-cli/config.json` 을 필드 단위로 덮는다.
-값은 문자열로 접고, `extra_headers` 만 목록 그대로 둔다(`credentials_from_config` 가 검증). 마법사는 `extra_headers` 를 묻지 않고 보존해 저장한다.
-CLI 파라미터가 그 위의 임시 오버라이드다. 파일이 있는데 못 읽으면 `ConfigError`.
+서버는 이름(`ENDPOINT_NAME_RE` — 소문자·숫자·`-`)으로 저장되고, `endpoint` 가 선택된 서버다. 한 프로세스(방 하나)는 서버 하나를 쓴다:
 
-**SetupWizard** (`setup.py`): 설정이 없고, 대화형이고, `--base-url`·`-m` 을 다 주지 않았을 때만 자동으로 뜬다(`main._maybe_setup`). `agent-cli setup` 으로 다시 띄운다.
+1. 이름 고르기 — `config.pick_endpoint_name(flag, environ, recorded, default)` 하나: `--endpoint` > `AGENT_CLI_ENDPOINT` > 되살리는 세션 메타의 `endpoint` > config 의 `endpoint`.
+2. 값 읽기 — `config.endpoint_config(name)`(빈 값은 빼고 문자열로 접고, `extra_headers` 만 목록 그대로). 없는 이름은 `EndpointError`, 못 읽는 파일은 `ConfigError` — `main._select_endpoint` 가 둘 다 종료 코드 `2` 로 끝낸다(다른 서버로 넘어가지 않는다).
+   고른 이름이 없으면(저장된 서버 0개) `config.env_endpoint_config()` — env `AGENT_CLI_PROVIDER`·`AGENT_CLI_BASE_URL`·`AGENT_CLI_API_KEY` 가 이름 없는 서버다. 서버가 골라지면 env 는 쓰지 않는다.
+3. 세우기 — `config.use_endpoint(name)` 을 부트가 한 번 부른다(다른 이름으로 다시 부르면 `RuntimeError`). 그 뒤 모델 표 함수가 그 서버 칸을 본다(§8.1).
+4. 덮기 — `main._resolve_provider(provider, model, base_url, api_key, values, source)` 가 플래그를 필드 단위로 덮는다. 파일은 읽지 않는다.
+5. 기록 — 고른 이름은 `ModelBinding.endpoint` 로 나와 `main._apply_endpoint` 가 `SessionMeta.endpoint` 에 적는다(기록과 다르면 한 줄). `web.json` 의 `endpoint`, 웹 `ready` 이벤트의 `endpoint`(머리 줄 칩)도 이 값이다.
+
+**옛 모양**(최상위에 `endpoints` 가 없는 파일)은 읽지 않는다 — `is_legacy_shape` 가 내용을 보지 않고 판정하고, 그 파일은 "서버 없음" 이다. 첫 서버를 저장하기 직전에 셋업(CLI 마법사·보드 admin)이 `retire_legacy_files(paths)` 로 `<name>.v1`(있으면 `.v1-2` …, `legacy_backup_path`)로 이름만 바꾼다. 쓰기 함수(`save_endpoint`·`set_default_endpoint`·`set_endpoint_value`)는 옛 모양 파일에 섞어 쓰지 않는다.
+
+**SetupWizard** (`setup.py`): 서버 하나를 만들거나 고친다 — 이름·provider·접속·기본 모델. 고치는 서버의 `extra_headers` 와(빈 입력이면) 키는 보존한다. 첫 서버는 기본이 된다. 저장된 서버가 없고, 대화형이고, 이름을 대지 않았고, env·`--base-url`·`-m` 으로 다 주지 않았을 때만 자동으로 뜬다(`main._maybe_setup`). `agent-cli setup` 으로 다시 띄운다. `agent-cli endpoints` 는 이름·provider·호스트(`config.endpoint_host`)만 보인다.
 
 **DIRECTIVE.md**: `.agent-cli/DIRECTIVE.md` 하나(`prompts/system_prompt.project_directive_file`). 공통·`## @main`·`## @agents` 청중 스코프로 나뉘고
 (`split_directive_scopes`/`join_directive_scopes`), 시스템 프롬프트의 Directives 절에 들어간다. 바뀌면 다음 턴에 시스템 프롬프트를 다시 짠다.
@@ -886,23 +898,27 @@ CLI 파라미터가 그 위의 임시 오버라이드다. 파일이 있는데 �
 
 ```json
 {
-  "models": {
-    "<model_id>": {
-      "provider": "anthropic | openai",
-      "context_window": 32768,
-      "max_output_tokens": 4096,
-      "supports_thinking": true,
-      "supports_grammar": true,
-      "supports_vision": false,
-      "temperature": 0.7,
-      "dialect": "json_fc"
+  "endpoints": {
+    "<서버 이름>": {
+      "models": {
+        "<model_id>": {
+          "provider": "anthropic | openai",
+          "context_window": 32768,
+          "max_output_tokens": 4096,
+          "supports_thinking": true,
+          "supports_grammar": true,
+          "supports_vision": false,
+          "temperature": 0.7,
+          "dialect": "json_fc"
+        }
+      }
     }
-  },
-  "provider_defaults": {
-    "openai": {"base_url": "..."}
   }
 }
 ```
+
+모델 표는 서버별이다 — 같은 이름도 서버에 따라 방언이 다를 수 있다. `get_model_entry`·`model_names`·`save_model_entry`·`fill_model_entry`·`bind_user_dialect` 는 `current_endpoint()` 의 칸을 읽고 쓴다. 서버가 없는 실행(`use_endpoint(None)`)은 패키지 바닥만 읽고 아무것도 저장하지 않는다. 사용자 문구의 "어느 표" 는 `models_path_label()`(경로 + 서버 이름).
+`provider_defaults`(프로바이더 기본 주소)는 패키지 `default_models.json` 에만 있다.
 
 능력치로 읽는 키는 `_build_from_entry` 가 정한다(`context_window`·`max_output_tokens`·`supports_thinking`·`supports_grammar`·`supports_vision`·`temperature`·`top_p`).
 `dialect` 는 `dialects.dialect_for_model` 이 읽는다 — 묶이지 않은 모델은 터미널이면 그 자리에서 묻고 저장한다(`config.bind_user_dialect`).
@@ -911,12 +927,12 @@ CLI 파라미터가 그 위의 임시 오버라이드다. 파일이 있는데 �
 
 | 우선순위 | 위치 | 역할 | 자동 저장 |
 |---------|------|------|----------|
-| 1 | `~/.agent-cli/models.json` | 사용자 설정·감지 캐시 | 감지한 모델을 `_auto_detected: true` 로 |
-| 2 | `agent_cli/default_models.json` | 패키지 기본값 | 안 함 |
+| 1 | `~/.agent-cli/models.json` 의 `endpoints.<이 프로세스의 서버>.models` | 사용자 설정·감지 캐시 | 감지한 모델을 `_auto_detected: true` 로 (그 서버 칸에) |
+| 2 | `agent_cli/default_models.json` | 패키지 기본값 — 서버와 무관한 바닥 | 안 함 |
 
 ### 8.3 설정 로딩 우선순위 (`config.py`)
 
-`_load_registry()` 가 기본값 파일 위에 유저 파일을 `models`·`provider_defaults` 키 단위로 덮는다. 파일 수정 시각이 바뀌면 다음 조회가 다시 읽는다.
+`_load_registry()` 가 기본값 파일의 `models` 위에 유저 파일의 이 서버 칸을 모델 단위로 덮는다. (서버, 파일 수정 시각) 이 바뀌면 다음 조회가 다시 읽는다.
 프로바이더 기본 주소만 코드에 있고(`_PROVIDER_FALLBACK_URLS`), 모델 이름은 추측하지 않는다 — 아무것도 해석되지 않으면 `model_check.NoModelSelected`.
 
 ### 8.4 능력치 조회 우선순위 (`providers/capabilities.py`)
@@ -1020,7 +1036,7 @@ SIGTERM(보드가 방을 끌 때)은 `run`·`web` 모두 같은 정리(`close_se
   렌더러의 `_emit` 이 이벤트 하나를 한 번 직렬화해 `hub.publish` 에 넘기면, 허브가 재생 버퍼와 열린 연결 전부의 큐에 넣는다.
 - 다중 뷰어 — 모두 동등하게 입력·대기열을 쓸 수 있다.
 - `--base-path <prefix>`: 프런트 URL 이 전부 상대 경로이고 `index` 가 `<base href="<prefix>/">` 를 넣어, 리버스 프록시의 경로 접두 밑에서 돈다.
-- 세션별 `web.json`(주소·토큰·pid)과 `status.json` 을 `instance_file.py` 가 쓴다 — 바깥 오케스트레이터(보드)가 읽는다. `--idle-timeout` 이면 `web/idle.py` 가 스스로 끝낸다.
+- 세션별 `web.json`(주소·토큰·pid, 있으면 title·endpoint)과 `status.json` 을 `instance_file.py` 가 쓴다 — 바깥 오케스트레이터(보드)가 읽는다. `--idle-timeout` 이면 `web/idle.py` 가 스스로 끝낸다.
 - 프런트(`web/static/`)는 빌드 없는 ES 모듈이다(docs/web-modules/DESIGN.md). 요소는 `dom.js` 의 `el(tag, classes, text)`(세 번째 인자는 textContent)로 만들고,
   HTML 은 이미 이스케이프·조립된 것만 `elHtml` 로 넣는다.
 - 웹 슬래시 명령(`/help`·`/sh`·`/compact`)은 `web/slash.py`, `@agent`·`/skill` 디스패치는 run 과 공용(`main.try_dispatch_agent_or_skill`).

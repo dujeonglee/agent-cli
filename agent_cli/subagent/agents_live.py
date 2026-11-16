@@ -1382,8 +1382,13 @@ class AgentRegistry:
             hint = f" (closest name: {near})" if near else ""
             avail = ", ".join(e.listing.models[:6])
             where = f'profile "{profile}"' if profile else "the role settings"
+            server = (
+                f'server "{binding.endpoint}"'
+                if getattr(binding, "endpoint", "")
+                else "the server"
+            )
             return (
-                f'the model "{model}" required by {where} is not on the server'
+                f'the model "{model}" required by {where} is not on {server}'
                 f"{hint}. Available: {avail}. Spawn with a different profile, "
                 "or tell the user the profile's model must be fixed."
             )

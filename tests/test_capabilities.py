@@ -406,6 +406,7 @@ class TestPromptModelCapabilities:
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        config_mod.use_endpoint("t")
 
         # context, supports_thinking(y), dialect(필수, v10.3.0) — budget
         # 프롬프트는 v8.21.0 에서 제거(정적 thinking_budget 필드 삭제).
@@ -421,6 +422,7 @@ class TestPromptModelCapabilities:
         import json
 
         saved = json.loads((tmp_path / "models.json").read_text())
+        saved = saved["endpoints"]["t"]
         assert "test-model" in saved["models"]
         assert saved["models"]["test-model"]["context_window"] == 131072
 
@@ -430,6 +432,7 @@ class TestPromptModelCapabilities:
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        config_mod.use_endpoint("t")
         inputs = iter(["", "", "", "json_fc"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
@@ -460,13 +463,14 @@ class TestPromptDialectBinding:
         import json
 
         saved = json.loads((tmp_path / "models.json").read_text())
-        return saved["models"]["test-model"]
+        return saved["endpoints"]["t"]["models"]["test-model"]
 
     def test_named_format_saved_as_binding(self, monkeypatch, tmp_path):
         import agent_cli.config as config_mod
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        config_mod.use_endpoint("t")
         inputs = iter(["131072", "n", "n", "xml_fc"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
@@ -479,6 +483,7 @@ class TestPromptDialectBinding:
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        config_mod.use_endpoint("t")
         inputs = iter(["4096", "n", "n", "", "auto", "xml_fc"])  # 둘 다 답이 아니다
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
@@ -490,6 +495,7 @@ class TestPromptDialectBinding:
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        config_mod.use_endpoint("t")
         inputs = iter(["4096", "n", "n", "xml_fx", "json_fc"])  # 오타 → 재질문
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
@@ -501,6 +507,7 @@ class TestPromptDialectBinding:
         from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        config_mod.use_endpoint("t")
         inputs = iter(["4096", "n", "n", "XML_FC"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 

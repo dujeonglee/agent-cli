@@ -115,6 +115,30 @@ def _image_store_in_tmp(monkeypatch, request, _image_store_root):
     monkeypatch.setattr(images, "_STORE_DIR", _image_store_root / sub)
 
 
+def _forget_endpoint(monkeypatch) -> None:
+    from agent_cli import config
+
+    monkeypatch.setattr(config, "_current", config._UNSET)
+    config.reload_registry()
+
+
+@pytest.fixture(autouse=True)
+def _endpoint_not_chosen(monkeypatch):
+    """테스트마다 "이 프로세스의 서버" 를 비운다 — 제품의 `config.use_endpoint` 는 프로세스에
+    한 번이고 재설정 길이 없다. 재설정은 이 파일 한 곳(테스트 하나 = 프로세스 하나로 본다)."""
+    _forget_endpoint(monkeypatch)
+    yield
+    from agent_cli import config
+
+    config.reload_registry()
+
+
+@pytest.fixture
+def next_process(monkeypatch):
+    """한 테스트 안에서 CLI 를 두 번 띄울 때 — 둘째 실행을 새 프로세스처럼(서버를 다시 고르게)."""
+    return lambda: _forget_endpoint(monkeypatch)
+
+
 # ── omlx integration connection ───────────────────────────
 OMLX_BASE_URL = os.environ.get("OMLX_BASE_URL", "http://127.0.0.1:8000/v1")
 OMLX_API_KEY = os.environ.get("OMLX_API_KEY", "")

@@ -76,6 +76,15 @@ es.addEventListener("ready", function (e) {
       document.title = "agent-cli";
     }
   }
+  // 서버 칩 (v10.144.0): 이 방의 서버 이름 — 방이 뜬 뒤엔 바뀌지 않는다.
+  const $endpoint = document.getElementById("chip-endpoint");
+  if ($endpoint) {
+    $endpoint.textContent = d.endpoint || "";
+    $endpoint.title = d.endpoint
+      ? "Model server — " + d.endpoint + " (fixed for this room; clone the room on the board to use another server)"
+      : "";
+    $endpoint.hidden = !d.endpoint;
+  }
   // ``workspace`` is the agent's working directory at session
   // creation time. Showing it in the top bar disambiguates which
   // checkout you're talking to when several LAN sessions are open

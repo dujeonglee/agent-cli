@@ -45,16 +45,22 @@ out["skills"] = sorted(n for n in skills_loader.list_names() if n in ("ghost", "
 from agent_cli.subagent.profiles import _profile_loader
 out["agents"] = sorted(n for n in _profile_loader.list_names() if n in ("ghost", "real"))
 
-from agent_cli.config import load_config, _CONFIG_PATHS, _SEARCH_PATHS
-out["config_paths"] = [str(p) for p in _CONFIG_PATHS]
-out["models_paths"] = [str(p) for p in _SEARCH_PATHS]
-out["default_model"] = load_config(use_cache=False).get("default_model", "")
+from agent_cli.config import _CONFIG_PATH, _GLOBAL_MODELS_PATH, endpoint_config
+out["config_paths"] = [str(_CONFIG_PATH)]
+out["models_paths"] = [str(_GLOBAL_MODELS_PATH)]
+out["default_model"] = endpoint_config("home").get("default_model", "")
 
 import agent_cli.input_history as ih
 out["chat_history"] = str(ih._HISTORY_FILE)
 
 print(json.dumps(out))
 """
+
+
+def _server(model: str) -> str:
+    return json.dumps(
+        {"endpoint": "home", "endpoints": {"home": {"default_model": model}}}
+    )
 
 
 def _md(name: str) -> str:
@@ -78,7 +84,7 @@ def _seed(tmp_path: Path) -> tuple[Path, Path]:
     (h / "skills" / "ghost.md").write_text(_md("ghost"))
     (h / "agents" / "ghost.md").write_text(_md("ghost"))
     # 유저 config 는 **읽혀야** 하는 것
-    (h / "config.json").write_text(json.dumps({"default_model": "USER-MODEL"}))
+    (h / "config.json").write_text(_server("USER-MODEL"))
 
     # ── 프로젝트: 실물 ──
     (p / "mcp.json").write_text(json.dumps({"mcpServers": {"real": {"command": "y"}}}))
@@ -86,7 +92,7 @@ def _seed(tmp_path: Path) -> tuple[Path, Path]:
     (p / "skills" / "real.md").write_text(_md("real"))
     (p / "agents" / "real.md").write_text(_md("real"))
     # 프로젝트 config 는 **무시되어야** 하는 것
-    (p / "config.json").write_text(json.dumps({"default_model": "PROJECT-MODEL"}))
+    (p / "config.json").write_text(_server("PROJECT-MODEL"))
     return home, proj
 
 
@@ -97,7 +103,12 @@ def _probe(home: Path, cwd: Path, extra_env: dict | None = None) -> dict:
         "USERPROFILE": str(home),
         "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
     }
-    for k in ("AGENT_CLI_MODEL", "AGENT_CLI_PROVIDER", "AGENT_CLI_SESSIONS_DIR"):
+    for k in (
+        "AGENT_CLI_MODEL",
+        "AGENT_CLI_PROVIDER",
+        "AGENT_CLI_SESSIONS_DIR",
+        "AGENT_CLI_ENDPOINT",
+    ):
         env.pop(k, None)
     env.update(extra_env or {})
     r = subprocess.run(

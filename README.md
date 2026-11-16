@@ -29,10 +29,15 @@ agent-cli update
 
 ## 첫 실행
 
-설정 파일이 없으면 터미널에서 처음 실행할 때 설정 마법사가 뜹니다.
-프로바이더, 서버 주소와 키, 기본 모델을 차례로 묻습니다.
-답은 `~/.agent-cli/config.json` 에 저장되고, 다음부터는 묻지 않습니다.
-다시 고치려면 `agent-cli setup` 을 실행합니다.
+저장된 모델 서버가 없으면 터미널에서 처음 실행할 때 설정 마법사가 뜹니다.
+서버 이름, 프로바이더, 서버 주소와 키, 기본 모델을 차례로 묻습니다.
+답은 `~/.agent-cli/config.json` 에 그 이름의 서버로 저장되고, 다음부터는 묻지 않습니다.
+서버를 더 추가하거나 고치려면 `agent-cli setup` 을, 목록은 `agent-cli endpoints` 를 실행합니다.
+실행마다 다른 서버를 쓰려면 `--endpoint <이름>` 을 줍니다.
+
+> 서버 이름이 없던 옛 모양의 설정 파일은 읽지 않습니다. `agent-cli setup` 을 다시 하면 옛 파일은
+> `config.json.v1`·`models.json.v1` 로 남습니다. agent-board 는 서버별 설정을 아는 판과 함께 올립니다
+> ([레퍼런스의 설정 절](docs/REFERENCE.md#설정)).
 
 마법사 없이 바로 시작하려면 서버 주소와 모델을 플래그로 줍니다.
 
@@ -45,7 +50,7 @@ OpenAI·Anthropic 은 `-p openai`·`-p anthropic` 으로 고르고, 키는 `--ap
 모델에는 **방언(dialect)** 이 하나 정해져 있어야 합니다.
 방언은 그 모델이 도구 호출을 쓰는 모양입니다(JSON 배열, `<tool_call>` 태그, 서버의 함수 호출 등).
 방언이 없는 모델로 터미널에서 `run` 을 돌리면 방언 목록을 보여 주고 고르게 합니다.
-고른 방언은 `~/.agent-cli/models.json` 에 저장되어 다음부터는 묻지 않습니다.
+고른 방언은 `~/.agent-cli/models.json` 의 그 서버 칸에 저장되어 다음부터는 묻지 않습니다.
 `web` 은 묻지 않으므로, 처음에는 `run` 을 한 번 돌리거나 `--dialect <이름>` 을 줍니다.
 방언 목록은 `agent-cli run --help` 의 `--dialect` 설명에 있습니다.
 자세한 설정은 [레퍼런스의 첫 실행 절](docs/REFERENCE.md#첫-실행-setup-wizard)과 [모델 레지스트리 절](docs/REFERENCE.md#모델-레지스트리)을 봅니다.

@@ -18,9 +18,9 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-import agent_cli.config as _config
 import agent_cli.dialects as _dialects
 from agent_cli.dialects import DialectUnbound, dialect_for_model, resolve_dialect
+from tests.endpoint_files import point_models
 
 
 class TestNoPackageShim:
@@ -77,9 +77,10 @@ class TestNoCliAlias:
 class TestModelsJsonOldKeyIgnored:
     def _models(self, tmp_path, monkeypatch, models: dict):
         target = tmp_path / "models.json"
-        target.write_text(json.dumps({"models": models}), encoding="utf-8")
-        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-        monkeypatch.setattr(_config, "_cached_registry", None)
+        target.write_text(
+            json.dumps({"endpoints": {"t": {"models": models}}}), encoding="utf-8"
+        )
+        point_models(monkeypatch, target)
         monkeypatch.setattr(_dialects, "_override", None)
 
     def test_old_key_alone_is_unbound(self, tmp_path, monkeypatch):
