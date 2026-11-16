@@ -15,7 +15,8 @@ f44cf539(v10.143.0) 에서 만든 기대값이 그 뒤의 구조 교체(우편�
 기다린다. 이벤트는 스레드별 열로 담는다 — 스레드 사이의 끼어듦은 담지 않는다. 비결정 값은 `normalize`
 가 지운다.
 
-재생성: ``python3 -m tests.oracle.driver --out tests/oracle/expected``
+재생성: ``python3 -m tests.oracle.driver --out tests/oracle/expected`` — 언제나 **전체**로 돌린다(``--only`` 로 일부만
+돌리면 앞 시나리오가 쓴 id 가 없어 원본 id 의 자릿수가 달라지고, 머리 자르기가 한 글자 달라지는 칸이 생긴다).
 """
 
 from __future__ import annotations
@@ -513,6 +514,20 @@ def _main_waits_then(box, step):
     return go
 
 
+def _after_main_calls(box, n: int, step):
+    """main 의 provider 호출이 ``n`` 번 시작된 **뒤** ``step(msgs)`` — 회신한 배우가 main 의 다음 꼬리(로스터의
+    ``[busy]``)가 지어지기 전에 내려오지 않게 한다. 호출 기록은 호출이 시작될 때 쌓인다(꼬리를 지은 뒤)."""
+
+    def go(msgs):
+        until(
+            lambda: len(box["s"].provider.calls.get("MAIN", [])) >= n,
+            "main's next call",
+        )
+        return step(msgs)
+
+    return go
+
+
 def _after_agents_settle(box, step, *, states=("idle", "dead")):
     """에이전트 모두가 한가해지거나 내려온 뒤 ``step(msgs)`` — 그 런의 끝 정리가 main 의 다음 턴보다 먼저."""
 
@@ -702,7 +717,8 @@ def s05_agent_to_agent(root: Path) -> dict:
                 ),
                 call("wait"),
                 lambda m: call("reply", id=owed_ids(m)[0], text="yy says 42"),
-                call("complete", result="ok"),
+                # 회신으로 깬 main 의 다음 호출(넷째)이 시작될 때까지 내려오지 않는다
+                _after_main_calls(box, 4, lambda m: call("complete", result="ok")),
             ],
             "TASK-E2": [
                 lambda m: call("reply", id=owed_id(m), text="TASK-E1 42"),
@@ -765,7 +781,8 @@ def s07_question_to_human(root: Path) -> dict:
                     box, lambda m: call("ask", question="TASK-G v1 or v2?")
                 ),
                 lambda m: call("reply", id=owed_id(m), text="asked the user"),
-                call("complete", result="ok"),
+                # 회신으로 깬 main 의 다음 호출(셋째)이 시작될 때까지 내려오지 않는다
+                _after_main_calls(box, 3, lambda m: call("complete", result="ok")),
                 complete_all("went with v2"),
             ],
         }
@@ -812,7 +829,14 @@ def s08_mid_run_absorption(root: Path) -> dict:
         return call("shell", command="true")
 
     def agent_reply_second(msgs):
-        until(lambda: box["s"].recorder.main_waiting.is_set(), "main waits again")
+        # main 의 **둘째** 제자리 대기(wait_in_place 셋째 호출 = 둘째 True) — 첫 대기의 낡은 표지를 보지 않는다
+        until(
+            lambda: (
+                box["s"].recorder.counts.get("wait_in_place", 0) >= 3
+                and box["s"].recorder.main_waiting.is_set()
+            ),
+            "main waits again",
+        )
         return call("reply", id=owed_ids(msgs)[0], text="b.py ok")
 
     p = Provider(
