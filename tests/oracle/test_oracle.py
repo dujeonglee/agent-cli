@@ -1,4 +1,5 @@
-"""메일함·요청 장부 오라클 — 지금 구현의 산출 == f44cf539 에서 만든 기대값.
+"""메일함·요청 장부 오라클 — 지금 구현의 산출 == 고정 버전에서 만든 기대값(s01~s17 은 f44cf539, s21~s27 은
+v10.144.0 — 1단계 기준 보강).
 
 기대값(``expected/*.json``)은 다시 만들지 않는다: 구조를 바꾸는 커밋에서 이 파일들이 바뀌면 오라클이 구현과 함께
 움직인 것이다. ``SHA256SUMS`` 가 그 파일들을 고정하고, 드라이버의 import 목록이 "공개 표면만" 을 고정한다.
@@ -141,6 +142,22 @@ class TestNormalize:
         assert got == {
             "a": {"key": "agt-A", "text": "took <d>, then <d>", "created_at": "<t>"},
             "b": {"ts": "<t>", "path": "<S>/s/agents/agt-B/x", "key": "agt-B"},
+        }
+
+    def test_a_key_right_after_a_serialized_newline_is_renamed(self):
+        """died 통지는 줄 머리가 키다(``──\\nagt-…``) — 직렬화된 글에서 ``n`` 뒤도 키 경계다 (v10.144.1)."""
+        doc = {"c": "── died [n-4] ──\nagt-1234abcd (bb): boom", "k": "agt-1234abcd"}
+        got = driver.normalize(doc, root="/w", agents=["agt-1234abcd"])
+        assert got == {"c": "── died [n-1] ──\nagt-A (bb): boom", "k": "agt-A"}
+
+    def test_job_pids_are_removed(self):
+        """꼬리의 작업 줄 pid 는 비결정이다 (v10.144.1) — 숫자 없는 안내문(``kill -- -<pid>``)은 그대로."""
+        doc = {
+            "t": "job #1 · pid 88283 · `sleep 30` · stop it: `kill -- -88283`; use `kill -- -<pid>`"
+        }
+        got = driver.normalize(doc, root="/w")
+        assert got == {
+            "t": "job #1 · pid <p> · `sleep 30` · stop it: `kill -- -<p>`; use `kill -- -<pid>`"
         }
 
     def test_key_order_does_not_follow_the_random_key(self):

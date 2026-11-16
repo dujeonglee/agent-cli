@@ -117,6 +117,10 @@ class Recorder:
         self.lanes: dict[str, list] = {}
         self.main_waiting = threading.Event()
         self.counts: dict[str, int] = {}
+        #: 에이전트 키 → 그 키의 런이 시작될 때(``begin_agent_work``) 워커를 죽일 신호 — 세워지면 터진다.
+        #: 원인 미상의 사망을 흉내 낸다(요청 처리기 밖의 기계 사망 — `test_machinery_crash_notifies_main` 과 같은
+        #: 수단). 기록은 터지기 전에 남는다.
+        self.crash_on_start: dict[str, threading.Event] = {}
 
     def lane(self) -> str:
         t = threading.current_thread()
@@ -137,6 +141,11 @@ class Recorder:
                     [name, _plain(list(args)), _plain(kwargs)]
                 )
                 self.counts[name] = self.counts.get(name, 0) + 1
+            if name == "begin_agent_work" and kwargs.get("key") in self.crash_on_start:
+                gate = self.crash_on_start.pop(kwargs["key"])
+                if not gate.wait(_PATIENCE_S):
+                    raise TimeoutError("oracle: crash gate never opened")
+                raise MemoryError("oracle: simulated crash in worker machinery")
             if name == "wait_in_place" and args and args[0]:
                 self.main_waiting.set()
             if name == "wait_in_place" and args and not args[0]:
@@ -422,11 +431,16 @@ class Session:
 # ── 정규화 ───────────────────────────────────────────────────
 
 _ID = re.compile(r"\b([unrq])-(\d+)\b")
-_AGENT = re.compile(r"\bagt-[0-9a-f]{8}\b")
+#: 키 앞의 경계 — 단어 경계, 또는 직렬화된 줄바꿈(``\\n``) 바로 뒤(died 통지는 줄 머리가 키다: ``…──\\nagt-…``
+#: 에서 ``n`` 과 ``a`` 사이는 단어 경계가 아니다). 기존 기대값 20개에는 그 모양이 없어 바이트가 그대로다.
+_AGENT = re.compile(r"(?:\b|(?<=\\n))agt-[0-9a-f]{8}\b")
 _TIME_KEYS = frozenset(
     {"ts", "created_at", "asked_at", "duration_s", "elapsed", "send_ts", "req_ts"}
 )
 _DURATION = re.compile(r"\b\d+(?:\.\d+)?s\b|\b\d+m\d{2}s\b|\b\d+h\d{2}m\b")
+#: 작업의 프로세스 번호 — 꼬리의 ``## Background jobs`` 줄(``pid 123 · … `kill -- -123```). 기존 기대값 20개에는
+#: 숫자 pid 가 없어(작업을 띄우는 시나리오가 없다) 바이트가 그대로다.
+_PID = re.compile(r"\bpid \d+\b|kill -- -\d+\b")
 
 
 def _drop_times(v):
@@ -439,7 +453,7 @@ def _drop_times(v):
 
 def normalize(doc: dict, *, root: str, agents: list[str] = ()) -> dict:
     """비결정 값을 지운 판 — 경로(``root`` → ``<S>``), 에이전트 키(``agents`` 의 순서 = 띄운 순서로 ``agt-A``…,
-    그 밖은 첫 등장 순), 시각 키(``<t>``), 글 속 소요 시간(``<d>``), 항목 id(접두 u-/n-/r-/q- 별로 첫 등장 순
+    그 밖은 첫 등장 순), 시각 키(``<t>``), 글 속 소요 시간(``<d>``), 작업 pid(``<p>``), 항목 id(접두 u-/n-/r-/q- 별로 첫 등장 순
     재번호). 키 이름을 먼저 바꾸고 정렬해 직렬화한 뒤 id 를 번호 매긴다 — 무작위 키의 사전순이 순서를 흔들지
     않게."""
     keys: dict[str, str] = {}
@@ -456,6 +470,9 @@ def normalize(doc: dict, *, root: str, agents: list[str] = ()) -> dict:
     text = text.replace(root, "<S>")
     text = _AGENT.sub(agent, text)
     text = _DURATION.sub("<d>", text)
+    text = _PID.sub(
+        lambda m: "pid <p>" if m.group(0).startswith("pid") else "kill -- -<p>", text
+    )
     text = json.dumps(json.loads(text), ensure_ascii=False, sort_keys=True)
     return json.loads(renumber_ids(text))
 
@@ -1295,6 +1312,560 @@ def s17_mail_to_an_idle_main_on_the_run_path(root: Path) -> dict:
     return s.collect()
 
 
+# ── 1단계 기준 보강 (v10.144.1): 기대값 20개에 없던 지금 동작 ──────────────────
+# 표지 ``[단계 N 에서 바뀜 — …]`` 은 그 단계의 "바뀌는 기대값 목록" 이다(one-actor-plan §2). 표지 없는
+# 시나리오는 단일 구조의 끝까지 같아야 한다.
+
+
+def _agent_key(s: Session, name: str) -> str:
+    rows = [r for r in s.reg.roster_snapshot() if r.get("name") == name]
+    if not rows:
+        raise AssertionError(f"oracle: no agent named {name}")
+    return rows[0]["key"]
+
+
+def _roster(s: Session) -> list[dict]:
+    return [
+        {k: r.get(k) for k in ("key", "name", "state", "pending_requests", "handled")}
+        for r in s.reg.roster_snapshot()
+    ]
+
+
+def s21_main_stop_owes_agent(root: Path) -> dict:
+    """1단계 ① main 정지 회신 `[단계 4c 에서 바뀜 — 결정 2]`: 상주가 main 에게 회신 기대 `message` → main 이 그
+    메일로 깬 런에서 사람이 ■ — 지금은 펌프의 런 끝(`main_run_ended`)이 stopped 를 넘기지 않아 빚진 상대(상주)에게
+    라벨 붙은 런 요약 폴백이 간다. 상주는 그것을 회신으로 읽고 새 런을 연다."""
+    box: dict = {}
+
+    def agent_asks(msgs):
+        assert box["s"].recorder.main_waiting.wait(_PATIENCE_S)
+        return call("message", to="main", text="which file should I use?")
+
+    def main_is_stopped(msgs):
+        s = box["s"]
+        until(lambda: s.agent_state(_agent_key(s, "helper")) == "idle", "asker parked")
+        s.surface.stop.set()  # 사람 ■ — 이 호출이 돌아온 뒤 런이 멈춘다
+        return call("shell", command="true")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="spawn", name="helper", task="TASK-S1 do the work"),
+                call("wait"),
+                main_is_stopped,
+            ],
+            "TASK-S1": [agent_asks, call("wait"), complete_all("read the answer")],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    facts: dict = {}
+
+    def done(s):
+        until(lambda: runs_ended(s) >= 1, "main stopped")
+        key = _agent_key(s, "helper")
+        until(
+            lambda: (
+                s.reg.roster_snapshot()[0]["handled"] >= 2
+                and s.agent_state(key) == "idle"
+            ),
+            "asker read the fallback",
+        )
+        facts["awaited_helper"] = s.reg.awaited_replies(f"agent:{key}")
+        facts["awaited_main"] = s.reg.awaited_replies("main")
+        facts["queue_lines"] = s.reg.pending_mail()
+
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+def _bb_dead_then(box, crash, step):
+    """bb 를 죽이고(신호) 죽음이 확정된 **뒤** ``step`` — 그다음 판정이 죽은 bb 를 본다."""
+
+    def go(msgs):
+        s = box["s"]
+        crash.set()
+        until(lambda: s.agent_state(_agent_key(s, "bb")) == "dead", "bb died")
+        return step if isinstance(step, str) else step(msgs)
+
+    return go
+
+
+def s22_agent_dies(root: Path, *, who: str) -> dict:
+    """1단계 ② 사망 통지 — 워커가 런 시작에서 원인 미상으로 죽는다(`Recorder.crash_on_start`).
+
+    - ``who="requested"`` (가) `[단계 4c 에서 바뀜 — 변화 5]`: 상주 aa 가 bb 에게 요청하고 `wait` → bb 사망. main
+      은 died 통지를 받고, aa 는 아무것도 받지 않는다.
+    - ``who="requester"`` (나) `[단계 4c 에서 바뀜 — 변화 10]`: aa 가 bb 에게 요청한 뒤 aa 사망. bb 는 죽은 쪽에
+      빚진 회신을 Open Items 에 든 채 일한다.
+    - ``who="main_waits"`` (다): main 이 bb 에게 요청하고 제자리 대기 중 bb 사망 — main 이 같은 런에서 깨어 died
+      통지를 읽고, 기다리던 회신이 닫히는가."""
+    box: dict = {}
+    facts: dict = {}
+    crash = threading.Event()
+
+    def arm(name: str):
+        s = box["s"]
+        s.recorder.crash_on_start[_agent_key(s, name)] = crash
+
+    def snapshot(tag: str):
+        s = box["s"]
+        facts[tag] = {
+            "roster": _roster(s),
+            "queue_lines": s.reg.pending_mail(),
+            "awaited_main": s.reg.awaited_replies("main"),
+            **{
+                f"awaited_{n}": s.reg.awaited_replies(f"agent:{_agent_key(s, n)}")
+                for n in ("aa", "bb")
+                if any(r.get("name") == n for r in s.reg.roster_snapshot())
+            },
+        }
+
+    if who == "requested":
+        scripts = {
+            "MAIN": [
+                call("agent", mode="spawn", name="bb"),
+                lambda m: (
+                    arm("bb"),
+                    call("agent", mode="spawn", name="aa", task="TASK-D1 ask bb"),
+                )[1],
+                call("wait"),
+            ]
+            + [complete_all("main read it")] * 10,
+            "TASK-D1": [
+                _main_waits_then(
+                    box, lambda m: call("message", to="bb", text="TASK-D2 compute")
+                ),
+                _bb_dead_then(box, crash, call("wait")),
+                lambda m: call("reply", id=owed_id(m), text="aa: bb did not answer"),
+                call("complete", result="ok"),
+            ],
+        }
+    elif who == "requester":
+        bb_go = threading.Event()
+        box["bb_go"] = bb_go
+        scripts = {
+            "MAIN": [
+                call("agent", mode="spawn", name="bb"),
+                call("agent", mode="spawn", name="aa", task="TASK-E1 ask bb"),
+                call("wait"),
+            ]
+            + [complete_all("main read it")] * 10,
+            "TASK-E1": [
+                _main_waits_then(
+                    box, lambda m: call("message", to="bb", text="TASK-E2 slow job")
+                ),
+                call("wait"),
+            ],
+            "TASK-E2": [
+                lambda m: (
+                    bb_go.wait(_PATIENCE_S),
+                    call("reply", id=owed_id(m), text="E2 done"),
+                )[1],
+                call("complete", result="ok"),
+            ],
+        }
+    else:
+        scripts = {
+            "MAIN": [
+                call("agent", mode="spawn", name="bb"),
+                lambda m: (arm("bb"), call("message", to="bb", text="TASK-F1 compute"))[
+                    1
+                ],
+                call("wait"),
+            ]
+            + [complete_all("main read it")] * 10,
+        }
+    p = Provider(scripts)
+    s = box["s"] = Session(root, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    if who == "main_waits":
+        # 사망은 main 이 제자리 대기에 든 뒤 — 먼저 죽으면 `wait` 가 "이미 도착" 으로 돌아간다
+        threading.Thread(
+            target=lambda: (s.recorder.main_waiting.wait(_PATIENCE_S), crash.set()),
+            daemon=True,
+        ).start()
+
+    def done(s):
+        if who == "requester":
+            until(lambda: len(s.agent_keys()) == 2, "spawned")
+            aa = _agent_key(s, "aa")
+            until(
+                lambda: (
+                    s.agent_state(aa) == "idle"
+                    and s.agent_state(_agent_key(s, "bb")) == "busy"
+                ),
+                "aa parked",
+            )
+            s.recorder.crash_on_start[aa] = crash
+            crash.set()
+            facts["notice"] = s.reg.request(
+                aa, "TASK-E1 fyi", author="main", expects_reply=False
+            )
+            until(lambda: s.agent_state(aa) == "dead", "aa died")
+            snapshot("after_death")
+            box["bb_go"].set()
+            until(lambda: s.agent_state(_agent_key(s, "bb")) == "idle", "bb done")
+            until(lambda: runs_ended(s) >= 1, "main read the death")
+        else:
+            until(lambda: runs_ended(s) >= 1, "main runs")
+        until(
+            lambda: all(s.agent_state(k) in ("idle", "dead") for k in s.agent_keys()),
+            "settle",
+        )
+        snapshot("end")
+
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+class _HeldTimer:
+    """체크인 타이머 대역 — 걸리기만 하고 스스로 발화하지 않는다. 대본이 `fire_checkin` 을 직접 부른다
+    (`threading.Timer` 는 가짜 시계로 돌릴 수 없다 — 레지스트리의 `checkin_timer_factory` 자리)."""
+
+    def __init__(self, interval, fn, args=()):
+        self.interval = interval
+        self.daemon = False
+
+    def start(self):
+        pass
+
+    def cancel(self):
+        pass
+
+
+def _agents_file_kinds(s: Session) -> list:
+    """``agents.json`` 의 미배달 메일 종류만 — 바이트는 담지 않는다."""
+    files = sorted(s.sdir.rglob("agents.json"))
+    if not files:
+        return []
+    doc = json.loads(files[0].read_text(encoding="utf-8"))
+    return [str(m.get("kind") or "") for m in doc.get("pending") or []]
+
+
+def s23_checkin_main_in_place(root: Path) -> dict:
+    """1단계 ③ 체크인: main 이 run 에이전트의 회신을 기다리는 제자리 대기 중 체크인이 깨운다 — 모델이 읽는 글,
+    Open Items 꼬리(체크인은 항목이 아니다), 저장 안 됨. main 은 다시 `wait` 하고 회신에 깬다."""
+    box: dict = {}
+    go = threading.Event()
+    facts: dict = {}
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="run", task="TASK-G slow work"),
+                call("wait"),
+                call("wait"),
+                _after_agents_settle(
+                    box, complete_all("main finished"), states=("dead",)
+                ),
+            ],
+            "TASK-G": [
+                lambda m: (
+                    go.wait(_PATIENCE_S),
+                    call("reply", id=owed_id(m), text="G done"),
+                )[1],
+                call("complete", result="ok"),
+            ],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.reg.checkin_timer_factory = _HeldTimer
+
+    def done(s):
+        assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        facts["checkin"] = s.reg.fire_checkin("main")
+        facts["persisted_kinds"] = _agents_file_kinds(s)
+        until(
+            lambda: (
+                len(p.calls.get("MAIN", [])) >= 3 and s.recorder.main_waiting.is_set()
+            ),
+            "waits again",
+        )
+        go.set()
+        until(lambda: runs_ended(s) >= 1, "main finished")
+
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+def s24_commands_while_waiting(root: Path) -> dict:
+    """1단계 ⑥ 기다리는 중 명령 (web).
+
+    - 다리 1 `[단계 4b 에서 바뀜 — 명령 함수 하나]`: main 이 run 에이전트의 회신을 제자리에서 기다리는 중 ``@…``·
+      ``/…`` 명령은 그 자리에서 라우팅되고 깨우지 않으며 말풍선 에코(`push_user_message`)가 없다. 일반 입력은
+      깨운다(에코는 다음 턴 경계의 흡수가 낸다). 다시 기다리다 ■.
+    - 다리 2 `[단계 5 에서 바뀜 — 결정 1]`: main 이 작업만 기다려 런이 끝난 상태(`wait` 가 런을 끝냄)에서 명령은
+      런을 열지 않고, 일반 입력은 새 런을 연다."""
+    box: dict = {}
+    go = threading.Event()
+    facts: dict = {}
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="run", task="TASK-H slow work"),
+                call("wait"),
+                call("wait"),
+                # 메일 런(■ 뒤 run 에이전트의 회신)
+                _after_agents_settle(
+                    box, complete_all("read the late reply"), states=("dead",)
+                ),
+                # 다리 2: 작업만 기다린다 — 런이 끝난다(작업은 대본이 띄웠다: 도구 결과의 pid 는 비결정이다)
+                call("wait"),
+                # 다리 2 의 일반 입력 런
+                complete_all("plain input read"),
+            ],
+            "TASK-H": [
+                lambda m: (
+                    go.wait(_PATIENCE_S),
+                    call("reply", id=owed_id(m), text="H done"),
+                )[1],
+                call("complete", result="ok"),
+            ],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.reg.checkin_timer_factory = _HeldTimer
+    s.surface.commands["@helper note"] = lambda: None
+    s.surface.commands["/noop"] = lambda: None
+
+    def routed(s) -> int:
+        return sum(1 for r in s.recorder.lanes.get("pump", []) if r[0] == "routed")
+
+    def done(s):
+        assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        s.say("@helper note", nickname="dj")
+        until(lambda: routed(s) == 1, "first command")
+        s.say("/noop", nickname="dj")
+        until(lambda: routed(s) == 2, "second command")
+        facts["leg1_calls_after_commands"] = len(p.calls.get("MAIN", []))
+        s.say("MAIN also check x", nickname="dj")
+        until(
+            lambda: (
+                len(p.calls.get("MAIN", [])) >= 3 and s.recorder.main_waiting.is_set()
+            ),
+            "waits again",
+        )
+        s.surface.stop.set()  # ■ — 제자리 대기 중
+        until(lambda: runs_ended(s) >= 1, "main stopped")
+        go.set()
+        until(lambda: runs_ended(s) >= 2, "mail run")
+        # 다리 2
+        facts["job"] = s.stores.jobs.start("sleep 30", owner="main").id
+        s.say("MAIN wait for the job", nickname="dj")
+        until(lambda: runs_ended(s) >= 3, "job wait ended the run")
+        s.say("@helper note", nickname="dj")
+        until(lambda: routed(s) == 3, "idle command")
+        s.say("/noop", nickname="dj")
+        until(lambda: routed(s) == 4, "idle command 2")
+        facts["leg2_runs_after_commands"] = runs_ended(s)
+        s.say("MAIN plain words", nickname="dj")
+        until(lambda: runs_ended(s) >= 4, "plain input run")
+
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+def s25_run_agent_leaves_queue(root: Path) -> dict:
+    """1단계 ⑦ `[단계 4c 에서 바뀜 — 변화 9]`: run 에이전트가 마지막 응답(`complete`)을 만드는 동안 main 이 그에게
+    회신 기대 요청을 보낸다 — 줄 선 채로 run 이 내려온다. 보낸 쪽(main)의 기다리는 회신과 `wait` 판정(받아들여
+    막히면 ■ 로 끝낸다 — 막힘은 대기 표시로 판정)."""
+    box: dict = {}
+    facts: dict = {}
+
+    def main_sends_second(msgs):
+        until(lambda: len(p.calls.get("TASK-Q1", [])) >= 2, "run agent's last call")
+        return call("message", to=box["s"].agent_keys()[0], text="TASK-Q2 also this")
+
+    def main_waits_after_come_down(msgs):
+        s = box["s"]
+        until(lambda: s.agent_state(s.agent_keys()[0]) == "dead", "run came down")
+        facts["awaited_main_before_wait"] = s.reg.awaited_replies("main")
+        facts["roster_before_wait"] = _roster(s)
+        return call("wait")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="run", task="TASK-Q1 work"),
+                main_sends_second,
+                main_waits_after_come_down,
+            ]
+            + [complete_all("main finished")] * 10,
+            "TASK-Q1": [
+                lambda m: call("reply", id=owed_id(m), text="Q1 done"),
+                _after_main_calls(box, 3, lambda m: call("complete", result="ok")),
+            ],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.reg.checkin_timer_factory = _HeldTimer
+
+    def done(s):
+        until(lambda: len(p.calls.get("MAIN", [])) >= 3, "main's wait call")
+        until(
+            lambda: (
+                s.recorder.main_waiting.is_set()
+                or runs_ended(s) >= 1
+                or len(p.calls.get("MAIN", [])) >= 4
+            ),
+            "wait judged",
+        )
+        facts["wait_blocked"] = s.recorder.main_waiting.is_set()
+        if facts["wait_blocked"]:
+            s.surface.stop.set()
+        until(lambda: runs_ended(s) >= 1, "main run ended")
+        facts["awaited_main_end"] = s.reg.awaited_replies("main")
+        facts["queue_lines"] = s.reg.pending_mail()
+
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+def s26_auditor_range(root: Path) -> dict:
+    """1단계 ⑧ 감사 구간: 사람 런이 `complete` 로 끝나면 감사 작업 하나 → 그 결과는 main 앞 통지 → main 의 메일 런.
+    감사가 도는 동안 main 의 `wait` 는 감사를 근거로 삼지 않는다(거절)."""
+    box: dict = {}
+    go = threading.Event()
+    facts: dict = {}
+    p = Provider(
+        {
+            "MAIN": [
+                complete_all("answer one"),
+                call("wait"),
+                complete_all("answer two"),
+                complete_all("read the audit"),
+            ],
+            "Audit main's run": [
+                lambda m: (
+                    go.wait(_PATIENCE_S),
+                    call("complete", result="audit: run one is fine"),
+                )[1],
+            ],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    auditor = s.owners.auditor
+    auditor.enabled = True
+    # run 의 수명 판정 — 큐·에이전트가 조용할 때 끝나지 않는 이유는 진행 중인 감사뿐이다
+    quiet = QuietPolicy(
+        queue=s.queue,
+        agent_registry=s.reg,
+        monitors=s.stores.monitors,
+        schedules=s.stores.schedules,
+        harness=auditor,
+        jobs=s.stores.jobs,
+    )
+
+    def done(s):
+        until(lambda: runs_ended(s) >= 1, "first run")
+        until(lambda: len(p.calls.get("Audit main's run", [])) >= 1, "audit started")
+        facts["run_would_stop_while_auditing"] = quiet.should_stop()
+        auditor.enabled = False  # 둘째 런은 감사하지 않는다 — 결과 한 통만
+        s.say("MAIN second", nickname="dj")
+        until(lambda: runs_ended(s) >= 2, "second run")
+        go.set()
+        until(lambda: runs_ended(s) >= 3, "audit mail run")
+        until(quiet.should_stop, "audit finished")
+
+    s.say("MAIN first", nickname="dj")
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+def s27_restart_after_wait(root: Path) -> dict:
+    """1단계 추론 A `[단계 5 에서 바뀜 — 결정 1·집어 든 봉투 저장]`: 상주 aa 가 main 의 요청을 받아 bb 에게 묻고
+    `wait` 로 런을 끝낸 채(빚은 메모리) 세션이 끝난다 → 새 조립이 복원 — aa 의 빚·main 의 기다리는 회신·bb 의 끊긴
+    런이 어떻게 되살아나는가. 2~4b 는 저장 모양이 바뀌어도 이 기대값이 같아야 한다."""
+    facts: dict = {}
+    box: dict = {}
+    p1 = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="spawn", name="aa"),
+                call("agent", mode="spawn", name="bb"),
+                complete_all("spawned"),
+            ],
+            "TASK-W1": [
+                lambda m: call("message", to="bb", text="TASK-W2 compute 6*7"),
+                call("wait"),
+            ],
+            "TASK-W2": [
+                lambda m: (
+                    until(
+                        lambda: box["s"].agent_state(box["bb"]) == "dead", "session end"
+                    ),
+                    call("shell", command="true"),
+                )[1]
+            ],
+        }
+    )
+    s = box["s"] = Session(root, p1, path="web")
+    s.say("MAIN go", nickname="dj")
+    t = s.pump_in_thread()
+    until(lambda: runs_ended(s) >= 1)
+    s.queue.shutdown()
+    t.join(10)
+    aa, bb = _agent_key(s, "aa"), _agent_key(s, "bb")
+    box["bb"] = bb
+    until(lambda: s.agent_state(aa) == "idle" and s.agent_state(bb) == "idle")
+    s.reg.request(aa, "TASK-W1 ask bb, then tell me")
+    until(lambda: s.agent_state(bb) == "busy", "bb picked aa's request")
+    # bb 의 모델 호출이 시작된 뒤 — 호출 전에 세션이 끝나면 대본의 호출 기록이 흔들린다
+    until(lambda: len(p1.calls.get("TASK-W2", [])) >= 1, "bb's call started")
+    until(lambda: s.agent_state(aa) == "idle", "aa's wait ended its run")
+    facts["before"] = {
+        "roster": _roster(s),
+        "queue_lines": s.reg.pending_mail(),
+        "awaited_aa": s.reg.awaited_replies(f"agent:{aa}"),
+        "awaited_main": s.reg.awaited_replies("main"),
+    }
+    teardown_session(
+        None,
+        s.ctx,
+        agent_registry=s.reg,
+        monitors=s.stores.monitors,
+        schedules=s.stores.schedules,
+        harness=s.owners.auditor,
+        jobs=s.stores.jobs,
+    )
+    first = s.collect()
+
+    box2: dict = {}
+    # 둘째 세션의 대본 — 되살린 쪽이 다시 일하면 이 대본을 읽는다(지금은 아무도 다시 일하지 않는다)
+    p2 = Provider(
+        {
+            "MAIN": [complete_all("main mail run")] * 3,
+            "TASK-W2": [lambda m: call("reply", id=owed_id(m), text="42")],
+            "TASK-W1": [complete_all("aa woke after restart")] * 3,
+        }
+    )
+    s2 = box2["s"] = Session(root, p2, path="web", resume=True)
+    # 되살림이 가라앉은 뒤 — 끊긴 런을 다시 집는 에이전트가 없으면 아무도 움직이지 않는다
+    until(
+        lambda: all(s2.agent_state(k) in ("idle", "dead") for k in s2.agent_keys()),
+        "restore settles",
+    )
+    facts["after_restore"] = {
+        "revived": s2.wired.revived,
+        "roster": _roster(s2),
+        "queue_lines": s2.reg.pending_mail(),
+        "awaited_aa": s2.reg.awaited_replies(f"agent:{aa}"),
+        "awaited_bb": s2.reg.awaited_replies(f"agent:{bb}"),
+        "awaited_main": s2.reg.awaited_replies("main"),
+        "main_runs": runs_ended(s2),
+    }
+
+    def done(s):
+        pass
+
+    drive(s2, path="web", until_done=done)
+    second = s2.collect()
+    return {"first": first, "second": second, "facts": facts}
+
+
 SCENARIOS = {
     "s01_run": lambda root: s01_request_to_run_agent_explicit_reply(root, "run"),
     "s01_web": lambda root: s01_request_to_run_agent_explicit_reply(root, "web"),
@@ -1320,6 +1891,16 @@ SCENARIOS = {
     "s15_late_mail": s15_mail_after_the_last_boundary,
     "s16_mail_during_command": s16_mail_during_a_command,
     "s17_idle_mail_run_path": s17_mail_to_an_idle_main_on_the_run_path,
+    # 1단계 기준 보강 (v10.144.1)
+    "s21_main_stop_owes_agent": s21_main_stop_owes_agent,
+    "s22_dies_requested": lambda root: s22_agent_dies(root, who="requested"),
+    "s22_dies_requester": lambda root: s22_agent_dies(root, who="requester"),
+    "s22_dies_main_waits": lambda root: s22_agent_dies(root, who="main_waits"),
+    "s23_checkin_main_in_place": s23_checkin_main_in_place,
+    "s24_commands_while_waiting": s24_commands_while_waiting,
+    "s25_run_agent_leaves_queue": s25_run_agent_leaves_queue,
+    "s26_auditor_range": s26_auditor_range,
+    "s27_restart_after_wait": s27_restart_after_wait,
 }
 
 
