@@ -171,17 +171,16 @@ class TestInjectedNotices:
 
     def test_human_question_notice(self, tmp_path):
         """에이전트 출력 끝에 붙어 main 이 읽는다."""
-        from agent_cli.subagent.agents_live import Question
         from tests.test_agents_live import make_registry
 
         reg = make_registry(tmp_path)
         try:
             key, _ = reg.spawn()
-            q = Question(id="q1", asker=key, target="user", text="which?")
-            reg._questions[q.id] = q
+            qid, err = reg.register_question(key, "which?")  # 유휴 — 런 이름 ""
+            assert not err
             tm = reg.get(key)
             out = reg._with_human_notice(tm, "", "done")
-            assert "q1" in out, "사전 조건: 안내가 실제로 붙어야 한다"
+            assert qid in out, "사전 조건: 안내가 실제로 붙어야 한다"
             _assert_ascii_ish(out, "미답 질문 안내")
         finally:
             reg.shutdown_all()

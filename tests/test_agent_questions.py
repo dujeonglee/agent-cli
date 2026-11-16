@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import re
 import threading
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -65,6 +64,17 @@ def mkreg(tmp_path):
     yield _make
     for reg in regs:
         reg.shutdown_all()
+
+
+def _question_ids(reg) -> list[str]:
+    """열린 질문의 id — 등록 순서."""
+    return [q.id for q in reg.open_human_questions()]
+
+
+def _question(reg, qid: str):
+    """열린 질문 하나 — 없으면 실패한다."""
+    (q,) = [q for q in reg.open_human_questions() if q.id == qid]
+    return q
 
 
 def spawn_idle(reg):
@@ -118,7 +128,7 @@ class TestRegisterAndDeliver:
         second, err = reg.register_question(a, "같은 질문")
         assert not err
         assert second == first
-        assert len(reg._questions) == 1  # 두 번째는 새로 올리지 않는다
+        assert len(reg.open_human_questions()) == 1  # 두 번째는 새로 올리지 않는다
 
     def test_request_returns_a_plain_error_string(self, mkreg, tmp_path, renderer):
         """``submit() -> (error, verdict)`` 는 ask 답변 슬롯을 구분하려던
@@ -150,7 +160,7 @@ class TestRegisterAndDeliver:
         assert spy.calls == []
         assert reg.drain_replies() == []  # main 의 메일박스로도 안 간다
         assert [q.id for q in reg.open_human_questions()] == [qid]
-        assert reg._questions[qid].target == "user"
+        assert _question(reg, qid).target == "user"
 
 
 # ── G3: 런 스코프 ───────────────────────────────
@@ -266,9 +276,9 @@ class TestDeath:
         mine, _ = reg.register_question(b, "B 가 묻는다")
         other, _ = reg.register_question(a, "A 가 묻는다")
         reg.kill(b)
-        assert wait_until(lambda: mine not in reg._questions)
+        assert wait_until(lambda: mine not in _question_ids(reg))
         assert reg.answer_question(mine, "답", by="user").startswith("unknown")
-        assert other in reg._questions  # 남의 질문은 그대로
+        assert other in _question_ids(reg)  # 남의 질문은 그대로
 
     def test_shutdown_all_keeps_questions(self, mkreg, tmp_path, renderer):
         """G1: ``_worker`` finally 는 세션 종료에서도 돈다. 거기서 지우면
@@ -314,12 +324,12 @@ class TestPersistence:
         a = spawn_idle(reg)
         reg.get(a).current_item = "r-4"
         qid, _ = reg.register_question(a, "질문")
-        assert reg._questions[qid].asked_in == "r-4"
+        assert _question(reg, qid).asked_in == "r-4"
         reg.shutdown_all()
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         fresh.restore()
-        assert fresh._questions[qid].asked_in == ""
+        assert _question(fresh, qid).asked_in == ""
         fresh.shutdown_all()
 
     def test_question_is_dropped_when_its_asker_did_not_come_back(
@@ -361,7 +371,7 @@ class TestPersistence:
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         fresh.restore()
-        assert list(fresh._questions) == ["q-kept"]
+        assert _question_ids(fresh) == ["q-kept"]
         assert fresh.stale_questions == 1
         fresh.shutdown_all()
 
@@ -388,14 +398,14 @@ class TestPersistence:
 
         fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         fresh.restore()  # 조용히 무시 — 부팅을 막지 않는다
-        assert fresh._questions == {}
+        assert fresh.open_human_questions() == []
         fresh.shutdown_all()
 
     def test_fresh_registry_reports_zero(self, mkreg, tmp_path, renderer):
         reg = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
         reg.restore()
         assert reg.stale_questions == 0
-        assert reg._questions == {}
+        assert reg.open_human_questions() == []
 
 
 # ── 사람 알림 · 표면 ────────────────────────────
@@ -517,8 +527,8 @@ class TestWebAnswerEndpoint:
         )
         assert r.status_code == 200
         assert r.json()["answered"] == qid
-        assert reg._questions == {}
-        assert reg.get(a).inbox.qsize() == 0  # 일감으로 들어가지 않았다
+        assert reg.open_human_questions() == []
+        assert reg.queued_for(f"agent:{a}") == ()  # 일감으로 들어가지 않았다
 
     def test_stale_answer_id_is_rejected_not_queued(self, mkreg, tmp_path, renderer):
         reg = mkreg()
@@ -530,7 +540,7 @@ class TestWebAnswerEndpoint:
             json={"content": "답", "answer_id": "q-gone"},
         )
         assert r.status_code == 409
-        assert reg.get(a).inbox.qsize() == 0
+        assert reg.queued_for(f"agent:{a}") == ()
 
 
 class Replies:
@@ -603,7 +613,7 @@ class TestReplyFreshness:
         reg.request(b, "일감")
         assert wait_until(lambda: len(ids) == 3)
         assert len(set(ids)) == 1
-        assert len(reg._questions) == 1
+        assert len(reg.open_human_questions()) == 1
 
     def test_human_run_still_renders_the_window(self, mkreg, renderer):
         """사람 발신 런은 애초에 밀 회신이 없다(창만) — 질문을 걸었어도 창에
@@ -667,7 +677,7 @@ class TestQuestionPort:
             reg.get(a).current_author = author
             qid, err = port_ask(reg, a, f"{author} 의 일에서")
             assert not err
-            assert reg._questions[qid].target == "user"
+            assert _question(reg, qid).target == "user"
 
     def test_main_ask_is_refused(self, mkreg, renderer):
         """main 이 포트로 물으면 **보이지도 답할 수도 사라지지도 않는**
@@ -678,7 +688,6 @@ class TestQuestionPort:
         qid, err = reg.question_port(None).ask("이거 해도 되나요?")
         assert not qid
         assert "blocking" in err
-        assert reg._questions == {}
         assert reg.open_human_questions() == []
         assert reg.any_activity() is False
 
@@ -772,16 +781,8 @@ class TestUncoveredSurfaces:
         """
         reg.request(key, "선행 일감")
         assert wait_until(lambda: reg.get(key).state == "busy")
-        for i, t in enumerate(texts, start=2):
-            reg.get(key).inbox.put(
-                {
-                    "id": f"u-{i + 10}",
-                    "text": t,
-                    "author": "user:bob",
-                    "expects_reply": True,
-                    "ts": time.time(),
-                }
-            )
+        for t in texts:
+            assert reg.request(key, t, author="user:bob") == ""  # 창의 사람 입력
         gate.set()
 
     def test_batch_run_reports_open_human_questions(self, mkreg, renderer):
@@ -963,14 +964,14 @@ class TestFlipDispatch:
         assert result.success and result.output == "부분 결과"
         # 막지 않았다 — 두 번째 턴이 실제로 돌았다.
         assert provider.call.call_count == 2
-        (q,) = list(reg._questions.values())
+        (q,) = reg.open_human_questions()
         assert q.text == "v1 or v2?" and q.target == "user"
         obs = "\n".join(str(m) for m in ctx.get_raw_messages())
         assert "not blocked" in obs
         assert q.id in obs  # 모델이 id 를 본다 → 같은 것을 되묻지 않는다
         # 사람이 트레이에서 답한다
         assert reg.answer_question(q.id, "v2", by="user:dj") == ""
-        assert reg._questions == {}
+        assert reg.open_human_questions() == []
 
     def test_reply_with_a_user_request_id_points_to_complete(
         self, mkreg, tmp_path, renderer
@@ -1013,7 +1014,7 @@ class TestFlipDispatch:
             [json.dumps({"action": "ask", "question": "괜찮나요?"})],
             questions=reg.question_port(None),
         )
-        assert reg._questions == {}  # 목록에 안 들어간다
+        assert reg.open_human_questions() == []  # 목록에 안 들어간다
         obs = "\n".join(str(m) for m in ctx.get_raw_messages())
         assert "User responded" in obs  # 기존 사용자-프롬프트 경로
 
@@ -1100,7 +1101,7 @@ class TestAskToUser:
         reg.get(a).current_author = "main"  # main 이 시킨 일
         qid, err = reg.question_port(a).ask("사람이 정할 일")
         assert not err
-        q = reg._questions[qid]
+        q = _question(reg, qid)
         assert q.target == "user" and q.to_human
         assert [x.id for x in reg.open_human_questions()] == [qid], "트레이에 없다"
         # main 의 메일박스로는 **안 간다** — 그랬다면 main 이 또 대신 답한다.
@@ -1116,7 +1117,7 @@ class TestAskToUser:
         # 아무 뷰어나 답한다 — 답은 asker(에이전트)에게, 주소는 user.
         with SubmitSpy(reg) as spy:
             assert reg.answer_question(qid, "남겨", by="user:dj") == ""
-        assert qid not in reg._questions
+        assert qid not in _question_ids(reg)
         (call,) = spy.calls
         assert call["key"] == a and "남겨" in call["message"], "답이 asker 에게 안 갔다"
         assert call["author"] == "user"  # 주소 = user (§0 그대로)
@@ -2161,7 +2162,7 @@ class TestMidRunAbsorption:
         assert (
             reg.request(b, "회신 본문", author=f"agent:{a}", expects_reply=False) == ""
         )
-        assert tm.inbox.qsize() == 2
+        assert len(reg.queued_for(me)) == 2
 
         items = reg.absorb_pending(tm)
         assert [next(iter(i)) for i in items] == ["record", "record"]
@@ -2175,8 +2176,8 @@ class TestMidRunAbsorption:
         # 장부: 시작 항목 [1] + 흡수된 요청 [2]; 회신은 빚이 아니다
         assert [d.id for d in reg.reply_debts(me)] == ["r-1", "r-2"]
         # 영속: 받은편지함 미러는 비고, 처리 중 목록에 셋 다
-        assert tm.inbox.qsize() == 0 and tm.inbox_items == []
-        assert [i["id"] for i in tm.in_flight] == ["r-1", "r-2", "n-3"]
+        assert reg.queued_for(me) == ()
+        assert [m.id for m in reg.taken_by(me)] == ["r-1", "r-2", "n-3"]
         saved = json.loads((reg.session_dir / "agents.json").read_text())
         (entry,) = [e for e in saved["agents"] if e["key"] == b]
         assert [i["id"] for i in entry["in_flight"]] == ["r-1", "r-2", "n-3"]
@@ -2185,7 +2186,7 @@ class TestMidRunAbsorption:
         assert reg.absorb_pending(tm) == []
         gate.set()
         assert wait_run_done(reg, b)
-        assert tm.handled == 3 and tm.in_flight == []
+        assert tm.handled == 3 and reg.taken_by(me) == ()
 
     def test_absorption_is_announced_and_logged(self, mkreg, renderer):
         """v10.8.2: 흡수한 항목마다 ``agent_msg direction="absorbed"`` 를 내고
@@ -2235,18 +2236,18 @@ class TestMidRunAbsorption:
         gate.set()
 
     def test_shutdown_sentinel_is_left_in_place(self, mkreg, renderer):
-        from agent_cli.subagent.agents_live import _SHUTDOWN
-
+        """끝내라는 신호(세션 종료) 뒤의 턴 경계는 받은편지함을 꺼내지 않는다 — 뒤에 온 항목은 줄에 남고
+        (저장돼 재시작이 다시 넣는다) 워커는 그대로 끝난다."""
         reg, _a, b, gate = self._busy(mkreg)
         tm = reg.get(b)
-        tm.inbox.put(_SHUTDOWN)
+        me = f"agent:{b}"
         assert reg.request(b, "뒤에 온 것", author="main") == ""
-        assert reg.absorb_pending(tm) == []  # 표식에서 멈춘다 — 뒤 항목은 안 꺼낸다
-        assert tm.inbox_items and tm.inbox_items[0]["text"] == "뒤에 온 것"
-        left = [tm.inbox.get_nowait() for _ in range(tm.inbox.qsize())]
-        assert _SHUTDOWN in left  # 되넣어져 남아 있다 (SimpleQueue 는 뒤로 간다)
-        assert [i["text"] for i in left if i is not _SHUTDOWN] == ["뒤에 온 것"]
+        reg.shutdown_all(deadline=0)  # 워커를 기다리지 않는다 — 런은 아직 붙잡혀 있다
+        assert reg.absorb_pending(tm) == []  # 뒤 항목은 안 꺼낸다
+        assert [m.text for m in reg.queued_for(me)] == ["뒤에 온 것"]
         gate.set()
+        assert wait_until(lambda: tm.state == "dead")  # 끝내라는 신호가 워커에 닿았다
+        assert [m.text for m in reg.queued_for(me)] == ["뒤에 온 것"]
 
     def test_absorbed_items_survive_a_restart(self, mkreg, renderer, tmp_path):
         from agent_cli.constants import RESUMED_RUN_NOTICE

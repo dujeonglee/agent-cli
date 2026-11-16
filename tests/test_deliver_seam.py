@@ -1,6 +1,6 @@
 """주소 배달 seam — `AgentRegistry.deliver` (docs/wiring/DESIGN.md §3.1, C1).
 
-종전엔 `if addr == "main": _push_reply(...) else: request(...)` 가 **세 곳에
+종전엔 `if addr == "main": <메일함에 넣기> else: request(...)` 가 **세 곳에
 손으로 복제**돼 있었다(`_deliver_question`/`_deliver_answer`/`kick_owed`).
 C1 은 그 분기를 하나로 접었다. v10.77.0 (B): 에이전트·main 에게 가는 질문과
 독촉이 없어져 그 둘은 사라졌고, 사람의 답(`_deliver_answer`)은 asker 에게 가는
@@ -28,7 +28,7 @@ def reg(tmp_path, renderer):
     """워커 없는 레지스트리 — 배달 **인자**만 재는 자리다.
 
     워커를 띄우면 배달된 항목이 곧바로 런이 되어 렌더러·독촉과 뒤엉킨다.
-    `_push_reply`/`request` 를 가로채므로 실제 워커는 필요 없다.
+    `request` 를 가로채고 main 메일함은 공개 조회로 보므로 실제 워커는 필요 없다.
     """
     r = make_registry(tmp_path)
     yield r
@@ -36,18 +36,22 @@ def reg(tmp_path, renderer):
 
 
 class _Calls:
-    """배달의 두 백엔드를 가로채 인자를 그대로 기록한다."""
+    """에이전트 백엔드(`request`)를 가로채 인자를 그대로 기록한다 — main 메일함은 공개 조회로 본다."""
 
     def __init__(self, registry: AgentRegistry):
-        self.mail: list[dict] = []
+        self.registry = registry
         self.requests: list[tuple] = []
         self.fail_with = ""
-        registry._push_reply = self.mail.append  # type: ignore[method-assign]
         registry.request = self._request  # type: ignore[method-assign]
 
     def _request(self, key, message, **kw):
         self.requests.append((key, message, kw))
         return self.fail_with
+
+    @property
+    def mail(self) -> tuple:
+        """main 메일함에 줄 선 것."""
+        return self.registry.queued_for("main")
 
 
 @pytest.fixture
@@ -69,7 +73,7 @@ class TestDeliverAnswer:
         """사람 발신이라 답 런은 사람 런이다(`expects_reply=True` — 닫는 법이 사람
         요청과 같다). 봉투가 무엇에 대한 답인지(``re``) 적는다."""
         reg._deliver_answer(_q(asker="a1", target="user"), "42")
-        assert calls.mail == []
+        assert calls.mail == ()
         assert calls.requests == [
             (
                 "a1",
@@ -94,7 +98,7 @@ class TestDeliverSurface:
             "somewhere", mail={}, text="x", author="main", expects_reply=False
         )
         assert err == 'unroutable address "somewhere"'
-        assert (calls.mail, calls.requests) == ([], [])
+        assert (calls.mail, calls.requests) == ((), [])
 
     def test_agent_backend_propagates_the_error_string(self, reg):
         """`request` 의 에러가 호출부로 그대로 올라간다 — 삼키지 않는다.

@@ -613,7 +613,6 @@ class TestExitPathConvergence:
 
         wiring = (
             "schedules.enqueue = lambda prompt, nickname: queue.enqueue(",
-            "enqueue_wake=lambda cid, t: queue.enqueue(cid, t, system=True)",
             "dequeue_user_message=queue.dequeue_nowait",
             "enqueue_user_message=lambda text, nickname: queue.enqueue(",
             "PumpDeps(queue=queue,",
@@ -628,6 +627,14 @@ class TestExitPathConvergence:
             assert "server.enqueue_" not in body and "server.dequeue_" not in body
             assert "queue=server," not in body
         assert "input_queue = server.queue" in self._body("web")
+
+    def test_the_mail_wake_is_wired_once_into_the_same_queue(self):
+        """깨우기 자리도 조립 함수 안에 한 번 — 같은 큐에 합성 입력으로 (v10.131.0)."""
+        import re
+
+        runtime = re.sub(r"\(\s+", "(", re.sub(r"\s+", " ", _RUNTIME_SRC))
+        wake = "enqueue_wake=lambda cid, t: queue.enqueue(cid, t, system=True)"
+        assert runtime.count(wake) == 1
 
     def test_run_and_web_share_assembly_helpers(self):
         """v10.131.0: 두 호스트가 같은 조립 함수 넷을 부르고, 조립 부품을 직접

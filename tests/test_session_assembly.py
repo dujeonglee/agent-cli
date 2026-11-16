@@ -160,19 +160,11 @@ class TestOrder:
 
 
 class TestOneQueue:
-    def test_schedule_wake_and_loop_ports_reach_the_same_queue(self, tmp_path):
-        """예약 `enqueue`·깨우기·`MainLoop` 포트·펌프가 **같은 큐 객체**에 닿는다 —
-        각각 넣어 보고 그 큐에서 꺼낸다."""
-        from agent_cli.session_slots import set_schedule_registry
-
-        q = InputQueue()
+    @staticmethod
+    def _wire(q, *, mail=None):
+        """조립 부품 몇을 대역으로 두고 ``q`` 하나로 세션을 묶는다 — ``(stores, wired, main_loop)``.
+        ``mail`` 을 주면 메일 배선(`wire_agent_mail`)을 그것으로 바꾼다."""
         spec = _spec(ctx=None, session=SimpleNamespace(session_id="s"))
-        captured: dict = {}
-
-        def _mail(registry, **kw):
-            captured.update(kw)
-            return MagicMock(WAKE_TEXT="WAKE"), 0, 0
-
         loops: list = []
         real_loop = R.MainLoop
 
@@ -180,44 +172,80 @@ class TestOneQueue:
             loops.append(real_loop(**kw))
             return loops[-1]
 
+        with ExitStack() as st:
+            st.enter_context(patch.object(R, "build_snapshot_store"))
+            st.enter_context(patch.object(R, "build_hook_runner"))
+            st.enter_context(
+                patch.object(R, "build_agent_registry", return_value=MagicMock())
+            )
+            st.enter_context(
+                patch("agent_cli.harness.auditor.build_auditor", return_value=None)
+            )
+            st.enter_context(patch("agent_cli.knobs.apply_all"))
+            if mail is not None:
+                st.enter_context(patch.object(R, "wire_agent_mail", mail))
+            st.enter_context(patch.object(R, "MainLoop", _loop))
+            stores = build_session_stores(spec, queue=q)
+            owners = build_session_owners(spec, stores, renderer=MagicMock())
+            stores.schedules.start = lambda: None  # 스레드는 띄우지 않는다
+            wired = wire_session(
+                spec, stores, owners, queue=q, surface=_Surface(), policy=None
+            )
+        return stores, wired, loops[0]
+
+    def test_schedule_and_loop_ports_reach_the_same_queue(self, tmp_path):
+        """예약 `enqueue`·`MainLoop` 포트·펌프가 **같은 큐 객체**에 닿는다 —
+        각각 넣어 보고 그 큐에서 꺼낸다."""
+        from agent_cli.session_slots import set_schedule_registry
+
+        q = InputQueue()
+        stores = None
         try:
-            with (
-                patch.object(R, "build_snapshot_store"),
-                patch.object(R, "build_hook_runner"),
-                patch.object(R, "build_agent_registry", return_value=MagicMock()),
-                patch("agent_cli.harness.auditor.build_auditor", return_value=None),
-                patch("agent_cli.knobs.apply_all"),
-                patch.object(R, "wire_agent_mail", _mail),
-                patch.object(R, "MainLoop", _loop),
-            ):
-                stores = build_session_stores(spec, queue=q)
-                owners = build_session_owners(spec, stores, renderer=MagicMock())
-                stores.schedules.start = lambda: None  # 스레드는 띄우지 않는다
-                wired = wire_session(
-                    spec, stores, owners, queue=q, surface=_Surface(), policy=None
-                )
+            stores, wired, main_loop = self._wire(q)
             stores.schedules.enqueue("weekly", "⏰ Scheduler")
-            captured["enqueue_wake"](None, "WAKE")
             assert wired.pump.deps.queue is q  # 펌프가 꺼내는 큐
-            main_kind_ports = loops[0].ports
+            main_kind_ports = main_loop.ports
             main_kind_ports.enqueue_user_message("hint", "dj")
+            # 둘 다 사람 입력과 같은 줄 — 화면 대기열에 보인다(합성 입력이 아니다)
+            assert [(i["text"], i["nickname"]) for i in q.snapshot()] == [
+                ("weekly", "⏰ Scheduler"),
+                ("hint", "dj"),
+            ]
 
             first = q.dequeue_nowait()
-            assert (first["text"], first["nickname"], first["system"]) == (
-                "weekly",
-                "⏰ Scheduler",
-                False,
-            )
+            assert (first["text"], first["nickname"]) == ("weekly", "⏰ Scheduler")
+            assert main_kind_ports.dequeue_user_message()["text"] == "hint"
+            assert q.dequeue_nowait() is None
+        finally:
+            if stores is not None:
+                stores.monitors.stop()
+            set_schedule_registry(None)
+
+    def test_the_mail_wake_reaches_the_same_queue_as_synthetic_input(self, tmp_path):
+        """깨우기 자리(`enqueue_wake`)도 같은 큐로 — 합성 입력이라 화면 대기열엔 없다."""
+        from agent_cli.session_slots import set_schedule_registry
+
+        q = InputQueue()
+        captured: dict = {}
+
+        def _mail(registry, **kw):
+            captured.update(kw)
+            return MagicMock(WAKE_TEXT="WAKE"), 0, 0
+
+        stores = None
+        try:
+            stores, _wired, _loop = self._wire(q, mail=_mail)
+            captured["enqueue_wake"](None, "WAKE")
+            assert q.snapshot() == []
             wake = q.dequeue_nowait()
             assert (wake["text"], wake["nickname"], wake["system"]) == (
                 "WAKE",
                 None,
                 True,
             )
-            assert main_kind_ports.dequeue_user_message()["text"] == "hint"
-            assert q.dequeue_nowait() is None
         finally:
-            stores.monitors.stop()
+            if stores is not None:
+                stores.monitors.stop()
             set_schedule_registry(None)
 
 

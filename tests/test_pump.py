@@ -11,7 +11,7 @@ import threading
 from unittest.mock import MagicMock
 
 from agent_cli.input_queue import InputQueue
-from agent_cli.pump import ForeverPolicy, PumpDeps, QuietPolicy, RunRequest, SessionPump
+from agent_cli.pump import ForeverPolicy, QuietPolicy, RunRequest
 from agent_cli.tools.result import ToolResult
 from tests.pump_support import (
     FakeRegistry,
@@ -104,16 +104,7 @@ class TestOneItem:
 
     def test_shutdown_ends_the_pump_even_under_forever_policy(self):
         q = InputQueue()
-        pump = SessionPump(
-            PumpDeps(
-                queue=q,
-                waker=FakeWaker(),
-                agent_registry=FakeRegistry(),
-                run_main=lambda r: None,
-                surface=FakeSurface(),
-                policy=ForeverPolicy(),
-            )
-        )
+        pump = make_pump(queue=q, run_main=lambda r: None, policy=ForeverPolicy())
         done = run_pump_in_thread(pump)
         assert not done.wait(0.2), "영원 정책인데 혼자 끝났다"
         q.shutdown()
@@ -123,16 +114,27 @@ class TestOneItem:
         q = InputQueue()
         q.enqueue(None, "/skill x")
         surface = FakeSurface(routed={"/skill x"})
-        waker = _WakeWaker([])
         run_main = MagicMock()
-        make_pump(queue=q, run_main=run_main, surface=surface, waker=waker).run()
+        make_pump(queue=q, run_main=run_main, surface=surface).run()
         run_main.assert_not_called()
         assert ("route", "/skill x") in surface.calls
         assert ("bind_stop", False) in surface.calls  # finally 가 돌았다
-        assert waker.run_ends == 1
 
 
 class TestWake:
+    def test_routed_command_still_tells_the_waker_the_run_ended(self):
+        """명령으로 끝난 차례도 런 끝 재확인(`on_run_end`)을 부른다 — 그 사이 도착한 메일을 놓치지 않게."""
+        q = InputQueue()
+        q.enqueue(None, "/skill x")
+        waker = _WakeWaker([])
+        make_pump(
+            queue=q,
+            run_main=MagicMock(),
+            surface=FakeSurface(routed={"/skill x"}),
+            waker=waker,
+        ).run()
+        assert waker.run_ends == 1
+
     def test_wake_run_has_no_author_and_is_not_a_user(self):
         q = InputQueue()
         q.enqueue(None, "WAKE", system=True)

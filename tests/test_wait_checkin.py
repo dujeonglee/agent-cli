@@ -32,7 +32,7 @@ from agent_cli.session_slots import (
     set_monitor_registry,
 )
 from agent_cli.subagent.agent_mail import build_reply_record
-from agent_cli.subagent.agents_live import AgentInstance, Question, ReplyDebt
+from agent_cli.subagent.agents_live import AgentInstance
 from agent_cli.wake import wake_source_ids, wake_sources
 from tests.loop_ports import make_ports
 from tests.loopkit import make_loop
@@ -301,23 +301,18 @@ def _fake_agent(
         context_mode="fresh",
         home_dir=reg.session_dir / key,
     )
+    reg._agents[key] = tm
+    if state == "busy":
+        # 일하는 중 = 그 요청자의 요청을 런이 집어 들고 있다 — 워커 없는 에이전트라 런 도중 흡수(공개 길)로 집는다.
+        # 집은 요청은 빚이 된다(런 시작·흡수가 같은 규칙)
+        assert reg.request(key, "job", author=current_author) == ""
+        assert len(reg.absorb_pending(tm)) == 1
+    # 대기열의 요청 = 보낸 쪽이 회신을 기다리는 것 — 받은편지함에 넣는 공개 길(`request`)
+    for it in inbox:
+        assert reg.request(key, "job", author=it["author"]) == ""
     tm.state = state
     tm.current_author = current_author
-    tm.inbox_items = list(inbox)
-    # 대기열의 요청 = 보낸 쪽이 회신을 기다리는 것(보낸 쪽 기록) — 받은편지함에 들 때 적힌다 (v10.143.0)
-    for n, it in enumerate(tm.inbox_items):
-        it.setdefault("id", f"r-{key}-q{n}")
-        with reg._cv:
-            reg._note_sent(it["author"], it["id"], f"agent:{key}", "job")
-    if state == "busy":
-        # 일하는 중 = 그 요청자의 아직 회신이 가지 않은 요청을 들고 있다 (v10.143.0 — 갚았거나 통지로 도는
-        # 런은 요청자의 깨울 근거가 아니다): 런이 집은 항목과 보낸 쪽 기록
-        rid = f"r-{key}"
-        tm.in_flight = [{"id": rid, "author": current_author, "text": "job"}]
-        with reg._cv:
-            reg._note_sent(current_author, rid, f"agent:{key}", "job")
     tm.ctx = SimpleNamespace(last_ordinal=ordinal, last_added_at=last_at)
-    reg._agents[key] = tm
     return tm
 
 
@@ -369,7 +364,7 @@ class TestAgentLines:
 
     def test_parked_debtor_shows_what_it_waits_on(self, reg, jobs):
         _fake_agent(reg, "m", profile="coder")  # idle, 받은편지함 빔 — 스스로 잠듦
-        reg._reply_debts["agent:m"] = [ReplyDebt(to="main", text="t", id="r-1")]
+        reg.note_owes("agent:m", "main", "t", id="r-1")
         jobs.start("pytest -x tests/", owner="agent:m")
         assert wake_source_ids("main", agents=get_agent_registry()) == {"agent:m"}
         reg.arm_checkin("main")
@@ -380,18 +375,22 @@ class TestAgentLines:
         ) in text
         assert "answered by the user" not in text
 
-    def test_parked_debtor_blocked_on_a_human_question_adds_the_line(self, reg, jobs):
+    def test_parked_debtor_blocked_on_a_human_question_adds_the_line(
+        self, reg, jobs, monkeypatch
+    ):
         _fake_agent(reg, "n", profile="reviewer")
-        reg._reply_debts["agent:n"] = [ReplyDebt(to="main", text="t", id="r-2")]
+        reg.note_owes("agent:n", "main", "t", id="r-2")
         jobs.start("sleep 30", owner="agent:n")
-        reg._questions["q-3"] = Question(
-            id="q-3", asker="n", target="user", text="?", asked_at=time.time() - 540
-        )
+        qid, err = reg.register_question("n", "?")  # 사람에게 건 질문 — 공개 길
+        assert not err
         reg.arm_checkin("main")
-        text = reg.fire_checkin("main")
+        asked = time.time()
+        with monkeypatch.context() as m:
+            m.setattr(time, "time", lambda: asked + 540)  # 9분 뒤의 알림
+            text = reg.fire_checkin("main")
         assert (
             "agent:n (reviewer) · owes you a reply · itself waiting on job #1 "
-            '(`sleep 30`) · blocked on question "q-3" to the user, unanswered for 9m'
+            f'(`sleep 30`) · blocked on question "{qid}" to the user, unanswered for 9m'
         ) in text
         assert text.endswith(
             "A question to the user is answered by the user, not by you."
@@ -401,7 +400,7 @@ class TestAgentLines:
         _fake_agent(
             reg, "p", state="busy", current_author="agent:q", last_at=time.time() - 5
         )
-        reg._reply_debts["agent:p"] = [ReplyDebt(to="main", text="t", id="r-3")]
+        reg.note_owes("agent:p", "main", "t", id="r-3")
         reg.arm_checkin("main")
         text = reg.fire_checkin("main")
         assert (
@@ -413,9 +412,11 @@ class TestAgentLines:
         """`pending_for` 는 `pending_agents_for` 의 글만 — 종전 문장 그대로."""
         _fake_agent(reg, "k", state="busy")
         _fake_agent(reg, "j", inbox=[{"author": "main"}])
-        reg._reply_debts["agent:p"] = [ReplyDebt(to="main", text="t", id="r-3")]
+        reg.note_owes("agent:p", "main", "t", id="r-3")
         _fake_agent(reg, "p", state="busy", current_author="agent:q")
+        # 일하는 중인 k 는 집어 든 main 의 요청을 빚진다 — 실제 흐름에선 "working" 이 "owes" 와 함께 선다
         assert reg.pending_for("main") == [
+            "agent:k owes you a reply",
             "agent:p owes you a reply",
             "agent:k working on your request",
             "agent:j has your request queued",
@@ -435,7 +436,14 @@ class TestResident:
 
         set_schedule_registry(None)
         gate = threading.Event()
-        r = make_registry(tmp_path, runner=make_runner(block=gate))
+        queries = []  # 런마다 모델이 받은 시작 글
+        gated = make_runner(block=gate)
+
+        def runner(kind, start, ctx):
+            queries.append(start.query)
+            return gated(kind, start, ctx)
+
+        r = make_registry(tmp_path, runner=runner)
         r.checkin_timer_factory = FakeTimer
         set_agent_registry(r)
         try:
@@ -451,17 +459,19 @@ class TestResident:
             assert _armed(r, me) is not None
             text = r.fire_checkin(me)
             assert text.startswith("⏰ Check-in after 5m — still running:\njob #1")
-            tm = r.get(key)
-            (item,) = [i for i in tm.inbox_items if i.get("kind") == "checkin"]
-            assert item["ledger"] == "none" and item["expects_reply"] is False
-            # 하니스 통지는 봉투 밖 (v10.84.0, 사용자 결정 C) — main 이 받는 모양과 같다
-            assert r._model_text(item).startswith("⏰ Check-in after 5m")
+            (item,) = [m for m in r.queued_for(me) if not m.persists]  # 장부 밖 알림
+            assert item.text.startswith("⏰ Check-in") and item.expects_reply is False
             saved = json.loads((tmp_path / "agents.json").read_text())
             (entry,) = [e for e in saved["agents"] if e["key"] == key]
             assert [i["text"] for i in entry["inbox"]] == ["do Y"]  # 알림은 빠졌다
             # 상주가 main 을 기다릴 때 — main 의 알림에 "working" 줄로 보인다
             r.arm_checkin("main")
             assert f"agent:{key}" in r.fire_checkin("main")
+            # 하니스 통지는 봉투 밖 (v10.84.0, 사용자 결정 C) — main 이 받는 모양과 같다: 그 알림이 연 런의 시작 글
+            gate.set()
+            assert wait_until(
+                lambda: any(q.startswith("⏰ Check-in after 5m") for q in queries)
+            )
         finally:
             gate.set()
             set_agent_registry(None)

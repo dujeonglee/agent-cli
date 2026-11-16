@@ -30,6 +30,7 @@ from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.loop_ports import make_ports
 from tests.loopkit import make_loop
+from tests.mail_support import to_main
 
 _REPLY = {"kind": "reply", "to": "agent:agt-a", "id": "r-4", "text": "검토해 줘"}
 _QUESTION = {"kind": "answer", "to": "agt-b", "id": "q-7a3f", "text": "할인 상한은?"}
@@ -175,7 +176,7 @@ class TestIdsAreOneFormat:
         reg = AgentRegistry(tmp_path)
         # 번호 공간 하나를 모든 접두가 함께 쓴다 (v10.77.0)
         assert reg.note_owes("main", "agent:agt-a", "t").id == "r-2"
-        reg._push_reply({"kind": "job", "output": "🧵 job #1 finished"})
+        to_main(reg, {"kind": "job", "output": "🧵 job #1 finished"})
         assert reg.pending_mail()[0]["id"] == "n-3"
 
     @pytest.mark.parametrize(

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -281,18 +282,11 @@ class TestAlreadyArrived:
     def test_resident_inbox_items_count_for_that_agent(self, tmp_path):
         """받은편지함 미러 `inbox_items` 로 센다 — `SimpleQueue` 엔 `queue` 속성이
         없어 종전 `pending_for` 의 "has your request queued" 가지는 늘 비었다."""
-        from types import SimpleNamespace
+        from tests.test_wait_checkin import _fake_agent
 
         reg = self._registry(tmp_path)
-        reg._agents["k"] = SimpleNamespace(
-            key="k",
-            state="idle",
-            inbox_items=[{"id": "r-1", "author": "main", "text": "x"}],
-            in_flight=[],
-            ends_after_task=False,
-        )
-        with reg._cv:  # 받은편지함에 들 때 적히는 보낸 쪽 기록 (v10.143.0)
-            reg._note_sent("main", "r-1", "agent:k", "x")
+        # 워커 없는 에이전트 — main 의 요청이 받은편지함에 줄 서 있다(공개 길 `request`, 보낸 쪽 기록도 적힌다)
+        _fake_agent(reg, "k", inbox=[{"author": "main"}])
         assert reg.arrived_for("agent:k") == 1
         assert reg.arrived_for("main") == 0
         assert reg.pending_for("main") == ["agent:k has your request queued"]
@@ -466,24 +460,25 @@ class TestCircularWait:
     @pytest.fixture
     def reg(self, tmp_path, monkeypatch):
         from agent_cli.session_slots import set_agent_registry, set_schedule_registry
-        from tests.test_agents_live import make_registry, wait_until
+        from tests.test_agents_live import make_registry, make_runner, wait_until
 
         set_schedule_registry(None)
-        r = make_registry(tmp_path)
+        self.gate = (
+            threading.Event()
+        )  # 열려 있으면 런이 바로 끝난다 — 닫으면 다음 런이 붙잡힌다
+        self.gate.set()
+        r = make_registry(tmp_path, runner=make_runner(block=self.gate))
         keys = [r.spawn()[0] for _ in range(3)]
         assert wait_until(lambda: all(r.get(k).state == "idle" for k in keys))
         set_agent_registry(r)
         yield r, keys
+        self.gate.set()
         set_agent_registry(None)
         r.shutdown_all()
 
     @staticmethod
     def _owes(r, debtor, to, rid):
-        from agent_cli.subagent.agents_live import ReplyDebt
-
-        r._reply_debts.setdefault(f"agent:{debtor}", []).append(
-            ReplyDebt(to=f"agent:{to}", text="t", id=rid)
-        )
+        r.note_owes(f"agent:{debtor}", f"agent:{to}", "t", id=rid)
 
     def test_two_agents_waiting_on_each_other_refuse_the_second_wait(self, reg):
         from agent_cli.wake import wake_sources
@@ -501,12 +496,12 @@ class TestCircularWait:
 
         r, (a, b, c) = reg
         self._owes(r, a, b, "r-1")  # a 는 b 에게 빚진 채 잠들었고
-        tc = r.get(c)  # c 가 a 의 요청을 처리 중이다 → a 는 깨어날 것이다
-        tc.state, tc.current_author = "busy", f"agent:{a}"
-        # 그 요청은 아직 회신이 가지 않았다 — 런이 든 항목과 보낸 쪽 기록 (v10.143.0)
-        tc.in_flight = [{"id": "r-9", "author": f"agent:{a}", "text": "job"}]
-        with r._cv:
-            r._note_sent(f"agent:{a}", "r-9", f"agent:{c}", "job")
+        # c 가 a 의 요청을 처리 중이다 → a 는 깨어날 것이다. 그 요청은 아직 회신이 가지 않았다 (v10.143.0)
+        self.gate.clear()
+        from tests.test_agents_live import wait_until
+
+        assert r.request(c, "job", author=f"agent:{a}") == ""
+        assert wait_until(lambda: r.taken_by(f"agent:{c}") != ())
         got = wake_sources(f"agent:{b}", agents=get_agent_registry())
         assert got == [f"agent:{a} owes you a reply (it is waiting on others)"]
 

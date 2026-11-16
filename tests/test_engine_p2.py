@@ -953,10 +953,16 @@ class TestNoHiddenSideEffects:
     def test_input_queue_wait_for_arrival_does_not_dequeue(self):
         q = InputQueue()
         assert q.wait_for_arrival(0.01) is False
+        q.enqueue(None, "hello")
+        assert q.wait_for_arrival(0.01) is True
+        assert q.pending_count() == 1  # 꺼내지 않았다
+        q.shutdown()
+        assert q.wait_for_arrival(0.01) is False
+
+    def test_input_queue_wait_for_arrival_ignores_the_synthetic_wake(self):
+        q = InputQueue()
         q.enqueue(None, "wake", system=True)  # 합성 깨우기는 세지 않는다
         assert q.wait_for_arrival(0.01) is False
         q.enqueue(None, "hello")
         assert q.wait_for_arrival(0.01) is True
         assert q.pending_count() == 2  # 꺼내지 않았다
-        q.shutdown()
-        assert q.wait_for_arrival(0.01) is False

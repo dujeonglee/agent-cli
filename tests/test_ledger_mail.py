@@ -21,9 +21,9 @@ from agent_cli.loop.core import mail_item
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.pump import RunRequest
 from agent_cli.subagent.agents_live import AgentRegistry
-from agent_cli.subagent.mail_waker import MailWaker
 from tests.loop_ports import make_ports
 from tests.loopkit import make_loop
+from tests.mail_support import to_main
 
 JOB = {
     "kind": "job",
@@ -42,7 +42,7 @@ def _no_render(monkeypatch):
 def _loop(tmp_path, *, query="", items=(), mail=()):
     reg = AgentRegistry(tmp_path / "reg")
     for m in mail:
-        reg._push_reply(dict(m))
+        to_main(reg, dict(m))
     q = [dict(it) for it in items]
     ctx = ContextManager(Path(tmp_path) / "s", max_context_tokens=30_000)
     loop = make_loop(
@@ -130,15 +130,15 @@ class TestOutOfLedgerMailIsNotPersisted:
 
     def test_pending_mirror_drops_declared_none_and_keeps_items(self, tmp_path):
         reg = AgentRegistry(tmp_path / "reg")
-        reg._push_reply(dict(JOB))
-        reg._push_reply({"kind": "monitor", "ledger": "none", "output": "⏰ check-in"})
+        to_main(reg, dict(JOB))
+        to_main(reg, {"kind": "monitor", "ledger": "none", "output": "⏰ check-in"})
         assert reg.arrived_for("main") == 2  # 배달은 둘 다 된다
         assert [r["kind"] for r in self._mirror(reg)["pending"]] == ["job"]
 
     def test_restore_sees_only_the_items(self, tmp_path):
         reg = AgentRegistry(tmp_path / "reg")
-        reg._push_reply(dict(JOB))
-        reg._push_reply({"kind": "monitor", "ledger": "none", "output": "⏰ check-in"})
+        to_main(reg, dict(JOB))
+        to_main(reg, {"kind": "monitor", "ledger": "none", "output": "⏰ check-in"})
         reg2 = AgentRegistry(tmp_path / "reg")
         reg2.restore()
         assert [r["kind"] for r in reg2.drain_replies()] == ["job"]
@@ -149,7 +149,7 @@ class TestWakeRunHasNoStarter:
         import threading
 
         wake = RunRequest(
-            text=MailWaker.WAKE_TEXT,
+            text="(mail)",
             author="🤝 agent",
             author_is_user=False,
             request_id="",
@@ -175,7 +175,7 @@ class TestWakeRunHasNoStarter:
         users = [m for m in ctx.get_raw_messages() if m.get("role") == "user"]
         assert len(users) == 1 and users[0]["tool"] == "job"
         assert "New agent mail" not in str(ctx.get_raw_messages())
-        (item,) = loop._state.ledger.requests
+        (item,) = loop._state.ledger.open_requests()
         assert item == {
             "id": "n-1",
             "author": "mail",
@@ -200,7 +200,7 @@ class TestClosingAMailItem:
         loop._intake()
         res = _complete(loop, result="잡 통과", answers=["n-1"])
         assert res.success and res.output == "잡 통과"
-        assert loop._state.ledger.requests == []
+        assert loop._state.ledger.open_requests() == ()
 
     def test_omitting_it_is_nagged_within_the_budget_then_reported(self, tmp_path):
         """v10.56.0 (P3): 생략은 결과를 배달한 뒤 예산 안에서 되돌린다 — 예산이
@@ -237,7 +237,7 @@ class TestBusyRunMixesWithUserRequests:
     def test_mail_joins_the_users_open_requests(self, tmp_path):
         loop, reg, _ctx = _loop(tmp_path, query="README 정리해 줘")
         loop._setup()
-        reg._push_reply(dict(JOB))  # 런 도중 도착
+        to_main(reg, dict(JOB))  # 런 도중 도착
         loop._intake()
         assert loop._state.ledger.request_ids() == ["u-1", "n-1"]
         tail = loop._llm._build_session_state(10_000)
@@ -269,7 +269,7 @@ class TestOpenDebtsArePinnedToo:
 
         reg = AgentRegistry(tmp_path / "reg")
         for m in mail:
-            reg._push_reply(dict(m))
+            to_main(reg, dict(m))
         ctx = ContextManager(Path(tmp_path) / "s", max_context_tokens=30_000)
         loop = make_loop(
             query="",
@@ -297,7 +297,7 @@ class TestOpenDebtsArePinnedToo:
                 }
             ],
         )
-        assert loop._state.ledger.requests == []  # 빚이지 열린 요청이 아니다
+        assert loop._state.ledger.open_requests() == ()  # 빚이지 열린 요청이 아니다
         rec = next(m for m in ctx._cache if m.get("tool") == "agent")
         debt_id = rec["request_id"]
         assert debt_id in loop._state.ledger.pin_ids()

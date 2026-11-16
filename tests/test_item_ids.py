@@ -16,6 +16,7 @@ from agent_cli import item_ids
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop.core import mail_item
 from agent_cli.subagent.agents_live import AgentRegistry
+from tests.mail_support import to_main
 
 
 class TestAllocator:
@@ -75,28 +76,29 @@ class TestResumeContinuesNumbers:
 
     def test_pending_mail_and_questions_are_observed_on_restore(self, tmp_path):
         reg = AgentRegistry(tmp_path)
-        reg._push_reply({"kind": "job", "output": "done"})  # n-1
-        reg._push_reply({"kind": "job", "output": "done 2"})  # n-2
+        to_main(reg, {"kind": "job", "output": "done"})  # n-1
+        to_main(reg, {"kind": "job", "output": "done 2"})  # n-2
         item_ids._last = 0
         fresh = AgentRegistry(tmp_path)
         fresh.restore()
-        assert [m["item_id"] for m in fresh._pending] == ["n-1", "n-2"]
+        assert [m.id for m in fresh.queued_for("main")] == ["n-1", "n-2"]
         assert item_ids.next_id(item_ids.MAIL) == "n-3"
 
 
 class TestMailIdsByKind:
     def test_prefix_follows_the_kind(self, tmp_path):
         reg = AgentRegistry(tmp_path)
-        reg._push_reply({"kind": "job", "output": "x"})
-        reg._push_reply(
+        to_main(reg, {"kind": "job", "output": "x"})
+        to_main(
+            reg,
             {
                 "kind": "peer_message",
                 "key": "agt-a",
                 "output": "y",
                 "expects_reply": True,
-            }
+            },
         )
-        assert [m["item_id"] for m in reg._pending] == ["n-1", "r-2"]
+        assert [m.id for m in reg.queued_for("main")] == ["n-1", "r-2"]
 
     def test_mail_item_stamps_an_unstamped_delivery_once(self):
         reply = {"kind": "job", "output": "x"}

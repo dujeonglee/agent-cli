@@ -67,7 +67,7 @@ _TURN = types.SimpleNamespace(
 
 
 def _ids(loop):
-    return [r["id"] for r in loop._state.ledger.requests]
+    return [r["id"] for r in loop._state.ledger.open_requests()]
 
 
 def _notice(loop, **ai):
@@ -106,7 +106,7 @@ class TestRequestsReachTheRun:
             ]
         )
         assert _ids(loop) == ["r1", "r2"]
-        assert loop._state.ledger.requests[0]["author"] == "Bob"
+        assert loop._state.ledger.open_requests()[0]["author"] == "Bob"
 
     def test_run_starter_is_recorded(self):
         loop = _loop(query_request_id="r0", query_author="Bob")
@@ -1082,7 +1082,7 @@ class TestAgentLoopsAreUntouched:
             ports=self._resident(),
         )
         loop._setup()
-        assert loop._state.ledger.requests == [], "에이전트 루프에 회계가 생겼다"
+        assert loop._state.ledger.open_requests() == (), "에이전트 루프에 회계가 생겼다"
         blob = loop._llm._build_session_state(30000)
         assert "Open Requests" not in blob, "에이전트 꼬리에 요청 목록이 떴다"
 
@@ -1120,7 +1120,7 @@ class TestOpenRequestsArePinnedInContext:
             [{"id": "r1", "text": "first"}, {"id": "r2", "text": "second"}]
         )
         assert loop.ctx._open_requests() == ["r1", "r2"]
-        loop._state.ledger.requests.pop(0)  # 정산으로 빠지면 바로 반영
+        loop._state.ledger.settle({"r1"})  # 정산으로 빠지면 바로 반영
         assert loop.ctx._open_requests() == ["r2"]
         # 그 id 를 단 user 레코드가 핀 대상이다
         pinned = [loop.ctx._cache[i]["request_id"] for i in loop.ctx._pinned_indices()]

@@ -538,7 +538,7 @@ class TestEndToEnd:
             assert wait_until(agents.has_pending_replies)
             (item,) = [r for r in agents.drain_replies() if r.get("kind") == "monitor"]
             assert "main 것" in item["output"]
-            assert agents.get(key).inbox.qsize() == 0, "에이전트가 가로챘다"
+            assert agents.queued_for(f"agent:{key}") == (), "에이전트가 가로챘다"
         finally:
             agents.shutdown_all()
 
