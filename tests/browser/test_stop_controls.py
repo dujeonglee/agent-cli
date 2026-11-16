@@ -17,6 +17,11 @@ import pytest
 from agent_cli.tools.result import ToolResult
 
 
+def _main_mail(reg) -> list[dict]:
+    """main 메일함에 줄 선 메일 — 공개 조회(`queued_for`)를 메일의 표지 키(``wakes_main``·``mark``)로."""
+    return [{"wakes_main": v.wakes, "mark": v.mark} for v in reg.queued_for("main")]
+
+
 def _wait(cond, timeout=8.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -105,7 +110,7 @@ class TestStopButton:
         menu.locator('[data-scope="agents"]').click()
         assert _wait(lambda: not menu.is_visible())
         # 모든 에이전트의 런이 멈추고 main 은 계속 — 상주는 남는다
-        assert _wait(lambda: tm.state == "idle" and live._pending)
+        assert _wait(lambda: tm.state == "idle" and _main_mail(live))
         assert not stop.is_set()
         assert _wait(lambda: not more.is_visible())  # 일하는 에이전트가 없다 — Stop 만
         assert page.locator("#chat-stop").is_visible()
@@ -123,7 +128,7 @@ class TestStopButton:
         page.locator('#stop-menu [data-scope="all"]').click()
         assert _wait(lambda: stop.is_set() and tm.state == "dead")
         # Stop everything 의 정지 회신은 main 을 깨우지 않는다 — 다음 입력 런에 함께 (사용자 결정)
-        assert _wait(lambda: [m.get("wakes_main") for m in live._pending] == [False])
+        assert _wait(lambda: [m.get("wakes_main") for m in _main_mail(live)] == [False])
         stack.server.set_stop_handle(None)
 
     def test_main_idle_agents_working_is_send_and_stop_all(self, stack, page, live):
@@ -136,7 +141,7 @@ class TestStopButton:
         assert page.locator("#send").is_visible()
         assert not page.locator("#chat-stop").is_visible()
         all_btn.click()
-        assert _wait(lambda: tm.state == "idle" and live._pending)
+        assert _wait(lambda: tm.state == "idle" and _main_mail(live))
         assert _wait(lambda: page.locator("#ov-stop-all").count() == 0)
 
 
@@ -155,7 +160,7 @@ class TestChannelHead:
         assert stop_btn.inner_text() == "■ Stop run" and stop_btn.is_enabled()
         assert head.locator('.chh-btn[data-act="kill"]').inner_text() == "✕ Remove"
         stop_btn.click()
-        assert _wait(lambda: tm.state == "idle" and live._pending)
+        assert _wait(lambda: tm.state == "idle" and _main_mail(live))
         assert tm.stop_event.is_set() is False  # 상주는 남는다
         assert _wait(lambda: head.locator('.chh-btn[data-act="stop"]').is_disabled())
 
@@ -182,4 +187,4 @@ class TestChannelHead:
         page.locator('#ov-chhead .chh-btn[data-act="kill"]').click()
         assert _wait(lambda: tm.state == "dead")
         assert _wait(lambda: "dead" in (chip.get_attribute("class") or ""))
-        assert [m.get("mark") for m in live._pending] == ["stopped by user"]
+        assert [m.get("mark") for m in _main_mail(live)] == ["stopped by user"]

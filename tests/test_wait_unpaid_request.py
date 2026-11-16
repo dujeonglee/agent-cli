@@ -73,14 +73,31 @@ def _idle_agent(reg, key):
 
 
 def _pick_up(reg, tm, *, note: bool):
-    """워커가 하는 것 — 받은편지함의 항목으로 런을 시작한다(``note`` 면 시작이 빚을 적은 뒤)."""
-    item = tm.inbox_items[0]
+    """워커가 하는 것 — 받은편지함의 항목으로 런을 시작한다. ``note`` 면 공개 길(`absorb_pending` — 런 시작과
+    같은 회계: 처리 중으로 옮기고 요청이면 빚을 적는다)로 줄 선 것 전부를, 아니면 빚을 적기 **전**의 틈을
+    세운다(첫 항목만 처리 중으로 — 그 틈은 공개 흐름으로 세울 수 없다)."""
+    (first, *_rest) = reg.queued_for(f"agent:{tm.key}")
     tm.state = "busy"
-    tm.current_author = item["author"]
+    tm.current_author = first.src
+    if note:
+        reg.absorb_pending(tm)
+        return {"id": first.id, "author": first.src, "text": first.text}
+    item = tm.inbox_items[0]
     reg._begin_items(tm, [item])
-    if note and item.get("expects_reply", True) and not item.get("kind"):
-        reg.note_owes(f"agent:{tm.key}", item["author"], item["text"], id=item["id"])
     return item
+
+
+def _relations(reg, addr) -> dict[str, str]:
+    """``addr`` 를 깨울 에이전트와 그 관계(owes·working·queued) — 공개 판정(`pending_agents_for`)의 글에서."""
+    kinds = (
+        ("owes you a reply", "owes"),
+        ("working on", "working"),
+        ("queued", "queued"),
+    )
+    return {
+        who: next(k for frag, k in kinds if frag in text)
+        for who, text in reg.pending_agents_for(addr)
+    }
 
 
 class TestWhoWakesTheRequester:
@@ -97,11 +114,11 @@ class TestWhoWakesTheRequester:
         assert wake_sources(requester, agents=reg) != []  # 일하는 동안은 근거
         (d,) = reg.reply_debts("agent:agt-w")
         assert reg.pay_debt("agent:agt-w", d, "3 callers") == ""
-        assert tm.state == "busy" and tm.in_flight[0]["id"] == item["id"]
+        assert tm.state == "busy" and reg.taken_by("agent:agt-w")[0].id == item["id"]
         if requester == "main":
             reg.drain_replies()  # 회신은 이미 읽었다
         else:
-            reg.get("agt-req").inbox_items.clear()
+            reg.absorb_pending(reg.get("agt-req"))  # 요청자가 회신을 읽었다
         assert wake_sources(requester, agents=reg) == []
         assert reg.pending_agents_for(requester) == []
 
@@ -113,16 +130,11 @@ class TestWhoWakesTheRequester:
         tm = _idle_agent(reg, "agt-w")
         reg.request("agt-w", "first", author=requester)
         reg.request("agt-w", "second", author=requester)
+        # 첫 항목으로 런을 시작하고 둘째는 런 도중 흡수 — 같은 회계(`absorb_pending`)라 한 번에
         _pick_up(reg, tm, note=True)
-        second = reg._queued(tm)[0]
-        # 런 도중 흡수 — 시작 항목과 같은 회계(`absorb_pending` 의 미러 옮기기·빚 적기)
-        with reg._cv:
-            tm.inbox_items = []
-            tm.in_flight.append(dict(second))
-        reg.note_owes("agent:agt-w", requester, "second", id=second["id"])
         first = next(d for d in reg.reply_debts("agent:agt-w") if d.text == "first")
         reg.pay_debt("agent:agt-w", first, "done 1")
-        relations = {who: kind for kind, who in reg._agent_relations(requester)}
+        relations = _relations(reg, requester)
         assert relations.get("agent:agt-w") in ("owes", "working")
         assert any("agt-w" in s for s in wake_sources(requester, agents=reg))
 
@@ -131,8 +143,11 @@ class TestWhoWakesTheRequester:
         tm = _idle_agent(reg, "agt-w")
         reg.request("agt-w", "find callers", author="main")
         _pick_up(reg, tm, note=False)
-        assert reg.reply_debts("agent:agt-w") == [] and reg._queued(tm) == []
-        assert ("working", "agent:agt-w") in reg._agent_relations("main")
+        assert (
+            reg.reply_debts("agent:agt-w") == []
+            and list(reg.queued_for("agent:agt-w")) == []
+        )
+        assert _relations(reg, "main").get("agent:agt-w") == "working"
         assert wake_sources("main", agents=reg) == [
             "agent:agt-w working on your request"
         ]
@@ -161,7 +176,7 @@ class TestWhoWakesTheRequester:
             expects_reply=False,
             kind="notice",
         )
-        assert len(reg._queued(reg.get("agt-w"))) == 1
+        assert len(reg.queued_for("agent:agt-w")) == 1
         assert wake_sources("main", agents=reg) == []
         reg.request("agt-w", "and count the callers", author="main")
         assert wake_sources("main", agents=reg) == [

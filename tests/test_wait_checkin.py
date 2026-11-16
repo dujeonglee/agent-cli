@@ -436,11 +436,11 @@ class TestResident:
 
         set_schedule_registry(None)
         gate = threading.Event()
-        queries = []  # 런마다 모델이 받은 시작 글
+        starts = []  # 런마다 엔진이 받은 시작(글·장부 id·사람 요청)
         gated = make_runner(block=gate)
 
         def runner(kind, start, ctx):
-            queries.append(start.query)
+            starts.append(start)
             return gated(kind, start, ctx)
 
         r = make_registry(tmp_path, runner=runner)
@@ -459,8 +459,9 @@ class TestResident:
             assert _armed(r, me) is not None
             text = r.fire_checkin(me)
             assert text.startswith("⏰ Check-in after 5m — still running:\njob #1")
-            (item,) = [m for m in r.queued_for(me) if not m.persists]  # 장부 밖 알림
-            assert item.text.startswith("⏰ Check-in") and item.expects_reply is False
+            (item,) = [m for m in r.queued_for(me) if m.text.startswith("⏰ Check-in")]
+            # 저장하지 않고(장부 밖 알림) 회신을 빚지우지도 않는다
+            assert item.persists is False and item.expects_reply is False
             saved = json.loads((tmp_path / "agents.json").read_text())
             (entry,) = [e for e in saved["agents"] if e["key"] == key]
             assert [i["text"] for i in entry["inbox"]] == ["do Y"]  # 알림은 빠졌다
@@ -470,8 +471,15 @@ class TestResident:
             # 하니스 통지는 봉투 밖 (v10.84.0, 사용자 결정 C) — main 이 받는 모양과 같다: 그 알림이 연 런의 시작 글
             gate.set()
             assert wait_until(
-                lambda: any(q.startswith("⏰ Check-in after 5m") for q in queries)
+                lambda: any(
+                    st.query.startswith("⏰ Check-in after 5m") for st in starts
+                )
             )
+            # 장부 항목이 아니다 — 그 알림이 연 런은 장부 id(핀·`answers`)도 사람 요청 줄(Open Items)도 없다
+            (checkin_run,) = [
+                st for st in starts if st.query.startswith("⏰ Check-in after 5m")
+            ]
+            assert checkin_run.request_id == "" and checkin_run.user_requests == []
         finally:
             gate.set()
             set_agent_registry(None)

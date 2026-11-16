@@ -363,8 +363,9 @@ class TestStopEverythingDoesNotWakeMain:
         assert not result.success  # main 의 런은 interrupt
         (tm,) = s["reg"]._agents.values()
         assert wait_until(lambda: tm.state == "dead")
-        assert wait_until(lambda: len(s["reg"]._pending) == 1)
-        (mail,) = s["reg"]._pending
+        assert wait_until(lambda: len(s["reg"].queued_for("main")) == 1)
+        (view,) = s["reg"].queued_for("main")
+        mail = {"wakes_main": view.wakes, "mark": view.mark}  # 메일의 표지 키로
         assert mail["wakes_main"] is False and mail["mark"] == "stopped by user"
         # main 런 0회 — 깨우기가 하나도 서지 않는다
         waker.mark_idle()

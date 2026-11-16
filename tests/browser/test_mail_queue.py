@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import time
 
+from tests.mail_support import to_main
+
 
 def _wait(cond, timeout=8.0):
     deadline = time.time() + timeout
@@ -44,7 +46,7 @@ class TestMailInTheQueue:
         reg = _wire(stack)
         stack.emit_ready()
         page.goto(stack.url)
-        reg._push_reply(dict(JOB))
+        to_main(reg, dict(JOB))
         assert _wait(lambda: _items(page).count() == 1)
         row = _items(page).first
         assert (
@@ -75,7 +77,7 @@ class TestMailInTheQueue:
                 window.__qSeen += document.querySelectorAll('#queue-list .queue-item').length;
               }).observe(document.getElementById('queue-list'), {childList: true, subtree: true}); }"""
         )
-        reg._push_reply(dict(JOB))
+        to_main(reg, dict(JOB))
         time.sleep(0.3)
         reg.drain_replies()
         time.sleep(2.0)  # 유예가 지난 뒤에도
@@ -86,7 +88,7 @@ class TestMailInTheQueue:
         reg = _wire(stack)
         stack.emit_ready()
         stack.server.enqueue(None, "user ask")
-        reg._push_reply(dict(JOB))
+        to_main(reg, dict(JOB))
         page.goto(stack.url)  # 대기 중에 연결 — sticky 대기열로 다시 선다
         assert _wait(lambda: _items(page).count() == 2)
         texts = [
@@ -98,7 +100,7 @@ class TestMailInTheQueue:
         reg = _wire(stack)
         stack.emit_ready()
         page.goto(stack.url)
-        reg._push_reply(dict(JOB))
+        to_main(reg, dict(JOB))
         assert _wait(lambda: _items(page).count() == 1)
         msgs = page.locator("#messages").inner_text()
         assert "Background job finished" not in msgs and "🤝" not in msgs
