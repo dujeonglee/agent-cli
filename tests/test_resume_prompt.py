@@ -1,4 +1,4 @@
-"""Tests for the resume prompt — ``main._maybe_resume_recent``.
+"""Tests for the resume prompt — ``main._pick_recent_session``.
 
 When ``chat`` / ``web`` start WITHOUT ``--resume``, the user is offered the
 most recent session ([y/N], default new). This is exactly the kind of feature
@@ -6,9 +6,12 @@ where a silent breakage is the worst case (the user would just always get a
 new session and never notice), so the branches are pinned here:
 
   - prompt_fn returns "y"     → resume the most recent session
-  - prompt_fn returns "n"/""  → start a NEW session
-  - prompt_fn is None (pipe)  → never prompt, start NEW
-  - no sessions exist         → start NEW (no prompt even on a TTY)
+  - prompt_fn returns "n"/""  → None (the caller starts a NEW session after boot)
+  - prompt_fn is None (pipe)  → never prompt, None
+  - no sessions exist         → None (no prompt even on a TTY)
+
+v10.144.0: 질문은 부트 **전에** 하고(이어 갈 세션의 서버로 부트하므로) 세션을 만들지 않는다 —
+"아니오" 가 빈 세션 디렉터리를 남기지 않는다(부트가 실패해도).
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from __future__ import annotations
 import pytest
 
 import agent_cli.session.store as session_mod
-from agent_cli.main import _maybe_resume_recent
+from agent_cli.main import _pick_recent_session
 from agent_cli.session.store import create_session, save_meta
 
 
@@ -35,46 +38,38 @@ def _make_session(workspace: str) -> str:
     return meta.session_id
 
 
-class TestMaybeResumeRecent:
+class TestPickRecentSession:
     def test_yes_resumes_most_recent(self, tmp_path):
         ws = str(tmp_path / "ws")
         sid = _make_session(ws)
 
-        session, is_resume = _maybe_resume_recent(ws, lambda _p: "y")
+        session = _pick_recent_session(ws, lambda _p: "y")
 
-        assert is_resume is True
         assert session.session_id == sid
 
     def test_yes_is_case_insensitive_and_trims(self, tmp_path):
         ws = str(tmp_path / "ws")
         sid = _make_session(ws)
 
-        session, is_resume = _maybe_resume_recent(ws, lambda _p: "  Y\n")
+        session = _pick_recent_session(ws, lambda _p: "  Y\n")
 
-        assert is_resume is True
         assert session.session_id == sid
 
     def test_no_starts_new_session(self, tmp_path):
-        # NOTE: don't compare session ids — create_session derives the id from
-        # int(time.time()), so a new session made in the same second as the
-        # pre-existing one collides. is_resume is the real contract.
         ws = str(tmp_path / "ws")
         _make_session(ws)
 
-        session, is_resume = _maybe_resume_recent(ws, lambda _p: "n")
-
-        assert is_resume is False
-        assert session.session_id
+        assert _pick_recent_session(ws, lambda _p: "n") is None
+        assert (
+            len(list(session_mod._SESSIONS_DIR.iterdir())) == 1
+        )  # 새 세션을 안 만든다
 
     def test_empty_default_starts_new_session(self, tmp_path):
         """Enter (empty string) takes the safe default: a new session."""
         ws = str(tmp_path / "ws")
         _make_session(ws)
 
-        session, is_resume = _maybe_resume_recent(ws, lambda _p: "")
-
-        assert is_resume is False
-        assert session.session_id
+        assert _pick_recent_session(ws, lambda _p: "") is None
 
     def test_non_interactive_never_prompts(self, tmp_path):
         """prompt_fn=None (pipe / cron): always new, and the prompt reader is
@@ -82,10 +77,7 @@ class TestMaybeResumeRecent:
         ws = str(tmp_path / "ws")
         _make_session(ws)
 
-        session, is_resume = _maybe_resume_recent(ws, None)
-
-        assert is_resume is False
-        assert session.session_id
+        assert _pick_recent_session(ws, None) is None
 
     def test_no_sessions_starts_new_without_prompting(self, tmp_path):
         """An empty workspace must NOT prompt — there is nothing to resume."""
@@ -94,10 +86,7 @@ class TestMaybeResumeRecent:
         def _fail_prompt(_p):
             raise AssertionError("must not prompt when there is no session")
 
-        session, is_resume = _maybe_resume_recent(ws, _fail_prompt)
-
-        assert is_resume is False
-        assert session.session_id
+        assert _pick_recent_session(ws, _fail_prompt) is None
 
     def test_picks_latest_of_several(self, tmp_path):
         """list_sessions sorts ascending by id (timestamp); the resume offer
@@ -117,7 +106,6 @@ class TestMaybeResumeRecent:
                 )
             )
 
-        session, is_resume = _maybe_resume_recent(ws, lambda _p: "y")
+        session = _pick_recent_session(ws, lambda _p: "y")
 
-        assert is_resume is True
         assert session.session_id == "1700000003"

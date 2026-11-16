@@ -1,4 +1,4 @@
-"""설정 파일 없는 첫 실행 (v10.125.0) — 마법사는 대화형이고 플래그로 다 주지 않았을 때만.
+"""서버 없는 첫 실행 (v10.125.0; v10.144.0 서버별 설정) — 마법사는 대화형이고 플래그로 다 주지 않았을 때만.
 
 종전엔 config.json 이 없으면 `_maybe_setup` 이 무조건 마법사를 띄워, ``-p openai --base-url …
 -m …`` 를 다 준 비대화식 실행(CI·컨테이너·스크립트)도 첫 질문에서 EOF → ``Aborted.`` rc=1 이었다.
@@ -12,6 +12,7 @@ from rich.console import Console
 
 import agent_cli.config as _config
 import agent_cli.main as m
+from tests.endpoint_files import point_config
 
 
 class _Reached(Exception):
@@ -27,12 +28,15 @@ def empty_home(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(_config, "_CONFIG_PATHS", [home / ".agent-cli" / "config.json"])
-    for key in (*_config._ENV_MAP, "AGENT_CLI_MODEL", "AGENT_CLI_NO_INPUT"):
+    point_config(monkeypatch, home / ".agent-cli")
+    for key in (
+        *_config._ENV_FIELDS,
+        "AGENT_CLI_MODEL",
+        "AGENT_CLI_NO_INPUT",
+        "AGENT_CLI_ENDPOINT",
+    ):
         monkeypatch.delenv(key, raising=False)
-    _config.reload_config()
-    yield home
-    _config.reload_config()
+    return home
 
 
 @pytest.fixture
@@ -78,7 +82,7 @@ def test_noninteractive_with_flags_skips_wizard_and_reaches_resolution(
 
 
 def test_base_url_from_env_counts(empty_home, wizard, monkeypatch):
-    # AGENT_CLI_BASE_URL 은 has_config 도 참으로 만든다 — 판정 함수 자체도 env 를 본다
+    # AGENT_CLI_BASE_URL 은 이름 없는 서버이기도 하다 — 판정 함수 자체도 env 를 본다
     monkeypatch.setenv("AGENT_CLI_BASE_URL", "http://127.0.0.1:1/v1")
     assert m._flags_complete(None, "some-model") is True
     monkeypatch.delenv("AGENT_CLI_BASE_URL")
@@ -116,8 +120,8 @@ def test_long_path_is_not_broken_at_80_columns(tmp_path, wizard, out, monkeypatc
     home = tmp_path / ("h" * 90)
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(_config, "_CONFIG_PATHS", [home / ".agent-cli" / "config.json"])
-    for key in (*_config._ENV_MAP, "AGENT_CLI_MODEL"):
+    point_config(monkeypatch, home / ".agent-cli")
+    for key in (*_config._ENV_FIELDS, "AGENT_CLI_MODEL", "AGENT_CLI_ENDPOINT"):
         monkeypatch.delenv(key, raising=False)
     _interactive(monkeypatch, False)
     with pytest.raises(typer.Exit):
@@ -142,12 +146,41 @@ def test_interactive_with_flags_does_not_ask(empty_home, wizard, monkeypatch):
 
 def test_existing_config_never_runs_the_wizard(empty_home, wizard, monkeypatch):
     cfg = empty_home / ".agent-cli" / "config.json"
-    cfg.parent.mkdir()
-    cfg.write_text('{"provider": "openai"}', encoding="utf-8")
+    cfg.parent.mkdir(exist_ok=True)
+    cfg.write_text(
+        '{"endpoint": "home", "endpoints": {"home": {"provider": "openai"}}}',
+        encoding="utf-8",
+    )
     _interactive(monkeypatch, False)
     m._maybe_setup(None, None)
     _interactive(monkeypatch, True)
     m._maybe_setup(None, None)
+    assert wizard == []
+
+
+def test_legacy_config_is_no_server(empty_home, wizard, out, monkeypatch):
+    """옛 모양 config.json 은 서버가 아니다 — 비대화식은 안내 한 줄(+ .v1 안내)로 2."""
+    cfg = empty_home / ".agent-cli" / "config.json"
+    cfg.parent.mkdir(exist_ok=True)
+    cfg.write_text(
+        '{"provider": "openai", "base_url": "http://x/v1"}', encoding="utf-8"
+    )
+    _interactive(monkeypatch, False)
+    with pytest.raises(typer.Exit) as ei:
+        m._maybe_setup(None, None)
+    assert ei.value.exit_code == 2
+    text = out.export_text()
+    assert "No model server is set up" in text and "board admin" in text
+    assert "before 10.144.0 are not read" in text and ".v1" in text
+    _interactive(monkeypatch, True)
+    with pytest.raises(_WizardRan):
+        m._maybe_setup(None, None)
+
+
+def test_named_endpoint_skips_the_wizard(empty_home, wizard, monkeypatch):
+    """이름을 댄 실행은 마법사 대신 "없는 이름" 오류로 간다(`_select_endpoint`)."""
+    _interactive(monkeypatch, True)
+    m._maybe_setup(None, None, named=True)
     assert wizard == []
 
 

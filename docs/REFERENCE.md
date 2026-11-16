@@ -69,40 +69,55 @@ agent-cli stats
 
 ## 설정
 
+> **⚠ v10.144.0 — 설정 모양이 바뀌었습니다. 옛 설정은 읽지 않습니다.**
+> 모델 서버 설정이 "서버 여러 개를 이름으로 저장" 하는 모양이 됐습니다(아래 [config.json](#configjson)).
+> v10.143.0 까지의 `~/.agent-cli/config.json`·`models.json`(최상위에 `endpoints` 가 없는 파일)은
+> **읽지 않고 "서버 없음" 으로 봅니다** — 옮겨 주는 코드는 없습니다. `agent-cli setup`(또는 보드 admin)으로
+> 서버를 다시 추가하세요. 첫 서버를 저장할 때 옛 파일은 지우지 않고 **`config.json.v1`·`models.json.v1`**
+> 로 이름만 바꿔 남깁니다(이미 있으면 `.v1-2`, `.v1-3` …) — 다시 입력할 때 옛 값을 거기서 보면 됩니다.
+>
+> **agent-board 와 함께 올려야 합니다** — 서버별 설정을 읽고 쓰는 보드는 v1.48.0 이상입니다. 옛 보드의
+> admin 은 새 모양 파일을 읽지 못하고, 새 보드는 낮은 agent-cli 에 안내를 띄웁니다.
+
 ### 첫 실행 (Setup Wizard)
 
-설정 파일(`config.json`)이 없으면 터미널에서 실행할 때 자동으로 설정 마법사가 시작됩니다:
+저장된 서버가 없으면 터미널에서 실행할 때 자동으로 설정 마법사가 시작됩니다. 마법사는 **서버 하나**를
+만들거나 고칩니다:
 
 ```
 $ agent-cli run "hello"
 
-No configuration found. Starting setup wizard...
+No model server is set up. Starting setup wizard...
 
 ╭─ Agent-CLI Setup ─────────────────────────────────────╮
 │                                                        │
 ╰─ ReAct pattern agent CLI for on-premise LLMs ─────────╯
 
-1. Select LLM Provider
+1. Server name → 영문 소문자·숫자·`-` (방이 이 이름으로 서버를 기억하므로 나중에 바꿀 수 없음).
+   저장된 이름을 대면 그 서버를 고친다
+2. Select LLM Provider
    [1] OpenAI compatible (OpenAI, vLLM, LM Studio, omlx) — default
    [2] Anthropic
-
-2. Connection → base URL, API key, 연결 테스트
-3. Model → OpenAI 호환·Anthropic 모두 `/v1/models`(provider별 인증 헤더)로 자동 탐색 및 목록 선택, 실패 시 직접 입력(OpenAI 기본 `gpt-4o`, Anthropic 기본 `claude-sonnet-4-20250514`)
-4. Review → 설정 확인 후 저장 위치 선택
+3. Connection → base URL, API key (고치는 서버면 빈 입력 = 저장된 키 유지)
+4. Default Model → OpenAI 호환·Anthropic 모두 `/v1/models`(provider별 인증 헤더)로 자동 탐색 및 목록 선택, 실패 시 직접 입력
+5. Review → 확인 후 저장. 첫 서버는 기본 서버가 되고, 그 뒤 서버는 기본으로 할지 묻는다
 ```
 
-수동으로 다시 실행:
+수동으로 다시 실행(서버 추가·수정):
 ```bash
 agent-cli setup
+agent-cli endpoints     # 저장된 서버 목록 (키는 보이지 않음)
 ```
 
-**설정 파일은 필수가 아닙니다 (v10.125.0)** — 접속할 곳과 모델을 플래그나 환경변수로 다 주면
-(`--base-url` 또는 `AGENT_CLI_BASE_URL`, 그리고 `-m` 또는 `AGENT_CLI_MODEL`) 마법사 없이 바로 진행합니다.
-키는 요구하지 않습니다(로컬 서버는 키가 없음). 터미널이 아닌 곳(CI·컨테이너·파이프·`AGENT_CLI_NO_INPUT=1`)에서
-설정 파일도 플래그도 모자라면 마법사를 띄우지 않고 한 줄과 종료 코드 `2` 로 멈춥니다:
+**설정 파일은 필수가 아닙니다 (v10.125.0)** — 서버가 하나도 골라지지 않은 실행에서는 접속할 곳과 모델을
+플래그나 환경변수로 다 주면(`--base-url` 또는 `AGENT_CLI_BASE_URL`, 그리고 `-m` 또는 `AGENT_CLI_MODEL`)
+마법사 없이 바로 진행합니다 — 설정 파일 없는 컨테이너·CI 의 길입니다(이 실행은 서버 이름이 없어 모델 표가
+패키지 기본 표뿐이고, 감지한 능력을 저장하지 않습니다). 키는 요구하지 않습니다(로컬 서버는 키가 없음).
+터미널이 아닌 곳(CI·컨테이너·파이프·`AGENT_CLI_NO_INPUT=1`)에서 서버도 플래그도 모자라면 마법사를 띄우지
+않고 한 줄과 종료 코드 `2` 로 멈춥니다(옛 모양 파일이 있으면 그 사실을 같은 줄에 덧붙입니다):
 
 ```
-No config file (~/.agent-cli/config.json). Run 'agent-cli setup' in a terminal, or pass --base-url and -m.
+No model server is set up (~/.agent-cli/config.json). Run 'agent-cli setup' in a terminal, add a server in the board admin, or pass --base-url and -m.
 ```
 
 ```bash
@@ -111,28 +126,65 @@ agent-cli run "hello" --base-url http://127.0.0.1:8000/v1 -m Qwen3.6-35B-A3B-8bi
 
 ### config.json
 
-설정은 JSON 파일로 저장됩니다:
+모델 서버를 **이름으로 여러 개** 저장합니다 (v10.144.0). `endpoint` 는 지금 선택된 서버 — 새 방과 CLI 의
+기본값입니다:
 
 ```json
 {
-  "provider": "openai",
-  "base_url": "http://127.0.0.1:8000/v1",
-  "api_key": "",
-  "default_model": "Qwen3.6-35B-A3B-8bit"
+  "endpoint": "home",
+  "endpoints": {
+    "home": {
+      "provider": "openai",
+      "base_url": "http://127.0.0.1:8000/v1",
+      "api_key": "",
+      "default_model": "Qwen3.6-35B-A3B-8bit"
+    },
+    "work": {
+      "provider": "openai",
+      "base_url": "https://gateway.example.com/v1",
+      "api_key": "…",
+      "default_model": "my-model",
+      "extra_headers": [{"name": "x-service-id", "value": "…"}]
+    }
+  }
 }
 ```
 
-**`provider` 를 안 적으면 `openai`(OpenAI 호환) 설정입니다 (v10.123.1)** — 그 파일·env 의
+- **서버 이름**: 영문 소문자·숫자·`-`. 방(세션)이 이름으로 서버를 기억하므로 만든 뒤 바꾸지 않습니다
+  (바꾸려면 새로 만들고 옛 것을 지웁니다). 방에는 이름만 기록되고 주소·키는 복사되지 않습니다 — 서버의
+  키를 바꾸면 그 서버를 쓰는 방이 다음에 뜰 때 새 키를 씁니다.
+- **서버를 고르는 순서**: `--endpoint <이름>` > `AGENT_CLI_ENDPOINT` > 되살리는 세션에 기록된 이름 > config 의
+  `endpoint`. 고른 서버의 값을 읽은 뒤 `--provider`·`--base-url`·`--api-key`·`--model` 이 있으면 그 값만
+  덮습니다. **없는 이름은 그 자리에서 오류(종료 코드 `2`)** 입니다 — 다른 서버로 조용히 넘어가지 않습니다:
+
+  ```
+  Unknown endpoint 'lab' (saved servers: home, work). Add it with 'agent-cli setup' or in the board admin.
+  ```
+
+- **세션의 서버**: 새 세션은 고른 서버 이름을 `session.jsonl` 메타에 남기고, `--resume` 은 그 이름으로
+  뜹니다(서버 기록이 없는 옛 세션은 그때 고른 서버를 쓰고 기록합니다). 지운 서버를 기억하는 세션은 되살릴 때
+  위 오류로 멈춥니다. `--resume` 에 다른 `--endpoint` 를 주면 그것이 이기고 기록을 바꾸며 한 줄로 알립니다:
+  `Session server changed: home → work`. 배너에 `Server:` 줄, 웹 방 머리 줄에 서버 칩이 보입니다.
+- **환경변수 `AGENT_CLI_PROVIDER`·`AGENT_CLI_BASE_URL`·`AGENT_CLI_API_KEY`** 는 저장된 서버가 **0개**인
+  실행의 이름 없는 서버입니다. 서버가 골라지면 쓰이지 않습니다 — 한 서버의 키가 env 로 다른 서버에 섞이지
+  않게. 덮어쓰기는 플래그로 합니다. 서버는 저장돼 있는데 기본(`endpoint`)이 없으면(손으로 고친 파일) 다른 곳으로
+  가지 않고 종료 코드 `2`: `No default server is set. Saved servers: home, work. Pick one with --endpoint, or set the default with 'agent-cli setup' or in the board admin.`
+- **주소는 사용자가 적은 것만** 씁니다 (v10.144.0) — 서버의 `base_url`, `--base-url`, 이름 없는 실행의
+  `AGENT_CLI_BASE_URL`. 어디에도 없으면 프로바이더 공개 주소(api.openai.com 등)로 가지 않고 종료 코드 `2` 입니다.
+  **종전과 달라진 동작**: v10.143.0 까지는 주소가 비면 공개 주소로 갔습니다 — 이제 `-p anthropic` 만 주고 주소를
+  안 주면 오류이니 `--base-url https://api.anthropic.com/v1` 을 적거나 그 서버를 저장하세요.
+
+**`provider` 를 안 적으면 `openai`(OpenAI 호환) 서버입니다 (v10.123.1)** — 그 서버의
 `base_url`·`default_model`·`api_key` 는 `-p` 없이 돌릴 때와 `-p openai` 일 때 쓰이고,
-`-p anthropic` 처럼 다른 provider 를 고르면 쓰이지 않습니다(설정 값은 그 설정의 provider 에만).
+`-p anthropic` 처럼 다른 provider 를 고르면 쓰이지 않습니다(서버 값은 그 서버의 provider 에만).
 모르는 provider 이름(`-p gemini`, 설정의 오타)은 사용 가능한 이름을 보여 주고 종료 코드 `2` 로 멈춥니다.
 
 **추가 헤더 `extra_headers` (v10.134.0)** — 사내 게이트웨이처럼 키 말고도 헤더를 요구하는 서버에
-임의 헤더를 붙입니다. 키(`api_key`)가 가는 **모든** 요청 — 대화 호출(서브에이전트·압축 요약 포함),
-능력 감지 프로브, `/models` 조회 — 에 같이 실리고, 키와 같은 범위입니다(설정의 provider 로 갈 때만).
+임의 헤더를 붙입니다(서버마다 자기 목록). 키(`api_key`)가 가는 **모든** 요청 — 대화 호출(서브에이전트·압축 요약 포함),
+능력 감지 프로브, `/models` 조회 — 에 같이 실리고, 키와 같은 범위입니다(그 서버의 provider 로 갈 때만).
 
 ```json
-{
+"work": {
   "provider": "openai",
   "base_url": "https://gateway.example.com/v1",
   "api_key": "test-…",
@@ -149,11 +201,11 @@ agent-cli run "hello" --base-url http://127.0.0.1:8000/v1 -m Qwen3.6-35B-A3B-8bi
 없는 문자열, 하니스가 정하는 헤더(`Authorization`·`Proxy-Authorization`·`x-api-key`·`anthropic-version`·
 `Content-Type`·`Content-Length`·`Host`·`Transfer-Encoding`·`Connection`)는 쓸 수 없고, 켜진 것끼리 같은
 이름(대소문자 무시)은 한 번만. 헤더는 HTTP 층에만 있어 모델이 받는 프롬프트는 바뀌지 않습니다. `agent-cli setup`
-은 이 목록을 묻지 않고 기존 값을 그대로 보존해 저장합니다. 보드의 admin 화면에서 체크박스로 켜고 끌 수 있습니다.
+은 이 목록을 묻지 않고 고치는 서버의 기존 값을 그대로 보존해 저장합니다. 보드의 admin 화면에서 서버마다 체크박스로 켜고 끌 수 있습니다.
 
 **읽지 못한 `config.json` 은 멈춥니다 (v10.123.4)** — JSON 오류(끝 쉼표 등)·객체가 아닌 내용이면
 `Could not read config <경로>: <오류, 줄·열>` 한 줄과 종료 코드 `2` — env·기본값으로 내려가지 않습니다. `agent-cli setup` 은 깨진 파일을
-고치는 길이라 멈추지 않고 읽지 못했다는 사실만 보여 준 뒤 진행합니다.
+고치는 길이라 멈추지 않고 읽지 못했다는 사실만 보여 준 뒤 진행합니다(저장할 때 그 파일은 `.v1` 로 남깁니다).
 
 **모델 이름은 부팅 때 검증됩니다 (v9.5.0)**. 서버의 `/v1/models` 에 그 이름이
 없으면 **그 자리에서 멈추고** 사용 가능한 목록을 보여줍니다 — 터미널에서 실행
@@ -177,8 +229,8 @@ agent-cli run "hello" --base-url http://127.0.0.1:8000/v1 -m Qwen3.6-35B-A3B-8bi
 
 ```
 ✗ Cannot connect to the server at http://127.0.0.1:8000/v1 (connection refused).
-  Model 'my-model' is not registered in ~/.agent-cli/models.json, so its capabilities cannot be known without the server.
-  Fix: start the server, or check --base-url / the base_url in ~/.agent-cli/config.json.
+  Model 'my-model' is not registered in ~/.agent-cli/models.json (server 'home'), so its capabilities cannot be known without the server.
+  Fix: start the server, or check --base-url / the base_url of server 'home' in ~/.agent-cli/config.json.
 ```
 
 괄호 안은 사실 하나입니다: `connection refused`·`host not found`·`TLS error: <사유>`(예: `certificate verify failed: …`)·`cannot connect`(그 밖의 연결 수립 실패).
@@ -199,7 +251,7 @@ agent-cli run "hello" --base-url http://127.0.0.1:8000/v1 -m Qwen3.6-35B-A3B-8bi
 
 | 스코프 | 위치 | 담는 것 |
 |--------|------|---------|
-| 유저 | `~/.agent-cli/` | `config.json` · `models.json` — 이 컴퓨터의 환경 (provider·API 키·모델 capability 캐시) |
+| 유저 | `~/.agent-cli/` | `config.json` · `models.json` — 이 컴퓨터의 환경 (모델 서버들·API 키·서버별 모델 capability 캐시) |
 | 프로젝트 | `.agent-cli/` (cwd 기준) | `mcp.json` · `skills/` · `agents/` · `hooks/` · `hooks.json` · `DIRECTIVE.md` — 이 저장소가 필요로 하는 것 |
 | 세션 | `sessions_dir()` | `sessions/` · `chat_history` — `AGENT_CLI_SESSIONS_DIR` 로 작업 트리 밖으로 뺄 수 있는 것 |
 
@@ -209,15 +261,16 @@ agent-cli run "hello" --base-url http://127.0.0.1:8000/v1 -m Qwen3.6-35B-A3B-8bi
 
 ### 설정 우선순위
 
-높은 게 낮은 걸 덮어씁니다 (필드 단위 병합):
+먼저 서버를 하나 고르고(`--endpoint` > `AGENT_CLI_ENDPOINT` > 세션 기록 > config 의 `endpoint`), 그 서버의 값 위에
+플래그가 필드 단위로 덮습니다:
 
 | 우선순위 | 위치 | 용도 |
 |---------|------|------|
-| 1 (최고) | CLI 파라미터 (`-p`, `-m`, `--base-url`, `--api-key`) | 임시 오버라이드 |
-| 2 | `~/.agent-cli/config.json` (유저) | 기본 설정 |
-| 3 (최저) | 환경변수 | 시스템 레벨 |
+| 1 (최고) | CLI 파라미터 (`-p`, `-m`, `--base-url`, `--api-key`) — 모델은 `AGENT_CLI_MODEL` 도 | 임시 오버라이드 |
+| 2 | 고른 서버의 값 (`~/.agent-cli/config.json` 의 `endpoints.<이름>`) | 기본 설정 |
+| — | 환경변수 `AGENT_CLI_PROVIDER`·`AGENT_CLI_BASE_URL`·`AGENT_CLI_API_KEY` | 저장된 서버가 없을 때만 — 이름 없는 서버 |
 
-프로젝트별로 다른 모델을 고정하려면 `-m` 이나 `AGENT_CLI_MODEL`(direnv 등)을 쓰세요 — v9.0.0 부터 프로젝트 `config.json` 은 읽지 않습니다.
+`--base-url` 로 주소만 덮으면 그 서버의 키·헤더가 새 주소로 갑니다(종전과 같은 동작). 프로젝트별로 다른 서버나 모델을 고정하려면 `AGENT_CLI_ENDPOINT`·`AGENT_CLI_MODEL`(direnv 등)을 쓰세요 — v9.0.0 부터 프로젝트 `config.json` 은 읽지 않습니다.
 
 예: `~/.agent-cli/config.json`에 `gpt-4o`가 기본이지만 `-m gpt-4o-mini`로 임시 실행:
 ```bash
@@ -261,10 +314,11 @@ agent-cli run "task" -m gpt-4o-mini
 
 | 변수 | config.json 키 | 설명 |
 |------|---------------|------|
-| `AGENT_CLI_PROVIDER` | `provider` | LLM 프로바이더 — 파일에도 env 에도 없으면 `openai`(OpenAI 호환) |
-| `AGENT_CLI_BASE_URL` | `base_url` | API 엔드포인트 |
-| `AGENT_CLI_API_KEY` | `api_key` | API 키 |
-| `AGENT_CLI_MODEL` | — | 모델 ID — 노브 `model` 의 부팅값 (v10.43.0; `--model`/`-m`, 웹 🤖 칩 v10.45.0). 세션 도중 바꾸면 다음 LLM 호출부터 실린다. config.json 의 `default_model` 은 파일에서만 읽는다 |
+| `AGENT_CLI_ENDPOINT` | `endpoint` | 쓸 서버 이름 (v10.144.0) — `--endpoint` 다음, 세션 기록·config 의 `endpoint` 보다 앞선다. 없는 이름은 종료 코드 `2` |
+| `AGENT_CLI_PROVIDER` | `provider` | 저장된 서버가 없을 때의 프로바이더 — 비면 `openai`(OpenAI 호환). 서버가 골라지면 쓰이지 않음 (v10.144.0) |
+| `AGENT_CLI_BASE_URL` | `base_url` | 저장된 서버가 없을 때의 API 엔드포인트 (설정 파일 없는 컨테이너·CI). 서버가 골라지면 쓰이지 않음 |
+| `AGENT_CLI_API_KEY` | `api_key` | 저장된 서버가 없을 때의 API 키. 서버가 골라지면 쓰이지 않음 |
+| `AGENT_CLI_MODEL` | — | 모델 ID — 노브 `model` 의 부팅값 (v10.43.0; `--model`/`-m`, 웹 🤖 칩 v10.45.0). 세션 도중 바꾸면 다음 LLM 호출부터 실린다. 서버의 `default_model` 위에 선다 |
 | `ANTHROPIC_API_KEY` | — | Anthropic API 키 (기존 호환) |
 | `OPENAI_API_KEY` | — | OpenAI API 키 (기존 호환) |
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
@@ -547,10 +601,11 @@ agent-cli run "task description" [options]
 
 | 옵션 | 설명 | 기본값 |
 |------|------|--------|
-| `-p, --provider` | `openai` / `anthropic` | `openai` |
-| `-m, --model` | 모델 ID | 프로바이더 기본값 |
-| `--base-url` | API 엔드포인트 | 프로바이더 기본값 |
-| `--api-key` | API 키 (환경 변수 자동 감지) | |
+| `--endpoint NAME` | 쓸 모델 서버 — `config.json` 에 저장된 이름 (v10.144.0; env `AGENT_CLI_ENDPOINT`). 세션에 기록되고 `--resume` 이 그 이름으로 뜬다. 없는 이름은 종료 코드 `2` | 세션 기록 → config `endpoint` |
+| `-p, --provider` | `openai` / `anthropic` — 고른 서버의 값을 덮는다 | 서버의 값 → `openai` |
+| `-m, --model` | 모델 ID | 서버의 `default_model` |
+| `--base-url` | API 엔드포인트 — 고른 서버의 값을 덮는다. 주소가 어디에도 없으면(서버에 `base_url` 없음·이름 없는 실행에 `AGENT_CLI_BASE_URL` 없음·서버와 다른 `-p`) 종료 코드 `2` — 프로바이더 공개 주소로 가지 않는다 (v10.144.0) | 서버의 값 |
+| `--api-key` | API 키 — 고른 서버의 값을 덮는다 | 서버의 값 → `OPENAI_API_KEY`·`ANTHROPIC_API_KEY` |
 | `-n, --max-turns` | 최대 턴 (0=무제한) | `0` |
 | `--max-context-tokens` | 컨텍스트 윈도우 토큰 상한 (0=모델에서 자동 결정) | `0` |
 | `--max-depth` | 중첩 깊이 (agent + skill 합산). 한계 도달 시 두 도구 모두 자동 비활성. | `2` |
@@ -558,7 +613,7 @@ agent-cli run "task description" [options]
 | `--stall-attempts` | 무진전 시 **총** 전송 횟수(첫 전송 포함, 1~10). 최대 대기 = `--stall` × 이 값 (env `AGENT_CLI_STREAM_MAX_ATTEMPTS`, 웹 ⏳ 칩의 둘째 입력; 한도 0 이면 잠김) | `4` |
 | `--compaction-ratio` | 컨텍스트 압축 목표 비율 (0.5~1.0). 1.0 = 생성이 창에 잘릴 때만 압축. 낮을수록 일찍 압축 (env `AGENT_CLI_COMPACTION_RATIO`, 웹 🗜️ 슬라이더) | `1.0` |
 | `--max-agents` | 동시 생존 서브에이전트 상한 (0 = 무제한) (env `AGENT_CLI_MAX_AGENTS`, 웹 👥 칩) | `10` |
-| `--model` / `-m` | 모델 ID — 노브이기도 하다 (v10.43.0): 세션 도중 바꾸면 다음 LLM 호출부터 (models.json 에 등록되고 이 세션의 방언에 묶인 모델만; env `AGENT_CLI_MODEL`, 웹 🤖 칩 — 같은 방언의 모델 목록에서 고른다, v10.45.0) | config `default_model` |
+| `--model` / `-m` | 모델 ID — 노브이기도 하다 (v10.43.0): 세션 도중 바꾸면 다음 LLM 호출부터 (이 세션 서버의 models.json 칸에 등록되고 이 세션의 방언에 묶인 모델만; env `AGENT_CLI_MODEL`, 웹 🤖 칩 — 같은 서버·같은 방언의 모델 목록에서 고른다, v10.45.0) | 서버의 `default_model` |
 | `--thinking` | 사고 `off`·`on` — 다음 LLM 요청부터 (v10.43.0; env `AGENT_CLI_THINKING`, 웹 🧠 노브). 정도는 서버 기본값(v10.72.0: `auto`·`--reasoning-effort` 제거) | `off` |
 | `--grammar` | 디코딩 문법 제약 `auto`(지원 기록된 모델에서 켬)·`on`·`off` (env `AGENT_CLI_GRAMMAR`, 웹 📐 노브) | `auto` |
 | `--temperature` | 샘플링 temperature 0~2 또는 `auto`(기본 — 보내지 않음: `models.json` 엔트리 → 서버 기본) — 다음 LLM 요청부터 (v10.69.0; env `AGENT_CLI_TEMPERATURE`, 웹 🎲 칩의 첫 입력) | `auto` |
@@ -680,6 +735,7 @@ agent-cli 인스턴스 하나를 단일 세션으로 브라우저 UI 에 노출.
 | `--trust-local` | **loopback(127.0.0.1/::1) 요청은 토큰 인증 생략.** 앞단에 인증을 직접 하는 신뢰된 로컬 게이트웨이/프록시를 둘 때 — 게이트웨이가 토큰을 매 요청 주입할 필요 없음. **localhost 바인드(`--host 127.0.0.1`)일 때만 안전.** 비-loopback 요청과 끈 상태에선 토큰 그대로 요구. | `false` |
 | `--base-path` | **리버스 프록시가 `/<prefix>/*` 를 이 인스턴스로 라우팅(+prefix strip)할 때의 URL 경로 prefix** (예 `/s/doom`). UI 의 모든 URL 은 상대경로이고 serve 되는 index.html 에 `<base href="<prefix>/">` 가 주입돼 prefix 하위로 resolve 됩니다. 기본 `''` = 루트(`<base href="/">`, 기존과 동일). | `''` (루트) |
 | `--title` | **방 제목** (v10.71.0) — 헤더 첫 줄(제목만의 줄 — 칩·노브·아이콘은 그 아래 줄, v10.74.1)과 브라우저 탭(`<제목> · agent-cli`), 배너 `Title:` 줄, `web.json` 의 `title`. 세션 메타에 남아 `--resume` 이 지킨다. agent-board 는 글의 topic 을 spawn 마다 넘기므로 보드에서 고친 제목은 다음 재시작에 들어온다. 없으면 제목 줄 없이 탭은 `agent-cli` | (없음) |
+| `--endpoint NAME` | 쓸 모델 서버 이름 (v10.144.0; env `AGENT_CLI_ENDPOINT`) — `run` 과 같은 순서로 고르고 세션에 기록한다. 배너 `Server:` 줄, 머리 줄의 서버 칩, `web.json` 의 `endpoint`. 방이 뜬 뒤에는 바뀌지 않는다(다른 서버는 보드에서 복제). agent-board 는 글에 기록된 서버를 spawn 마다 넘긴다 | 세션 기록 → config `endpoint` |
 
 > 브라우저 자동 오픈은 **로컬 bind 일 때만** 일어납니다 — 기본 `127.0.0.1`(과 `0.0.0.0`/`localhost`/`::`/`::1`)처럼 *이 머신에서 localhost 로 접속 가능한* 경우. `--host <원격IP>` 처럼 특정 IP 에 바인드하면(원격 서버) 자동 오픈을 생략하고 접속 URL 만 출력합니다(서버에서 브라우저를 띄워봐야 소용없으므로). `--no-browser` 는 로컬에서도 끄고 싶을 때.
 
@@ -775,7 +831,22 @@ curl -X POST "http://localhost:49374/api/input?token=<TOKEN>" \
 agent-cli setup
 ```
 
-프로바이더, 접속 정보, 기본 모델을 대화형으로 설정합니다. 설정이 없을 때 자동으로 실행되며, 언제든 수동으로 다시 실행할 수 있습니다. 기존 설정의 `extra_headers` 는 묻지 않고 그대로 보존하며 모델 목록 조회에도 싣습니다.
+모델 서버 **하나**를 대화형으로 만들거나 고칩니다 — 이름·프로바이더·접속 정보·기본 모델 (v10.144.0). 저장된 서버가 없을 때 자동으로 실행되며, 언제든 수동으로 다시 실행할 수 있습니다(서버를 더 추가하거나 고칠 때). 저장된 서버 표(키는 `***`)를 먼저 보여 주고, 저장된 이름을 대면 그 서버를 고칩니다 — 빈 API 키 입력은 저장된 키를 유지합니다. 첫 서버는 기본 서버가 되고, 그 뒤 서버는 기본으로 할지 묻습니다. 고치는 서버의 `extra_headers` 는 묻지 않고 그대로 보존하며 모델 목록 조회에도 싣습니다. 자세한 편집(헤더·모델 표)은 보드 admin 이나 파일 편집으로 합니다.
+
+옛 모양(v10.143.0 까지) 파일이 있으면 읽지 않았다고 한 줄로 알리고, 저장 직전에 `config.json.v1`·`models.json.v1` 로 이름만 바꿔 남깁니다(이미 있으면 `.v1-2`, `.v1-3` … — 덮어쓰지 않습니다).
+
+### `endpoints` — 저장된 서버 목록
+
+```bash
+agent-cli endpoints
+```
+
+```
+home  openai  127.0.0.1:8000          (default)
+work  openai  gateway.example.com
+```
+
+이름·프로바이더·호스트(`host[:port]` — 경로·쿼리·사용자 정보는 보이지 않음)와 기본 서버 표시. 키와 헤더 값은 보이지 않습니다. 서버가 없으면 `agent-cli setup`·보드 admin 으로 추가하라는 한 줄입니다(종료 코드 `0`).
 
 ### `sessions` — 세션 관리
 
@@ -808,7 +879,7 @@ Sessions for /path/to/project:
 |------|------|--------|
 | `-w, --workspace` | 워크스페이스 경로 필터 | 현재 디렉토리 |
 
-**`--resume` 없이 시작할 때:** `web` 을 `--resume` 없이 실행하면, 가장 최근 세션을 위 포맷으로 보여주고 `Resume it? [y/N]` 를 묻습니다. `y` 면 그 세션을 이어가고, 그 외(Enter 포함)는 새 세션으로 시작합니다 (안전한 기본값). 파이프/비대화 환경(stdin 이 TTY 아님)에서는 묻지 않고 항상 새 세션입니다.
+**`--resume` 없이 시작할 때:** `web` 을 `--resume` 없이 실행하면, 가장 최근 세션을 위 포맷으로 보여주고 `Resume it? [y/N]` 를 묻습니다. `y` 면 그 세션을 이어가고, 그 외(Enter 포함)는 새 세션으로 시작합니다 (안전한 기본값). 파이프/비대화 환경(stdin 이 TTY 아님)에서는 묻지 않고 항상 새 세션입니다. v10.144.0 부터 이 질문은 모델 서버에 접속하기 **전에** 합니다 — 이어 가는 세션에 기록된 서버로 떠야 하므로. 새 세션은 접속이 끝난 뒤 만들어, 부트가 실패하면 빈 세션 디렉터리가 남지 않습니다.
 
 LLM은 `history` 도구로 현재 또는 이전 세션의 이력을 **SQL 로 질의**할 수 있습니다 (history 테이블에 `SELECT` — kind/tools/files/author/turn/text 컬럼, 읽기전용).
 
@@ -1123,7 +1194,8 @@ agent-cli run "task" -p openai --base-url https://api.openai.com/v1 -m gpt-4o
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-agent-cli run "task" -p anthropic
+agent-cli run "task" -p anthropic --base-url https://api.anthropic.com/v1 -m <model>
+# 또는 `agent-cli setup` 으로 provider anthropic 서버를 저장하고 --endpoint 로 고른다
 ```
 
 System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용된다.
@@ -1132,17 +1204,22 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
 
 ## 모델 레지스트리
 
-`models.json`에 모델별 능력치를 정의합니다:
+`models.json`에 **서버별로** 모델 능력치를 정의합니다 (v10.144.0 — 같은 모델 이름이라도 서버에 따라 방언이 다를 수 있어 서버 아래에 둡니다). 한 방(프로세스)은 자기 서버의 칸만 읽고 씁니다:
 
 ```json
 {
-  "models": {
-    "gpt-4o": {
-      "provider": "openai",
-      "context_window": 32768,
-      "max_output_tokens": 4096,
-      "supports_thinking": true,
-      "supports_vision": true
+  "endpoints": {
+    "home": {
+      "models": {
+        "gpt-4o": {
+          "provider": "openai",
+          "context_window": 32768,
+          "max_output_tokens": 4096,
+          "supports_thinking": true,
+          "supports_vision": true,
+          "dialect": "json_fc"
+        }
+      }
     }
   }
 }
@@ -1154,10 +1231,10 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
 
 | 우선순위 | 위치 | 역할 | 자동 저장 |
 |---------|------|------|----------|
-| 1 | `~/.agent-cli/models.json` | 유저 설정 (v9.0.0 — 프로젝트 `models.json` 은 읽지 않음) | 새 모델 자동 저장 |
-| 2 | `agent_cli/default_models.json` | 패키지 기본값 | 안 함 (읽기만) |
+| 1 | `~/.agent-cli/models.json` 의 `endpoints.<이 세션의 서버>.models` | 유저 설정 (v9.0.0 — 프로젝트 `models.json` 은 읽지 않음) | 새 모델 자동 저장 (그 서버 칸에) |
+| 2 | `agent_cli/default_models.json` | 패키지 기본값 — 서버와 무관한 바닥 | 안 함 (읽기만) |
 
-- 미등록 모델은 런타임 자동 감지 → `~/.agent-cli/models.json`에 저장
+- 미등록 모델은 런타임 자동 감지 → `~/.agent-cli/models.json` 의 이 세션 서버 칸에 저장. 서버가 골라지지 않은 실행(env 만)은 패키지 기본 표만 읽고 저장하지 않습니다
   - OpenAI 호환: context window를 `/v1/models`의 `max_model_len`에서 읽고, 값이 없으면 컨텍스트 오버플로 프로브로 추정. 추가로 thinking 지원 여부를 프로브.
   - Anthropic: 동일한 로직을 Anthropic API(`/messages`, `x-api-key`+`anthropic-version`)로 프로브 — context window는 `/models` 메타(omlx) → `/messages` 오버플로 프로브 → 128K 폴백, structured-output 은 프롬프트 기반 JSON 검사. (`/v1/models` 메타가 없는 실 Anthropic 모델은 레지스트리/폴백 사용.)
   - Thinking 감지: 프로브 프롬프트 → `reasoning_content` 필드 또는 `<think>` 태그 확인 (하드코딩 없이 자동). **2단계(v8.22.0)**: 기본 프로브에서 미검출이면 사고 스위치를 켜고 재프로브 → Qwen 처럼 사고가 기본 OFF 인 모델도 감지. **v8.37.0 부터 두 transport 공통**: OpenAI 호환은 `enable_thinking=true`, Anthropic 호환은 `thinking` 블록으로 재프로브(재프로브 실패는 관용 → 미지원). (이미 저장된 엔트리는 재감지 전까지 갱신 안 됨 — 과거 `false` 로 잘못 저장됐으면 재감지/수동 수정 필요.)

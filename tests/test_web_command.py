@@ -80,7 +80,7 @@ class TestC4Bootstrap:
         monkeypatch.setattr(
             m,
             "_setup_provider",
-            lambda *a, **k: ("PROV", caps, "m1", "http://u", "k", "openai"),
+            lambda *a, **k: ("PROV", caps, "m1", "http://u", "k", "openai", ""),
         )
         return m
 

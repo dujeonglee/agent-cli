@@ -123,7 +123,12 @@ class WebRenderer(Renderer):
     """
 
     def __init__(
-        self, *, workspace: str = "", session_dir: str = "", title: str = ""
+        self,
+        *,
+        workspace: str = "",
+        session_dir: str = "",
+        title: str = "",
+        endpoint: str = "",
     ) -> None:
         super().__init__()
         self._lock = threading.Lock()
@@ -174,6 +179,7 @@ class WebRenderer(Renderer):
         #: 방 제목 (v10.71.0) — ``ready`` 에 실려 헤더 첫 자리·브라우저 탭이 된다. 빈
         #: 문자열 = 필드 생략(헤더에 제목 자리가 생기지 않는다).
         self._title = title
+        self._endpoint = endpoint
         # Per-scope system-prompt snapshots for the Prompt Inspector
         # (``GET /api/debug/prompt``). Keyed by scope: ``_MAIN_SCOPE`` ("")
         # is the main loop, a ``task_id`` is a delegate sub-agent — resolved
@@ -1301,6 +1307,8 @@ class WebRenderer(Renderer):
             payload["workspace"] = self._workspace
         if self._title:
             payload["title"] = self._title
+        if self._endpoint:
+            payload["endpoint"] = self._endpoint
         # Sticky + ``prepend`` so the top-bar populates before everything on a
         # client that opens the page mid-session (fixes stuck "connecting…").
         self.set_sticky("ready", "ready", payload, position="prepend")

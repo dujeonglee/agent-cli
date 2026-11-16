@@ -10,6 +10,7 @@ import pytest
 from agent_cli.dialects import get as get_wf
 from agent_cli.dialects.engine import Dialect
 from agent_cli.dialects.specs.xml_fc import XML_FC
+from tests.endpoint_files import point_models
 from tests.loop_ports import TEST_PORTS
 
 
@@ -640,16 +641,16 @@ class TestBindingIntegration:
     def test_models_json_binding_resolves_xml_fc(self, tmp_path, monkeypatch):
         import json as _json
 
-        import agent_cli.config as _config
         from agent_cli.dialects import resolve_dialect
 
         target = tmp_path / "models.json"
         target.write_text(
-            _json.dumps({"models": {"qwen-x": {"dialect": "xml_fc"}}}),
+            _json.dumps(
+                {"endpoints": {"t": {"models": {"qwen-x": {"dialect": "xml_fc"}}}}}
+            ),
             encoding="utf-8",
         )
-        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-        monkeypatch.setattr(_config, "_cached_registry", None)
+        point_models(monkeypatch, target)
         import agent_cli.dialects as _dialects
 
         monkeypatch.setattr(_dialects, "_override", None)

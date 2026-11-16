@@ -148,27 +148,36 @@ class TestInputsReachTheOwners:
 class TestModelChip:
     @pytest.fixture
     def models(self, tmp_path, monkeypatch):
-        import agent_cli.config as _config
         import agent_cli.dialects as _dialects
+        from tests.endpoint_files import point_models
 
         target = tmp_path / "models.json"
         target.write_text(
             json.dumps(
                 {
-                    "models": {
-                        "Test-Model-8bit": {
-                            "context_window": 32768,
-                            "dialect": "json_fc",
-                        },
-                        "other-json": {"context_window": 20000, "dialect": "json_fc"},
-                        "foreign-xml": {"context_window": 8000, "dialect": "xml_fc"},
+                    "endpoints": {
+                        "t": {
+                            "models": {
+                                "Test-Model-8bit": {
+                                    "context_window": 32768,
+                                    "dialect": "json_fc",
+                                },
+                                "other-json": {
+                                    "context_window": 20000,
+                                    "dialect": "json_fc",
+                                },
+                                "foreign-xml": {
+                                    "context_window": 8000,
+                                    "dialect": "xml_fc",
+                                },
+                            }
+                        }
                     }
                 }
             ),
             encoding="utf-8",
         )
-        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-        monkeypatch.setattr(_config, "_cached_registry", None)
+        point_models(monkeypatch, target)
         monkeypatch.setattr(_dialects, "_override", None)
 
     def test_options_are_the_models_bound_to_this_dialect(self, models, stack, page):

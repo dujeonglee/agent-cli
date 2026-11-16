@@ -21,6 +21,7 @@ import agent_cli.main as m
 from agent_cli import model_check
 from agent_cli.providers import capabilities as _caps
 from agent_cli.providers.capabilities import ModelCapabilities
+from tests.endpoint_files import point_config
 
 URL = "http://127.0.0.1:1/v1"
 MODEL = "fresh-model"
@@ -35,19 +36,17 @@ DETECTED = ModelCapabilities(
 
 @pytest.fixture
 def models_path(tmp_path, monkeypatch):
-    target = tmp_path / "models.json"
-    monkeypatch.setattr(_config, "_GLOBAL_MODELS_PATH", target)
-    monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-    monkeypatch.setattr(_config, "_cached_registry", None)
+    monkeypatch.delenv("AGENT_CLI_ENDPOINT", raising=False)
+    _, target = point_config(
+        monkeypatch,
+        tmp_path,
+        endpoints={"home": {"provider": "openai"}},
+        package=False,
+    )
     monkeypatch.setattr(_dialects, "_override", None)
-    monkeypatch.setattr(_config, "_CONFIG_PATHS", [tmp_path / "config.json"])
-    (tmp_path / "config.json").write_text('{"provider": "openai"}', encoding="utf-8")
-    _config.reload_config()
     model_check._cache.clear()
     yield target
     model_check._cache.clear()
-    _config.reload_config()
-    _config.reload_registry()
 
 
 @pytest.fixture
@@ -98,7 +97,8 @@ def _terminal(monkeypatch, answers=None):
 
 
 def _entry(path):
-    return json.loads(path.read_text(encoding="utf-8"))["models"][MODEL]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data["endpoints"]["home"]["models"][MODEL]
 
 
 def _boot(quiet=False):
@@ -185,7 +185,7 @@ def test_unsavable_entry_is_not_asked(models_path, out, monkeypatch):
     monkeypatch.setattr(
         m,
         "_setup_provider",
-        lambda *a, **k: (object(), DETECTED, MODEL, URL, "", "openai"),
+        lambda *a, **k: (object(), DETECTED, MODEL, URL, "", "openai", "home"),
     )
     with pytest.raises(typer.Exit) as ei:
         _boot()
@@ -200,7 +200,10 @@ def test_unsavable_entry_is_not_asked(models_path, out, monkeypatch):
 def _registered(path, dialect_value):
     entry = {"context_window": 32768, "supports_thinking": False}
     entry["dialect"] = dialect_value
-    path.write_text(json.dumps({"models": {MODEL: entry}}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"endpoints": {"home": {"models": {MODEL: entry}}}}),
+        encoding="utf-8",
+    )
     _config.reload_registry()
 
 
@@ -221,6 +224,7 @@ def test_empty_dialect_value_is_unbound_and_gets_filled(
 
 
 def test_bind_user_dialect_never_overwrites_a_value(models_path):
+    _config.use_endpoint("home")
     _registered(models_path, "json_fc")
     assert _config.bind_user_dialect(MODEL) is False
     assert _config.bind_user_dialect(MODEL, "xml_fc") is False
@@ -244,7 +248,7 @@ def test_write_failure_after_asking_keeps_the_message(
     assert ei.value.exit_code == 2
     assert len(answers.prompts) == 1
     text = " ".join(out.export_text().split())
-    assert f"Could not save the dialect to {models_path}." in text
+    assert f"Could not save the dialect to {models_path} (server 'home')." in text
     assert "--dialect xml_fc" in text
     assert _entry(models_path)["dialect"] == ""
     assert _dialects._override is None
@@ -255,19 +259,19 @@ def test_long_models_path_is_one_chunk_at_80_columns(
 ):
     deep = tmp_path / ("d" * 90)
     deep.mkdir()
-    target = deep / "models.json"
-    monkeypatch.setattr(_config, "_GLOBAL_MODELS_PATH", target)
-    monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-    monkeypatch.setattr(_config, "_cached_registry", None)
+    monkeypatch.delenv("AGENT_CLI_ENDPOINT", raising=False)
+    _, target = point_config(
+        monkeypatch,
+        deep,
+        endpoints={"home": {"provider": "openai"}},
+        package=False,
+    )
     monkeypatch.setattr(_dialects, "_override", None)
-    monkeypatch.setattr(_config, "_CONFIG_PATHS", [tmp_path / "none.json"])
-    _config.reload_config()
     model_check._cache.clear()
     _terminal(monkeypatch, _Answers("json_fc"))
     _boot()
     assert len(str(target)) > 80
     assert str(target) in out.export_text()
-    _config.reload_registry()
 
 
 # ── 설명의 원천은 스펙 하나 ─────────────────────────────────────

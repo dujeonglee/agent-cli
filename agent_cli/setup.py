@@ -1,12 +1,10 @@
 """First-time setup wizard using Rich TUI.
 
-Guides user through provider, connection, and model selection.
-Saves configuration to ~/.agent-cli/config.json or .agent-cli/config.json.
+Guides the user through one model server: its name, provider, connection and
+default model. Saves it under ``endpoints`` in ~/.agent-cli/config.json.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import requests
 from rich.console import Console
@@ -15,7 +13,6 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 from rich.text import Text
 
-from agent_cli.config import save_config
 from agent_cli.providers.credentials import (
     Credentials,
     ExtraHeaderError,
@@ -59,23 +56,6 @@ def _list_models(
     return []
 
 
-def _existing_extra_headers():
-    """기존 유저 config.json 의 ``extra_headers`` 원본 — 없거나 못 읽으면 None.
-
-    마법사는 추가 헤더를 묻지 않으므로 저장할 때 이것을 그대로 되쓴다(보드나 손으로
-    적은 것이 마법사 한 번에 사라지지 않게)."""
-    from agent_cli.config import ConfigError, read_config_file
-    from agent_cli.paths import user_dir
-
-    path = user_dir() / "config.json"
-    if not path.is_file():
-        return None
-    try:
-        return read_config_file(path).get("extra_headers")
-    except ConfigError:
-        return None
-
-
 def _wizard_credentials(api_key: str, extra_headers) -> Credentials:
     """모델 목록 조회용 — 기존 추가 헤더가 규칙을 어기면 헤더 없이 묻는다(마법사는
     깨진 설정을 고치는 길이라 멈추지 않는다; 부팅이 그 오류를 이름과 함께 알린다)."""
@@ -87,38 +67,62 @@ def _wizard_credentials(api_key: str, extra_headers) -> Credentials:
         return Credentials(api_key=api_key)
 
 
+def _saved_endpoints() -> tuple[dict[str, dict], str | None, str]:
+    """``(저장된 서버들, 기본 서버 이름, 못 읽었을 때의 사유)`` — 마법사는 깨진 설정을 고치는
+    길이라 못 읽어도 멈추지 않는다(저장하면 바뀐다)."""
+    from agent_cli.config import ConfigError, default_endpoint_name, list_endpoints
+
+    try:
+        return list_endpoints(), default_endpoint_name(), ""
+    except ConfigError as e:
+        return {}, None, str(e)
+
+
 class SetupWizard:
-    """Interactive setup wizard for agent-cli configuration."""
+    """Interactive setup wizard — creates or edits one model server (endpoint).
+
+    서버 하나를 만들거나 고친다(v10.144.0). 서버 이름은 사용자가 정하고 바꾸지 않는다.
+    추가 헤더(`extra_headers`)는 묻지 않는다 — 고치는 서버의 것을 그대로 두고(저장이 그
+    키를 건드리지 않는다) 모델 목록 조회에도 싣는다. 옛 모양 설정은 읽지 않고, 저장 직전에
+    `config.retire_legacy_files` 가 ``.v1`` 로 이름만 바꿔 남긴다."""
 
     def __init__(self):
         self.console = console
 
     def run(self) -> dict | None:
-        """Run the setup wizard. Returns config dict or None if cancelled."""
+        """Run the setup wizard. Returns the saved server values (with ``name``) or None."""
         self._welcome()
-        self._show_existing_configs()
+        saved, default, unreadable = _saved_endpoints()
+        self._show_existing(saved, default, unreadable)
+        name = self._select_name(saved)
+        existing = saved.get(name, {})
         provider = self._select_provider()
-        base_url, api_key = self._configure_connection(provider)
-        # 추가 헤더(`extra_headers`)는 마법사가 묻지 않는다 — 기존 설정의 것을 그대로
-        # 두고(저장 때 보존), 모델 목록 조회에도 싣는다(게이트웨이가 요구할 수 있다).
-        extra_headers = _existing_extra_headers()
+        base_url, api_key = self._configure_connection(provider, existing)
+        key_for_listing = api_key if api_key else str(existing.get("api_key") or "")
         default_model = self._select_model(
-            provider, base_url, _wizard_credentials(api_key, extra_headers)
+            provider,
+            base_url,
+            _wizard_credentials(key_for_listing, existing.get("extra_headers")),
         )
         if not default_model:
             self.console.print("[yellow]No model selected. Setup cancelled.[/]")
             return None
 
         config = self._build_config(provider, base_url, api_key, default_model)
-        if extra_headers is not None:
-            config["extra_headers"] = extra_headers
-        if not self._review(config):
+        if not api_key and existing.get("api_key"):
+            del config["api_key"]  # 빈 입력 = 저장된 키 유지
+        make_default = default is None or default not in saved or name == default
+        if not make_default:
+            make_default = Confirm.ask(
+                f"   Use '{name}' as the default server?", default=False
+            )
+        if not self._review(name, config, existing, make_default):
             self.console.print("[yellow]Setup cancelled.[/]")
             return None
 
-        self._save(config)
-        self._done(config)
-        return config
+        self._save(name, config, make_default)
+        self._done()
+        return {"name": name, **config}
 
     def _welcome(self) -> None:
         self.console.print()
@@ -131,65 +135,78 @@ class SetupWizard:
         )
         self.console.print()
 
-    def _show_existing_configs(self) -> None:
-        """Display the existing user config so the user can reference it
-        before picking new values. Silent when none exists (first-time setup).
-        v9.0.0: config.json 은 유저 스코프만 — 프로젝트 후보는 없다."""
-        from agent_cli.config import ConfigError, read_config_file
-        from agent_cli.paths import user_dir
+    def _show_existing(
+        self, saved: dict[str, dict], default: str | None, unreadable: str
+    ) -> None:
+        """저장된 서버 표(키는 ``***``) — 없으면 조용하다. 옛 모양 파일·못 읽은 파일은 한 줄."""
+        from agent_cli.config import legacy_config_present
 
-        candidates = [("User", user_dir() / "config.json")]
-        entries: list[tuple[str, Path, dict]] = []
-        for label, path in candidates:
-            if not path.exists():
-                continue
-            try:
-                data = read_config_file(path)
-            except ConfigError as e:
-                # setup 은 깨진 파일을 고치는 길이다 — 멈추지 않고 사실만 말한다 (v10.123.4)
-                self.console.print(
-                    f"Could not read the existing config {e}. "
-                    "Saving at the end of setup replaces it.\n",
-                    style="yellow",
-                    markup=False,
-                    highlight=False,
-                    soft_wrap=True,  # 경로를 rich 가 80칸에서 끊지 않게
-                )
-                continue
-            entries.append((label, path, data))
-
-        if not entries:
+        if unreadable:
+            self.console.print(
+                f"Could not read the existing config {unreadable}. "
+                "Saving at the end of setup keeps it as a .v1 file; the servers "
+                "in it will not be in the new file.\n",
+                style="yellow",
+                markup=False,
+                highlight=False,
+                soft_wrap=True,  # 경로를 rich 가 80칸에서 끊지 않게
+            )
+        elif legacy_config_present():
+            self.console.print(
+                "Settings saved before 10.144.0 are not read. Saving at the end of "
+                "setup keeps the old files as config.json.v1 / models.json.v1.\n",
+                style="yellow",
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
+        if not saved:
             return
 
         table = Table(show_header=True, header_style="bold cyan", padding=(0, 1))
-        table.add_column("Scope", style="cyan", no_wrap=True)
+        table.add_column("Server", style="cyan", no_wrap=True)
         table.add_column("Provider")
         table.add_column("Base URL")
         table.add_column("Default Model")
         table.add_column("API Key")
-        table.add_column("Path", style="grey46")
-        for label, path, data in entries:
-            has_key = bool(data.get("api_key"))
+        for name, data in sorted(saved.items()):
+            label = f"{name} (default)" if name == default else name
             table.add_row(
-                label,
-                str(data.get("provider") or "(unset)"),
-                str(data.get("base_url") or "(unset)"),
-                str(data.get("default_model") or "(unset)"),
-                "***" if has_key else "(none)",
-                str(path),
+                Text(label),
+                Text(str(data.get("provider") or "openai")),
+                Text(str(data.get("base_url") or "(unset)")),
+                Text(str(data.get("default_model") or "(unset)")),
+                "***" if data.get("api_key") else "(none)",
             )
         self.console.print(
             Panel(
                 table,
-                title="Existing configuration",
-                subtitle="for reference — new choices below can override these",
+                title="Saved servers",
+                subtitle="enter an existing name to edit it, or a new name to add one",
                 border_style="grey46",
             )
         )
         self.console.print()
 
+    def _select_name(self, saved: dict[str, dict]) -> str:
+        from agent_cli.config import ENDPOINT_NAME_RE
+
+        self.console.print("[bold]1. Server name[/]")
+        self.console.print(
+            "   [dim]Lowercase letters, digits and '-'. Rooms remember a server by "
+            "this name, so it cannot be renamed later.[/]"
+        )
+        while True:
+            name = Prompt.ask("   Name").strip()
+            if ENDPOINT_NAME_RE.match(name):
+                break
+            self.console.print("   [yellow]Use lowercase letters, digits and '-'.[/]")
+        action = "Editing" if name in saved else "New server"
+        self.console.print(f"   [green]{action}: {name}[/]\n")
+        return name
+
     def _select_provider(self) -> str:
-        self.console.print("[bold]1. Select LLM Provider[/]")
+        self.console.print("[bold]2. Select LLM Provider[/]")
         for i, (key, label) in enumerate(_PROVIDERS, 1):
             self.console.print(f"   [{i}] {label}")
 
@@ -202,15 +219,26 @@ class SetupWizard:
         self.console.print(f"   [green]Selected: {provider}[/]\n")
         return provider
 
-    def _configure_connection(self, provider: str) -> tuple[str, str]:
-        self.console.print(f"[bold]2. {provider.title()} Connection[/]")
+    def _configure_connection(
+        self, provider: str, existing: dict | None = None
+    ) -> tuple[str, str]:
+        existing = existing or {}
+        self.console.print(f"[bold]3. {provider.title()} Connection[/]")
 
-        default_url = _DEFAULT_URLS.get(provider, "https://api.openai.com/v1")
+        default_url = str(existing.get("base_url") or "") or _DEFAULT_URLS.get(
+            provider, "https://api.openai.com/v1"
+        )
         base_url = Prompt.ask("   Base URL", default=default_url)
 
         # API key — OpenAI-compatible servers may not need one (omlx /
-        # local vLLM), but the prompt allows it; empty stays empty.
-        api_key = Prompt.ask("   API Key", password=True, default="")
+        # local vLLM), but the prompt allows it; empty stays empty, or keeps the
+        # saved key when editing a server.
+        label = (
+            "   API Key (empty keeps the saved key)"
+            if existing.get("api_key")
+            else "   API Key"
+        )
+        api_key = Prompt.ask(label, password=True, default="")
 
         self.console.print()
         return base_url, api_key
@@ -218,7 +246,7 @@ class SetupWizard:
     def _select_model(
         self, provider: str, base_url: str, credentials: Credentials
     ) -> str:
-        self.console.print("[bold]3. Select Default Model[/]")
+        self.console.print("[bold]4. Select Default Model[/]")
         # Both providers expose ``/models`` (omlx serves the same models under
         # both APIs; real Anthropic has GET /v1/models too) — list them so the
         # user picks a real id instead of typing. Falls back to manual entry
@@ -269,36 +297,60 @@ class SetupWizard:
             "default_model": default_model,
         }
 
-    def _review(self, config: dict) -> bool:
-        self.console.print("[bold]4. Review[/]")
+    def _review(
+        self, name: str, config: dict, existing: dict, make_default: bool
+    ) -> bool:
+        self.console.print("[bold]5. Review[/]")
         table = Table(show_header=False, padding=(0, 2))
         table.add_column("Key", style="cyan")
         table.add_column("Value")
-        table.add_row("Provider", config["provider"])
-        table.add_row("Base URL", config["base_url"])
-        table.add_row("API Key", "***" if config["api_key"] else "(none)")
-        table.add_row("Model", config["default_model"])
+        table.add_row("Server", Text(name + (" (default)" if make_default else "")))
+        table.add_row("Provider", Text(config["provider"]))
+        table.add_row("Base URL", Text(config["base_url"]))
+        has_key = bool(config.get("api_key") or existing.get("api_key"))
+        table.add_row("API Key", "***" if has_key else "(none)")
+        table.add_row("Model", Text(config["default_model"]))
 
         self.console.print(Panel(table, title="Configuration"))
         return Confirm.ask("   Save?", default=True)
 
-    def _save(self, config: dict) -> None:
-        # v9.0.0: 저장 위치 질문 제거 — config.json 은 유저 스코프 하나뿐
-        # (docs/config-scopes). 프로젝트별 모델 고정은 `--model`/env 로.
-        from agent_cli.paths import user_dir
+    def _save(self, name: str, config: dict, make_default: bool) -> None:
+        """옛 모양 파일을 ``.v1`` 로 남기고, 서버 하나를 저장하고, 필요하면 기본으로 지정한다."""
+        from agent_cli.config import (
+            config_path,
+            retire_legacy_files,
+            save_endpoint,
+            set_default_endpoint,
+        )
 
-        path = user_dir() / "config.json"
-        save_config(config, path)
-        self.console.print(f"   [green]Saved to {path}[/]")
+        for kept in retire_legacy_files():
+            self.console.print(
+                f"   Kept the old file as {kept}",
+                style="grey46",
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
+        save_endpoint(name, config)
+        if make_default:
+            set_default_endpoint(name)
+        self.console.print(
+            f"   Saved server '{name}' to {config_path()}",
+            style="green",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
 
-    def _done(self, config: dict) -> None:
+    def _done(self) -> None:
         self.console.print()
         self.console.print(
             Panel(
                 "[green]Ready![/] Try:\n"
                 '  agent-cli run "List files in current directory"\n'
                 "  agent-cli web   [dim](interactive browser UI)[/]\n"
-                "  agent-cli setup  [dim](to reconfigure)[/]",
+                "  agent-cli endpoints  [dim](saved servers)[/]\n"
+                "  agent-cli setup  [dim](to add or edit a server)[/]",
                 title="Setup Complete",
             )
         )

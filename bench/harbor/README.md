@@ -7,7 +7,7 @@ harbor 는 `uv tool` 로 격리 설치, 어댑터는 harbor + stdlib 만 import 
 ```
 [호스트 harbor]                          [태스크 컨테이너]
 harbor run … --agent agent_cli_harbor:AgentCli
-  setup  → install():  wheel 업로드 ──→  uv tool install (py3.12 격리) + ~/.agent-cli/models.json
+  setup  → install():  wheel 업로드 ──→  uv tool install (py3.12 격리) + ~/.agent-cli/config.json·models.json (서버 하나, 권한 600)
   run    → run():      env 주입    ──→  agent-cli run "$AGENT_CLI_TASK" -p openai -m <model> …
                                         세션 → /logs/agent/sessions (AGENT_CLI_SESSIONS_DIR)
                                         종료 코드 → /logs/agent/exit-code.txt (0·1 은 검증으로, 2+ 는 harbor 예외)
@@ -24,8 +24,13 @@ open -a Docker                  # 데몬 필요 (-e docker 기본)
 ```
 
 LLM 은 **컨테이너 안에서** 호출되므로 호스트 서버(omlx/vLLM 등)는
-`host.docker.internal` 로 접근한다. 모델이 `~/.agent-cli/models.json` 에 등록돼
-있으면 컨테이너 안 런타임 프로빙을 건너뛴다(어댑터가 파일을 주입).
+`host.docker.internal` 로 접근한다. 어댑터는 컨테이너에 **서버 하나짜리** `config.json`·`models.json`
+(agent-cli ≥ 10.144.0 모양)을 올린다 — 서버는 호스트 agent-cli 의 선택된 서버(`--ak endpoint=<이름>` 로
+다른 서버), 주소는 `--ae AGENT_CLI_BASE_URL` 또는 그 서버의 `base_url`(loopback → `host.docker.internal`),
+키·추가 헤더는 `--ae AGENT_CLI_API_KEY` 또는 그 서버의 값, 모델 표는 호스트 `models.json` 의 그 서버 칸.
+방언 바인딩이 그 칸에서 오므로 벤치 모델이 그 서버에 등록돼 있어야 한다(없으면 컨테이너 안 런타임
+프로빙 뒤 `No dialect for model` 로 끝난다). 키는 파일로만 가고 env·명령줄에는 없다. 호스트 설정이 옛 모양
+(v10.143.0 까지)이면 읽지 않는다 — `agent-cli setup` 을 먼저 다시 한다.
 
 ## 실행
 
@@ -85,7 +90,9 @@ agent-cli(off) 4/9 · agent-cli(on) 4/9 · Hermes 4/9 — 점수는 같고 통�
 | `max_depth` | (agent-cli 기본) | `--max-depth` |
 | `prompt_template_path` | (없음) | Jinja 템플릿(`{{ instruction }}`) — `prompt.j2` 는 비대화형 규칙(`ask` 금지·검증 후 `complete`) 추가 |
 | `wheel` | `dist/` 최신(버전 숫자 비교 — 사전순이면 9.24 가 10.27 을 이긴다) | 컨테이너에 설치할 wheel 경로 |
-| `models_json` | `~/.agent-cli/models.json` | 주입할 모델 레지스트리 (`""` 면 미주입 → 런타임 프로빙) |
+| `endpoint` | 호스트 config 의 선택된 서버 | 컨테이너에 올릴 호스트 agent-cli 서버 이름 — 없는 이름은 오류 |
+| `host_config` | `~/.agent-cli/config.json` | 서버의 접속 정보를 읽을 호스트 설정 |
+| `models_json` | `~/.agent-cli/models.json` | 그 서버 칸을 주입할 모델 레지스트리 (`""` 면 미주입 → 런타임 프로빙) |
 | `python` | 3.12 | uv 가 컨테이너에 확보할 파이썬 |
 | `extras` | `image` | wheel 의 extras(쉼표 구분) — `image` 는 Pillow(이미지 축소, v10.61.1 부터 선택 의존성). `""` 면 순정 설치 |
 

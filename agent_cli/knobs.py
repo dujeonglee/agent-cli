@@ -313,11 +313,11 @@ def _model_info(s: KnobSession) -> dict:
 def _model_options(s: KnobSession) -> list[str]:
     """models.json 에 등록되고 이 세션의 방언으로 풀리는 모델들 — `binding.switch`
     가 받는 것과 같은 규칙(`resolve_dialect` 가 `--dialect` 강제를 안다)."""
-    from agent_cli.config import _load_registry
+    from agent_cli.config import model_names
     from agent_cli.dialects import resolve_dialect
 
     out = []
-    for name in sorted(_load_registry().get("models", {})):
+    for name in model_names():
         try:
             if resolve_dialect(name).name == s.binding.dialect.name:
                 out.append(name)
@@ -511,9 +511,9 @@ KNOBS: tuple[Knob, ...] = (
         env="AGENT_CLI_MODEL",
         label="Model",
         help=(
-            "Model ID (default: config.json default_model, then the provider's "
-            "default). Mid-session switches apply from the next LLM call; the "
-            "model must be in models.json and bound to this session's dialect."
+            "Model ID (default: the server's default_model in config.json). "
+            "Mid-session switches apply from the next LLM call; the model must be "
+            "in the server's models.json entries and bound to this session's dialect."
         ),
         kind=Text(),
         default=None,

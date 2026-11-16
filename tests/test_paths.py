@@ -49,17 +49,16 @@ class TestSingleScopePins:
     def test_config_is_user_only(self):
         from agent_cli import config
 
-        assert config._CONFIG_PATHS == [Path.home() / _A / "config.json"]
+        assert config._CONFIG_PATH == Path.home() / _A / "config.json"
 
     def test_models_is_user_only_plus_builtin(self):
         from agent_cli import config
 
-        assert config._SEARCH_PATHS == [
-            Path.home() / _A / "models.json",
-            Path(config.__file__).parent / "default_models.json",
-        ]
-        # 자동 저장 대상 == 탐색 경로 (한 파일)
-        assert config._GLOBAL_MODELS_PATH == config._SEARCH_PATHS[0]
+        # 사용자 파일 하나(자동 저장 대상이자 서버별 칸) + 패키지 바닥
+        assert config._GLOBAL_MODELS_PATH == Path.home() / _A / "models.json"
+        assert config._PACKAGE_MODELS_PATH == (
+            Path(config.__file__).parent / "default_models.json"
+        )
 
     # ── 프로젝트 스코프 ──
     def test_mcp_is_project_only(self):
@@ -239,18 +238,16 @@ class TestUserScopeFilesAreIgnoredAtRuntime:
         from agent_cli import config as cfgmod
 
         home, proj = self._home_and_project(tmp_path, monkeypatch)
-        (proj / ".agent-cli" / "config.json").write_text(
-            json.dumps({"default_model": "PROJECT-MODEL"})
-        )
-        (home / ".agent-cli" / "config.json").write_text(
-            json.dumps({"default_model": "USER-MODEL"})
-        )
-        monkeypatch.setattr(
-            cfgmod, "_CONFIG_PATHS", [home / ".agent-cli" / "config.json"]
-        )
-        for k in ("AGENT_CLI_MODEL", "AGENT_CLI_PROVIDER"):
-            monkeypatch.delenv(k, raising=False)
-        assert cfgmod.load_config(use_cache=False)["default_model"] == "USER-MODEL"
+
+        def _server(model):
+            return json.dumps(
+                {"endpoint": "home", "endpoints": {"home": {"default_model": model}}}
+            )
+
+        (proj / ".agent-cli" / "config.json").write_text(_server("PROJECT-MODEL"))
+        (home / ".agent-cli" / "config.json").write_text(_server("USER-MODEL"))
+        monkeypatch.setattr(cfgmod, "_CONFIG_PATH", home / ".agent-cli" / "config.json")
+        assert cfgmod.endpoint_config("home")["default_model"] == "USER-MODEL"
 
 
 class TestChatHistoryFollowsSessionsDir:

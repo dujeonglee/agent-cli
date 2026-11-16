@@ -35,6 +35,9 @@
          thinking_tick 이벤트가 실시간 부착. -->
     <!-- 방 제목 (v10.71.0): ``ready`` 의 title — 보드 글의 topic 이 --title 로 온다. 없으면 숨김. -->
     <span id="room-title" class="hd-title" hidden></span>
+    <!-- 서버 칩 (v10.144.0): ``ready`` 의 endpoint — 이 방이 쓰는 config.json 의 서버 이름.
+         방이 뜬 뒤엔 바뀌지 않는다(다른 서버는 보드에서 복제). 없으면 숨김. -->
+    <span id="chip-endpoint" class="hd-chip" hidden></span>
     <span id="token-usage" class="hd-chip" title="token usage" hidden><span id="tok-base"></span></span>
     <button id="chip-ws" class="hd-chip hd-chip-btn" type="button" hidden
             title="">

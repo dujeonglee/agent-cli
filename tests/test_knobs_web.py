@@ -22,6 +22,7 @@ from agent_cli.render.web_hub import WebConnection
 from agent_cli.subagent.agents_live import AgentRegistry
 from agent_cli.web.server import WebServer, create_app
 from tests.binding_support import make_binding
+from tests.endpoint_files import point_models
 from tests.web_static import js_text
 
 TOKEN = "t"
@@ -227,26 +228,28 @@ class TestChipShapeComesFromTheServer:
         """모델이 바뀌면 사고·문법의 잠김이 바뀔 수 있다 — 전부 다시 싣는다."""
         import json
 
-        import agent_cli.config as _config
         import agent_cli.dialects as _dialects
 
         target = tmp_path / "models.json"
         target.write_text(
             json.dumps(
                 {
-                    "models": {
-                        "m1": {"context_window": 32768, "dialect": "json_fc"},
-                        "m2": {
-                            "context_window": 8000,
-                            "dialect": "json_fc",
-                            "supports_thinking": False,
-                        },
+                    "endpoints": {
+                        "t": {
+                            "models": {
+                                "m1": {"context_window": 32768, "dialect": "json_fc"},
+                                "m2": {
+                                    "context_window": 8000,
+                                    "dialect": "json_fc",
+                                    "supports_thinking": False,
+                                },
+                            }
+                        }
                     }
                 }
             )
         )
-        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-        monkeypatch.setattr(_config, "_cached_registry", None)
+        point_models(monkeypatch, target)
         monkeypatch.setattr(_dialects, "_override", None)
         _s, renderer, client = _full(tmp_path)
         assert _get(client, "model")["options"] == ["m1", "m2"]
@@ -286,22 +289,24 @@ class TestStatusFileMirrorsTheKnobs:
     def test_each_set_rewrites_the_file(self, tmp_path, monkeypatch):
         import json
 
-        import agent_cli.config as _config
         import agent_cli.dialects as _dialects
 
         target = tmp_path / "models.json"
         target.write_text(
             json.dumps(
                 {
-                    "models": {
-                        "m1": {"context_window": 32768, "dialect": "json_fc"},
-                        "m2": {"context_window": 8000, "dialect": "json_fc"},
+                    "endpoints": {
+                        "t": {
+                            "models": {
+                                "m1": {"context_window": 32768, "dialect": "json_fc"},
+                                "m2": {"context_window": 8000, "dialect": "json_fc"},
+                            }
+                        }
                     }
                 }
             )
         )
-        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-        monkeypatch.setattr(_config, "_cached_registry", None)
+        point_models(monkeypatch, target)
         monkeypatch.setattr(_dialects, "_override", None)
         _s, _r, client = _full(tmp_path)
         _post(client, "model", "m2")

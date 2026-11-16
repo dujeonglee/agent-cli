@@ -84,9 +84,11 @@ def test_missing_binary_is_still_a_harbor_error(tmp_path):
 
 
 def test_container_first_run_needs_no_config_or_wizard(tmp_path, monkeypatch):
-    """벤치 컨테이너의 첫 실행(config.json 없음·``</dev/null``) — 어댑터가 넘기는 ``-m`` 과
-    ``AGENT_CLI_BASE_URL`` 만으로 마법사 없이 지나간다 (agent-cli v10.125.0 의 "플래그 완비").
-    ``_runtime_env`` 는 ``AGENT_CLI_BASE_URL`` 이 없으면 거부하므로 그 env 는 늘 있다."""
+    """설정 파일 없는 비대화식 첫 실행 — 어댑터 명령의 ``-m`` 과 ``AGENT_CLI_BASE_URL`` 만으로
+    마법사 없이 지나간다 (agent-cli v10.125.0 의 "플래그 완비"; v10.144.0 부터 env 는 서버가
+    골라지지 않은 실행의 이름 없는 서버). 어댑터 자신은 v10.144.0 부터 서버 하나짜리
+    config.json 을 올리지만(방언 바인딩이 그 서버의 models.json 칸에서 오므로), 서버 없는
+    실행 길은 agent-cli 의 계약으로 남는다."""
     import shlex
 
     import agent_cli.config as config
@@ -99,12 +101,10 @@ def test_container_first_run_needs_no_config_or_wizard(tmp_path, monkeypatch):
     )
     model = argv[argv.index("-m") + 1]
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(
-        config, "_CONFIG_PATHS", [tmp_path / ".agent-cli" / "config.json"]
-    )
+    monkeypatch.setattr(config, "_CONFIG_PATH", tmp_path / ".agent-cli" / "config.json")
     monkeypatch.setenv("AGENT_CLI_NO_INPUT", "1")
+    monkeypatch.delenv("AGENT_CLI_ENDPOINT", raising=False)
     monkeypatch.setenv("AGENT_CLI_BASE_URL", "http://host.docker.internal:8000/v1")
-    config.reload_config()
     assert main._flags_complete(None, model) is True
 
     def _no_wizard():
@@ -112,4 +112,3 @@ def test_container_first_run_needs_no_config_or_wizard(tmp_path, monkeypatch):
 
     monkeypatch.setattr("agent_cli.setup.SetupWizard", _no_wizard)
     main._maybe_setup(None, model)
-    config.reload_config()

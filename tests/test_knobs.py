@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 from agent_cli import knobs as K
 from agent_cli.context.manager import ContextManager
 from agent_cli.knobs import KNOB_BY_NAME, KNOBS, KnobSession, apply_all, resolve_all
+from tests.endpoint_files import point_models
 
 _PKG = Path(__file__).resolve().parent.parent / "agent_cli"
 
@@ -295,24 +296,26 @@ class TestModelKnob:
     def models(self, tmp_path, monkeypatch):
         import json
 
-        import agent_cli.config as _config
         import agent_cli.dialects as _dialects
 
         target = tmp_path / "models.json"
         target.write_text(
             json.dumps(
                 {
-                    "models": {
-                        "a": {"context_window": 80000, "dialect": "json_fc"},
-                        "b": {"context_window": 20000, "dialect": "json_fc"},
-                        "x": {"context_window": 8000, "dialect": "xml_fc"},
+                    "endpoints": {
+                        "t": {
+                            "models": {
+                                "a": {"context_window": 80000, "dialect": "json_fc"},
+                                "b": {"context_window": 20000, "dialect": "json_fc"},
+                                "x": {"context_window": 8000, "dialect": "xml_fc"},
+                            }
+                        }
                     }
                 }
             ),
             encoding="utf-8",
         )
-        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-        monkeypatch.setattr(_config, "_cached_registry", None)
+        point_models(monkeypatch, target)
         monkeypatch.setattr(_dialects, "_override", None)
 
     def test_switch_applies_to_the_next_call_without_copies(self, tmp_path, models):
@@ -524,22 +527,24 @@ class TestChipShapeIsDeclaredInTheTable:
     ):
         import json
 
-        import agent_cli.config as _config
         import agent_cli.dialects as _dialects
 
         target = tmp_path / "models.json"
         target.write_text(
             json.dumps(
                 {
-                    "models": {
-                        "a": {"context_window": 80000, "dialect": "json_fc"},
-                        "x": {"context_window": 8000, "dialect": "xml_fc"},
+                    "endpoints": {
+                        "t": {
+                            "models": {
+                                "a": {"context_window": 80000, "dialect": "json_fc"},
+                                "x": {"context_window": 8000, "dialect": "xml_fc"},
+                            }
+                        }
                     }
                 }
             )
         )
-        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
-        monkeypatch.setattr(_config, "_cached_registry", None)
+        point_models(monkeypatch, target)
         monkeypatch.setattr(_dialects, "_override", None)
         s = self._session(tmp_path)
         assert K.web_state(KNOB_BY_NAME["model"], s)["options"] == ["a"]

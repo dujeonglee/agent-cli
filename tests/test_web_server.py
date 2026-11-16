@@ -1244,6 +1244,10 @@ class TestStaticUI:
         assert 'id="token-usage"' in html and 'id="chip-ws"' in html
         # 방 제목 자리 (v10.71.0) — ready.title 이 채우고 탭 제목도 바꾼다
         assert 'id="room-title"' in html
+        # 서버 칩 (v10.144.0) — 보드 카드의 🖥 칩과 같은 모양, title 로 무엇인지
+        assert 'id="chip-endpoint"' in html
+        sse = client.get("/static/js/sse.js").text
+        assert '"🖥 " + d.endpoint' in sse and '"Server: " + d.endpoint' in sse
         # v10.74.1: 제목은 자기 줄 — flex-wrap 헤더에서 basis 100% 가 칩·노브·아이콘을
         # 다음 줄로 내린다. 36ch 상한이 돌아오면 제목이 다시 칩 줄에 섞인 것.
         css = client.get("/static/style.css").text
