@@ -61,7 +61,7 @@ agent_cli/
 ├── wake.py                  한 주소를 무엇이 깨우나(`wake_sources`)·체크인 알림·메일 → 레코드·`release_owner`, 루프의 우편 창구 `Mailbox`(포트 `mailbox`)
 ├── pump.py                  세션 펌프 — 큐에서 꺼내 깨우기·라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
 ├── command_table.py         사용자 명령 표 하나 — 웹 `/help` 와 `run "/help"` 가 여기서 나온다
-├── config.py                config.json 의 서버(endpoint) 표·고르는 순서·이 프로세스의 서버, 서버별 models.json 읽기·저장, 옛 모양 판정·`.v1` 이름 바꾸기, 프로바이더 기본값, 방언 바인딩(`bind_user_dialect`)
+├── config.py                config.json 의 서버(endpoint) 표·고르는 순서·이 프로세스의 서버, 서버별 models.json 읽기·저장, 옛 모양 판정·`.v1` 이름 바꾸기, 방언 바인딩(`bind_user_dialect`)
 ├── setup.py                 첫 실행 설정 마법사 `SetupWizard` (Rich TUI — 프로바이더·연결·모델)
 ├── model_check.py           부팅 때 모델 이름 검증 — "없는 모델"(`ModelNotFound`)과 "확인할 수 없음"을 가른다
 ├── knobs.py                 세션 노브 선언 `KNOBS` 하나에서 env·CLI 플래그·web 칩 표면을 파생 (docs/knobs/DESIGN.md)
@@ -882,7 +882,7 @@ OpenAIProvider 하나로 OpenAI·vLLM·LM Studio·omlx 를 `--base-url` 만 바�
 
 1. 이름 고르기 — `config.pick_endpoint_name(flag, environ, recorded, default)` 하나: `--endpoint` > `AGENT_CLI_ENDPOINT` > 되살리는 세션 메타의 `endpoint` > config 의 `endpoint`.
 2. 값 읽기 — `config.endpoint_config(name)`(빈 값은 빼고 문자열로 접고, `extra_headers` 만 목록 그대로). 없는 이름은 `EndpointError`, 못 읽는 파일은 `ConfigError` — `main._select_endpoint` 가 둘 다 종료 코드 `2` 로 끝낸다(다른 서버로 넘어가지 않는다).
-   고른 이름이 없으면(저장된 서버 0개) `config.env_endpoint_config()` — env `AGENT_CLI_PROVIDER`·`AGENT_CLI_BASE_URL`·`AGENT_CLI_API_KEY` 가 이름 없는 서버다. 서버가 골라지면 env 는 쓰지 않는다.
+   고른 이름이 없고 저장된 서버도 0개면 `config.env_endpoint_config()` — env `AGENT_CLI_PROVIDER`·`AGENT_CLI_BASE_URL`·`AGENT_CLI_API_KEY` 가 이름 없는 서버다. 서버는 있는데 고른 이름이 없으면(기본 없음 — 손으로 고친 파일) 종료 코드 `2`. 서버가 골라지면 env 는 쓰지 않는다.
 3. 세우기 — `config.use_endpoint(name)` 을 부트가 한 번 부른다(다른 이름으로 다시 부르면 `RuntimeError`). 그 뒤 모델 표 함수가 그 서버 칸을 본다(§8.1).
 4. 덮기 — `main._resolve_provider(provider, model, base_url, api_key, values, source)` 가 플래그를 필드 단위로 덮는다. 파일은 읽지 않는다.
 5. 기록 — 고른 이름은 `ModelBinding.endpoint` 로 나와 `main._apply_endpoint` 가 `SessionMeta.endpoint` 에 적는다(기록과 다르면 한 줄). `web.json` 의 `endpoint`, 웹 `ready` 이벤트의 `endpoint`(머리 줄 칩)도 이 값이다.
@@ -918,7 +918,6 @@ OpenAIProvider 하나로 OpenAI·vLLM·LM Studio·omlx 를 `--base-url` 만 바�
 ```
 
 모델 표는 서버별이다 — 같은 이름도 서버에 따라 방언이 다를 수 있다. `get_model_entry`·`model_names`·`save_model_entry`·`fill_model_entry`·`bind_user_dialect` 는 `current_endpoint()` 의 칸을 읽고 쓴다. 서버가 없는 실행(`use_endpoint(None)`)은 패키지 바닥만 읽고 아무것도 저장하지 않는다. 사용자 문구의 "어느 표" 는 `models_path_label()`(경로 + 서버 이름).
-`provider_defaults`(프로바이더 기본 주소)는 패키지 `default_models.json` 에만 있다.
 
 능력치로 읽는 키는 `_build_from_entry` 가 정한다(`context_window`·`max_output_tokens`·`supports_thinking`·`supports_grammar`·`supports_vision`·`temperature`·`top_p`).
 `dialect` 는 `dialects.dialect_for_model` 이 읽는다 — 묶이지 않은 모델은 터미널이면 그 자리에서 묻고 저장한다(`config.bind_user_dialect`).
@@ -933,7 +932,7 @@ OpenAIProvider 하나로 OpenAI·vLLM·LM Studio·omlx 를 `--base-url` 만 바�
 ### 8.3 설정 로딩 우선순위 (`config.py`)
 
 `_load_registry()` 가 기본값 파일의 `models` 위에 유저 파일의 이 서버 칸을 모델 단위로 덮는다. (서버, 파일 수정 시각) 이 바뀌면 다음 조회가 다시 읽는다.
-프로바이더 기본 주소만 코드에 있고(`_PROVIDER_FALLBACK_URLS`), 모델 이름은 추측하지 않는다 — 아무것도 해석되지 않으면 `model_check.NoModelSelected`.
+주소도 모델 이름도 추측하지 않는다. 주소는 플래그나 고른 서버(이름 없는 실행은 `AGENT_CLI_BASE_URL`)의 것뿐이고, 없으면 `_resolve_provider` 가 종료 코드 `2` 로 끝낸다 — 프로바이더 공개 주소로 가지 않는다(setup 마법사의 입력 칸 기본값으로만 보인다). 모델이 해석되지 않으면 `model_check.NoModelSelected`.
 
 ### 8.4 능력치 조회 우선순위 (`providers/capabilities.py`)
 
@@ -1055,7 +1054,7 @@ SIGTERM(보드가 방을 끌 때)은 `run`·`web` 모두 같은 정리(`close_se
 1. `providers/<name>.py` 에 `LLMProvider` 를 만족하는 클래스 — `call(messages, system, model, capabilities, **kwargs) -> LLMResponse`, 원어 stop_reason 을 루프 어휘로 매핑(§7.2),
    능력 프로브 전송 `capability_transport`(`_ProbeTransport` 하위 클래스).
 2. 모듈 끝에서 `register_provider("<name>", Cls)`, `providers/__init__.py::_BUILTIN_MODULES` 에 한 줄.
-3. `config._PROVIDER_FALLBACK_URLS` 에 공개 엔드포인트가 있으면 추가.
+3. 공개 엔드포인트가 있으면 setup 마법사의 입력 칸 기본값(`setup._DEFAULT_URLS`)에 추가 — 실행 중 기본 주소는 없다(§8.3).
 
 ### 12.2 새 도구 추가
 

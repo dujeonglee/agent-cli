@@ -13,7 +13,6 @@ from agent_cli.config import (
     endpoint_host,
     env_endpoint_config,
     get_model_entry,
-    get_provider_defaults,
     is_legacy_shape,
     legacy_backup_path,
     list_endpoints,
@@ -51,33 +50,20 @@ class TestGetModelEntry:
         assert entry["supports_thinking"] is True
 
 
-class TestGetProviderDefaults:
-    """주소는 준다, 모델 이름은 **추측하지 않는다** (v9.5.0).
+class TestNoGuessedDefaults:
+    """주소도 모델 이름도 **추측하지 않는다** — 모델 이름은 v9.5.0, 주소는 v10.144.0.
 
-    종전엔 openai→``gpt-4o`` / anthropic→``claude-sonnet-4-…`` 를 최후 폴백으로
-    끼워 넣었다. 로컬 서버(omlx·vLLM·LM Studio)에는 그런 모델이 있을 리 없으니
-    이 추측은 **절대 맞을 수 없고**, "모델을 안 골랐다"를 "없는 모델 404"로
-    바꿔 원인을 가렸다(사용자 제보). 주소는 사정이 다르다 — 프로바이더의 공개
-    엔드포인트는 실제로 그 주소가 맞다."""
+    모델: 로컬 서버에 있을 리 없는 ``gpt-4o`` 같은 추측은 "모델을 안 골랐다"를 "없는 모델 404"로
+    바꿔 원인을 가렸다. 주소: 서버에 base_url 이 없거나 이름 없는 실행에 주소가 없을 때
+    프로바이더 공개 주소로 가면 키 없는 요청이 바깥으로 나간다(리뷰 재현) — 주소는 사용자가
+    적은 것만 쓴다(`main._resolve_provider` 가 없으면 종료 코드 2)."""
 
-    def test_anthropic_gives_url_but_no_model_guess(self):
-        defaults = get_provider_defaults("anthropic")
-        assert "api.anthropic.com" in defaults.base_url
-        assert defaults.default_model == ""
+    def test_no_fallback_table_in_the_module(self):
+        assert not hasattr(_config, "_PROVIDER_FALLBACK_URLS")
+        assert not hasattr(_config, "get_provider_defaults")
 
-    def test_openai_gives_url_but_no_model_guess(self):
-        defaults = get_provider_defaults("openai")
-        assert "api.openai.com" in defaults.base_url
-        assert defaults.default_model == ""
-
-    def test_unknown_provider_fallback(self):
-        defaults = get_provider_defaults("unknown_provider")
-        assert defaults.base_url == "http://127.0.0.1:8000/v1"
-        assert defaults.default_model == ""
-
-    def test_no_provider_default_ships_a_model_name(self):
-        """패키지 기본 레지스트리에 모델 이름이 **되살아나지 않도록** 하는 가드.
-        누가 편의로 다시 넣으면 같은 고장이 그대로 돌아온다."""
+    def test_package_registry_ships_no_provider_defaults(self):
+        """패키지 기본 표에 주소·모델 기본값이 **되살아나지 않도록** 하는 가드."""
         from pathlib import Path
 
         import agent_cli
@@ -85,10 +71,7 @@ class TestGetProviderDefaults:
         raw = json.loads(
             (Path(agent_cli.__file__).parent / "default_models.json").read_text()
         )
-        for provider, entry in raw.get("provider_defaults", {}).items():
-            assert "default_model" not in entry, (
-                f"{provider} 에 모델 추측이 다시 들어왔다: {entry.get('default_model')!r}"
-            )
+        assert "provider_defaults" not in raw
 
 
 class TestSaveModelEntry:

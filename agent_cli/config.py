@@ -19,7 +19,8 @@
   셋업이 첫 서버를 저장하기 전에 :func:`retire_legacy_files` 가 이름만 ``.v1`` 로 바꿔 둔다.
 - 서버가 하나도 골라지지 않은 실행(설정 파일 없는 컨테이너 등)은 env
   ``AGENT_CLI_PROVIDER``·``AGENT_CLI_BASE_URL``·``AGENT_CLI_API_KEY`` 가 이름 없는 서버가 된다
-  (:func:`env_endpoint_config`). 서버가 골라지면 그 env 는 쓰지 않는다.
+  (:func:`env_endpoint_config`) — 저장된 서버가 **0개**일 때만. 서버가 골라지면 그 env 는
+  쓰지 않는다. 주소는 사용자가 적은 것만 쓴다(프로바이더 공개 주소로 몰래 가지 않는다).
 
 No project-local (``<cwd>/.agent-cli/``) config.json or models.json is read.
 """
@@ -31,19 +32,11 @@ import os
 import re
 import sys
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from agent_cli.fsio import atomic_write_json
 from agent_cli.paths import user_dir
-
-
-@dataclass
-class ProviderDefaults:
-    base_url: str
-    default_model: str
-
 
 # 둘 다 **유저 스코프만** (docs/config-scopes): provider·키는 머신 사실이고, 모델 표는
 # capability 탐지(콜드 로드 유발)의 캐시라 머신 단위가 맞다.
@@ -64,14 +57,6 @@ _ENV_FIELDS = {
 # 문자열이 아닌 값을 그대로 두는 키 — 나머지는 ``str()`` 로 접는다.
 # ``extra_headers`` 는 객체 목록이다(검증은 ``providers.credentials``).
 _STRUCTURED_KEYS = frozenset({"extra_headers"})
-
-# 프로바이더별 기본 **주소**만. 모델 이름은 여기 두지 않는다 (v9.5.0):
-# 추측한 이름은 로컬 서버에서 절대 맞을 수 없고, "모델을 안 골랐다"를 "없는 모델
-# 404"로 바꿔 원인을 가렸다 (`model_check.NoModelSelected`).
-_PROVIDER_FALLBACK_URLS = {
-    "anthropic": "https://api.anthropic.com/v1",
-    "openai": "https://api.openai.com/v1",
-}
 
 
 class ConfigError(Exception):
@@ -375,10 +360,7 @@ def _load_registry() -> dict[str, Any]:
         return _cached_registry
 
     package = _read_json_quiet(_PACKAGE_MODELS_PATH) or {}
-    merged: dict[str, Any] = {
-        "models": dict(package.get("models", {})),
-        "provider_defaults": dict(package.get("provider_defaults", {})),
-    }
+    merged: dict[str, Any] = {"models": dict(package.get("models", {}))}
     user = _read_json_quiet(_GLOBAL_MODELS_PATH) or {}
     merged["models"].update(_endpoint_models(user, current_endpoint()))
 
@@ -409,17 +391,6 @@ def get_model_entry(model: str) -> dict[str, Any] | None:
 def model_names() -> list[str]:
     """이 프로세스 서버에서 고를 수 있는 모델 이름들(패키지 바닥 포함), 이름순."""
     return sorted(_load_registry().get("models", {}))
-
-
-def get_provider_defaults(provider: str) -> ProviderDefaults:
-    """프로바이더의 기본 주소 — 패키지 표의 ``provider_defaults`` > 공개 엔드포인트."""
-    entry = _load_registry().get("provider_defaults", {}).get(provider, {})
-    fb_url = _PROVIDER_FALLBACK_URLS.get(provider, "http://127.0.0.1:8000/v1")
-    return ProviderDefaults(
-        base_url=entry.get("base_url", fb_url),
-        # 빈 문자열 = "고른 적 없음". 추측하지 않는다.
-        default_model=entry.get("default_model", ""),
-    )
 
 
 def _user_models_for_write() -> tuple[dict, dict] | None:

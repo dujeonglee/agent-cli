@@ -67,7 +67,7 @@ def test_no_flag_env_base_url_only(cfg, monkeypatch):
 
 
 def test_no_flag_config_api_key_without_provider(cfg):
-    values = cfg({"api_key": _K})
+    values = cfg({"base_url": _U, "api_key": _K})
     _provider, _url, _model, key = _resolve(None, None, None, None, values)
     assert key == Credentials(api_key=_K)
 
@@ -78,12 +78,21 @@ def test_openai_flag_matches_config_without_provider(cfg):
     assert (provider, url) == ("openai", _U)
 
 
-def test_other_provider_flag_ignores_config_url(cfg):
-    """기존 규칙 유지 — 설정 값은 그 설정의 provider 에만."""
+def test_other_provider_flag_ignores_config_url(cfg, capsys):
+    """서버 값은 그 서버의 provider 에만 — 다른 provider 를 고르면 주소를 직접 적어야 한다.
+
+    v10.144.0: 종전엔 프로바이더 공개 주소(``https://api.anthropic.com/v1``)로 갔다 — 주소는
+    사용자가 적은 것만 쓴다."""
     values = cfg({"provider": "openai", "base_url": _U})
-    provider, url, _model, _key = _resolve("anthropic", None, None, None, values)
-    assert provider == "anthropic"
-    assert url == "https://api.anthropic.com/v1"
+    with pytest.raises(typer.Exit) as ei:
+        _resolve("anthropic", None, None, None, values)
+    assert ei.value.exit_code == 2
+    out = capsys.readouterr()
+    assert "--provider anthropic differs" in out.out + out.err
+    provider, url, _model, _key = _resolve(
+        "anthropic", None, "http://127.0.0.1:3/v1", None, values
+    )
+    assert (provider, url) == ("anthropic", "http://127.0.0.1:3/v1")
 
 
 def test_config_provider_anthropic_uses_its_url(cfg):

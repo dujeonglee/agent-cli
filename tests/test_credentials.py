@@ -299,7 +299,7 @@ class TestConfigFlow:
             }
         )
         _p, _u, _m, cred = _resolve_provider(
-            "anthropic", None, None, None, values, "home"
+            "anthropic", None, "http://a/v1", None, values, "home"
         )
         assert cred.extra_headers == ()
 

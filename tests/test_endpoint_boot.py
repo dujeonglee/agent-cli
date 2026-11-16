@@ -385,3 +385,110 @@ def test_profile_model_missing_names_the_server():
     with patch("agent_cli.model_check.verify_model", _missing):
         msg = AgentRegistry(None)._model_unavailable("pinned", "code-writer", binding)
     assert 'is not on server "work"' in msg
+
+
+# ── 주소를 모르면 나가지 않는다 (리뷰 재현: 기본 없는 서버 → api.openai.com 으로 GET) ──
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """요청이 나가는 모든 자리(requests·httpx·urllib)를 세고 막는다."""
+    import urllib.request
+
+    import httpx
+
+    calls = []
+
+    def _block(*a, **k):
+        calls.append((a, k))
+        raise AssertionError("a request went out")
+
+    monkeypatch.setattr(requests.Session, "request", _block)
+    monkeypatch.setattr(httpx.Client, "send", _block)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _block)
+    monkeypatch.setattr(urllib.request, "urlopen", _block)
+    return calls
+
+
+class TestNoRequestWithoutAnAddress:
+    def _run(self, *args, env=None, monkeypatch=None):
+        for k, v in (env or {}).items():
+            monkeypatch.setenv(k, v)
+        made = []
+        with (
+            patch("agent_cli.main.create_provider", lambda *a: made.append(a)),
+            patch("agent_cli.main._setup_mcp", return_value=(None, {})),
+        ):
+            r = CliRunner().invoke(m.app, ["run", "hi", *args])
+        return r, made
+
+    def _clean(self, monkeypatch, tmp_path):
+        for key in (
+            "AGENT_CLI_ENDPOINT",
+            "AGENT_CLI_PROVIDER",
+            "AGENT_CLI_BASE_URL",
+            "AGENT_CLI_API_KEY",
+            "AGENT_CLI_MODEL",
+            "OPENAI_API_KEY",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("AGENT_CLI_NO_INPUT", "1")
+        monkeypatch.chdir(tmp_path)
+
+    def test_saved_servers_without_a_default(self, tmp_path, monkeypatch, no_network):
+        self._clean(monkeypatch, tmp_path)
+        cfg, _ = point_config(monkeypatch, tmp_path / "home")
+        cfg.write_text(json.dumps({"endpoints": _SERVERS}))  # "endpoint" 없음
+        r, made = self._run(monkeypatch=monkeypatch)
+        assert r.exit_code == 2, r.output
+        assert "No default server is set. Saved servers: home, work" in r.output
+        assert no_network == [] and made == []
+        assert _sessions(tmp_path) == []
+
+    def test_saved_servers_without_a_default_ignore_the_env(
+        self, tmp_path, monkeypatch, no_network
+    ):
+        """서버가 있으면 env 는 이름 없는 서버가 되지 않는다 — 주소를 env 로 줘도 멈춘다."""
+        self._clean(monkeypatch, tmp_path)
+        cfg, _ = point_config(monkeypatch, tmp_path / "home")
+        cfg.write_text(json.dumps({"endpoints": _SERVERS}))
+        r, made = self._run(
+            "-m", "m", env={"AGENT_CLI_BASE_URL": URL_HOME}, monkeypatch=monkeypatch
+        )
+        assert r.exit_code == 2, r.output
+        assert no_network == [] and made == []
+
+    def test_unnamed_run_without_an_address(self, tmp_path, monkeypatch, no_network):
+        """서버 0개 + env 에 주소 없음(provider·key 만) → 공개 주소로 가지 않고 2."""
+        self._clean(monkeypatch, tmp_path)
+        point_config(monkeypatch, tmp_path / "home")
+        r, made = self._run(
+            "-m",
+            "m",
+            env={"AGENT_CLI_PROVIDER": "openai", "AGENT_CLI_API_KEY": "k"},
+            monkeypatch=monkeypatch,
+        )
+        assert r.exit_code == 2, r.output
+        assert "No server address" in r.output
+        assert no_network == [] and made == []
+
+    def test_named_server_without_base_url(self, tmp_path, monkeypatch, no_network):
+        self._clean(monkeypatch, tmp_path)
+        point_config(
+            monkeypatch,
+            tmp_path / "home",
+            endpoints={"bare": {"provider": "openai", "default_model": "m"}},
+        )
+        r, made = self._run(monkeypatch=monkeypatch)
+        assert r.exit_code == 2, r.output
+        assert "Server 'bare'" in r.output and "has no base_url" in r.output
+        assert no_network == [] and made == []
+
+    def test_other_provider_without_base_url(self, tmp_path, monkeypatch, no_network):
+        """서버와 다른 ``-p`` 는 그 서버의 주소를 쓰지 않는다 — 주소를 안 적으면 2(공개 주소 없음)."""
+        self._clean(monkeypatch, tmp_path)
+        point_config(monkeypatch, tmp_path / "home", endpoints=_SERVERS, default="home")
+        r, made = self._run("-p", "anthropic", "-m", "x", monkeypatch=monkeypatch)
+        assert r.exit_code == 2, r.output
+        assert "--provider anthropic differs" in r.output
+        assert no_network == [] and made == []

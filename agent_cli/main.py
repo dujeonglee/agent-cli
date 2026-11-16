@@ -15,7 +15,6 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
-from agent_cli.config import get_provider_defaults
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import (
@@ -159,29 +158,44 @@ def _resolve_provider(
     effective_provider = provider or config_provider
     names = available_providers()
     if effective_provider not in names:
-        source = "--provider" if provider else "config provider"
+        which = "--provider" if provider else "config provider"
         console.print(
-            f"Unknown {source} {effective_provider!r}. Available: {', '.join(names)}",
+            f"Unknown {which} {effective_provider!r}. Available: {', '.join(names)}",
             style=C["error"],
             markup=False,
             highlight=False,
         )
         raise typer.Exit(2)
 
-    # Resolve: CLI args > config (only if same provider) > provider defaults
-    defaults = get_provider_defaults(effective_provider)
-    if config_provider == effective_provider:
-        resolved_url = base_url or config.get("base_url", "") or defaults.base_url
-        resolved_model = (
-            model or config.get("default_model", "") or defaults.default_model
+    # Resolve: CLI args > the server's values (only if same provider). 주소는 사용자가 적은
+    # 것만 — 프로바이더 공개 주소로 몰래 가지 않는다 (v10.144.0; 종전엔 비어 있으면
+    # api.openai.com 등으로 키 없는 요청이 나갔다). 모델 이름은 추측하지 않는다(v9.5.0).
+    same = config_provider == effective_provider
+    resolved_url = base_url or (config.get("base_url", "") if same else "")
+    resolved_model = model or (config.get("default_model", "") if same else "")
+    if not resolved_url:
+        if not same:
+            why = (
+                f"--provider {effective_provider} differs from the provider of "
+                f"{source}, so its base_url is not used. Pass --base-url."
+            )
+        elif source.startswith("server "):
+            why = (
+                f"{source[0].upper()}{source[1:]} has no base_url. Set it with "
+                "'agent-cli setup' or in the board admin, or pass --base-url."
+            )
+        else:
+            why = (
+                "No server address: pass --base-url or set AGENT_CLI_BASE_URL, or "
+                "save a server with 'agent-cli setup' or in the board admin."
+            )
+        console.print(
+            why, style=C["error"], markup=False, highlight=False, soft_wrap=True
         )
-    else:
-        # Different provider than config — don't use config's URL/model
-        resolved_url = base_url or defaults.base_url
-        resolved_model = model or defaults.default_model
+        raise typer.Exit(2)
 
     if api_key is None:
-        if config_provider == effective_provider:
+        if same:
             api_key = config.get("api_key", "")
         else:
             api_key = ""
@@ -196,7 +210,7 @@ def _resolve_provider(
         credentials_from_config,
     )
 
-    if config_provider == effective_provider:
+    if same:
         try:
             credentials = credentials_from_config(config, api_key=api_key)
         except ExtraHeaderError as e:
@@ -277,7 +291,8 @@ def _select_endpoint(flag: str | None, recorded: str | None):
 
     순서는 `config.pick_endpoint_name` 하나(``--endpoint`` > ``AGENT_CLI_ENDPOINT`` > 세션
     기록 > config 기본). 없는 이름·못 읽는 설정은 그 자리에서 ``Exit(2)`` — 다른 서버로
-    넘어가지 않는다. 고른 서버가 없으면(서버 0개) env 세 개가 이름 없는 서버다."""
+    넘어가지 않는다. 저장된 서버가 0개면 env 세 개가 이름 없는 서버다 — 서버가 있는데 고른
+    이름이 없으면(기본 없음) 역시 ``Exit(2)``."""
     from agent_cli.config import (
         ConfigError,
         EndpointError,
@@ -285,12 +300,14 @@ def _select_endpoint(flag: str | None, recorded: str | None):
         default_endpoint_name,
         endpoint_config,
         env_endpoint_config,
+        list_endpoints,
         pick_endpoint_name,
         use_endpoint,
     )
 
     try:
         name = pick_endpoint_name(flag, os.environ, recorded, default_endpoint_name())
+        saved = sorted(list_endpoints()) if name is None else []
         values = endpoint_config(name) if name else env_endpoint_config()
     except ConfigError as e:
         # 못 읽은 설정으로 계속 가면 기본값(공개 엔드포인트)이 된다 (v10.123.4)
@@ -308,6 +325,19 @@ def _select_endpoint(flag: str | None, recorded: str | None):
             str(e), style=C["error"], markup=False, highlight=False, soft_wrap=True
         )
         raise typer.Exit(2) from None
+    if saved:
+        # 이름 없는 실행(env)은 저장된 서버가 0개일 때만 — 서버가 있는데 기본이 없으면
+        # 다른 곳으로 가지 않고 멈춘다(손으로 고친 파일이 이 상태가 될 수 있다).
+        console.print(
+            f"No default server is set. Saved servers: {', '.join(saved)}. Pick one "
+            "with --endpoint, or set the default with 'agent-cli setup' or in the "
+            "board admin.",
+            style=C["error"],
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+        raise typer.Exit(2)
     use_endpoint(name)
     source = (
         f"server '{name}' in {config_path()}" if name else "the AGENT_CLI_* environment"

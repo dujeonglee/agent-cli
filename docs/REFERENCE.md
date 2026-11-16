@@ -165,9 +165,12 @@ agent-cli run "hello" --base-url http://127.0.0.1:8000/v1 -m Qwen3.6-35B-A3B-8bi
   뜹니다(서버 기록이 없는 옛 세션은 그때 고른 서버를 쓰고 기록합니다). 지운 서버를 기억하는 세션은 되살릴 때
   위 오류로 멈춥니다. `--resume` 에 다른 `--endpoint` 를 주면 그것이 이기고 기록을 바꾸며 한 줄로 알립니다:
   `Session server changed: home → work`. 배너에 `Server:` 줄, 웹 방 머리 줄에 서버 칩이 보입니다.
-- **환경변수 `AGENT_CLI_PROVIDER`·`AGENT_CLI_BASE_URL`·`AGENT_CLI_API_KEY`** 는 서버가 하나도 골라지지 않은
-  실행(저장된 서버 없음)의 이름 없는 서버입니다. 서버가 골라지면 쓰이지 않습니다 — 한 서버의 키가 env 로 다른
-  서버에 섞이지 않게. 덮어쓰기는 플래그로 합니다.
+- **환경변수 `AGENT_CLI_PROVIDER`·`AGENT_CLI_BASE_URL`·`AGENT_CLI_API_KEY`** 는 저장된 서버가 **0개**인
+  실행의 이름 없는 서버입니다. 서버가 골라지면 쓰이지 않습니다 — 한 서버의 키가 env 로 다른 서버에 섞이지
+  않게. 덮어쓰기는 플래그로 합니다. 서버는 저장돼 있는데 기본(`endpoint`)이 없으면(손으로 고친 파일) 다른 곳으로
+  가지 않고 종료 코드 `2`: `No default server is set. Saved servers: home, work. Pick one with --endpoint, or set the default with 'agent-cli setup' or in the board admin.`
+- **주소는 사용자가 적은 것만** 씁니다 (v10.144.0) — 서버의 `base_url`, `--base-url`, 이름 없는 실행의
+  `AGENT_CLI_BASE_URL`. 어디에도 없으면 프로바이더 공개 주소(api.openai.com 등)로 가지 않고 종료 코드 `2` 입니다.
 
 **`provider` 를 안 적으면 `openai`(OpenAI 호환) 서버입니다 (v10.123.1)** — 그 서버의
 `base_url`·`default_model`·`api_key` 는 `-p` 없이 돌릴 때와 `-p openai` 일 때 쓰이고,
@@ -599,7 +602,7 @@ agent-cli run "task description" [options]
 | `--endpoint NAME` | 쓸 모델 서버 — `config.json` 에 저장된 이름 (v10.144.0; env `AGENT_CLI_ENDPOINT`). 세션에 기록되고 `--resume` 이 그 이름으로 뜬다. 없는 이름은 종료 코드 `2` | 세션 기록 → config `endpoint` |
 | `-p, --provider` | `openai` / `anthropic` — 고른 서버의 값을 덮는다 | 서버의 값 → `openai` |
 | `-m, --model` | 모델 ID | 서버의 `default_model` |
-| `--base-url` | API 엔드포인트 — 고른 서버의 값을 덮는다 | 서버의 값 → 프로바이더 기본값 |
+| `--base-url` | API 엔드포인트 — 고른 서버의 값을 덮는다. 주소가 어디에도 없으면(서버에 `base_url` 없음·이름 없는 실행에 `AGENT_CLI_BASE_URL` 없음·서버와 다른 `-p`) 종료 코드 `2` — 프로바이더 공개 주소로 가지 않는다 (v10.144.0) | 서버의 값 |
 | `--api-key` | API 키 — 고른 서버의 값을 덮는다 | 서버의 값 → `OPENAI_API_KEY`·`ANTHROPIC_API_KEY` |
 | `-n, --max-turns` | 최대 턴 (0=무제한) | `0` |
 | `--max-context-tokens` | 컨텍스트 윈도우 토큰 상한 (0=모델에서 자동 결정) | `0` |
@@ -1189,7 +1192,8 @@ agent-cli run "task" -p openai --base-url https://api.openai.com/v1 -m gpt-4o
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-agent-cli run "task" -p anthropic
+agent-cli run "task" -p anthropic --base-url https://api.anthropic.com/v1 -m <model>
+# 또는 `agent-cli setup` 으로 provider anthropic 서버를 저장하고 --endpoint 로 고른다
 ```
 
 System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용된다.
