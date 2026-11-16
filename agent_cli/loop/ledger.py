@@ -127,6 +127,11 @@ class Ledger:
 
     # ── 읽기 ──────────────────────────────────────────────
 
+    def open_requests(self) -> tuple[dict, ...]:
+        """`complete` 의 ``answers`` 로 닫을 열린 요청 ``({"id", "author", "text"}, …)`` — 도착 순서의 사본.
+        읽기만 한다."""
+        return tuple(dict(r) for r in self.requests)
+
     def request_ids(self) -> list[str]:
         return [str(r.get("id")) for r in self.requests]
 

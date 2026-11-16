@@ -205,9 +205,9 @@ agent_cli/
 │   ├── agent_stop.py        사람의 정지(■ 런 정지·✕ 제거) 규칙 한 장 `STOP_RULES`·런의 정지 `LinkedStop`·stopped/removed 회신 문장
 │   ├── delegation_checks.py 에이전트를 띄우기 전 거부 판정(빈 과제·provider·순환·깊이) — run·spawn 공통
 │   ├── resident_loop.py     에이전트(run·spawn)의 루프 종류 `ResidentLoop`
-│   ├── agents_live.py       `AgentRegistry`·`AgentInstance` — 명단·상한·스레드·agents.json 저장 시점, spawn·`message` 라우팅·메일함·회신 배달(`pay_debt`)·보낸 쪽 기록(기다리는 회신)
+│   ├── agents_live.py       `AgentRegistry`·`AgentInstance` — 명단·상한·스레드·agents.json 저장 시점, spawn·`message` 라우팅·메일함·회신 배달(`pay_debt`)·보낸 쪽 기록(기다리는 회신)·읽기 전용 조회(`queued_for`·`taken_by`)
 │   ├── agent_modes.py       `agent` 도구의 실행 — 모드 표 `_MODE_HANDLERS`·`tool_agent`·모드 결과 문구
-│   ├── agent_mail.py        에이전트 메일의 글 — 봉투 `envelope`·main 관찰 레코드 `build_reply_record`·대기열 한 줄
+│   ├── agent_mail.py        에이전트 메일의 글 — 봉투 `envelope`·main 관찰 레코드 `build_reply_record`·대기열 한 줄·조회의 불변 사본 `MailView`
 │   ├── question_port.py     루프의 질문·회신 seam `QuestionPort` — `reply(id)` 의 거부 규칙
 │   ├── agents_state.py      상태 어휘 `state_is_active`·`agents.json` 의 모양 — 항목 ↔ 에이전트, 버전·읽기
 │   ├── mail_waker.py        `MailWaker` — 한가한 main 을 메일이 깨운다

@@ -63,12 +63,15 @@ from agent_cli.session_slots import get_job_registry
 from agent_cli.subagent import agent_stop, agents_state
 from agent_cli.subagent.agent_mail import (
     _NO_REPLY_LABEL,
+    MailView,
     envelope,
     format_agent_label,
     is_human_addr,
     mail_queue_item,
     owe_line,
     run_error_line,
+    view_of_inbox_item,
+    view_of_main_mail,
 )
 from agent_cli.subagent.delegation_checks import depth_or_recursion_refusal
 from agent_cli.subagent.question_port import QuestionPort
@@ -829,6 +832,32 @@ class AgentRegistry:
         """``tm`` 의 받은편지함에 들어 있고 아직 런이 집지 않은 항목(미러 스냅샷)."""
         with self._cv:
             return list(tm.inbox_items)
+
+    def queued_for(self, addr: str) -> tuple[MailView, ...]:
+        """``addr`` 앞에 줄 서 아직 꺼내 가지 않은 배달 — main 메일함·에이전트 받은편지함(미러)·private 메일함,
+        도착 순서. 읽기만 한다 — 락 안에서 사본을 뜬다."""
+        with self._cv:
+            if addr == "main":
+                return tuple(view_of_main_mail(m) for m in self._pending)
+            if is_private_owner(addr):
+                return tuple(
+                    view_of_main_mail(m) for m in self._mailboxes.get(addr, ())
+                )
+            tm = self._agents.get(addr.removeprefix("agent:"))
+            return () if tm is None else tuple(map(view_of_inbox_item, tm.inbox_items))
+
+    def taken_by(self, addr: str) -> tuple[MailView, ...]:
+        """``addr`` 의 런이 꺼내 들고 있는 배달 — 에이전트의 지금 런이 시작·흡수한 항목(런이 끝나면 빈다).
+        main·private 은 꺼낸 것을 들고 있지 않다. 읽기만 한다."""
+        tm = (
+            self._agents.get(addr.split(":", 1)[1])
+            if addr.startswith("agent:")
+            else None
+        )
+        if tm is None:
+            return ()
+        with self._cv:
+            return tuple(map(view_of_inbox_item, tm.in_flight))
 
     def arrived_for(self, addr: str) -> int:
         """``addr`` 앞에 **이미 도착해 다음 턴 경계에 배달될** 메일 수 (v10.66.2,
