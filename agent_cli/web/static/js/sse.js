@@ -79,9 +79,10 @@ es.addEventListener("ready", function (e) {
   // 서버 칩 (v10.144.0): 이 방의 서버 이름 — 방이 뜬 뒤엔 바뀌지 않는다.
   const $endpoint = document.getElementById("chip-endpoint");
   if ($endpoint) {
-    $endpoint.textContent = d.endpoint || "";
+    // 보드 카드의 🖥 칩과 같은 모양
+    $endpoint.textContent = d.endpoint ? "🖥 " + d.endpoint : "";
     $endpoint.title = d.endpoint
-      ? "Model server — " + d.endpoint + " (fixed for this room; clone the room on the board to use another server)"
+      ? "Server: " + d.endpoint + " — fixed for this room; clone the room on the board to use another server"
       : "";
     $endpoint.hidden = !d.endpoint;
   }

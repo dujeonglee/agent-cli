@@ -1084,6 +1084,21 @@ class TestHeaderWorkspace:
         _event, data2 = conn2.queue.get(timeout=1.0)
         assert "title" not in data2
 
+    def test_endpoint_rides_on_ready_only_when_set(self):
+        """v10.144.0: 방의 서버 이름 — 있을 때만 ``ready.endpoint`` (머리 줄 🖥 칩)."""
+        r = WebRenderer(endpoint="work")
+        conn = WebConnection(id="c")
+        r.hub.register(conn)
+        r.header("openai", "gpt-4o", 10)
+        _event, data = conn.queue.get(timeout=1.0)
+        assert data["endpoint"] == "work"
+        r2 = WebRenderer()
+        conn2 = WebConnection(id="c2")
+        r2.hub.register(conn2)
+        r2.header("openai", "gpt-4o", 10)
+        _event, data2 = conn2.queue.get(timeout=1.0)
+        assert "endpoint" not in data2
+
     def test_workspace_omitted_when_empty(self):
         """Empty workspace means we don't know — omit the field so the
         frontend's ``if (d.workspace)`` branch is the single source of
