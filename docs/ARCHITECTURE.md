@@ -155,6 +155,12 @@ agent_cli/
 │   ├── store.py             세션 디렉터리 배치·메타 `session.jsonl`·목록·resume
 │   ├── records.py           디스크 레코드 모양의 단일 리더·분류기(ops·개입 종류)
 │   └── lock.py              한 세션 한 프로세스 — `session.lock` flock
+├── post/                    우편함과 요청 장부 — 나르는 것·주소별 상자·기다리는 의무의 줄을 조건변수 하나 아래 함께 바꾼다(잎 — 아직 아무도 쓰지 않는다)
+│   ├── __init__.py          패키지 표식(docstring)
+│   ├── envelope.py          봉투 `Envelope`(머리 + 불투명 payload)와 종류별 만드는 함수 — 닫는 법(`closes_by`)은 여기서만 정한다
+│   ├── request_book.py      요청 장부 `RequestBook`·줄 `Row` — 줄 전이표(`CLOSES`)와 이름 있는 질문(빚·기다림·열린 요청·질문)
+│   ├── postbox.py           주소 하나의 상자 `Postbox` — 줄 선 것·런이 든 것, 꺼내는 순서와 이름 있는 수(락 없음)
+│   └── office.py            창구 `PostOffice` — 모든 변경이 이름 있는 메서드 하나(바뀐 주소 `Changed`), 불변식 `check_consistency`
 ├── prompts/                 모델이 읽는 글 — 시스템 프롬프트·꼬리·압축 지침 (docs/prompt-notation/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── system_prompt.py     능력에 맞춘 시스템 프롬프트 섹션 조립, 지시사항 파일 읽기·쓰기, 도구 설명 교체
@@ -360,7 +366,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 | 3 | `dialects/` · `mcp/` · `web/` |
 | 2 | `tools/` · `render/` · `pump` · `setup` |
 | 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` · `instance_file` · `wake` |
-| 0 | `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `snapshot_nested` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `session_slots` · `terminate` · `agents/` |
+| 0 | `post/` · `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `snapshot_nested` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `session_slots` · `terminate` · `agents/` |
 
 `context/`·`prompts/`·`providers/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).
 그래서 한 층의 한 묶음으로 적는다. `main` 은 명령 함수 안에서 지연 import 하는 것이 많아(`runtime`·`loop/` 등) 층이 낮게 나온다.

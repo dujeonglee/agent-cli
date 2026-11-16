@@ -1,0 +1,319 @@
+"""창구 — 메서드마다 무엇을 바꾸고 무엇을 돌려주는가, 런 끝의 규칙 하나, 한 락 구간, 조건변수 공유.
+
+매 테스트 끝에 불변식을 본다(`office` 픽스처의 정리 단계 — 시안 §8 R10).
+"""
+
+from __future__ import annotations
+
+import threading
+
+import pytest
+
+from agent_cli.post import envelope as E
+from agent_cli.post.office import Changed, ConsistencyError, PostOffice
+from agent_cli.post.postbox import BoxError
+from agent_cli.post.request_book import RowError
+
+A = "agent:a"
+
+
+@pytest.fixture
+def office():
+    o = PostOffice()
+    yield o
+    o.check_consistency()
+
+
+def _rows(o):
+    return [(r.rid, r.state, r.how) for r in o.rows()]
+
+
+class TestDeliver:
+    def test_a_request_opens_a_queued_row(self, office):
+        ch = office.deliver(E.request("r-1", "main", A, "do"))
+        assert ch == Changed(frozenset({A}), True)
+        assert _rows(office) == [("r-1", "queued", None)]
+
+    def test_main_n_items_open_their_row_at_put_too(self, office):
+        """수정 2: 닫는 법이 있는 봉투는 모두 put 때 줄이 선다 — main 앞 n- 도. 열린 요청(`open_requests`)은
+        picked 만 보이므로 밖에서는 "주입 때 생김" 과 같다."""
+        office.deliver(E.system("n-1", "job", "main", "done", opens_row=True))
+        assert _rows(office) == [("n-1", "queued", None)]
+        assert office.open_requests("main") == ()
+        office.absorb("main")
+        assert [r.rid for r in office.open_requests("main")] == ["n-1"]
+
+    def test_notices_replies_and_checkins_open_no_row(self, office):
+        office.deliver(E.notice("n-1", A, "main", "fyi"))
+        office.deliver(E.reply("n-2", A, "main", "ok", re="r-0"))
+        ch = office.deliver(
+            E.system("n-3", "harness", A, "⏰", opens_row=False, persists=False)
+        )
+        assert office.rows() == () and ch.persist is False
+
+    def test_a_duplicate_id_changes_nothing(self, office):
+        office.deliver(E.request("r-1", "main", A, "do"))
+        with pytest.raises(BoxError):
+            office.deliver(E.notice("r-1", "main", "agent:b", "same id"))
+        assert office.queued("agent:b") == () and len(office.rows()) == 1
+
+
+class TestRuns:
+    def test_start_run_picks_and_absorb_takes_the_rest(self, office):
+        office.deliver(E.request("r-1", "main", A, "one"))
+        office.deliver(E.request("r-2", "main", A, "two"))
+        envs, ch = office.start_run(A)
+        assert [e.id for e in envs] == ["r-1"] and ch.addrs == frozenset({A})
+        assert _rows(office) == [("r-1", "picked", None), ("r-2", "queued", None)]
+        envs, _ = office.absorb(A)
+        assert [e.id for e in envs] == ["r-2"]
+        assert [e.id for e in office.taken(A)] == ["r-1", "r-2"]
+
+    def test_start_run_returns_a_tuple_of_people(self, office):
+        office.deliver(E.human("u-1", "user:dj", A, "a"))
+        office.deliver(E.human("u-2", "user:dj", A, "b"))
+        envs, _ = office.start_run(A)
+        assert [e.id for e in envs] == ["u-1", "u-2"]
+        assert office.start_run(A) == ((), Changed())
+
+    def test_pay_closes_and_delivers(self, office):
+        office.deliver(E.request("r-1", "main", A, "do"))
+        office.start_run(A)
+        ch = office.pay(
+            A, "r-1", E.reply("n-2", A, "main", "done", re="r-1"), run_id="r-1"
+        )
+        assert ch.addrs == frozenset({"main"})
+        assert _rows(office) == [("r-1", "closed", "reply")]  # 그 런 끝까지 남는다
+        assert office.last_to(A, "main").how == "reply"
+        assert office.awaited_by("main") == ()
+
+    def test_pay_refuses_a_reply_that_answers_something_else(self, office):
+        office.deliver(E.request("r-1", "main", A, "do"))
+        office.start_run(A)
+        with pytest.raises(RowError):
+            office.pay(A, "r-1", E.reply("n-2", A, "main", "x", re="r-9"), run_id="r-1")
+        with pytest.raises(RowError):
+            office.pay(
+                A, "r-1", E.reply("n-2", A, "agent:z", "x", re="r-1"), run_id="r-1"
+            )
+        assert (
+            _rows(office) == [("r-1", "picked", None)] and office.queued("main") == ()
+        )
+
+    def test_pay_by_message_pays_the_oldest_and_delivers(self, office):
+        office.deliver(E.request("r-1", "main", A, "one"))
+        office.deliver(E.request("r-2", "main", A, "two"))
+        office.absorb(A)
+        row, _ = office.pay_by_message(
+            A, "main", E.notice("n-3", A, "main", "x"), run_id="r-1"
+        )
+        assert row.rid == "r-1" and row.how == "by_message"
+        assert [r.rid for r in office.owed_by(A)] == ["r-2"]
+        row, _ = office.pay_by_message(
+            A, "agent:b", E.request("r-4", A, "agent:b", "y"), run_id="r-1"
+        )
+        assert row is None and [r.rid for r in office.awaited_by(A)] == ["r-4"]
+
+    def test_complete_closes_open_u_and_n(self, office):
+        office.deliver(E.human("u-1", "user:dj", A, "hi"))
+        office.start_run(A)
+        assert office.complete(A, ["u-1", "u-9"], run_id="u-1") == ("u-1",)
+        assert office.open_requests(A) == ()
+
+    def test_open_human_has_no_envelope(self, office):
+        office.open_human("u-1", "user:dj", "main", "hello", answers=["dj"])
+        assert [r.rid for r in office.open_requests("main")] == ["u-1"]
+        assert office.queued("main") == () == office.taken("main")
+
+
+class TestEndRun:
+    def _two_debts(self, office):
+        office.deliver(E.request("r-1", "main", A, "one"))
+        office.deliver(E.request("r-2", "agent:b", A, "two"))
+        office.deliver(E.human("u-3", "user:dj", A, "hi"))
+        office.absorb(A)
+
+    @pytest.mark.parametrize(
+        ("outcome", "how"), [("done", "fallback"), ("stopped", "stopped")]
+    )
+    def test_one_rule_replies_where_given_and_drops_the_rest(
+        self, office, outcome, how
+    ):
+        self._two_debts(office)
+        ch = office.end_run(
+            A,
+            run_id="r-1",
+            outcome=outcome,
+            replies={"r-1": E.reply("n-4", A, "main", "summary", re="r-1")},
+        )
+        assert ch.addrs == frozenset({"main", A})
+        assert (
+            office.rows() == ()
+        )  # fallback/stopped·run_ended 는 그 런 끝에 버려지고, r-2 는 dropped
+        assert [e.re for e in office.queued("main")] == ["r-1"]
+        assert office.queued("agent:b") == () and office.taken(A) == ()
+
+    def test_main_stopping_is_just_empty_replies(self, office):
+        """main/에이전트 분기가 없다 — main 정지(회신 없이 버림)는 빈 replies 다."""
+        office.deliver(E.request("r-1", A, "main", "q"))
+        office.absorb("main")
+        office.end_run("main", run_id="u-0", outcome="stopped", replies={})
+        assert office.rows() == () and office.queued(A) == ()
+
+    def test_wait_keeps_the_rows_and_empties_the_hands(self, office):
+        self._two_debts(office)
+        office.end_run(A, run_id="r-1", outcome="wait")
+        assert [r.state for r in office.rows()] == ["picked"] * 3
+        assert office.taken(A) == ()  # 스스로 잠든 빚 — 들고 있는 봉투는 없다
+
+    def test_wait_keeps_a_paid_debt_for_the_already_replied_refusal(self, office):
+        office.deliver(E.request("r-1", "main", A, "do"))
+        office.start_run(A)
+        office.pay(A, "r-1", E.reply("n-2", A, "main", "ok", re="r-1"), run_id="r-1")
+        office.end_run(A, run_id="r-1", outcome="wait")
+        assert office.last_to(A, "main").how == "reply"
+        office.end_run(A, run_id="r-5", outcome="done")
+        assert office.last_to(A, "main") is None
+
+    def test_session_end_touches_nothing(self, office):
+        """버그 3 의 구조 수준 짝 — 세션 끝은 들고 있던 봉투도 줄도 남긴다(재시작이 되살린다)."""
+        self._two_debts(office)
+        before = (_rows(office), office.taken(A))
+        office.end_run(A, run_id="r-1", outcome="session_end", replies={})
+        assert (_rows(office), office.taken(A)) == before
+
+    def test_hops_are_carried_by_the_caller(self, office):
+        """D3: office 는 hop 을 잇기만 한다 — 줄은 요청의 hop 을, 회신은 만든 쪽이 준 hop 을 든다."""
+        office.deliver(E.request("r-1", "agent:b", A, "do", hop=4))
+        office.absorb(A)
+        (row,) = office.owed_by(A)
+        assert row.hop == 4
+        fb = E.reply("n-2", A, "agent:b", "fb", re="r-1", hop=row.hop + 1)
+        office.end_run(A, run_id="r-1", outcome="done", replies={"r-1": fb})
+        assert [e.hop for e in office.queued("agent:b")] == [5]
+
+    def test_a_duplicate_reply_id_changes_nothing(self, office):
+        self._two_debts(office)
+        office.deliver(E.notice("n-4", A, "main", "taken id"))
+        with pytest.raises(BoxError):
+            office.end_run(
+                A, run_id="r-1", outcome="done",
+                replies={"r-1": E.reply("n-4", A, "main", "x", re="r-1")},
+            )  # fmt: skip
+        assert [r.state for r in office.rows()] == ["picked"] * 3
+
+
+class TestStops:
+    def test_remove_queued_answers_r_drops_people_and_forgets_the_rest(self, office):
+        office.deliver(E.request("r-1", "main", A, "one"))
+        office.deliver(E.human("u-2", "user:dj", A, "hi"))
+        office.deliver(E.notice("n-3", "agent:b", A, "fyi"))
+        office.remove_queued(
+            A,
+            {
+                "r-1": E.reply(
+                    "n-4", A, "main", "removed", re="r-1", mark="removed by user"
+                )
+            },
+        )
+        assert office.rows() == () and office.queued(A) == ()
+        assert [e.mark for e in office.queued("main")] == ["removed by user"]
+
+    def test_drop_takes_the_envelope_with_it(self, office):
+        office.deliver(E.request("r-1", "agent:b", A, "deep", hop=6))
+        office.drop("r-1")
+        assert office.rows() == () and office.queued(A) == ()
+
+    def test_take_reply_leaves_the_box(self, office):
+        office.deliver(E.reply("n-1", A, "main", "ans", re="r-7"))
+        assert office.take_reply("main", "r-7").id == "n-1"
+        assert office.queued("main") == () and office.taken("main") == ()
+
+
+class TestQuestions:
+    def test_ask_answer_forget(self, office):
+        office.ask("q-1", A, "user:dj", "v1 or v2?")
+        office.ask("q-2", A, "user:dj", "another?")
+        office.answer("q-1", E.human("u-3", "user:dj", A, "v2"))
+        assert [r.rid for r in office.open_questions()] == ["q-2"]
+        assert [e.id for e in office.queued(A)] == ["u-3"]
+        assert office.forget_questions_of(A) == ("q-2",)
+        assert office.open_questions() == ()
+
+    def test_an_answer_must_go_to_the_asker(self, office):
+        office.ask("q-1", A, "user:dj", "?")
+        with pytest.raises(RowError):
+            office.answer("q-1", E.human("u-3", "user:dj", "agent:b", "v2"))
+
+
+class TestConsistency:
+    def test_the_checker_names_what_is_broken(self):
+        o = PostOffice()
+        o.deliver(E.request("r-1", "main", A, "do"))
+        o._box(A).discard(
+            "r-1"
+        )  # 줄은 queued 인데 봉투가 없다 — 테스트만 일부러 깨뜨린다
+        with pytest.raises(ConsistencyError) as err:
+            o.check_consistency()
+        assert any(p.startswith("I2 r-1") for p in err.value.problems)
+
+    def test_a_row_closed_in_the_run_that_still_holds_its_envelope_is_fine(
+        self, office
+    ):
+        office.deliver(E.human("u-1", "user:dj", A, "hi"))
+        office.start_run(A)
+        office.complete(A, ["u-1"], run_id="u-1")
+        office.check_consistency()  # 봉투는 런이 아직 들고 있고, 줄은 그 런 안에서 닫혔다
+
+
+class TestOneLockSection:
+    def test_pay_order_is_not_visible_from_outside(self):
+        """버그 5 의 구조 수준 짝 — 닫기와 배달이 한 락 구간이라, 회신이 보이는 첫 순간 빚은 이미 갚혔다."""
+        o = PostOffice()
+        o.deliver(E.request("r-1", "main", A, "do"))
+        o.start_run(A)
+        seen = []
+        ready = threading.Event()
+
+        def watcher():
+            with o.cv:
+                ready.set()
+                o.cv.wait_for(lambda: o.queued("main") != ())
+                seen.append([r.rid for r in o.owed_by(A)])
+
+        t = threading.Thread(target=watcher)
+        t.start()
+        assert ready.wait(5)
+        with o.cv:  # 감시자가 wait 에 들어가 락을 놓은 뒤에야 잡힌다
+            pass
+        o.pay(A, "r-1", E.reply("n-2", A, "main", "ok", re="r-1"), run_id="r-1")
+        t.join(5)
+        assert seen == [[]]
+
+    def test_reentrant_calls_while_holding_the_condition(self, office):
+        """펌프는 cv 를 쥔 채 큐·우편을 부른다 — 기본 조건변수는 재진입 락이다."""
+        with office.cv:
+            office.deliver(E.notice("n-1", A, "main", "fyi"))
+            assert office.has_waking("main")
+
+    def test_a_shared_condition_wakes_the_other_owner(self):
+        """입력 큐와 같은 조건변수를 쓰면, 우편의 배달이 큐 쪽에서 기다리는 이를 깨운다."""
+        cv = threading.Condition()
+        o = PostOffice(cv)
+        woke = []
+        ready = threading.Event()
+
+        def queue_owner():
+            with cv:
+                ready.set()
+                cv.wait_for(lambda: o.has_waking("main"))
+                woke.append(True)
+
+        t = threading.Thread(target=queue_owner)
+        t.start()
+        assert ready.wait(5)
+        with cv:
+            pass
+        o.deliver(E.notice("n-1", A, "main", "fyi"))
+        t.join(5)
+        assert woke == [True]
