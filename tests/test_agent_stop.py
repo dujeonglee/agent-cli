@@ -356,7 +356,8 @@ class TestRemove:
         busy_with(reg, stage, tm, "HOLD17", "r-17")
         threading.Thread(target=reg.kill, args=(tm.key,)).start()
         assert until(lambda: tm.state == "dead")
-        assert tm.inbox.qsize() == 1  # 꺼내지 않은 표식
+        # 끝난 워커는 아무것도 들고 있지 않다(끝내라는 표식은 꺼내지 않은 채 나갔다 — 그 표식은 구현의 것)
+        assert reg.taken_by(f"agent:{tm.key}") == ()
         reg.drain_replies()
         assert not reg.has_active_work() and not reg.any_activity()
 

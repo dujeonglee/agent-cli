@@ -82,6 +82,8 @@ def _pick_up(reg, tm, *, note: bool):
     if note:
         reg.absorb_pending(tm)
         return {"id": first.id, "author": first.src, "text": first.text}
+    # 4단계 예외: 빚을 적기 전의 틈은 `ResidentLoop.start` 안(처리 중으로 옮긴 뒤 `note_owes` 전)에만 있다 —
+    # 공개 입구가 없다. 새 구조는 꺼내기와 빚 적기가 한 메서드라 이 틈 자체가 없다.
     item = tm.inbox_items[0]
     reg._begin_items(tm, [item])
     return item
