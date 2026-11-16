@@ -105,6 +105,22 @@ class RequestBook:
         """봉투 없이 곧바로 집힌 사람의 말(u-) — main 의 입력은 입력 큐를 지나 상자에 들지 않는다."""
         return self._add(Row(rid, src, dst, "u", text, tuple(answers), state="picked"))
 
+    def owe(
+        self,
+        rid: str,
+        debtor: str,
+        creditor: str,
+        text: str,
+        *,
+        hop: int = 0,
+        answers=(),
+    ) -> Row:
+        """봉투 없이 곧바로 집힌 r 줄 — ``debtor`` 가 ``creditor`` 에게 `reply` 를 빚진다(봉투가 상자를 지나지
+        않은 빚: main 이 관찰로 읽은 요청, 테스트가 세운 빚). 같은 id 의 줄이 있으면 `RowError`."""
+        return self._add(
+            Row(rid, creditor, debtor, "r", text, tuple(answers), hop, state="picked")
+        )
+
     def open_question(self, qid: str, asker: str, target: str, text: str) -> Row:
         """에이전트가 사람에게 묻는다(q-) — 봉투 없이 picked. 사람의 답이 닫는다."""
         return self._add(Row(qid, asker, target, "q", text, state="picked"))

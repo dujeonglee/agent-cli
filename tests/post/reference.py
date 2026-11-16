@@ -237,6 +237,24 @@ class Model:
     def close_box(self, addr):
         """표지만 — 봉투는 그대로(관찰값에 닫힘은 들지 않는다)."""
 
+    def owe(self, rid, debtor, creditor):
+        if rid in self.rows:
+            raise Refused("dup row")
+        self.rows[rid] = {
+            "kind": "r",
+            "src": creditor,
+            "dst": debtor,
+            "state": "picked",
+            "how": None,
+        }
+
+    def take(self, addr):
+        q = self._q(addr)
+        if any(e["closes_by"] is not None for e in q):
+            raise Refused("take would orphan rows")
+        self.queued[addr] = []
+        return q
+
     def take_reply(self, addr, rid):
         q = self._q(addr)
         for i, e in enumerate(q):

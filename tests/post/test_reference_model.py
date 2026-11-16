@@ -59,7 +59,7 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
 
     ops: list[tuple[str, dict]] = []
     for _ in range(STEPS):
-        k = rnd.randrange(13)
+        k = rnd.randrange(15)
         addr = rnd.choice(ADDRS)
         run = rnd.choice(runs)
         if k <= 3:
@@ -162,6 +162,12 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
                 ops.append(("drop", {"rid": any_id()}))
             else:
                 ops.append(("take_reply", {"addr": addr, "rid": any_id()}))
+        elif k == 13:
+            debtor, creditor = rnd.sample(ADDRS, 2)
+            rid = nid("r") if rnd.random() < 0.8 else any_id()
+            ops.append(("owe", {"rid": rid, "debtor": debtor, "creditor": creditor}))
+        elif k == 14:
+            ops.append(("take", {"addr": rnd.choice(ADDRS)}))
         else:
             if qids and rnd.random() < 0.6:
                 qid = rnd.choice(qids)
@@ -291,5 +297,6 @@ def test_the_generator_reaches_every_operation_and_both_verdicts():
     assert seen == {
         "deliver", "start_run", "absorb", "pay", "pay_by_message", "complete", "end_run",
         "remove_queued", "drop", "take_reply", "ask", "answer", "forget_questions_of",
+        "owe", "take",
     }  # fmt: skip
     assert accepted > 5000 and refused > 500, (accepted, refused)

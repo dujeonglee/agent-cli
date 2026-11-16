@@ -197,13 +197,34 @@ class TestOrders:
 
         assert run(STARTED, agent, main, check) == 2
 
+    def test_private_take_against_arrivals(self):
+        """private 루프의 꺼내기와 도착 — 어느 순서든 봉투는 꺼내졌거나 줄에 있다, 둘 중 하나만."""
+        reader = [("take", {"addr": "harness:j"})]
+        sender = [
+            (
+                "deliver",
+                {"e": E.system("n-1", "job", "harness:j", "a", opens_row=False)},
+            ),
+            (
+                "deliver",
+                {"e": E.system("n-2", "job", "harness:j", "b", opens_row=False)},
+            ),
+        ]
+
+        def check(twin, order, results):
+            got = [e.id for e in results[("A", "take")]]
+            left = [e.id for e in twin.office.queued("harness:j")]
+            assert sorted(got + left) == ["n-1", "n-2"] and not set(got) & set(left)
+
+        assert run([], reader, sender, check) == 3
+
 
 def test_order_counts():
-    """시나리오별 순서 수 — 보고용(3·4·2·3·2·2)."""
+    """시나리오별 순서 수 — 보고용(3·4·2·3·2·2·3)."""
     assert [
         len(list(merges([0] * a, [0] * b)))
-        for a, b in ((2, 1), (3, 1), (1, 1), (1, 2), (1, 1), (1, 1))
-    ] == [3, 4, 2, 3, 2, 2]
+        for a, b in ((2, 1), (3, 1), (1, 1), (1, 2), (1, 1), (1, 1), (1, 2))
+    ] == [3, 4, 2, 3, 2, 2, 3]
 
 
 # ── 진짜 스레드 — 경합마다 하나, Event 로 순서를 강제 ───────────────────────

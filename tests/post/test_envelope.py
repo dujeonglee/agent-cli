@@ -68,3 +68,8 @@ def test_hashable_and_equal_by_value():
     a = E.notice("n-1", "agent:a", "main", "fyi", payload={"k": 1})
     b = E.notice("n-1", "agent:a", "main", "fyi", payload={"k": 1})
     assert a == b and hash(a) == hash(b)
+
+
+def test_a_persons_answer_is_human_words_about_the_question():
+    env = E.human("u-7", "user:dj", "agent:a", "v2", re="q-3")
+    assert E.is_human_words(env) and env.re == "q-3" and env.closes_by == "complete"

@@ -51,6 +51,11 @@ class Postbox:
         order += [i for i, e in enumerate(self._queued) if not is_human_words(e)]
         return self._move(order)
 
+    def take_away(self) -> tuple[Envelope, ...]:
+        """줄 선 것 전부를 꺼낸다 — 런이 들지 않는다(taken 에 두지 않음)."""
+        out, self._queued = tuple(self._queued), []
+        return out
+
     def take_reply(self, rid: str) -> Envelope | None:
         """요청 ``rid`` 에 대한 회신 하나를 상자에서 꺼낸다(런이 들지 않는다 — `@agent` 명령의 답)."""
         for i, e in enumerate(self._queued):

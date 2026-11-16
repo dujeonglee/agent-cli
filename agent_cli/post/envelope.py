@@ -82,17 +82,20 @@ def human(
     dst: str,
     text: str,
     *,
+    re: str = "",
     answers=(),
     ts: float = 0.0,
     payload: Mapping[str, Any] | None = None,
 ) -> Envelope:
-    """사람의 말 (u-) — 에이전트 채널 입력. `complete` 의 ``answers`` 로 닫힌다(창이 곧 배달이라 회신은 없다)."""
+    """사람의 말 (u-) — 에이전트 채널 입력·트레이의 답(``re`` = 그 질문). `complete` 의 ``answers`` 로 닫힌다
+    (창이 곧 배달이라 회신은 없다)."""
     return Envelope(
         id,
         "request",
         src,
         dst,
         text,
+        re=re,
         closes_by="complete",
         answers=answers,
         ts=ts,

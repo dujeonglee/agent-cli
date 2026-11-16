@@ -105,6 +105,10 @@ class Twin:
             o.remove_queued(args["addr"], args["replies"])
         elif op == "drop":
             o.drop(args["rid"])
+        elif op == "owe":
+            o.owe(args["rid"], args["debtor"], args["creditor"], "t")
+        elif op == "take":
+            return o.take(args["addr"])[0]
         elif op == "take_reply":
             return o.take_reply(args["addr"], args["rid"])
         elif op == "ask":

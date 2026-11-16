@@ -203,6 +203,30 @@ class TestEndRun:
         assert [r.state for r in office.rows()] == ["picked"] * 3
 
 
+class TestOweAndTake:
+    def test_owe_is_a_picked_debt_the_run_end_falls_back_on(self, office):
+        office.owe("r-1", "main", A, "decide")
+        office.end_run(
+            "main", run_id="u-0", outcome="done",
+            replies={"r-1": E.reply("n-2", "main", A, "summary", re="r-1")},
+        )  # fmt: skip
+        assert office.rows() == () and [e.re for e in office.queued(A)] == ["r-1"]
+
+    def test_take_empties_a_private_box_without_holding(self, office):
+        office.deliver(E.system("n-1", "job", "harness:j", "done", opens_row=False))
+        envs, ch = office.take("harness:j")
+        assert [e.id for e in envs] == ["n-1"] and ch.addrs == frozenset({"harness:j"})
+        assert office.queued("harness:j") == () == office.taken("harness:j")
+        assert office.take("harness:j") == ((), Changed())
+
+    def test_take_refuses_to_orphan_a_row(self, office):
+        office.deliver(E.request("r-1", "main", "harness:j", "x"))
+        office.deliver(E.notice("n-2", "main", "harness:j", "y"))
+        with pytest.raises(RowError):
+            office.take("harness:j")
+        assert [e.id for e in office.queued("harness:j")] == ["r-1", "n-2"]
+
+
 class TestUnusedReplies:
     """쓰이지 않을 회신은 말없이 버리지 않는다 — 아무것도 바꾸지 않고 거절한다."""
 

@@ -204,3 +204,23 @@ class TestQuestions:
         row = book.open_human("u-1", "user:dj", "main", "hello", answers=("dj",))
         assert (row.kind, row.state, row.answers) == ("u", "picked", ("dj",))
         assert [r.rid for r in book.open_requests("main")] == ["u-1"]
+
+
+def test_owe_opens_a_picked_reply_debt_without_an_envelope():
+    book = RequestBook()
+    row = book.owe("r-1", "main", "agent:a", "decide", hop=2, answers=("dj",))
+    assert (row.kind, row.state, row.src, row.dst, row.hop) == (
+        "r",
+        "picked",
+        "agent:a",
+        "main",
+        2,
+    )
+    assert [r.rid for r in book.owed_by("main")] == ["r-1"]
+    with pytest.raises(RowError):
+        book.owe(
+            "r-1", "main", "agent:a", "again"
+        )  # 같은 id — 두 뜻을 한 이름에 담지 않는다
+    book.open(E.request("r-2", "main", "agent:b", "x"))
+    with pytest.raises(RowError):
+        book.owe("r-2", "agent:b", "main", "x")  # 봉투로 열린 줄도 같다

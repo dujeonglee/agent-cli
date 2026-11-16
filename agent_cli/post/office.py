@@ -99,6 +99,39 @@ class PostOffice:
             self.cv.notify_all()
             return row
 
+    def owe(
+        self,
+        rid: str,
+        debtor: str,
+        creditor: str,
+        text: str,
+        *,
+        hop: int = 0,
+        answers: Iterable[str] = (),
+    ) -> Row:
+        """봉투 없이 곧바로 집힌 r 줄 — 빚이 상자를 지나지 않고 생겼다. 같은 id 의 줄이 이미 있으면 `RowError`
+        (이미 집힌 봉투의 빚인지는 호출자가 `row` 로 먼저 본다). 장부의 r 줄은 저장 대상이 아니다."""
+        with self.cv:
+            row = self._book.owe(
+                rid, debtor, creditor, text, hop=hop, answers=tuple(answers)
+            )
+            self.cv.notify_all()
+            return row
+
+    def take(self, addr: str) -> tuple[tuple[Envelope, ...], Changed]:
+        """줄 선 것 전부를 꺼내고 잊는다 — 런이 들지 않는다(private 메일함: 그 루프가 턴 경계마다 읽는다).
+        줄이 있는 봉투가 섞여 있으면 아무것도 바꾸지 않고 `RowError` — 줄을 닫을 길이 없어지기 때문이다."""
+        with self.cv:
+            box = self._box(addr)
+            with_rows = [e.id for e in box.queued() if e.closes_by is not None]
+            if with_rows:
+                raise RowError(f"take({addr}) would orphan rows: {with_rows}")
+            envs = box.take_away()
+            self.cv.notify_all()
+            if not envs:
+                return (), Changed()
+            return envs, Changed(frozenset({addr}), any(e.persists for e in envs))
+
     def pay(
         self, debtor: str, rid: str, reply_env: Envelope, *, run_id: str
     ) -> Changed:
