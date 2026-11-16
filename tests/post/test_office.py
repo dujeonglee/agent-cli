@@ -203,6 +203,45 @@ class TestEndRun:
         assert [r.state for r in office.rows()] == ["picked"] * 3
 
 
+class TestUnusedReplies:
+    """쓰이지 않을 회신은 말없이 버리지 않는다 — 아무것도 바꾸지 않고 거절한다."""
+
+    def test_end_run_refuses_a_reply_for_a_row_it_does_not_close(self, office):
+        office.deliver(E.request("r-1", "main", A, "do"))
+        office.absorb(A)
+        before = (_rows(office), office.taken(A))
+        with pytest.raises(RowError):
+            office.end_run(
+                A, run_id="r-1", outcome="done",
+                replies={
+                    "r-1": E.reply("n-2", A, "main", "fb", re="r-1"),
+                    "r-9": E.reply("n-3", A, "main", "stray", re="r-9"),
+                },
+            )  # fmt: skip
+        assert (_rows(office), office.taken(A)) == before and office.queued(
+            "main"
+        ) == ()
+
+    @pytest.mark.parametrize("outcome", ["wait", "session_end"])
+    def test_end_run_without_closing_takes_no_replies(self, office, outcome):
+        office.deliver(E.request("r-1", "main", A, "do"))
+        office.absorb(A)
+        with pytest.raises(RowError):
+            office.end_run(
+                A, run_id="r-1", outcome=outcome,
+                replies={"r-1": E.reply("n-2", A, "main", "fb", re="r-1")},
+            )  # fmt: skip
+        assert [e.id for e in office.taken(A)] == ["r-1"]
+
+    def test_remove_queued_refuses_a_reply_for_a_row_not_queued(self, office):
+        office.deliver(E.request("r-1", "main", A, "one"))
+        office.deliver(E.request("r-2", "main", A, "two"))
+        office.start_run(A)  # r-1 은 집혔다 — 줄에 없다
+        with pytest.raises(RowError):
+            office.remove_queued(A, {"r-1": E.reply("n-3", A, "main", "rm", re="r-1")})
+        assert [e.id for e in office.queued(A)] == ["r-2"]
+
+
 class TestStops:
     def test_remove_queued_answers_r_drops_people_and_forgets_the_rest(self, office):
         office.deliver(E.request("r-1", "main", A, "one"))
@@ -232,13 +271,19 @@ class TestStops:
 
 class TestQuestions:
     def test_ask_answer_forget(self, office):
-        office.ask("q-1", A, "user:dj", "v1 or v2?")
+        row, ch = office.ask("q-1", A, "user:dj", "v1 or v2?")
+        assert row.kind == "q" and ch == Changed(frozenset(), True)  # 질문은 저장된다
         office.ask("q-2", A, "user:dj", "another?")
-        office.answer("q-1", E.human("u-3", "user:dj", A, "v2"))
+        ch = office.answer("q-1", E.human("u-3", "user:dj", A, "v2"))
+        assert ch.persist and ch.addrs == frozenset({A})
         assert [r.rid for r in office.open_questions()] == ["q-2"]
         assert [e.id for e in office.queued(A)] == ["u-3"]
-        assert office.forget_questions_of(A) == ("q-2",)
+        assert office.forget_questions_of(A) == (("q-2",), Changed(frozenset(), True))
         assert office.open_questions() == ()
+        assert office.forget_questions_of(A) == (
+            (),
+            Changed(),
+        )  # 닫은 것이 없으면 저장할 것도 없다
 
     def test_an_answer_must_go_to_the_asker(self, office):
         office.ask("q-1", A, "user:dj", "?")

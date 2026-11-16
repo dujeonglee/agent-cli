@@ -92,7 +92,8 @@ class PostOffice:
         *,
         answers: Iterable[str] = (),
     ) -> Row:
-        """입력 큐를 지난 사람의 말(main 의 u-) — 봉투 없이 곧바로 picked 줄."""
+        """입력 큐를 지난 사람의 말(main 의 u-) — 봉투 없이 곧바로 picked 줄. 저장 대상이 아니다(main 앞 사람
+        입력은 큐에만 있다 — 시안 §6) — 그래서 `Changed` 를 돌려주지 않는다."""
         with self.cv:
             row = self._book.open_human(rid, src, dst, text, answers=tuple(answers))
             self.cv.notify_all()
@@ -131,7 +132,8 @@ class PostOffice:
     def complete(
         self, addr: str, ids: Iterable[str], *, run_id: str
     ) -> tuple[str, ...]:
-        """``addr`` 의 런이 `complete` 의 ``answers`` 로 닫은 u·n 줄 — 닫은 id(없는 id 는 건너뛴다)."""
+        """``addr`` 의 런이 `complete` 의 ``answers`` 로 닫은 u·n 줄 — 닫은 id(없는 id 는 건너뛴다). 줄은 저장
+        대상이 아니고(장부는 q- 만 저장 — 시안 §7) 상자도 그대로라 `Changed` 를 돌려주지 않는다."""
         with self.cv:
             open_ids = {r.rid for r in self._book.open_requests(addr)}
             done = tuple(i for i in ids if i in open_ids)
@@ -154,11 +156,20 @@ class PostOffice:
           fallback, ``stopped`` → stopped), 없으면 dropped. 집힌 u·n 줄은 run_ended. 들고 있던 봉투를 비우고,
           남겨 둔 닫힌 줄(명시 회신)을 버린다.
         - ``wait``: 줄은 그대로(잠든 빚), 들고 있던 봉투만 비운다.
-        - ``session_end``: 아무것도 건드리지 않는다 — 들고 있던 봉투와 줄은 재시작이 되살린다."""
+        - ``session_end``: 아무것도 건드리지 않는다 — 들고 있던 봉투와 줄은 재시작이 되살린다.
+
+        쓰이지 않을 회신은 받지 않는다: ``replies`` 의 rid 가 이번에 닫는 r 줄이 아니거나, ``wait``·``session_end``
+        인데 ``replies`` 가 있으면 아무것도 바꾸지 않고 `RowError`."""
         replies = replies or {}
         with self.cv:
             changed = Changed()
             box = self._box(addr)
+            closing = (
+                {r.rid for r in self._book.owed_by(addr)}
+                if outcome in ("done", "stopped")
+                else set()
+            )
+            self._ensure_used(replies, closing)
             if outcome in ("done", "stopped"):
                 self._ensure_new(replies.values())
                 how = "fallback" if outcome == "done" else "stopped"
@@ -183,9 +194,16 @@ class PostOffice:
         self, addr: str, replies: Mapping[str, Envelope] | None = None
     ) -> Changed:
         """✕ — 줄 선 봉투를 모두 뺀다. r 줄은 ``replies`` 의 회신을 배달하고 removed(회신이 없으면 dropped),
-        그 밖에 줄이 있는 봉투(사람의 말 등)는 dropped, 줄 없는 봉투는 그냥 지운다."""
+        그 밖에 줄이 있는 봉투(사람의 말 등)는 dropped, 줄 없는 봉투는 그냥 지운다. ``replies`` 의 rid 가 줄 선
+        r 줄이 아니면 아무것도 바꾸지 않고 `RowError`."""
         replies = replies or {}
         with self.cv:
+            queued_r = {
+                e.id
+                for e in self._box(addr).queued()
+                if (row := self._book.get(e.id)) is not None and row.kind == "r"
+            }
+            self._ensure_used(replies, queued_r)
             self._ensure_new(replies.values())
             gone = self._box(addr).drop_queued()
             changed = Changed(frozenset({addr}), True) if gone else Changed()
@@ -222,14 +240,16 @@ class PostOffice:
 
     # ── 질문 ─────────────────────────────────────────
 
-    def ask(self, qid: str, asker: str, target: str, text: str) -> Row:
+    def ask(self, qid: str, asker: str, target: str, text: str) -> tuple[Row, Changed]:
+        """사람에게 묻는다 — q 줄을 연다. 질문은 저장된다(시안 §7) — ``persist`` 가 참이다."""
         with self.cv:
             row = self._book.open_question(qid, asker, target, text)
             self.cv.notify_all()
-            return row
+            return row, Changed(frozenset(), True)
 
     def answer(self, qid: str, answer_env: Envelope) -> Changed:
-        """사람의 답 — 질문 줄을 닫고 답 봉투를 묻는 쪽에게 배달한다(한 락 구간)."""
+        """사람의 답 — 질문 줄을 닫고 답 봉투를 묻는 쪽에게 배달한다(한 락 구간). 저장된 질문이 사라지므로
+        ``persist`` 는 언제나 참이다."""
         with self.cv:
             row = self._book.get(qid)
             if row is None or row.kind != "q":
@@ -238,18 +258,19 @@ class PostOffice:
                 raise RowError(f"{answer_env.id}: the answer goes to {row.src}")
             self._ensure_new([answer_env])
             self._book.close(qid, "user_answered")
-            changed = self._deliver(answer_env)
+            changed = self._deliver(answer_env) | Changed(frozenset(), True)
             self.cv.notify_all()
             return changed
 
-    def forget_questions_of(self, asker: str) -> tuple[str, ...]:
-        """묻는 쪽이 사라졌다 — 그 질문 줄을 undeliverable 로 닫는다. 닫은 id."""
+    def forget_questions_of(self, asker: str) -> tuple[tuple[str, ...], Changed]:
+        """묻는 쪽이 사라졌다 — 그 질문 줄을 undeliverable 로 닫는다. 닫은 id 와, 닫은 것이 있으면 저장할
+        것이 바뀌었다는 `Changed`."""
         with self.cv:
             gone = tuple(r.rid for r in self._book.open_questions() if r.src == asker)
             for qid in gone:
                 self._book.close(qid, "undeliverable")
             self.cv.notify_all()
-            return gone
+            return gone, Changed(frozenset(), bool(gone))
 
     # ── 닫기 ─────────────────────────────────────────
 
@@ -395,6 +416,13 @@ class PostOffice:
 
     def _box_or_empty(self, addr: str) -> Postbox:
         return self._boxes.get(addr) or Postbox()
+
+    @staticmethod
+    def _ensure_used(replies: Mapping[str, Envelope], closing: set[str]) -> None:
+        """회신마다 이번에 닫는 줄이 있어야 한다 — 쓰이지 않을 회신을 말없이 버리지 않는다."""
+        unused = sorted(set(replies) - closing)
+        if unused:
+            raise RowError(f"replies for rows this call does not close: {unused}")
 
     def _ensure_new(self, envs: Iterable[Envelope]) -> None:
         """배달할 봉투들을 **바꾸기 전에** 검사한다 — 한 메서드는 전부 하거나 하나도 안 한다."""

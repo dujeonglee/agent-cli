@@ -261,10 +261,15 @@ class TestThreads:
         twin = Twin(ADDRS)
         o = twin.office
         o.deliver(REQ)
-        remove = lambda: o.remove_queued(
-            A, {"r-1": E.reply("n-2", A, "main", "rm", re="r-1")}
-        )
-        take = lambda: o.start_run(A)[0]
+
+        def remove():  # 지울 때 줄에 있는 요청에만 회신한다(쓰이지 않을 회신은 거절된다)
+            queued = {e.id for e in o.queued(A)}
+            reply = E.reply("n-2", A, "main", "rm", re="r-1")
+            return o.remove_queued(A, {"r-1": reply} if "r-1" in queued else {})
+
+        def take():
+            return o.start_run(A)[0]
+
         first, second = (take, remove) if taker_first else (remove, take)
         _in_thread(first)
         second()

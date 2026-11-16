@@ -176,6 +176,9 @@ class Model:
                 self._close(rid, "completed", run_id)
 
     def end_run(self, addr, run_id, outcome, replies):
+        closing = set(self._owed(addr)) if outcome in ("done", "stopped") else set()
+        if set(replies) - closing:
+            raise Refused("unused replies")
         if outcome in ("done", "stopped"):
             for e in replies.values():
                 if self._anywhere(e["id"]):
@@ -201,6 +204,13 @@ class Model:
             self.taken[addr] = []
 
     def remove_queued(self, addr, replies):
+        queued_r = {
+            e["id"]
+            for e in self._q(addr)
+            if e["id"] in self.rows and self.rows[e["id"]]["kind"] == "r"
+        }
+        if set(replies) - queued_r:
+            raise Refused("unused replies")
         for e in replies.values():
             if self._anywhere(e["id"]):
                 raise Refused("dup reply")
