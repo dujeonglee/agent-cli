@@ -229,6 +229,7 @@ class TestShowExisting:
         assert len(str(cfg)) > 80
         out, _ = self._show(monkeypatch, home, width=80)
         assert "Could not read the existing config" in out
+        assert "will not be in the new file" in " ".join(out.split())
         assert str(cfg) in out
         assert "line 1" in out
         assert "Saved servers" not in out

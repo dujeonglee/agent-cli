@@ -144,7 +144,8 @@ class SetupWizard:
         if unreadable:
             self.console.print(
                 f"Could not read the existing config {unreadable}. "
-                "Saving at the end of setup keeps it as a .v1 file.\n",
+                "Saving at the end of setup keeps it as a .v1 file; the servers "
+                "in it will not be in the new file.\n",
                 style="yellow",
                 markup=False,
                 highlight=False,

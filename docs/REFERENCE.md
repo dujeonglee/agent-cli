@@ -171,6 +171,8 @@ agent-cli run "hello" --base-url http://127.0.0.1:8000/v1 -m Qwen3.6-35B-A3B-8bi
   가지 않고 종료 코드 `2`: `No default server is set. Saved servers: home, work. Pick one with --endpoint, or set the default with 'agent-cli setup' or in the board admin.`
 - **주소는 사용자가 적은 것만** 씁니다 (v10.144.0) — 서버의 `base_url`, `--base-url`, 이름 없는 실행의
   `AGENT_CLI_BASE_URL`. 어디에도 없으면 프로바이더 공개 주소(api.openai.com 등)로 가지 않고 종료 코드 `2` 입니다.
+  **종전과 달라진 동작**: v10.143.0 까지는 주소가 비면 공개 주소로 갔습니다 — 이제 `-p anthropic` 만 주고 주소를
+  안 주면 오류이니 `--base-url https://api.anthropic.com/v1` 을 적거나 그 서버를 저장하세요.
 
 **`provider` 를 안 적으면 `openai`(OpenAI 호환) 서버입니다 (v10.123.1)** — 그 서버의
 `base_url`·`default_model`·`api_key` 는 `-p` 없이 돌릴 때와 `-p openai` 일 때 쓰이고,
