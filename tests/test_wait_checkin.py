@@ -412,7 +412,8 @@ class TestAgentLines:
         """`pending_for` 는 `pending_agents_for` 의 글만 — 종전 문장 그대로."""
         _fake_agent(reg, "k", state="busy")
         _fake_agent(reg, "j", inbox=[{"author": "main"}])
-        reg.note_owes("agent:p", "main", "t", id="r-3")
+        # 손으로 고른 id 는 할당기가 이 테스트에서 내지 않는 값 — 같은 id 의 봉투가 뒤에 오지 않게
+        reg.note_owes("agent:p", "main", "t", id="r-903")
         _fake_agent(reg, "p", state="busy", current_author="agent:q")
         # 일하는 중인 k 는 집어 든 main 의 요청을 빚진다 — 실제 흐름에선 "working" 이 "owes" 와 함께 선다
         assert reg.pending_for("main") == [

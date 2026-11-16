@@ -495,7 +495,8 @@ class TestCircularWait:
         from agent_cli.wake import wake_sources
 
         r, (a, b, c) = reg
-        self._owes(r, a, b, "r-1")  # a 는 b 에게 빚진 채 잠들었고
+        # 손으로 고른 id 는 할당기가 이 테스트에서 내지 않는 값 — 아래 `request` 가 받는 id 와 겹치지 않게
+        self._owes(r, a, b, "r-901")  # a 는 b 에게 빚진 채 잠들었고
         # c 가 a 의 요청을 처리 중이다 → a 는 깨어날 것이다. 그 요청은 아직 회신이 가지 않았다 (v10.143.0)
         self.gate.clear()
         from tests.test_agents_live import wait_until
