@@ -793,6 +793,9 @@ def s03_agent_request_to_main(root: Path, *, main_replies: bool) -> dict:
         s = box["s"]
         key = s.agent_keys()[0]
         until(lambda: s.agent_state(key) == "idle", "asker parked")
+        # 회신의 창 줄(`agent_message` — 받는 쪽 키, main 스레드, 받은편지함에 넣은 뒤)에서 main 을 잡는다 — main 의
+        # 다음 꼬리는 상주가 그 회신을 집은 뒤(바쁨)에 짓는다(`_held_request_to` 와 같은 규칙, v10.145.1)
+        s.recorder.hold("agent_message", key, lambda: s.agent_state(key) == "busy")
         return call("reply", id=owed_id(msgs), text="TASK-C use a.py")
 
     def main_skips(msgs):
@@ -823,7 +826,8 @@ def s03_agent_request_to_main(root: Path, *, main_replies: bool) -> dict:
     # main 이 회신하지 않는 길에선 main 의 런이 끝난 뒤에 끝낸다 — 상주의 폴백이 main 의 그 런에 흡수될지 새 런을
     # 열지가 갈리지 않게(늘 새 런)
     read_the_answer = (
-        complete_all("read the answer")
+        # main 의 회신으로 깬 런 — main 의 다음 꼬리(넷째 호출)가 이 런의 "바쁨" 을 본 뒤에 끝낸다
+        _after_main_calls(box, 4, complete_all("read the answer"))
         if main_replies
         else lambda m: (
             until(lambda: runs_ended(box["s"]) >= 1, "main's run ended"),
