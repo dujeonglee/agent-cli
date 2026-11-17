@@ -3913,8 +3913,8 @@ class TestChangesEndpoints:
             "detail": off[1],
         }
 
-    def test_clear_without_a_count_omits_cleared(self, ws, monkeypatch):
-        """셀 수 없었던 Clear 는 ``cleared`` 를 싣지 않는다(토스트는 수 없이)."""
+    def test_clear_without_a_count_sends_null(self, ws, monkeypatch):
+        """셀 수 없었던 Clear 는 ``cleared: null``(토스트는 수 없이)."""
         _, client, store = ws
         orig = store.clear
 
@@ -3924,7 +3924,7 @@ class TestChangesEndpoints:
 
         monkeypatch.setattr(store, "clear", no_count)
         got = client.post("/api/changes/clear?token=testtoken").json()
-        assert "cleared" not in got and got["baseline"]["kind"] == "cleared"
+        assert got["cleared"] is None and got["baseline"]["kind"] == "cleared"
 
     def test_store_that_cannot_count_is_unreadable(self, ws, monkeypatch):
         """저장소는 있으나 기준점·목록을 못 센다 → ``unreadable``(웹이 정한다)."""

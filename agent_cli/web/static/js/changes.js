@@ -47,7 +47,9 @@
 // false 라 ✕ 가 없고, 스냅샷 실패(`cause` `snapshot_failing`)는 색만 빨갛다.
 // 📁 트리의 하위 저장소 폴더 행에는 작은 `git` 배지를 단다(`data-rel` 로, 표시와 같은 길).
 //
-// 다시 세는 때: 페이지 로드(스냅샷 재생 끝), 패널을 열 때, ↻, 런 끝. 런 끝은 기존 SSE 로
+// 다시 세는 때: 페이지 로드(스냅샷 재생 끝), 패널을 열 때, 📁 서랍을 열 때(v10.144.2 — 늘 서
+// 있는 줄이 보이는 순간; 서랍의 `aria-hidden` 이 "false" 로 바뀌는 것을 DOM 으로 본다,
+// workspace.js 를 import 하지 않는다), ↻, 런 끝. 런 끝은 기존 SSE 로
 // 안다 — main 런은 `worker_state` 가 바쁨 → 한가로 바뀔 때(main 런은 `scope_end` 를 내지
 // 않는다), 에이전트·스킬·상주 런은 `scope_end`. 도구 호출마다 세지 않는다. 재생이
 // `scope_end` 를 몰아 보내도 한 번으로 합친다(RECOUNT_MS).
@@ -66,6 +68,7 @@ const $toast = document.getElementById("changes-toast");
 const $clear = document.getElementById("changes-clear");
 const $entry = document.getElementById("changes-entry"); // 📁 서랍 머리 아래 한 줄
 const $tree = document.getElementById("dl-tree"); // workspace.js 의 트리 — 행을 꾸미기만 한다
+const $filesDrawer = document.getElementById("download-drawer"); // 열림만 본다(aria-hidden)
 // 런 끝 신호를 한 번으로 합치는 간격 — 재생이 끝난 스코프를 몰아 보낸다
 const RECOUNT_MS = 400;
 // Clear 뒤 Undo 토스트가 서 있는 시간
@@ -504,6 +507,13 @@ if ($badge && $drawer) {
       });
       if (fresh && !data) recount();
     }).observe($tree, { childList: true, subtree: true });
+  }
+  // 📁 서랍이 열리면 다시 센다 — 밖에서 디스크가 바뀌었어도 서랍의 줄이 지금 수를 말하게.
+  // workspace.js 는 열 때 aria-hidden 을 "false" 로 둔다(클래스 open 은 전환용이라 이것을 본다)
+  if ($filesDrawer) {
+    new MutationObserver(function () {
+      if ($filesDrawer.getAttribute("aria-hidden") === "false") recountSoon();
+    }).observe($filesDrawer, { attributes: true, attributeFilter: ["aria-hidden"] });
   }
   // 새 main 최종답 카드가 그려지면 줄을 그리로 — 직계 자식 추가만 본다(subtree 아님)
   new MutationObserver(function (records) {

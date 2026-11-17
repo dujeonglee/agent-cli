@@ -1018,6 +1018,35 @@ def test_entry_line_without_changes_opens_the_empty_panel(stack, page, ws):
     assert errors == []
 
 
+def test_opening_the_files_drawer_recounts(stack, page, ws):
+    """페이지 로드 뒤 밖에서 디스크가 바뀌었다 — 📁 서랍을 열면 다시 세어 줄이 지금 수를 말한다
+    (서랍을 닫았다 다시 열 때도)."""
+    errors = _open(page, stack)
+    page.wait_for_function(
+        "() => !!document.querySelector('#changes-entry.zero')", timeout=8000
+    )
+    _edit(ws)
+    _files_drawer(page)
+    page.wait_for_function(
+        "() => document.querySelector('#changes-entry .chg-entry-what').textContent"
+        " === '3 files changed'",
+        timeout=8000,
+    )
+    page.click("#dl-close")
+    page.wait_for_function(
+        "() => document.querySelector('#download-drawer').getAttribute('aria-hidden') === 'true'",
+        timeout=8000,
+    )
+    (ws / "more.txt").write_text("4\n")
+    _files_drawer(page)
+    page.wait_for_function(
+        "() => document.querySelector('#changes-entry .chg-entry-what').textContent"
+        " === '4 files changed'",
+        timeout=8000,
+    )
+    assert errors == []
+
+
 def test_clear_counts_the_disk_not_the_stale_list(stack, page, ws):
     """화면은 0 인데 밖에서 디스크가 바뀌었다(↻ 없이) — Clear 는 늘 눌리고, 토스트의 수는
     서버가 Clear 할 때 센 실제 수, 다시 세면 0, Undo 로 이전 기준점이 돌아온다."""
