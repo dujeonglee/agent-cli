@@ -223,7 +223,7 @@ class TestMainRepliesById:
         port = reg.question_port(None)
         assert port.reply("둘째 답", id=d2.id) == ""
         assert [d.id for d in reg.reply_debts("main")] == [d1.id]  # 그 빚만
-        # main 의 회신도 봉투(reply re [r-…])로 간다 (v10.77.0)
+        # main 의 회신도 봉투(reply re [r-…])로 간다 (v10.77.0). settles — 이 배달이 그 빚을 닫는다(v10.145.0)
         assert sent == [
             (
                 key,
@@ -234,6 +234,7 @@ class TestMainRepliesById:
                     "expects_reply": False,
                     "kind": "reply",
                     "re": d2.id,
+                    "settles": d2.id,
                 },
             )
         ]

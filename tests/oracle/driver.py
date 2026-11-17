@@ -682,6 +682,16 @@ def _held_peer_message(box, sender: str, to: str, text: str) -> str:
     return call("message", to=to, text=text)
 
 
+def _held_request_to(box, to: str, text: str) -> str:
+    """보내는 쪽이 ``to`` 에게 회신 기대 `message` — 보낸 쪽의 다음 꼬리는 받는 쪽이 일을 집은 뒤(바쁨)에 짓게
+    잡는다(요청의 창 줄 `agent_message` 에서). 안 잡으면 부하 아래 그 꼬리가 "idle · 1 queued" 로 찍힌다(s22 가,
+    컨테이너 cpus 0.5·부하 1회, 2026-11-17)."""
+    s = box["s"]
+    b = _agent_key(s, to)
+    s.recorder.hold("agent_message", b, lambda: s.agent_state(b) == "busy")
+    return call("message", to=to, text=text)
+
+
 def _pay_before_main_notes(s: Session) -> None:
     """상주가 main 에게 보내는 회신 기대 `message` 는 자기 과제의 빚도 갚는다 — 갚음(보낸 쪽 기록 지우기)은
     배달 **뒤**다. main 이 그 요청을 빚으로 적는 자리(`note_request`)에서 main 의 "기다리는 회신" 이 비기까지
@@ -1309,7 +1319,10 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
     """§4 재시작: 세션 끝(런 도중)·미배달 메일·에이전트→main 미배달 요청 → 저장 → 새 조립이 복원 → 로스터·
     다음 런의 모델 글·기다리는 회신. ``query`` 면 `run --resume` 처럼 첫 질의가 펌프보다 먼저 큐에 있다(질의가 먼저
     연다), 아니면 웹 resume 처럼 질의 없이 — 복원된 메일이 한가한 펌프를 깨운다. ``agents.json`` 바이트는 담지
-    않는다."""
+    않는다.
+
+    `[v10.145.0 에서 재기록 — 2단계 예외 D1: 재시작 뒤 main 메일함의 요청을 보낸 쪽이 기다리는 것으로 선다. 번호는
+    정규화의 첫 등장 순서 때문에 r-1↔r-2 가 뒤바뀐다]`"""
     facts: dict = {}
     box: dict = {}
     # ── 첫 세션: 상주 둘을 띄우고 펌프를 닫는다(웹 서버가 내려간 것과 같다) ──
@@ -1348,6 +1361,8 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
     s.reg.request(asker, "TASK-P ask main about the branch")
     until(lambda: len(s.reg.pending_mail()) == 1, "asker's request")
     until(lambda: s.agent_state(asker) == "idle")
+    # worker 의 첫 일은 세션 종료가 멈춘다 — 그 런의 시작을 종료(로스터의 dead)까지 잡아, 모델 호출 전에 멈추게 한다
+    s.recorder.hold("begin_agent_work", worker, lambda: s.agent_state(worker) == "dead")
     s.reg.request(worker, "TASK-O1 first job")
     until(lambda: s.agent_state(worker) == "busy")
     s.reg.request(worker, "TASK-O2 second job")
@@ -1486,7 +1501,15 @@ def s17_mail_to_an_idle_main_on_the_run_path(root: Path) -> dict:
     box: dict = {}
 
     def notify_after_main_ended(msgs):
-        until(lambda: runs_ended(box["s"]) >= 1, "main run ended")
+        # 런 끝의 기록(`surface.run_ended`)은 펌프가 한가함을 세우기(`waker.mark_idle`) **전**이다 — 그 사이에
+        # 통지가 오면 busy=True 로 찍힌다(컨테이너 cpus 0.5·부하 아래 1회, 2026-11-17). 한가함까지 잡는다.
+        until(
+            lambda: (
+                runs_ended(box["s"]) >= 1
+                and box["s"].wired.pump.deps.waker.idle.is_set()
+            ),
+            "main run ended and idle",
+        )
         return call("message", to="main", text="all done", expects_reply=False)
 
     p = Provider(
@@ -1644,7 +1667,7 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
             + [complete_all("main read it")] * 10,
             "TASK-D1": [
                 _main_waits_then(
-                    box, lambda m: call("message", to="bb", text="TASK-D2 compute")
+                    box, lambda m: _held_request_to(box, "bb", "TASK-D2 compute")
                 ),
                 # main 이 died 통지를 읽고 되묻기를 다 받은 뒤(열두째 호출) — aa 는 그동안 바쁘다
                 _bb_dead_then(
