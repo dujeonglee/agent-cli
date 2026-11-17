@@ -2169,23 +2169,25 @@ class AgentRegistry:
 
     def message_handler(self, sender: str):
         """``message`` 도구의 라우팅 훅 — 보내는 주소(``"main"`` | ``"agent:<key>"``) 하나에
-        하나 (v5.11; v10.141.0 main 에도). ``(to, text, expects_reply) -> 결과 한 줄``.
+        하나 (v5.11; v10.141.0 main 에도). ``(to, text, expects_reply) -> (receipt, err)`` — 보냈으면 ``(배달
+        영수증 한 줄, "")``, 못 보냈으면 ``("", 사유)`` (v10.145.2 — 종전엔 한 줄 글이라 루프가 성공·실패를
+        가르지 못해 실패도 성공으로 기록했다).
 
         상대의 받은편지함(또는 main 메일함)으로 비동기 전송하고 즉시 반환한다. 상대의
         회신은 보낸 쪽에게 새 메시지로 온다(보낸 쪽은 막히지 않는다)."""
         me_key = sender.split(":", 1)[1] if sender.startswith("agent:") else ""
 
-        def handler(to: str, text: str, expects_reply: bool = True) -> str:
+        def handler(to: str, text: str, expects_reply: bool = True) -> tuple[str, str]:
             to = (to or "").strip()
             text = (text or "").strip()
             if not to:
-                return 'message needs a `to` agent key or name (or "main")'
+                return "", 'message needs a `to` agent key or name (or "main")'
             if not text:
-                return "empty message — nothing sent"
+                return "", "empty message — nothing sent"
             if not has_words(text):
                 # v10.1.2: 구두점뿐인 메시지(실측 `>`)는 보내지 않는다 — 받은
                 # 쪽이 뜻을 찾느라 턴을 쓴다.
-                return (
+                return "", (
                     f"message has no words ({text[:20]!r}) — nothing sent; say it "
                     "in words"
                 )
@@ -2193,14 +2195,14 @@ class AgentRegistry:
                 # v10.1.0: 키·`agent:` 접두·이름 전부 받는다 (resolve_key).
                 resolved = self.resolve_key(to)
                 if resolved is None:
-                    return (
+                    return "", (
                         f'unknown agent "{to}" — use a key or name from '
                         '`## Live Agents` (or "main")'
                     )
                 to = resolved
             addr = "main" if to == "main" else f"agent:{to}"
             if addr == sender:
-                return "cannot message yourself"
+                return "", "cannot message yourself"
             tm = self._agents.get(me_key) if me_key else None
             # `message` 는 기본으로 **요청**이다 — 상대에게 회신을 빚지운다
             # (v9.21.0). ``expects_reply=False`` (v10.1.0) 는 **통지**: 상대가
@@ -2220,7 +2222,7 @@ class AgentRegistry:
                     expects_reply=bool(expects_reply),
                     notice=not expects_reply,
                 )
-                return delivered_line(rec_id, expects_reply=bool(expects_reply))
+                return delivered_line(rec_id, expects_reply=bool(expects_reply)), ""
             # Capture the send time BEFORE request() enqueues — the target's
             # worker can start (scope_start) the instant it's queued, so a
             # later timestamp on this arrow would render the request AFTER
@@ -2238,13 +2240,14 @@ class AgentRegistry:
                 kind="" if expects_reply else "notice",
             )
             if err:
-                return err
+                return "", err
             if me_key:
                 self._log_outbound(me_key, text, to=to, ts=send_ts)  # 발신자 창 out
             line = delivered_line(rec_id, expects_reply=bool(expects_reply))
             target = self._agents.get(to)
             backlog = self.backlog_of(to) if target is not None else 0
-            return line + (REQUEST_STACKED.format(n=backlog) if backlog >= 2 else "")
+            stacked = REQUEST_STACKED.format(n=backlog) if backlog >= 2 else ""
+            return line + stacked, ""
 
         return handler
 

@@ -1501,7 +1501,7 @@ class TestCompleteIsLocal:
         a, b = spawn_idle(reg), spawn_idle(reg)
         reg.request(a, "원 일감")
         assert wait_until(lambda: got, timeout=5.0)
-        rid = box["res"].split('delivered as request "')[1].split('"')[0]
+        rid = box["res"][0].split('delivered as request "')[1].split('"')[0]
         assert rid.startswith("r-")
         head, _, body = got[0].partition("\n")
         assert head.startswith("── reply [n-") and head.endswith(f"re [{rid}] ──")
@@ -1584,7 +1584,8 @@ class TestCompleteIsLocal:
         debt = reg.note_owes(me, f"agent:{a}", "일감")
         assert [d["to"] for d in port.debts()] == [f"agent:{a}"]
         # 요청자에게 보낸 `message`(통지)는 갚지 않는다(v10.145.1) — 갚는 것은 `reply` 하나
-        assert "delivered" in reg.message_handler(me)(a, "결과", expects_reply=False)
+        receipt, err = reg.message_handler(me)(a, "결과", expects_reply=False)
+        assert err == "" and "delivered" in receipt
         assert [d["to"] for d in port.debts()] == [f"agent:{a}"]
         assert port.reply("결과", id=debt.id) == ""
         assert port.debts() == []
@@ -1734,7 +1735,7 @@ class TestUnifiedDebtRules:
         b = spawn_idle(reg)
         ports = ResidentLoop.make_ports(
             key=b,
-            message_handler=lambda to, text, **kw: "",
+            message_handler=lambda to, text, **kw: ("", ""),
             questions=reg.question_port(b),
             inbox=lambda: reg.absorb_pending(reg.get(b)),
             peer_roster=None,
@@ -1801,7 +1802,7 @@ class TestUnifiedDebtRules:
         a, b = spawn_idle(reg), spawn_idle(reg)
         ports = ResidentLoop.make_ports(
             key=b,
-            message_handler=lambda to, text, **kw: "",
+            message_handler=lambda to, text, **kw: ("", ""),
             questions=reg.question_port(b),
             inbox=lambda: reg.absorb_pending(reg.get(b)),
             peer_roster=None,
@@ -2122,8 +2123,8 @@ class TestPerRequestDebts:
         me = self._two(reg, b, f"agent:{a}")
         send = reg.message_handler(me)
         # 요청자에게 보낸 `message` 는 요청이든 통지든 빚을 갚지 않는다(v10.145.1 — 갚는 것은 `reply` 하나)
-        assert "delivered" in send(a, "하나", expects_reply=False)
-        assert "delivered" in send(a, "둘", expects_reply=True)
+        assert "delivered" in send(a, "하나", expects_reply=False)[0]
+        assert "delivered" in send(a, "둘", expects_reply=True)[0]
         assert [d.id for d in reg.reply_debts(me)] == ["3", "5"]
         # main 쪽 (v10.56.0): 메일마다 빚(`r-…`), `agent request` 는 갚지 않는다 —
         # 갚는 도구는 `reply(id)` 하나다

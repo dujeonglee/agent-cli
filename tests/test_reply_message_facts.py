@@ -4,6 +4,7 @@
   이라고 말하지 않는다.
 - 요청자가 죽었거나 사라졌으면 `reply` 는 "not delivered" 를 말하고 실패로 기록된다 — 에이전트가 갚든 main 이
   갚든 같은 문장. 빚은 닫힌다(기다리는 이가 없다).
+- `message` 는 보냈을 때만 성공으로 기록된다 — 핸들러가 ``(receipt, err)`` 를 돌려준다. 관찰 글은 그대로.
 """
 
 from __future__ import annotations
@@ -139,6 +140,111 @@ class TestReplyToAGoneRequester:
             (obs,) = [m for m in ctx.get_raw_messages() if m.get("tool") == "reply"]
             assert obs["success"] is False
             assert obs["content"] == "Observation: [reply] " + _gone(a, d.id)
+        finally:
+            door.set()
+            reg.shutdown_all()
+
+
+def _run_one_turn(tmp_path, ops: str, ports):
+    """대본 한 턴(`ops`) 뒤 complete — 그 턴의 관찰 레코드들을 돌려준다."""
+    from agent_cli.context.manager import ContextManager
+    from agent_cli.providers.base import LLMResponse
+    from agent_cli.providers.capabilities import ModelCapabilities
+    from tests.binding_support import make_binding
+    from tests.loopkit import run_loop
+
+    script = [ops, json.dumps({"action": "complete", "result": "done"})]
+
+    class _P:
+        def call(self, messages, system, model, capabilities, **kw):
+            return LLMResponse(content=script.pop(0))
+
+    ctx = ContextManager(tmp_path / "loop", max_context_tokens=20_000)
+    run_loop(
+        query="go",
+        binding=make_binding(
+            provider=_P(), capabilities=ModelCapabilities(32768, 4096, False)
+        ),
+        ports=ports,
+        ctx=ctx,
+    )
+    return [m for m in ctx.get_raw_messages() if m.get("tool")]
+
+
+class TestMessageIsRecordedAsWhatHappened:
+    def _ports(self, reg, b):
+        from tests.loop_ports import make_ports
+
+        return make_ports(
+            owner=f"agent:{b}", message_handler=reg.message_handler(f"agent:{b}")
+        )
+
+    def test_handler_says_sent_or_not(self, tmp_path):
+        reg, a, b, door = _two_idle_agents(tmp_path)
+        try:
+            send = reg.message_handler(f"agent:{b}")
+            receipt, err = send("main", "hello", True)
+            assert err == "" and receipt.startswith('delivered as request "r-')
+            unknown = (
+                'unknown agent "nobody" — use a key or name from `## Live Agents` '
+                '(or "main")'
+            )
+            assert send("nobody", "hi", True) == ("", unknown)
+            assert reg.kill(a) == ""
+            assert wait_until(lambda: reg.get(a).state == "dead")
+            receipt, err = send(a, "hi", True)
+            assert receipt == "" and err.startswith(f'agent "{a}" is dead')
+        finally:
+            door.set()
+            reg.shutdown_all()
+
+    def test_a_failed_message_is_recorded_as_failed(self, tmp_path):
+        reg, _a, b, door = _two_idle_agents(tmp_path)
+        try:
+            ops = json.dumps({"action": "message", "to": "nobody", "text": "hi"})
+            (obs,) = _run_one_turn(tmp_path, ops, self._ports(reg, b))
+            assert obs["tool"] == "message" and obs["success"] is False
+            assert obs["content"] == (
+                'Observation: [message → nobody] unknown agent "nobody" — use a key or '
+                'name from `## Live Agents` (or "main")'
+            )
+        finally:
+            door.set()
+            reg.shutdown_all()
+
+    def test_a_sent_message_is_recorded_as_sent(self, tmp_path):
+        reg, a, b, door = _two_idle_agents(tmp_path)
+        try:
+            ops = json.dumps(
+                {"action": "message", "to": a, "text": "fyi", "expects_reply": False}
+            )
+            (obs,) = _run_one_turn(tmp_path, ops, self._ports(reg, b))
+            assert obs["success"] is True
+            assert obs["content"].startswith(
+                f'Observation: [message → {a}] delivered as notice "n-'
+            )
+        finally:
+            door.set()
+            reg.shutdown_all()
+
+    def test_in_a_batch_only_the_failed_one_is_failed(self, tmp_path):
+        reg, a, b, door = _two_idle_agents(tmp_path)
+        try:
+            ops = json.dumps(
+                [
+                    {
+                        "action": "message",
+                        "to": a,
+                        "text": "fyi",
+                        "expects_reply": False,
+                    },
+                    {"action": "message", "to": "nobody", "text": "hi"},
+                ]
+            )
+            (obs,) = _run_one_turn(tmp_path, ops, self._ports(reg, b))
+            assert obs["success"] is False
+            assert "[1/2] message — OK" in obs["content"]
+            assert "[2/2] message — FAILED" in obs["content"]
         finally:
             door.set()
             reg.shutdown_all()

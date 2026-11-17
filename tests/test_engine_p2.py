@@ -675,10 +675,10 @@ class TestRepliesAndNoticesAreNotItems:
         s = session(p)
         reg = s["reg"]
         key, _ = reg.spawn()
-        out = reg.message_handler(f"agent:{key}")(
+        out, err = reg.message_handler(f"agent:{key}")(
             "main", "S-FYI halfway", expects_reply=False
         )
-        assert out.startswith('delivered as notice "n-')
+        assert err == "" and out.startswith('delivered as notice "n-')
         self._main_completes_once(p, s)
         assert "── notice [" in contents(s["ctx"])
         first_tail = str(p.calls["MAIN"][0][-1]["content"])
@@ -704,8 +704,8 @@ class TestRepliesAndNoticesAreNotItems:
         s = session(p)
         reg = s["reg"]
         key, _ = reg.spawn()
-        out = reg.message_handler(f"agent:{key}")("main", "T-QUESTION which dirs?")
-        assert out.startswith('delivered as request "r-')
+        out, err = reg.message_handler(f"agent:{key}")("main", "T-QUESTION which dirs?")
+        assert err == "" and out.startswith('delivered as request "r-')
         result = s["run"]()
         assert result.success
         first_tail = str(p.calls["MAIN"][0][-1]["content"])
