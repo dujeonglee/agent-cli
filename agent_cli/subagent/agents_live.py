@@ -448,9 +448,8 @@ class AgentRegistry:
         self._cv = self._post.cv
         #: 이 스레드의 다음 배달 하나를 갚기로 보내는 문맥(`_deliver_as`)
         self._deliver_tls = threading.local()
-        #: private 주소(run:·harness:)의 메일함 (v10.84.0) — 그 루프가 턴 경계와
-        #: `wait` 에서 읽는다. UI·영속 밖(프로세스 수명). 같은 `_cv` 로 깨운다.
-        self._mailboxes: dict[str, list[dict]] = {}
+        # private 주소(run:·harness:)의 메일함(v10.84.0)도 우편의 상자다 — 그 루프가 턴 경계와 `wait` 에서 읽는다.
+        # UI·영속 밖(프로세스 수명 — 저장 파일은 에이전트와 main 의 상자만 쓴다).
         # 회신 도착 알림 (CLI 대기 줄) — 부트스트랩 주입.
         self.on_reply: Callable[[dict], None] | None = None
         #: 미배달 메일이 늘거나 비워졌다 (v10.51.0) — web 이 입력창 위 대기열을
@@ -2291,16 +2290,12 @@ class AgentRegistry:
         main 메일함과 달리 디스크·UI·대기열 콜백이 없다(프로세스 수명)."""
         with self._cv:
             self._stamp_mail(mail)
-            self._mailboxes.setdefault(addr, []).append(mail)
-            self._post_deliver(envelope_of_main_mail(mail, addr))  # 2단계 그림자
-            self._cv.notify_all()
+            self._post_deliver(envelope_of_main_mail(mail, addr))
 
     def take_mail(self, addr: str) -> list[dict]:
         """private 메일함을 비우며 전부 돌려준다 — 루프의 메일함 포트(``mailbox.take``)가 턴
         경계마다 부른다. 도착 순서."""
-        with self._cv:
-            self._mailboxes.pop(addr, None)  # 2단계 — 옛 쪽도 쓴다(1c 에서 지운다)
-            envs, _ = self._post.take(addr)
+        envs, _ = self._post.take(addr)
         return [dict(e.payload) for e in envs]
 
     def wait_mail(
@@ -2370,11 +2365,12 @@ class AgentRegistry:
         self._cancel_checkins(addr)
         with self._cv:
             self._checkin_last.pop(addr, None)
-            if (
-                addr in self._mailboxes
-            ):  # 2단계 그림자 — private 메일함만(에이전트 주소의 받은편지함은 그대로)
-                self._post.take(addr)
-            return len(self._mailboxes.pop(addr, []))
+            if not is_private_owner(addr):
+                return (
+                    0  # 에이전트 주소의 받은편지함은 그대로 — private 메일함만 버린다
+                )
+            envs, _ = self._post.take(addr)
+            return len(envs)
 
     # ── status / kill / 종료 ────────────────────
 
