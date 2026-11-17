@@ -28,6 +28,7 @@ from agent_cli.subagent.agents_live import (
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS, make_ports
+from tests.mail_support import to_main
 
 #: 루프 밖의 main 호출자 — `tool_agent` 는 호출자를 받는다 (v10.141.0)
 MAIN_CALLER = make_caller()
@@ -149,6 +150,16 @@ def _unlabel(output: str) -> str:
     return output[len(_NO_REPLY_LABEL) + 1 :]
 
 
+def _queue_behind_a_held_run(reg, key):
+    """받은편지함에 미처리 요청 하나를 세운다 — 붙잡히는 러너(``make_runner(block=…)``)의 워커가 첫 일감을 든
+    채로 두 번째가 줄에 남는다."""
+    me = f"agent:{key}"
+    assert reg.request(key, "held") == ""
+    assert wait_until(lambda: reg.taken_by(me) != ())
+    assert reg.request(key, "x") == ""
+    assert [m.text for m in reg.queued_for(me)] == ["x"]
+
+
 def make_registry(tmp_path, *, runner=None, **runtime):
     reg = AgentRegistry(
         tmp_path,
@@ -265,51 +276,67 @@ class TestBuildReplyRecord:
         assert len(rec["content"]) < len(big)
         assert "head excerpt" in rec["content"]
 
-    class _FakeInbox:
-        def __init__(self, n):
-            self._n = n
+    @staticmethod
+    def _agent_with_backlog(tmp_path, queued: int | None):
+        """실제 레지스트리의 에이전트 하나 — ``queued`` 가 None 이면 유휴, 아니면 런 하나가 붙잡힌 채 그만큼 줄
+        서 있다. ``(reg, key, gate)`` — 끝나면 ``gate.set()`` 과 ``shutdown_all``."""
+        gate, started = threading.Event(), threading.Event()
 
-        def qsize(self):
-            return self._n
+        def runner(kind, start, ctx):
+            started.set()
+            gate.wait(5)
+            return _FakeLoopResult(output="done"), 0.01
 
-    class _FakeTm:
-        def __init__(self, state, queued):
-            self.state = state
-            self.inbox = TestBuildReplyRecord._FakeInbox(queued)
+        reg = make_registry(tmp_path, runner=runner)
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        if queued is not None:
+            assert reg.request(key, "held job") == ""
+            assert started.wait(5)
+            for n in range(queued):
+                assert reg.request(key, f"queued {n}") == ""
+        return reg, key, gate
 
-    class _FakeReg:
-        def __init__(self, tm):
-            self._tm = tm
+    def _status(self, tmp_path, queued: int | None, **kw) -> str:
+        reg, key, gate = self._agent_with_backlog(tmp_path, queued)
+        try:
+            return build_reply_record(self._reply(key=key, **kw), registry=reg)[
+                "content"
+            ]
+        finally:
+            gate.set()
+            reg.shutdown_all()
 
-        def get(self, key):
-            return self._tm
-
-    def test_reply_carries_backlog_status(self):
+    def test_reply_carries_backlog_status(self, tmp_path):
         """v7.11.0: 회신 배달에 배달-시점 잔여 상태 동봉 — main 이 "얼마나
         밀렸는지" 보고 다음 요청/대기를 판단. 잔여가 있으면 자동 배달
         안내(v7.9.0 넛지 정합 — 이 줄 때문에 status 폴링을 돌면 안 됨)."""
-        reg = self._FakeReg(self._FakeTm("busy", 2))
-        rec = build_reply_record(self._reply(), registry=reg)
-        assert "busy" in rec["content"]
-        assert "2 queued" in rec["content"]
-        assert "arrive automatically" in rec["content"]
+        content = self._status(tmp_path, 2)
+        assert "busy" in content
+        assert "2 queued" in content
+        assert "arrive automatically" in content
 
-    def test_reply_status_idle_ready(self):
-        reg = self._FakeReg(self._FakeTm("idle", 0))
-        rec = build_reply_record(self._reply(), registry=reg)
-        assert "idle" in rec["content"]
-        assert "ready for new requests" in rec["content"]
+    def test_reply_status_idle_ready(self, tmp_path):
+        content = self._status(tmp_path, None)
+        assert "idle" in content
+        assert "ready for new requests" in content
 
     def test_reply_status_absent_without_registry(self):
         # 레거시/직접 호출 경로 무변경 (restore pending 미러 재생 등)
         rec = build_reply_record(self._reply())
         assert "agent status:" not in rec["content"]
 
-    def test_status_tail_survives_overcap_pointer(self):
+    def test_status_tail_survives_overcap_pointer(self, tmp_path):
         """over-cap 치환(본문→디스크 포인터) 뒤에도 상태 tail 은 붙는다."""
-        reg = self._FakeReg(self._FakeTm("busy", 1))
-        big = "x" * 40_000
-        rec = build_reply_record(self._reply(output=big), cap=100, registry=reg)
+        reg, key, gate = self._agent_with_backlog(tmp_path, 1)
+        try:
+            big = "x" * 40_000
+            rec = build_reply_record(
+                self._reply(key=key, output=big), cap=100, registry=reg
+            )
+        finally:
+            gate.set()
+            reg.shutdown_all()
         assert "reply-r-1.md" in rec["content"]  # 포인터 치환 유지
         assert "agent status: busy" in rec["content"]
         assert "1 queued" in rec["content"]
@@ -330,7 +357,7 @@ class TestBuildReplyRecord:
         # state=="busy" 만 기다리면 첫 런의 꼬리(회신은 busy 인 채 나간다)에
         # 걸려 곧바로 통과한다 — 두 번째 요청이 실제로 처리 중일 때까지.
         assert wait_until(
-            lambda: [i["text"] for i in reg.get(key).in_flight] == ["second job"]
+            lambda: [m.text for m in reg.taken_by(f"agent:{key}")] == ["second job"]
         )
         reply = reg.drain_replies()[0]
         rec = build_reply_record(reply, registry=reg)
@@ -339,12 +366,16 @@ class TestBuildReplyRecord:
         assert "arrive automatically" in rec["content"]
         reg.shutdown_all()
 
-    def test_died_record_has_no_status_tail(self):
-        reg = self._FakeReg(self._FakeTm("busy", 3))
-        d = build_reply_record(
-            {"key": "agt-abc", "kind": "died", "output": "crash"},
-            registry=reg,
-        )
+    def test_died_record_has_no_status_tail(self, tmp_path):
+        reg, key, gate = self._agent_with_backlog(tmp_path, 3)
+        try:
+            d = build_reply_record(
+                {"key": key, "kind": "died", "output": "crash"},
+                registry=reg,
+            )
+        finally:
+            gate.set()
+            reg.shutdown_all()
         assert "agent status:" not in d["content"]
 
 
@@ -587,14 +618,19 @@ class TestRegistryLifecycle:
         enqueued. The worker runs on its own thread and can dequeue + emit
         ``begin_agent_work`` (scope_start) the instant the item lands — so a
         post-enqueue timestamp would render the request AFTER the work it
-        triggered (team-view ordering bug). Monotonic clock + a put-time probe:
-        the inbound message's ts must be <= the clock value at enqueue."""
+        triggered (team-view ordering bug). Monotonic clock + a probe at the
+        save that follows the enqueue: the request thread is held there until
+        the worker has taken the item, and the clock at that moment is noted —
+        the inbound message's ts must be <= it."""
         import agent_cli.subagent.agents_live as al
+        from agent_cli import fsio
 
         block = threading.Event()
         reg = make_registry(tmp_path, runner=make_runner(block=block))
         key, _ = reg.spawn()
-        tm = reg.get(key)
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        me = f"agent:{key}"
+        requester = threading.current_thread()
 
         clock = [1000.0]
 
@@ -602,23 +638,18 @@ class TestRegistryLifecycle:
             clock[0] += 1.0
             return clock[0]
 
-        put_at = []
+        taken_at = []
+        real_write = fsio.atomic_write_json
 
-        class ProbeQueue:
-            # SimpleQueue.put is read-only, so wrap the queue and record the
-            # clock value at the moment of enqueue (without advancing it).
-            def __init__(self, inner):
-                self._inner = inner
+        def write(path, data, *a, **k):
+            # 받은편지함에 든 뒤 요청 스레드의 첫 저장 — 워커가 꺼내 갈 때까지 붙잡고, 그때의 시계를 적는다
+            if threading.current_thread() is requester and not taken_at:
+                assert wait_until(lambda: reg.taken_by(me) != ())
+                taken_at.append(clock[0])
+            return real_write(path, data, *a, **k)
 
-            def put(self, item, *a, **k):
-                put_at.append(clock[0])
-                return self._inner.put(item, *a, **k)
-
-            def __getattr__(self, n):
-                return getattr(self._inner, n)
-
+        monkeypatch.setattr(fsio, "atomic_write_json", write)
         monkeypatch.setattr(al.time, "time", tick)
-        tm.inbox = ProbeQueue(tm.inbox)
         reg.request(key, "hello", author="main")
         block.set()
 
@@ -628,8 +659,8 @@ class TestRegistryLifecycle:
             if n == "agent_message" and kw.get("direction") == "in"
         ]
         assert ins, "request should emit an inbound message"
-        assert put_at, "request should enqueue"
-        assert ins[0]["ts"] <= put_at[0]  # stamped at-or-before the enqueue
+        assert taken_at, "request should enqueue"
+        assert ins[0]["ts"] <= taken_at[0]  # stamped at-or-before the enqueue
         reg.shutdown_all()
 
     def test_log_outbound_honors_passed_ts(self, tmp_path, renderer):
@@ -810,7 +841,8 @@ class TestWaitAndScope:
         """v7.10.0: idle-reap 가드 — main 유휴·무접속이어도 에이전트가
         working 이거나 inbox 에 미처리 요청이 있으면 인스턴스를 자가
         종료하면 안 된다 (진행 중 작업 소실)."""
-        reg = make_registry(tmp_path)
+        gate = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
         assert reg.any_activity() is False
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
@@ -818,11 +850,13 @@ class TestWaitAndScope:
         reg.get(key).state = "busy"
         assert reg.any_activity() is True
         reg.get(key).state = "idle"
-        reg.get(key).inbox.put(("req", "x", None))
+        # 미처리 요청 하나 — 워커를 첫 일감에 붙잡아 두고 그 뒤에 줄 세운다(픽업 전 창)
+        _queue_behind_a_held_run(reg, key)
+        reg.get(key).state = "idle"
         try:
             assert reg.any_activity() is True
         finally:
-            reg.get(key).inbox.get_nowait()
+            gate.set()
         reg.shutdown_all()
 
     def test_real_roster_flows_to_status_file(self, tmp_path):
@@ -858,7 +892,8 @@ class TestWaitAndScope:
         working/미처리 inbox 가 있으면 "`wait` 로 턴을 마쳐라, 회신은
         자동 배달·도착 시 깨워진다" 힌트를 관찰 말미에 붙인다. 전부
         idle 인 로스터 확인용 status 엔 안 붙임(노이즈)."""
-        reg = make_registry(tmp_path)
+        gate = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         # 대기 상황 아님 → 힌트 없음
@@ -870,11 +905,12 @@ class TestWaitAndScope:
         assert "wake you" in s and "polling `status`" in s
         reg.get(key).state = "idle"
         # inbox 에 미처리 요청 → 힌트 (worker 픽업 전 창)
-        reg.get(key).inbox.put(("req", "x", None))
+        _queue_behind_a_held_run(reg, key)
+        reg.get(key).state = "idle"
         try:
             assert "finish this turn" in reg.format_status()
         finally:
-            reg.get(key).inbox.get_nowait()
+            gate.set()
         reg.shutdown_all()
 
 
@@ -1086,7 +1122,7 @@ class TestLoopWiring:
         assert added[0]["tool"] == "agent"
         # v10.141.0 (사용자 결정): 회신(여기선 런 끝 폴백 요약)은 장부 항목이 아니다 — 읽으면
         # 끝, 레코드에 항목 id 도 없다
-        assert fake_self._state.ledger.requests == []
+        assert fake_self._state.ledger.open_requests() == ()
         assert "request_id" not in added[0] and fake_self.noted == []
         assert not is_format_intervention(added[0])
         assert not reg.has_pending_replies()  # 소비 완료
@@ -1246,7 +1282,7 @@ class TestAskRouting:
 
         assert reg.answer_question(q.id, "main branch", by="user") == ""
         assert wait_until(lambda: reg.get(key).handled == 2)
-        assert reg._questions == {}
+        assert reg.open_human_questions() == []
         assert not reg.has_pending_replies()  # 사람 런 — 창이 곧 배달
         reg.shutdown_all()
 
@@ -1284,7 +1320,7 @@ class TestAskRouting:
         reg.shutdown_all()
         assert time.monotonic() - t0 < 4.0
         assert reg.get(key).state == "dead"
-        assert len(reg._questions) == 1  # 세션 종료는 질문을 지우지 않는다
+        assert len(reg.open_human_questions()) == 1  # 세션 종료는 질문을 지우지 않는다
 
     def test_delegate_ask_path_unchanged(self):
         # handler=None(delegate/main) 이면 종전 사용자-프롬프트 경로 —
@@ -1350,7 +1386,7 @@ class TestResumeRestore:
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         reg.request(key, "hi")
-        # ``_push_reply`` appends in memory (what ``has_pending_replies`` sees)
+        # ``deliver`` appends in memory (what ``has_pending_replies`` sees)
         # and mirrors to disk a step later — wait for the mirror itself, not
         # the in-memory flag (CI Linux caught the gap once: 0 == 1).
         assert wait_until(lambda: len(self._state(tmp_path)["pending"]) == 1)
@@ -1371,7 +1407,7 @@ class TestResumeRestore:
         from agent_cli import fsio
 
         reg = make_registry(tmp_path)
-        reg._push_reply({"kind": "reply", "key": "agt-x", "output": "done"})
+        to_main(reg, {"kind": "reply", "key": "agt-x", "output": "done"})
         assert len(self._state(tmp_path)["pending"]) == 1
 
         real_write = fsio.atomic_write_json
@@ -1433,7 +1469,7 @@ class TestResumeRestore:
                 if name not in reach and self_calls(node) & reach:
                     reach.add(name)
                     grew = True
-        assert "drain_replies" in reach and "_push_reply" in reach  # 스캔이 본다
+        assert "drain_replies" in reach and "deliver" in reach  # 스캔이 본다
 
         def holds_cv(w):
             return any(
@@ -1508,7 +1544,7 @@ class TestResumeRestore:
         # 복원보다 먼저 닿은 통지 — 파일은 그대로 두고, 복원 뒤 첫 저장이 둘 다 쓴다.
         key, saved = self._leave_session(tmp_path)
         reg2 = make_registry(tmp_path)
-        reg2._push_reply({"item_id": "n-early", "output": "early"})
+        to_main(reg2, {"item_id": "n-early", "output": "early"})
         assert (tmp_path / "agents.json").read_bytes() == saved
         assert reg2.restore() == 1
         reg2._save_state()
@@ -1903,6 +1939,7 @@ class TestRunMessagePump:
             return 0
 
     def _pump(self, queue, waker, reg, run_one):
+        """``waker`` 가 None 이면 깨우기 없는 대역(`pump_support.FakeWaker`)."""
         from tests.pump_support import make_pump
 
         make_pump(
@@ -1915,14 +1952,12 @@ class TestRunMessagePump:
 
     def test_plain_run_executes_once_and_exits(self):
         from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.mail_waker import MailWaker
 
         q = InputQueue()
         reg = self._FakeReg()
-        waker = MailWaker(q.enqueue, reg.has_pending_replies)
         calls = []
         q.enqueue(None, "the query")
-        self._pump(q, waker, reg, lambda text, *, wake: calls.append((text, wake)))
+        self._pump(q, None, reg, lambda text, *, wake: calls.append((text, wake)))
         assert calls == [("the query", False)]
 
     def test_wake_cycle_delivers_then_quiesces(self):
@@ -1996,14 +2031,12 @@ class TestRunMessagePump:
 
     def test_shutdown_exits(self):
         from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.mail_waker import MailWaker
 
         q = InputQueue()
         reg = self._FakeReg()
         reg.busy = True  # 활성 작업이 있어도 SHUTDOWN 이 우선
-        waker = MailWaker(q.enqueue, reg.has_pending_replies)
         q.shutdown()
-        self._pump(q, waker, reg, lambda text, *, wake: None)  # 즉시 반환
+        self._pump(q, None, reg, lambda text, *, wake: None)  # 즉시 반환
 
 
 # ── 전문가 역할: died 통지·광고·auto-spawn (v4.59.0) ──
@@ -2979,10 +3012,11 @@ class TestRendererSignatureRegression:
         q = InputQueue()
         q.enqueue("c1", "user ask", nickname="dj")
         reg.on_pending_change = lambda: seen.append(q.snapshot() + reg.pending_mail())
-        reg._push_reply(
-            {"kind": "job", "success": True, "output": "🧵 job #1 finished rc=0\nlog"}
+        to_main(
+            reg,
+            {"kind": "job", "success": True, "output": "🧵 job #1 finished rc=0\nlog"},
         )
-        reg._push_reply({"kind": "harness", "job": "auditor", "output": "AUDIT ok"})
+        to_main(reg, {"kind": "harness", "job": "auditor", "output": "AUDIT ok"})
         last = seen[-1]
         assert [it.get("mail", False) for it in last] == [False, True, True]
         job, aud = last[1], last[2]
@@ -2998,8 +3032,8 @@ class TestRendererSignatureRegression:
         from agent_cli.subagent.agents_live import AgentRegistry
 
         a = AgentRegistry(tmp_path)
-        a._push_reply({"kind": "job", "output": "🧵 job #1 finished"})
-        a._push_reply({"kind": "job", "output": "🧵 job #2 finished"})
+        to_main(a, {"kind": "job", "output": "🧵 job #1 finished"})
+        to_main(a, {"kind": "job", "output": "🧵 job #2 finished"})
         b = AgentRegistry(tmp_path)
         b.restore()
         ids = [it["id"] for it in b.pending_mail()]
@@ -3032,7 +3066,7 @@ class TestResumeMode:
         reg.get(key).ctx.add({"role": "user", "content": "landmark-before-death"})
         reg.request(key, "first job")
         assert wait_until(lambda: reg.get(key).handled == 1)
-        # handled 증가는 _push_reply 보다 앞선다(worker 루프 순서) —
+        # handled 증가는 회신의 메일함 도착보다 앞선다(worker 루프 순서) —
         # drain 은 반드시 회신이 실제로 도착한 뒤에 (CI 타이밍 플레이크
         # 원인: 빈 drain → reply-1 잔류 → 부활 후 seq 1 오집기).
         assert wait_until(reg.has_pending_replies)
@@ -4114,15 +4148,16 @@ class TestAttributionInheritance:
         reg.set_current_run_authors(["Bob"])
         # 워커가 question 을 올리게 하려면 ask 경로가 필요해 무겁다 —
         # 계약의 핵심(승계는 kind=reply 에만 존재)을 shape 로 고정:
-        # _push_reply 로 올라오는 question dict 에는 answers 키가 없다.
-        reg._push_reply(
+        # main 메일함으로 올라오는 question dict 에는 answers 키가 없다.
+        to_main(
+            reg,
             {
                 "kind": "question",
                 "key": key,
                 "profile": "p",
                 "success": True,
                 "output": "which file?",
-            }
+            },
         )
         q = next(r for r in reg.drain_replies() if r["kind"] == "question")
         assert "answers" not in q

@@ -169,4 +169,6 @@ class TestWebServerInjection:
         item = enqueue("weekly report", "⏰ Scheduler")
         assert item["text"] == "weekly report"
         assert item["nickname"] == "⏰ Scheduler"
-        assert item["system"] is False  # 화면의 대기열에도 보인다
+        assert [i["id"] for i in server._queue.snapshot()] == [
+            item["id"]
+        ]  # 화면의 대기열에도 보인다

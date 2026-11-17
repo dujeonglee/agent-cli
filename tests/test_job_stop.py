@@ -403,25 +403,23 @@ class TestOwnerRouting:
 
         monkeypatch.setattr(render_mod, "get_renderer", lambda: RecordingRenderer())
         registry = make_registry(tmp_path)
-        mail: list[dict] = []
         requests: list[tuple] = []
-        registry._push_reply = mail.append
         registry.request = lambda key, text, **kw: (
             requests.append((key, text, kw)) or ""
         )
-        yield registry, mail, requests
+        yield registry, requests
         registry.shutdown_all()
 
     def test_agent_owned_stop_goes_to_that_agent_only(self, tmp_path, agents):
         from agent_cli.runtime import wire_job_delivery
 
-        registry, mail, requests = agents
+        registry, requests = agents
         jobs = JobRegistry(tmp_path)
         wire_job_delivery(registry, jobs)
         try:
             job = jobs.start("sleep 60", owner="agent:k")
             assert jobs.kill(job, by="alice") is True
-            assert mail == []  # main 은 모른다 (소유자 의미론)
+            assert registry.queued_for("main") == ()  # main 은 모른다 (소유자 의미론)
             ((key, text, kw),) = requests
             assert key == "k" and kw["kind"] == "job"
             assert kw["author"] == "main" and kw["expects_reply"] is False
@@ -433,14 +431,14 @@ class TestOwnerRouting:
         from agent_cli.runtime import wire_job_delivery
         from agent_cli.subagent.agent_mail import build_reply_record
 
-        registry, mail, requests = agents
+        registry, requests = agents
         jobs = JobRegistry(tmp_path)
         wire_job_delivery(registry, jobs)
         try:
             job = jobs.start("sleep 60", owner="main")
             jobs.kill(job, by="alice")
             assert requests == []
-            (m,) = mail
+            (m,) = registry.drain_replies()  # main 메일함에 든 그 메일
             assert m["kind"] == "job" and m["success"] is False
             rec = build_reply_record(m)
             assert rec["tool"] == "job" and rec["success"] is False

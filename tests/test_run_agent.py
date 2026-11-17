@@ -233,7 +233,7 @@ class TestStop:
         assert _wait(lambda: tm.state == "dead") and tm.stop_event.is_set()
         # 요청자는 stopped 회신을 받았다 — 기다림이 닫혔다
         assert reg.awaited_replies("main") == []
-        assert [m.get("mark") for m in reg._pending] == ["stopped by user"]
+        assert [m.mark for m in reg.queued_for("main")] == ["stopped by user"]
 
 
 class TestHooks:

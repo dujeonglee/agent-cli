@@ -127,8 +127,8 @@ def test_run_agent_runs_no_tool_after_its_stop(tmp_path):
         assert _until(lambda: reg.get(key).state == "dead")
         assert not target.exists()
         assert p.calls == 1
-        assert [m.get("re") for m in reg._pending] == ["r-1"]
-        assert reg._pending[0]["mark"] == "stopped by user"
+        assert [m.re for m in reg.queued_for("main")] == ["r-1"]
+        assert reg.queued_for("main")[0].mark == "stopped by user"
     finally:
         reg.shutdown_all()
 
@@ -145,7 +145,7 @@ def test_resident_runs_no_tool_after_its_run_stop(tmp_path):
     holder["key"] = key
     assert reg.request(key, "go", item_id="r-2") == ""
     try:
-        assert _until(lambda: [m.get("re") for m in reg._pending] == ["r-2"])
+        assert _until(lambda: [m.re for m in reg.queued_for("main")] == ["r-2"])
         assert not target.exists()
         assert p.calls == 1
         assert reg.get(key).state != "dead"

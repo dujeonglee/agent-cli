@@ -46,6 +46,7 @@ class Stage:
 
     - ``HOLD``: 시작을 알리고(``started[tag]``), ``absorb[tag]`` 가 서면 받은편지함을 이 런으로 흡수하고
       (``absorbed[tag]``), 정지가 설 때까지 막는다. 멈추면 interrupt 결과, 아니면 성공.
+    - ``PARK``: 바로 `wait` 로 끝난다(빚은 열린 채 — 스스로 잠든 상주).
     - 그 밖: 바로 성공(``ran`` 에 표지를 적는다).
     런 기록(호출 둘·생각 하나)을 ctx 에 남겨 회신의 "Last activity"·"Partial notes" 재료로 쓴다."""
 
@@ -61,8 +62,10 @@ class Stage:
         return d.setdefault(tag, threading.Event())
 
     def __call__(self, kind, start, ctx):
-        m = re.search(r"\b(HOLD\d+|NEXT)\b", start.query)
+        m = re.search(r"\b(HOLD\d+|PARK\d+|NEXT)\b", start.query)
         tag = m.group(1) if m else ""
+        if tag.startswith("PARK"):
+            return ToolResult(True, output="⏸ waiting", waiting=True)
         if not tag.startswith("HOLD"):
             self.ran.append(tag)
             # 그 런의 첫 흡수가 읽은 것 — 들고 있던 항목(``opens_run`` 거짓)이 여기서 보인다
@@ -151,11 +154,47 @@ def peer(reg, key="agt-peer0001"):
 
 
 def main_mail(reg, rid):
-    return [m for m in reg._pending if str(m.get("re") or "") == rid]
+    """main 메일함에 줄 선 ``rid`` 의 회신 — 공개 조회(`queued_for`)를 정지 회신의 메일 모양으로 되짠다
+    (`build_reply_record`·`mail_item` 이 읽는 키). 정지 회신은 에이전트가 main 에게 보낸 회신이다."""
+    return [
+        {
+            "kind": "peer_message",
+            "key": v.src.removeprefix("agent:"),
+            "item_id": v.id,
+            "re": v.re,
+            "mark": v.mark,
+            "output": v.text,
+            "expects_reply": v.expects_reply,
+            "wakes_main": v.wakes,
+        }
+        for v in reg.queued_for("main")
+        if v.re == rid
+    ]
+
+
+def _inbox_rows(tm):
+    """``tm`` 의 받은편지함에 줄 선 항목 — 공개 조회를 항목 모양(dict)으로."""
+    return [
+        {
+            "id": v.id,
+            "re": v.re,
+            "mark": v.mark,
+            "text": v.text,
+            "expects_reply": v.expects_reply,
+            "opens_run": v.wakes,
+        }
+        for v in get_agent_registry().queued_for(f"agent:{tm.key}")
+    ]
 
 
 def peer_replies(tm):
-    return [i for i in tm.inbox_items if i.get("kind") == "reply"]
+    """``tm`` 의 받은편지함에 든 회신(무엇에 대한 것인지 ``re`` 를 단, 빚 아닌 항목)."""
+    return [i for i in _inbox_rows(tm) if i["re"] and not i["expects_reply"]]
+
+
+def held_items(tm):
+    """``tm`` 이 런을 열지 않고 든 항목("Stop everything" 의 정지 회신) — 받은편지함의 깨우지 않는 항목."""
+    return [i for i in _inbox_rows(tm) if not i["opens_run"]]
 
 
 def busy_with(reg, stage, tm, tag, rid, *, author="main"):
@@ -286,9 +325,10 @@ class TestRemove:
         p6 = peer(reg)
         tm = spawn(reg)
         # 스스로 잠든 빚(지난 런이 `wait` 로 끝남) — 장부에만 있다
-        reg.note_owes(f"agent:{tm.key}", f"agent:{p6.key}", "old ask", id="r-60")
-        with reg._cv:
-            reg._note_sent(f"agent:{p6.key}", "r-60", f"agent:{tm.key}", "old ask")
+        assert not reg.request(
+            tm.key, "PARK1 old ask", author=f"agent:{p6.key}", item_id="r-60"
+        )
+        assert until(lambda: tm.handled == 1 and tm.state == "idle")
         assert reg.kill(tm.key) == ""
         assert until(lambda: tm.state == "dead")
         (r60,) = peer_replies(p6)
@@ -316,7 +356,8 @@ class TestRemove:
         busy_with(reg, stage, tm, "HOLD17", "r-17")
         threading.Thread(target=reg.kill, args=(tm.key,)).start()
         assert until(lambda: tm.state == "dead")
-        assert tm.inbox.qsize() == 1  # 꺼내지 않은 표식
+        # 끝난 워커는 아무것도 들고 있지 않다(끝내라는 표식은 꺼내지 않은 채 나갔다 — 그 표식은 구현의 것)
+        assert reg.taken_by(f"agent:{tm.key}") == ()
         reg.drain_replies()
         assert not reg.has_active_work() and not reg.any_activity()
 
@@ -494,7 +535,11 @@ class TestNoHiddenSideEffects:
         monkeypatch.setattr(reg, "_save_state", lambda: calls.append("save"))
         monkeypatch.setattr(reg, "_notify_roster", lambda: calls.append("roster"))
         assert reg.stop_run(tm.key) == ""
-        assert calls == [] and reg._pending == [] and tm.inbox_items == []
+        assert (
+            calls == []
+            and list(reg.queued_for("main")) == []
+            and list(reg.queued_for(f"agent:{tm.key}")) == []
+        )
         assert (tm.stop_cause, tm.stop_by) == ("stopped", "user")
         assert tm.run_stop.is_set() and not tm.stop_event.is_set()
 
@@ -525,14 +570,14 @@ class TestStopEverythingAgentRequesters:
         res, sub = self._resident_with_sub_run(reg, stage)
         assert reg.stop_all_runs(wakes_requesters=False) == [sub.key]
         assert until(lambda: sub.state == "dead")
-        assert until(lambda: len(res.held_items) == 1)
-        (held,) = res.held_items
+        assert until(lambda: len(held_items(res)) == 1)
+        (held,) = held_items(res)
         assert held["opens_run"] is False and held["re"] == "r-120"
         assert held["mark"] == "stopped by user"
         assert (
             stage.ran == [] and res.handled == 0 and res.state == "idle"
         )  # 상주 런 0회
-        assert [i["id"] for i in res.inbox_items] == [held["id"]]  # 미러에 남는다
+        assert [i["id"] for i in _inbox_rows(res)] == [held["id"]]  # 미러에 남는다
         assert not reg.has_active_work()  # 들고 있는 항목은 일이 아니다
         assert reg.awaited_replies(f"agent:{res.key}") == []
         # 다음 요청의 런이 함께 읽는다
@@ -541,18 +586,18 @@ class TestStopEverythingAgentRequesters:
         (rec,) = stage.absorbed_by["NEXT"]
         assert "· stopped by user ──" in rec["record"]["content"]
         assert "your request [r-120]" in rec["record"]["content"]
-        assert res.held_items == [] and res.inbox_items == []
+        assert held_items(res) == [] and _inbox_rows(res) == []
 
     def test_stop_all_agents_wakes_the_resident(self, reg, stage):
         res, sub = self._resident_with_sub_run(reg, stage)
         assert reg.stop_all_runs() == [sub.key]
         # 회신이 런을 열었다(인용된 과제 글의 표지로 가짜 엔진이 그 런을 붙잡는다)
-        assert until(lambda: res.state == "busy" and res.held_items == [])
+        assert until(lambda: res.state == "busy" and held_items(res) == [])
 
     def test_held_items_survive_a_restart(self, reg, stage, tmp_path):
         res, _sub = self._resident_with_sub_run(reg, stage)
         reg.stop_all_runs(wakes_requesters=False)
-        assert until(lambda: len(res.held_items) == 1)
+        assert until(lambda: len(held_items(res)) == 1)
         reg._save_state()
         data = json.loads((reg.session_dir / "agents.json").read_text())
         (e,) = [x for x in data["agents"] if x["key"] == res.key]

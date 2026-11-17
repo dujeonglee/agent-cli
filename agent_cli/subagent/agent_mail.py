@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from agent_cli.subagent.agent_stop import one_line
-from agent_cli.subagent.agents_state import state_is_active
+from agent_cli.subagent.agents_state import persists, state_is_active
 from agent_cli.token_estimator import estimate_tokens
 from agent_cli.wake import harness_record
 
@@ -77,6 +79,59 @@ def format_agent_label(key: str, profile: str = "", name: str = "") -> str:
     """표시 라벨 — 다중 인스턴스 구분: "agt-x (code-writer · ui)"."""
     parts = [p for p in (profile, name) if p]
     return f"{key} ({' · '.join(parts)})" if parts else key
+
+
+@dataclass(frozen=True)
+class MailView:
+    """주소 앞에 줄 선(또는 런이 꺼내 간) 배달 하나의 읽기 전용 사본 — 레지스트리의 공개 조회
+    (`AgentRegistry.queued_for`·`taken_by`)가 돌려준다. 담는 것은 봉투 머리의 어휘(우편·장부가 읽는 것)와 본문뿐
+    이고, main 메일과 에이전트 받은편지함 항목의 저장 모양 차이를 여기서 지운다.
+
+    - ``src``: 보낸 주소 — ``"main"``·``"agent:<key>"``·``"user:<nick>"``, 하니스 통지는 그 종류(``"job"`` 등).
+    - ``wakes``: 받는 쪽을 깨우는가 — "Stop everything" 의 정지 회신만 거짓.
+    - ``persists``: ``agents.json`` 에 남는가 — 체크인 같은 장부 밖 알림은 거짓.
+    - ``expects_reply``: 받는 쪽이 이것으로 `reply` 를 빚지는가 — 사람의 말·통지·회신은 거짓."""
+
+    id: str
+    src: str
+    text: str
+    re: str = ""
+    mark: str = ""
+    wakes: bool = True
+    persists: bool = True
+    expects_reply: bool = False
+
+
+def view_of_main_mail(mail: dict) -> MailView:
+    """main 메일함의 메일 한 통 → :class:`MailView`. 읽기만 한다."""
+    key = str(mail.get("key") or "")
+    return MailView(
+        id=str(mail.get("item_id") or ""),
+        src=f"agent:{key}" if key else str(mail.get("kind") or ""),
+        text=str(mail.get("output") or mail.get("text") or ""),
+        re=str(mail.get("re") or ""),
+        mark=str(mail.get("mark") or ""),
+        wakes=bool(mail.get("wakes_main", True)),
+        persists=persists(mail),
+        expects_reply=bool(mail.get("expects_reply")),
+    )
+
+
+def view_of_inbox_item(item: dict) -> MailView:
+    """에이전트 받은편지함 항목 하나 → :class:`MailView`. 읽기만 한다. ``expects_reply`` 는 런 시작·흡수가 빚을 적는
+    규칙과 같다 — 회신을 기대하는 항목이고 보낸 이가 사람이 아니다(사람의 빚은 창이 곧 배달이라 갚을 것이 없다)."""
+    author = str(item.get("author") or "main")
+    return MailView(
+        id=str(item.get("id") or ""),
+        src=author,
+        text=str(item.get("text") or ""),
+        re=str(item.get("re") or ""),
+        mark=str(item.get("mark") or ""),
+        wakes=bool(item.get("opens_run", True)),
+        persists=persists(item),
+        expects_reply=bool(item.get("expects_reply", True))
+        and not is_human_addr(author),
+    )
 
 
 def mail_queue_item(reply: dict) -> dict:
