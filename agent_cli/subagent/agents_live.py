@@ -3089,10 +3089,10 @@ class AgentRegistry:
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()
 
-    def _next_run_items(self, tm: AgentInstance, poll_s: float = 0.5) -> list[dict]:
+    def _next_run_items(self, tm: AgentInstance) -> list[dict]:
         """다음 런을 열 항목 — 우편의 `start_run`(첫 **깨우는** 봉투, 사람의 말이면 이어진 사람의 말까지 묶음 — 깨우지
-        않는 봉투는 줄에 남아 그 런의 첫 흡수가 읽는다). 올 때까지 조건변수에서 기다린다: 배달이 깨우고, 정지(✕·세션
-        종료)는 ``stop_event`` 를 세운 뒤 깨운다(`_wake_worker`). 정지가 서면 빈 목록.
+        않는 봉투는 줄에 남아 그 런의 첫 흡수가 읽는다). 올 때까지 시한 없이 기다린다: 배달이 깨우고, ``stop_event`` 를
+        세우는 둘(`_end_agent`·`shutdown_all`)이 세운 뒤 깨운다(`_wake_worker`). 정지가 서면 빈 목록.
 
         집는 순간 ``busy`` 다(P0-9b) — 그 사이 idle-reap 의 `any_activity`(상태·쌓인 일)가 "활동 없음" 으로 보지
         않게 같은 락 구간에서."""
@@ -3105,7 +3105,7 @@ class AgentRegistry:
                 if envs:
                     tm.state = "busy"
                     return [dict(e.payload) for e in envs]
-                self._cv.wait(timeout=poll_s)
+                self._cv.wait()
 
     def _wake_worker(self) -> None:
         """정지를 세운 뒤 기다리는 워커를 깨운다 — 그 워커가 ``stop_event`` 를 보고 나온다."""
