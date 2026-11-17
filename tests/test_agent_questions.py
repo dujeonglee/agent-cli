@@ -2068,6 +2068,26 @@ class TestPerRequestDebts:
         err = port.reply("정정", id="3")
         assert "already replied to [3]" in err and "`message` (`to`" in err
 
+    def test_a_reply_to_a_gone_requester_still_counts_as_replied(self, mkreg, renderer):
+        """요청자가 사라져 회신이 가지 못해도 갚음이다 — 같은 런의 둘째 `reply` 는 "이미 회신했다" 로 거부되고,
+        남은 빚은 그대로다(2단계: 우편의 줄은 ``unsent`` 로 닫혀 그 런 끝까지 남는다)."""
+        reg = mkreg()
+        a, b = spawn_idle(reg), spawn_idle(reg)
+        me = self._two(reg, b, f"agent:{a}")
+        assert reg.kill(a) == ""
+        assert wait_until(lambda: reg.get(a).state == "dead")
+        port = reg.question_port(b)
+        assert (
+            port.reply("답", id="3") == ""
+        )  # 받을 이가 없다 — 조용히 버린다(종전 그대로)
+        err = port.reply("정정", id="3")
+        assert err == (
+            f"already replied to [3] (agent:{a}) in this run — a second reply is not "
+            f'delivered. If you must correct it, send the correction with `message` (`to` "{a}", '
+            "`text` your correction)."
+        )
+        assert [d.id for d in reg.reply_debts(me)] == ["5"]
+
     def test_id_alone_routes_the_reply(self, mkreg, renderer):
         """main 과 동료에게 진 빚이 섞여 있어도 id 하나로 제자리에 간다
         (v10.77.0, C — `to` 를 지웠다)."""

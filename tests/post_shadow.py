@@ -15,7 +15,8 @@ conftest 의 자동 픽스처가 부른다: 저장 지점(`_save_state`)마다 `
 
 빼는 칸(이유)
 - 명단에 없는 에이전트가 보낸 요청 메일(테스트가 main 메일함에 손으로 넣은 것) — 옛 쪽에 보낸 쪽 기록이 없다.
-- 갚았는데 회신이 가지 못한 빚 — 옛 쪽은 갚음으로 남기고 우편은 dropped 로 지운다(보고 항목).
+- 버그 4(추정 버그 재현 테스트 `TestReplyInTheMessageToMainGap`): 요청을 넣은 뒤 보낸 쪽 기록을 적는 틈에 회신이
+  오면 옛 쪽에는 끝난 기다림이 영영 남는다. 우편이 옳다 — 그 테스트는 xfail 이라 어긋남이 xfail 로 보고된다.
 - 런이 집었지만 아직 빚으로 적히지 않은 요청 — 옛 구현의 틈(`_begin_items` 와 런 시작 사이).
 - main 이 꺼낸(taken) 요청 메일의 빚 — 우편은 꺼낼 때 줄을 집고(빚), 옛 구현은 루프가 그 메일을 관찰로 넣을 때 같은
   id 로 빚을 적는다(`_inject_mail`). 꺼내기만 하는 테스트 흐름에서는 옛 쪽에 끝까지 빚이 없다.
@@ -116,13 +117,7 @@ def compare(
             )
             if debtor != "main" and human_old != human_new:
                 problems.append(f"{debtor} human {human_old} != {human_new}")
-            # 갚았는데 회신이 가지 못한 빚(요청자가 사라짐·대역 `request`) — 옛 쪽은 갚음으로 남기고 우편은 dropped
-            # 로 지운다(판정: 1b 에서 "이미 갚았다" 거부 사유를 읽을 때 달라질 수 있는 칸 — 보고 항목)
-            paid_old = sorted(
-                d.id
-                for d in debts
-                if d.settled and not d.human and post.row(d.id) is not None
-            )
+            paid_old = sorted(d.id for d in debts if d.settled and not d.human)
             paid_new = sorted(rid for rid, r in retained.items() if r.dst == debtor)
             if paid_old != paid_new:
                 problems.append(f"{debtor} paid {paid_old} != {paid_new}")

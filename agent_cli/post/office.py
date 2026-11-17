@@ -148,6 +148,17 @@ class PostOffice:
             self.cv.notify_all()
             return changed
 
+    def pay_unsent(self, debtor: str, rid: str, *, run_id: str) -> Changed:
+        """``debtor`` 가 요청 ``rid`` 를 갚았는데 회신이 가지 못했다(요청자가 사라졌다) — 줄을 갚음으로 닫아
+        그 런 끝까지 남긴다("이미 회신했다" 거부 사유가 사실이어야 한다). 배달할 것은 없다."""
+        with self.cv:
+            row = self._book.get(rid)
+            if row is None or row.kind != "r" or row.dst != debtor:
+                raise RowError(f"{rid}: {debtor} owes no such reply")
+            self._book.close(rid, "unsent", in_run=run_id)
+            self.cv.notify_all()
+            return Changed()
+
     def pay_by_message(
         self, debtor: str, to: str, env: Envelope, *, run_id: str
     ) -> tuple[Row | None, Changed]:

@@ -22,6 +22,7 @@ RowKind = Literal["u", "n", "r", "q"]
 State = Literal["queued", "picked", "closed"]
 How = Literal[
     "reply",
+    "unsent",
     "fallback",
     "by_message",
     "stopped",
@@ -47,7 +48,7 @@ CLOSES: dict[tuple[RowKind, State], frozenset[str]] = {
     ("u", "queued"): frozenset({"dropped", "died"}),
     ("n", "queued"): frozenset({"dropped", "died"}),
     ("r", "picked"): frozenset(
-        {"reply", "fallback", "by_message", "stopped", "dropped", "died"}
+        {"reply", "unsent", "fallback", "by_message", "stopped", "dropped", "died"}
     ),
     ("u", "picked"): frozenset({"completed", "run_ended", "dropped"}),
     ("n", "picked"): frozenset({"completed", "run_ended", "dropped"}),
@@ -56,7 +57,7 @@ CLOSES: dict[tuple[RowKind, State], frozenset[str]] = {
 
 #: 런 안에서 닫는 방법 — 닫힌 줄의 ``closed_in_run`` 이 비면 안 된다(불변식 I5)
 IN_RUN: frozenset[str] = frozenset(
-    {"reply", "by_message", "completed", "fallback", "stopped", "run_ended"}
+    {"reply", "unsent", "by_message", "completed", "fallback", "stopped", "run_ended"}
 )
 
 #: 닫힌 뒤에도 그 빚진 쪽의 런 끝까지 남기는 방법 — 런 안에서 닫는 것 전부. "이미 갚았다" 거부 사유가

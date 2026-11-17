@@ -1153,8 +1153,9 @@ class AgentRegistry:
                 return self._pay_debt(debtor, d, text)
         finally:
             row = self._post.row(d.id)
-            if not paid and row is not None and row.state != "closed":
-                self._post.drop(d.id)  # 회신이 가지 못했다 — 옛 쪽은 갚음으로 적었다
+            if not paid and row is not None and row.state == "picked":
+                # 회신이 가지 못했다 — 갚음이다(닫힌 채 그 런 끝까지: "이미 회신했다")
+                self._post.pay_unsent(debtor, d.id, run_id=run_id)
 
     def _pay_debt(self, debtor: str, d: ReplyDebt, text: str) -> str:
         if debtor == "main":
@@ -2358,9 +2359,9 @@ class AgentRegistry:
             if settled is not None:  # 배달 **뒤** 요청자의 기다림을 닫는다
                 self._close_sent(settled.to, settled.id)
                 row = self._post.row(settled.id) if err else None
-                if row is not None and row.state != "closed":
-                    # 2단계 그림자 — 보내지 못했어도 옛 쪽은 갚음으로 적었다
-                    self._post.drop(settled.id)
+                if row is not None and row.state == "picked":
+                    # 2단계 그림자 — 보내지 못했어도 갚음이다
+                    self._post.pay_unsent(sender, settled.id, run_id=run_id)
             if err:
                 return err
             if me_key:

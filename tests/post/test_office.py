@@ -87,6 +87,17 @@ class TestRuns:
         assert office.last_to(A, "main").how == "reply"
         assert office.awaited_by("main") == ()
 
+    def test_pay_unsent_closes_and_keeps_the_row_without_delivering(self, office):
+        """갚았는데 회신이 가지 못했다(요청자가 사라짐) — 닫힌 채 그 런 끝까지 남는다("이미 회신했다"), 배달 없음."""
+        office.deliver(E.request("r-1", "agent:b", A, "do"))
+        office.start_run(A)
+        assert office.pay_unsent(A, "r-1", run_id="r-1") == Changed()
+        assert _rows(office) == [("r-1", "closed", "unsent")]
+        assert office.last_to(A, "agent:b").how == "unsent"
+        assert office.queued("agent:b") == () and office.owed_by(A) == ()
+        office.end_run(A, run_id="r-1", outcome="done")
+        assert _rows(office) == []
+
     def test_pay_refuses_a_reply_that_answers_something_else(self, office):
         office.deliver(E.request("r-1", "main", A, "do"))
         office.start_run(A)

@@ -22,7 +22,15 @@ KIND = {
 }
 
 #: 런 안에서 닫는 방법 — 그 빚진 쪽의 런이 끝날 때까지 닫힌 채 남는다
-IN_RUN = {"reply", "by_message", "completed", "fallback", "stopped", "run_ended"}
+IN_RUN = {
+    "reply",
+    "unsent",
+    "by_message",
+    "completed",
+    "fallback",
+    "stopped",
+    "run_ended",
+}
 
 
 def _human(e: dict) -> bool:
@@ -37,7 +45,15 @@ def _may_close(kind: str, state: str, how: str) -> bool:
     if state != "picked":
         return False
     if kind == "r":
-        return how in {"reply", "fallback", "by_message", "stopped", "dropped", "died"}
+        return how in {
+            "reply",
+            "unsent",
+            "fallback",
+            "by_message",
+            "stopped",
+            "dropped",
+            "died",
+        }
     if kind in ("u", "n"):
         return how in {"completed", "run_ended", "dropped"}
     return how in {"user_answered", "undeliverable"}  # q
