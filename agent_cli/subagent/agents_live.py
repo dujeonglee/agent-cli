@@ -1889,10 +1889,9 @@ class AgentRegistry:
         """이 항목들로 런을 시작한다 — 미러에서 빼고 처리 중으로 적는다.
         꺼냈지만 아직 시작 안 한 항목(배치 수집의 stash)은 미러에 남는다."""
         ids = {i.get("id") for i in items}
-        with self._cv:
+        with self._cv:  # 2단계 — 옛 거울도 쓴다(1c 에서 지운다). 우편은 `_next_run_items` 가 이미 집었다
             tm.inbox_items = [i for i in tm.inbox_items if i.get("id") not in ids]
             tm.in_flight = [dict(i) for i in items]
-            self._post.start_run(f"agent:{tm.key}")  # 2단계 그림자
         self._save_state()
 
     def _who(self, author: str) -> str:
@@ -1979,7 +1978,6 @@ class AgentRegistry:
             ids = {i.get("id") for i in items}
             tm.inbox_items = [i for i in tm.inbox_items if i.get("id") not in ids]
             tm.in_flight.extend(dict(i) for i in items)
-            tm.held_items = [i for i in tm.held_items if i.get("id") not in ids]
         if not items:
             return []
         out: list[dict] = []
@@ -2592,7 +2590,8 @@ class AgentRegistry:
         # 워커의 `finally` 가 잡는다 — 죽음이 확정되는 유일한 지점이다.
         self._drop_monitors(tm.key)
         tm.stop_event.set()
-        tm.inbox.put(_SHUTDOWN)
+        tm.inbox.put(_SHUTDOWN)  # 2단계 — 옛 받은편지함의 표식(1c 에서 지운다)
+        self._wake_worker()
         if (
             join
             and tm.worker is not None
@@ -2793,7 +2792,8 @@ class AgentRegistry:
         for tm in list(self._agents.values()):
             self._drop_monitors(tm.key)
             tm.stop_event.set()
-            tm.inbox.put(_SHUTDOWN)
+            tm.inbox.put(_SHUTDOWN)  # 2단계 — 옛 받은편지함의 표식(1c 에서 지운다)
+        self._wake_worker()
         for tm in list(self._agents.values()):
             if tm.worker is not None:
                 tm.worker.join(timeout=wait_left(deadline, 5.0))
@@ -3182,50 +3182,12 @@ class AgentRegistry:
             # (busy/dead 전환만 알리고 최초 idle 을 빠뜨렸었음, v4.62.1).
             self._notify_roster()
 
-            # 사람-직접 요청 배치 수집 중 만난 비-사람 항목을 다음 이터레이션으로
-            # 이월하는 1칸 stash (SimpleQueue 는 put-front 가 없어 필요).
-            stash = None
             while not tm.stop_event.is_set():
-                item = stash if stash is not None else self._next_inbox_item(tm)
-                stash = None
-                if item is _SHUTDOWN or tm.stop_event.is_set():
+                items = self._next_run_items(tm)
+                if not items:
                     break
-                if isinstance(item, dict) and item.get("opens_run") is False:
-                    tm.held_items.append(
-                        item
-                    )  # 런을 열지 않는다 — 다음 런이 함께 읽는다
-                    continue
-                # P0-9b: dequeue 직후 즉시 busy — 종전엔 분류/배치 수집 뒤
-                # _handle_* 안에서야 busy 로 바뀌어, 그 사이 idle-reap 의
-                # any_activity()(state 검사 + inbox.qsize — 방금 비움)가 "활동
-                # 없음"으로 오판해 작업 중 세션을 거둘 수 있었다.
-                tm.state = "busy"
-                # 사람-직접(user:*) 요청은 대기분을 한 턴에 배치 처리(drain-all,
-                # C-1) — main 위임/peer/배달회신은 회신 목적지가 달라 개별. inbox 에
-                # 실제로 더 쌓여 있을 때(qsize>0)만 수집하므로 단건 경로는 종전과
-                # 동일(회귀 안전).
-                if self._is_human_direct(item):
-                    batch = [item]
-                    while tm.inbox.qsize() > 0:
-                        try:
-                            nxt = tm.inbox.get_nowait()
-                        except Empty:
-                            break
-                        if nxt is _SHUTDOWN:
-                            tm.inbox.put(_SHUTDOWN)  # 바깥 루프 종료 몫으로 재게시
-                            break
-                        if self._is_human_direct(nxt):
-                            batch.append(nxt)
-                        else:
-                            stash = nxt  # 비-사람 항목은 다음 이터레이션으로 이월
-                            break
-                    self._release_held(tm)
-                    self._begin_items(tm, batch)
-                    finished = kind.run(kind.start(batch))
-                else:
-                    self._release_held(tm)
-                    self._begin_items(tm, [item])
-                    finished = kind.run(kind.start([item]))
+                self._begin_items(tm, items)
+                finished = kind.run(kind.start(items))
                 if tm.ends_after_task and not self._run_ended_by_wait(finished):
                     self._come_down(tm, finished)
                     break
@@ -3268,24 +3230,28 @@ class AgentRegistry:
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()
 
-    @staticmethod
-    def _next_inbox_item(tm: AgentInstance, poll_s: float = 0.5):
-        """받은편지함의 다음 항목 — 정지가 서면 ``_SHUTDOWN``. 정지를 세우는 쪽은 표식도 넣지만
-        (`_end_agent`·`shutdown_all`), 막힌 채 기다리지 않고 짧게 다시 본다."""
-        while True:
-            try:
-                return tm.inbox.get(timeout=poll_s)
-            except Empty:
-                if tm.stop_event.is_set():
-                    return _SHUTDOWN
+    def _next_run_items(self, tm: AgentInstance, poll_s: float = 0.5) -> list[dict]:
+        """다음 런을 열 항목 — 우편의 `start_run`(첫 **깨우는** 봉투, 사람의 말이면 이어진 사람의 말까지 묶음 — 깨우지
+        않는 봉투는 줄에 남아 그 런의 첫 흡수가 읽는다). 올 때까지 조건변수에서 기다린다: 배달이 깨우고, 정지(✕·세션
+        종료)는 ``stop_event`` 를 세운 뒤 깨운다(`_wake_worker`). 정지가 서면 빈 목록.
 
-    @staticmethod
-    def _release_held(tm: AgentInstance) -> None:
-        """들고 있던 런을 열지 않는 항목(``opens_run`` 거짓)을 받은편지함으로 되돌린다 — 곧 시작할 런의 첫 턴 경계
-        흡수(`absorb_pending`)가 함께 읽는다. 런을 시작하기 직전에만 부른다."""
-        held, tm.held_items = tm.held_items, []
-        for it in held:
-            tm.inbox.put(it)
+        집는 순간 ``busy`` 다(P0-9b) — 그 사이 idle-reap 의 `any_activity`(상태·쌓인 일)가 "활동 없음" 으로 보지
+        않게 같은 락 구간에서."""
+        addr = f"agent:{tm.key}"
+        with self._cv:
+            while True:
+                if tm.stop_event.is_set():
+                    return []
+                envs, _ = self._post.start_run(addr)
+                if envs:
+                    tm.state = "busy"
+                    return [dict(e.payload) for e in envs]
+                self._cv.wait(timeout=poll_s)
+
+    def _wake_worker(self) -> None:
+        """정지를 세운 뒤 기다리는 워커를 깨운다 — 그 워커가 ``stop_event`` 를 보고 나온다."""
+        with self._cv:
+            self._cv.notify_all()
 
     @staticmethod
     def _run_ended_by_wait(finished) -> bool:
