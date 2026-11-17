@@ -13,7 +13,7 @@ from agent_cli.post import envelope as E
 from agent_cli.post.request_book import RequestBook, RowError
 
 HOWS = (
-    "reply", "unsent", "fallback", "by_message", "stopped", "removed", "dropped",
+    "reply", "unsent", "fallback", "stopped", "removed", "dropped",
     "completed", "run_ended", "user_answered", "undeliverable", "died",
 )  # fmt: skip
 OPS = ("pick",) + tuple(f"close:{h}" for h in HOWS)
@@ -32,7 +32,6 @@ EXPECT = {
         "picked",
         "close:unsent",
     ): "closed",  # 갚았는데 회신이 가지 못함 — 닫힌 채 남는다(2단계)
-    ("r", "picked", "close:by_message"): "closed",
     ("r", "picked", "close:fallback"): "closed",
     ("r", "picked", "close:stopped"): "closed",
     ("r", "picked", "close:dropped"): "gone",
@@ -99,18 +98,16 @@ def test_row_transition_table(kind, state, op):
 
 def test_table_size():
     """칸 수 — 보고용 숫자를 고정한다(허용 칸 + 금지 칸 = 전체)."""
-    assert len(CELLS) == 4 * 4 * 13 - 2 * 13
-    assert len([c for c in CELLS if c in EXPECT]) == len(EXPECT) == 25
+    assert len(CELLS) == 4 * 4 * 12 - 2 * 12
+    assert len([c for c in CELLS if c in EXPECT]) == len(EXPECT) == 24
 
 
 @pytest.mark.parametrize(
     "how",
-    ["reply", "unsent", "by_message", "completed", "fallback", "stopped", "run_ended"],
+    ["reply", "unsent", "completed", "fallback", "stopped", "run_ended"],
 )
 def test_closing_inside_a_run_needs_the_run(how):
-    kind = (
-        "r" if how in ("reply", "unsent", "by_message", "fallback", "stopped") else "u"
-    )
+    kind = "r" if how in ("reply", "unsent", "fallback", "stopped") else "u"
     book = _book_with(kind, "picked")
     with pytest.raises(RowError):
         book.close("x-1", how)
@@ -186,12 +183,6 @@ class TestQuestions:
     def test_awaited_by_includes_the_not_yet_picked(self):
         """빚으로 적히기 전(queued)에도 기다림은 있다 — `wait` 의 근거."""
         assert [r.rid for r in self._book().awaited_by("main")] == ["r-1", "r-3"]
-
-    def test_owes_oldest_picks_the_oldest_to_that_requester(self):
-        book = self._book()
-        assert book.owes_oldest("agent:a", "main").rid == "r-1"
-        assert book.owes_oldest("agent:a", "agent:b").rid == "r-2"
-        assert book.owes_oldest("agent:a", "agent:c") is None
 
     def test_open_requests_are_the_picked_u_and_n(self):
         book = self._book()

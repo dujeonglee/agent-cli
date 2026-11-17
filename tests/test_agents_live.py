@@ -2552,8 +2552,9 @@ class TestPeerMessaging:
         assert content == f"── notice [{mid}] from {a} (alpha) ──\nstatus: half done"
         reg.shutdown_all()
 
-    def test_notice_to_requester_still_settles_my_debt(self, tmp_path, renderer):
-        """내 요청자에게 보낸 통지는 내 빚을 갚는다 (fire-and-forget 회신)."""
+    def test_notice_to_requester_leaves_my_debt(self, tmp_path, renderer):
+        """내 요청자에게 보낸 통지도 내 빚을 갚지 않는다 (v10.145.1 — 갚는 것은 `reply` 하나;
+        종전엔 fire-and-forget 회신으로 갚았다)."""
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
         me = f"agent:{a}"
@@ -2561,7 +2562,7 @@ class TestPeerMessaging:
         assert reg.reply_debts(me)
         handler = reg.message_handler(f"agent:{a}")
         handler(b, "done, no answer needed", expects_reply=False)
-        assert reg.reply_debts(me) == []
+        assert [d.id for d in reg.reply_debts(me)] == ["1"]
         reg.shutdown_all()
 
     def test_resolve_key_accepts_prefix_and_name(self, tmp_path, renderer):

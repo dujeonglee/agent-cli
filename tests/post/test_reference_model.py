@@ -112,17 +112,9 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
                 )
             )
         elif k == 7:
-            to = rnd.choice(ADDRS)
+            # `message` 는 빚을 갚지 않는다(v10.145.1) — 통지는 평범한 배달
             ops.append(
-                (
-                    "pay_by_message",
-                    {
-                        "debtor": addr,
-                        "to": to,
-                        "env": E.notice(nid("n"), addr, to, "m"),
-                        "run_id": run,
-                    },
-                )
+                ("deliver", {"e": E.notice(nid("n"), addr, rnd.choice(ADDRS), "m")})
             )
         elif k == 8:
             ops.append(
@@ -292,7 +284,7 @@ def test_the_generator_reaches_every_operation_and_both_verdicts():
             refused += impl_refused
             accepted += not impl_refused
     assert seen == {
-        "deliver", "start_run", "absorb", "pay", "pay_by_message", "complete", "end_run",
+        "deliver", "start_run", "absorb", "pay", "complete", "end_run",
         "remove_queued", "take_reply", "ask", "answer", "forget_questions_of",
         "owe", "take",
     }  # fmt: skip

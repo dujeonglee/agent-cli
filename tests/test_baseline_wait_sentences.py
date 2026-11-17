@@ -156,8 +156,10 @@ class TestMainAccepts:
 
 class TestMainRefuses:
     def test_an_agent_waiting_on_mains_answer_is_not_a_source(self, session):  # noqa: F811
-        """상주가 main 에게 회신 기대 `message` 로 묻고(그 `message` 가 자기 과제의 빚을 갚는다) 잠들었다 — main 이
-        `wait` 하면 근거가 없어 거절된다: 빚진 쪽은 main 이고, 상주는 main 에게 빚이 없다."""
+        """상주가 main 에게 회신 기대 `message` 로 묻고 잠들었다 — main 이 `wait` 하면 거절된다: 상주를 깨울 것은
+        main 의 회신뿐이다. `[v10.145.1 에서 바뀜 — 그 `message` 는 상주의 과제 빚을 갚지 않는다: 상주는 main 에게
+        빚진 채 main 을 기다리므로 거절 문장이 "근거 없음" 에서 고리("owes you a reply but is itself waiting — on
+        you")로 바뀐다]`"""
         holder: dict = {"waiting": threading.Event()}
 
         def asks(msgs):
@@ -184,18 +186,29 @@ class TestMainRefuses:
                     lambda m: call("reply", id=owed_id(m), text="use a.py"),
                     call("complete", result="done", answers=[]),
                 ],
-                "TASK-P1": [asks, call("wait"), call("complete", result="ok")],
+                # main 이 그 물음을 빚으로 적은 뒤(셋째 호출이 시작된 뒤) 잠든다 — 먼저 잠들면 기다릴 근거가 없어
+                # 거절되고, 과제 빚(갚지 않은)이 되묻기·폴백으로 닫혀 main 의 거절 문장이 갈린다(v10.145.1)
+                "TASK-P1": [
+                    asks,
+                    lambda m: (
+                        wait_until(lambda: len(holder["p"].calls["MAIN"]) >= 3),
+                        call("wait"),
+                    )[1],
+                    call("complete", result="ok"),
+                ],
             }
         )
+        holder["p"] = p
         s = session(p)
         holder["reg"] = s["reg"]
         s["reg"].checkin_timer_factory = FakeTimer
         s["run"]()
         lines = _wait_lines(contents(s["ctx"]))
+        (key,) = [r["key"] for r in s["reg"].roster_snapshot()]
         assert lines[1] == (
-            "Observation: wait refused — nothing you started is pending (no background "
-            "job, monitor or agent of yours), so nothing would wake you. Keep working, or "
-            "call `complete` if the task is done."
+            f"Observation: wait refused — agent:{key} owes you a reply but is itself "
+            "waiting — on you, so if you wait too, nobody wakes. Reply to what you owe, "
+            "or keep working; call `complete` if the task is done."
         )
 
 

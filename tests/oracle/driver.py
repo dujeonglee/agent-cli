@@ -76,6 +76,9 @@ EVENTS = frozenset(
 
 #: 한 번 기다리는 상한 — 넘으면 시나리오가 실패한다(결과를 바꾸는 값이 아니다)
 _PATIENCE_S = 20.0
+#: 갚지 않은 빚이 있는 `complete` 를 하니스가 되돌리는 횟수 — 제품의 되묻기 예산(`loop.ledger.NAG_BUDGET`)과 같다.
+#: 대본이 그 호출 수만큼 줄을 둔다(공개 표면만 import 하는 규칙이라 값을 적는다 — 어긋나면 기대값 diff 로 드러난다).
+NAG_BUDGET = 8
 
 
 def call(action: str, **kw) -> str:
@@ -447,16 +450,13 @@ class Session:
 
         self.recorder.rules["wait_in_place"] = after_wake
 
-    def close_answered_awaits_before_main_reads(self, *, paid: bool = False) -> None:
+    def close_answered_awaits_before_main_reads(self) -> None:
         """main 이 제자리 대기에서 깰 때(``wait_in_place(False)``) 도착한 회신이 답하는 "기다리는 회신" 이 닫힐
         때까지 main 을 잡는다 — 회신한 쪽은 배달한 **뒤** 보낸 쪽 기록을 지운다(`AgentRegistry.awaited_replies`).
         기대값의 띠(`open_items`)는 그 뒤의 것이다. 회신한 쪽이 그다음 곧바로 런을 끝내는 시나리오에서는 쓰지
         않는다 — main 의 꼬리가 회신한 쪽의 "바쁨" 을 보는 순서와 함께 강제할 손잡이가 없다."""
 
         def answered_awaits_closed() -> bool:
-            if paid:
-                # 깨운 메일이 통지(`message`)로 빚을 갚았다 — 회신 머리(``re [r-…]``)가 없어 전부 닫힐 때까지
-                return not self.reg.awaited_replies("main")
             heads = " ".join(m.get("text") or "" for m in self.reg.pending_mail())
             return not any(
                 f"re [{r['id']}]" in heads for r in self.reg.awaited_replies("main")
@@ -692,11 +692,14 @@ def _held_request_to(box, to: str, text: str) -> str:
     return call("message", to=to, text=text)
 
 
-def _pay_before_main_notes(s: Session) -> None:
-    """상주가 main 에게 보내는 회신 기대 `message` 는 자기 과제의 빚도 갚는다 — 갚음(보낸 쪽 기록 지우기)은
-    배달 **뒤**다. main 이 그 요청을 빚으로 적는 자리(`note_request`)에서 main 의 "기다리는 회신" 이 비기까지
-    잡는다 — 기대값의 띠(`open_items`)는 그 뒤의 것이다."""
-    s.recorder.hold("note_request", None, lambda: not s.reg.awaited_replies("main"))
+def _wake_runs_after_idle(s: Session, name: str) -> None:
+    """메일이 연 main 의 런(``wake``)은 ``name`` 이 런을 끝낸(한가한) 뒤에 연다 — 그 상주의 폴백이 연 런의 첫 글이
+    상주의 상태(바쁨↔한가함)를 보는 순서가 갈리지 않게(s17 과 같은 규칙, v10.145.1)."""
+    s.surface.before_run = lambda req: (
+        until(lambda: s.agent_state(_agent_key(s, name)) == "idle", f"{name} done")
+        if req.wake
+        else None
+    )
 
 
 def _after_agents_settle(box, step, *, states=("idle", "dead")):
@@ -777,12 +780,13 @@ def s02_fallback_reply(root: Path) -> dict:
 
 def s03_agent_request_to_main(root: Path, *, main_replies: bool) -> dict:
     """§4 요청 r-(→main): 상주가 main 에게 `message`(회신 기대) → main 앞 메일 → main 이 `reply`(또는 하지 않고
-    런을 끝내 폴백). 상주는 `wait` 로 런을 끝냈다가 회신에 새 런으로 깬다."""
+    런을 끝내 폴백). 상주는 `wait` 로 런을 끝냈다가 회신에 새 런으로 깬다. `[v10.145.1 에서 재기록 — 그 `message` 는
+    상주의 과제 빚(TASK-C)을 갚지 않는다: 깬 런의 `complete` 가 되묻기 예산을 다 쓰고 런 끝 폴백이 main 에게 간다]`"""
     box: dict = {}
 
     def agent_asks(msgs):
         assert box["s"].recorder.main_waiting.wait(_PATIENCE_S)
-        _pay_before_main_notes(box["s"])
+        # `message` 는 상주의 빚을 갚지 않는다(v10.145.1) — main 의 기다림은 회신(또는 폴백)까지 열린 채다
         return call("message", to="main", text="which file should I use?")
 
     def main_answers(msgs):
@@ -800,7 +804,6 @@ def s03_agent_request_to_main(root: Path, *, main_replies: bool) -> dict:
             "complete", result="TASK-C no answer from main", answers=closing_ids(msgs)
         )
 
-    # 요청자(main)에게 보낸 `message` 는 상주 자신의 빚도 갚는다 — main 의 기다림은 이 메일로 닫힌다
     main_script = [
         call("agent", mode="spawn", name="helper", task="TASK-C do the work"),
         _after_runs_began(box, 1, call("wait")),
@@ -809,10 +812,24 @@ def s03_agent_request_to_main(root: Path, *, main_replies: bool) -> dict:
         main_script += [
             main_answers,
             _after_agents_settle(box, complete_all("main finished")),
+            # 상주의 과제 폴백이 연 main 의 둘째 런
+            complete_all("read the fallback"),
         ]
     else:
-        # `reply` 없는 `complete` 는 빚 독촉이 되돌린다 — 예산이 다할 때까지 같은 답
-        main_script += [main_skips] * 10
+        # `reply` 없는 `complete` 는 빚 독촉이 되돌린다 — 예산이 다할 때까지 같은 답(첫 `complete` + 되묻기 여덟),
+        # 그리고 상주의 폴백이 연 main 의 둘째 런에서 한 번
+        main_script += [main_skips] * (1 + NAG_BUDGET + 1)
+    # 깬 런 — main 의 회신(또는 폴백)을 읽고 끝낸다. 과제 빚이 열린 채라 되묻기가 예산만큼 돌아오고 폴백이 닫는다.
+    # main 이 회신하지 않는 길에선 main 의 런이 끝난 뒤에 끝낸다 — 상주의 폴백이 main 의 그 런에 흡수될지 새 런을
+    # 열지가 갈리지 않게(늘 새 런)
+    read_the_answer = (
+        complete_all("read the answer")
+        if main_replies
+        else lambda m: (
+            until(lambda: runs_ended(box["s"]) >= 1, "main's run ended"),
+            complete_all("read the answer")(m),
+        )[1]
+    )
     p = Provider(
         {
             "MAIN": main_script,
@@ -820,15 +837,16 @@ def s03_agent_request_to_main(root: Path, *, main_replies: bool) -> dict:
                 agent_asks,
                 # main 이 그 요청을 읽어 빚을 적은 뒤(셋째 호출) — 먼저 기다리면 근거가 없어 거절된다
                 _after_main_calls(box, 3, lambda m: call("wait")),
-                # 깬 런 — main 의 회신(또는 폴백)을 읽고 끝낸다
-                complete_all("read the answer"),
+                read_the_answer,
+                *[complete_all("read the answer")] * NAG_BUDGET,
             ],
         }
     )
     s = box["s"] = Session(root, p, path="web")
+    _wake_runs_after_idle(s, "helper")
 
     def done(s):
-        until(lambda: runs_ended(s) >= 1, "main runs")
+        until(lambda: runs_ended(s) >= 2, "main runs")
         key = s.agent_keys()[0]
         until(
             lambda: (
@@ -844,8 +862,9 @@ def s03_agent_request_to_main(root: Path, *, main_replies: bool) -> dict:
 
 
 def s04_notices_both_ways(root: Path) -> dict:
-    """§4 회신·통지 — 줄 없음: 상주 → main 통지(`message` 회신 기대 없음)는 main 을 깨우고 상주의 빚을 갚되 장부
-    항목이 아니다, main → 상주 통지는 상주의 새 런을 열되 빚이 아니다."""
+    """§4 회신·통지 — 줄 없음: 상주 → main 통지(`message` 회신 기대 없음)는 main 을 깨우되 장부 항목이 아니다, main
+    → 상주 통지는 상주의 새 런을 열되 빚이 아니다. `[v10.145.1 에서 재기록 — 통지는 상주의 빚을 갚지 않는다: 상주의
+    `complete` 는 되묻기 예산(8)을 다 쓰고 런 끝 폴백이 그 빚을 갚는다]`"""
     box: dict = {}
     p = Provider(
         {
@@ -862,15 +881,17 @@ def s04_notices_both_ways(root: Path) -> dict:
                         "message", to="main", text="built it", expects_reply=False
                     ),
                 ),
-                # 통지로 깬 main 의 꼬리(셋째 호출)가 이 런의 "바쁨" 을 본 뒤에 끝낸다
+                # 통지로 깬 main 의 꼬리(셋째 호출)가 이 런의 "바쁨" 을 본 뒤에 끝낸다 — 빚이 열린 채라 되묻기가
+                # 여덟 번 더 돌아오고(예산), 그 뒤 하니스가 폴백으로 닫는다
                 _after_main_calls(box, 3, complete_all("ok")),
+                *[complete_all("ok")] * NAG_BUDGET,
                 # 통지를 보낸 main 의 꼬리(넷째 호출)가 그 런의 "바쁨" 을 본 뒤에 끝낸다
                 _after_main_calls(box, 4, complete_all("noted")),
             ],
         }
     )
     s = box["s"] = Session(root, p)
-    s.close_answered_awaits_before_main_reads(paid=True)
+    s.close_answered_awaits_before_main_reads()
     s.say("MAIN go")
     drive(s, path="run", until_done=None)
     return s.collect()
@@ -1359,7 +1380,11 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
     until(lambda: s.agent_state(worker) == "idle" and s.agent_state(asker) == "idle")
     # 펌프가 없는 동안: asker 가 main 에게 묻고(미배달 요청) 기다린다, worker 는 첫 일 도중 · 둘째는 줄에
     s.reg.request(asker, "TASK-P ask main about the branch")
-    until(lambda: len(s.reg.pending_mail()) == 1, "asker's request")
+    # `message` 는 asker 의 TASK-P 빚을 갚지 않는다(v10.145.1) — 펌프가 없어 main 이 집지 않은 요청은 `wait` 근거가
+    # 아니므로 asker 의 런은 되묻기 끝에 폴백으로 끝난다. 그 폴백까지(메일 둘) 잡는다 — 하나에서 멈추면 폴백과 경주한다.
+    until(
+        lambda: len(s.reg.pending_mail()) == 2, "asker's request and its run's fallback"
+    )
     until(lambda: s.agent_state(asker) == "idle")
     # worker 의 첫 일은 세션 종료가 멈춘다 — 그 런의 시작을 종료(로스터의 dead)까지 잡아, 모델 호출 전에 멈추게 한다
     s.recorder.hold("begin_agent_work", worker, lambda: s.agent_state(worker) == "dead")
@@ -1562,12 +1587,13 @@ def _roster(s: Session) -> list[dict]:
 def s21_main_stop_owes_agent(root: Path) -> dict:
     """1단계 ① main 정지 회신 `[단계 4c 에서 바뀜 — 결정 2]`: 상주가 main 에게 회신 기대 `message` → main 이 그
     메일로 깬 런에서 사람이 ■ — 지금은 펌프의 런 끝(`main_run_ended`)이 stopped 를 넘기지 않아 빚진 상대(상주)에게
-    라벨 붙은 런 요약 폴백이 간다. 상주는 그것을 회신으로 읽고 새 런을 연다."""
+    라벨 붙은 런 요약 폴백이 간다. 상주는 그것을 회신으로 읽고 새 런을 연다. `[v10.145.1 에서 재기록 — 그 `message` 는
+    상주의 과제 빚(TASK-S1)을 갚지 않는다: 깬 런의 `complete` 가 되묻기 예산을 다 쓰고 런 끝 폴백이 main 의 새 런을 연다]`"""
     box: dict = {}
 
     def agent_asks(msgs):
         assert box["s"].recorder.main_waiting.wait(_PATIENCE_S)
-        _pay_before_main_notes(box["s"])
+        # `message` 는 상주의 빚을 갚지 않는다(v10.145.1) — main 의 기다림은 회신(또는 폴백)까지 열린 채다
         return call("message", to="main", text="which file should I use?")
 
     def main_is_stopped(msgs):
@@ -1582,19 +1608,25 @@ def s21_main_stop_owes_agent(root: Path) -> dict:
                 call("agent", mode="spawn", name="helper", task="TASK-S1 do the work"),
                 _after_runs_began(box, 1, call("wait")),
                 main_is_stopped,
+                # 상주의 과제 폴백이 연 main 의 둘째 런
+                complete_all("read the fallback"),
             ],
             "TASK-S1": [
                 agent_asks,
                 _after_main_calls(box, 3, lambda m: call("wait")),
                 complete_all("read the answer"),
+                *[complete_all("read the answer")] * NAG_BUDGET,
             ],
         }
     )
     s = box["s"] = Session(root, p, path="web")
+    _wake_runs_after_idle(s, "helper")
     facts: dict = {}
 
     def done(s):
-        until(lambda: runs_ended(s) >= 1, "main stopped")
+        until(
+            lambda: runs_ended(s) >= 2, "main stopped, then read the asker's fallback"
+        )
         key = _agent_key(s, "helper")
         until(
             lambda: (

@@ -141,20 +141,6 @@ class PostOffice:
             self._book.close(rid, "unsent", in_run=run_id)
             self.cv.notify_all()
 
-    def pay_by_message(
-        self, debtor: str, to: str, env: Envelope, *, run_id: str
-    ) -> Row | None:
-        """``debtor`` 가 ``to`` 에게 `message` 를 보낸다 — ``to`` 에게 진 가장 오래된 빚이 있으면 갚음으로 닫고,
-        봉투(요청·통지)를 배달한다(한 락 구간). 닫은 줄을 돌려준다."""
-        with self.cv:
-            self._ensure_new([env])
-            row = self._book.owes_oldest(debtor, to)
-            if row is not None:
-                row = self._book.close(row.rid, "by_message", in_run=run_id)
-            self._deliver(env)
-            self.cv.notify_all()
-            return row
-
     def complete(
         self, addr: str, ids: Iterable[str], *, run_id: str
     ) -> tuple[str, ...]:
@@ -322,10 +308,6 @@ class PostOffice:
     def awaited_by(self, requester: str) -> tuple[Row, ...]:
         with self.cv:
             return self._book.awaited_by(requester)
-
-    def owes_oldest(self, debtor: str, to: str) -> Row | None:
-        with self.cv:
-            return self._book.owes_oldest(debtor, to)
 
     def open_requests(self, addr: str) -> tuple[Row, ...]:
         with self.cv:
