@@ -116,7 +116,8 @@ class QuestionPort:
         return self._reg.pay_debt(self.me, d, text)
 
     def reply(self, text: str, *, id: str = "") -> str:
-        """빚진 회신을 갚는다 (v9.21.0) — 에러 메시지 또는 빈 문자열.
+        """빚진 회신을 갚는다 (v9.21.0) — 에러 메시지 또는 빈 문자열. 요청자가 사라져 배달하지 못했으면 빚은
+        닫히고 그 사실이 에러로 온다(`AgentRegistry.pay_debt`, v10.145.2 — main 의 길과 같은 문장).
 
         ``id`` (v9.25.0) 는 **필수** — 어느 요청에 대한 답인지 하네스가 알아야
         한다. 런 도중 요청이 흡수되면 빚이 여럿이고, 그때 "요청자" 는 하나가
@@ -184,5 +185,4 @@ class QuestionPort:
                     "`text` your correction)."
                 )
             return f'no unpaid request "{id}" — you owe: {listing}.'
-        self._reg.pay_debt(self.me, d, text)
-        return ""
+        return self._reg.pay_debt(self.me, d, text)

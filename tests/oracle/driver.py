@@ -1667,6 +1667,8 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
       은 died 통지를 받고, aa 는 아무것도 받지 않는다.
     - ``who="requester"`` (나) `[단계 4c 에서 바뀜 — 변화 10]`: aa 가 bb 에게 요청한 뒤 aa 사망. bb 는 죽은 쪽에
       빚진 회신을 Open Items 에 든 채 일한다.
+      `[v10.145.2 에서 바뀜]` bb 의 `reply` 는 "not delivered — … is gone" 을 실패로 듣고, 배달되지 않은 회신은
+      발신 줄(conversation)에도 남지 않는다(종전엔 "delivered to whoever was waiting on it").
     - ``who="main_waits"`` (다) `[단계 4c 에서 바뀔 수 있음 — died 가 회신 모양이 되면]`: main 이 bb 에게 요청하고
       제자리 대기 중 bb 사망 — main 이 같은 런에서 깨어 died 통지를 읽고, 기다리던 회신이 닫히는가."""
     box: dict = {}

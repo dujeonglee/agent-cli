@@ -806,7 +806,7 @@ class AgentRegistry:
             out = [
                 {"id": r.rid, "from": r.dst, "text": r.text}
                 for r in self._post.awaited_by(addr)
-                if self._debtor_alive(r.dst)
+                if self._agent_alive(r.dst)
             ]
         return sorted(out, key=lambda r: item_ids.number_of(r["id"]))
 
@@ -838,11 +838,13 @@ class AgentRegistry:
                 return tm.current_item
         return addr
 
-    def _debtor_alive(self, debtor: str) -> bool:
-        """빚진 쪽이 아직 회신을 보낼 수 있는가 — main 은 언제나, 에이전트는 죽지 않았으면."""
-        if not debtor.startswith("agent:"):
+    def _agent_alive(self, addr: str) -> bool:
+        """이 주소가 아직 말을 주고받을 수 있는가 — main(과 에이전트 아닌 주소)은 언제나, 에이전트는 명단에 있고
+        죽지 않았고 멈추는 중이 아니면. 빚진 쪽이면 "회신을 보낼 수 있다", 요청자면 "회신을 받을 수 있다" 는 같은
+        조건이다(`request` 의 dead 거절과도 같다). 읽기만 한다."""
+        if not addr.startswith("agent:"):
             return True
-        tm = self._agents.get(debtor.split(":", 1)[1])
+        tm = self._agents.get(addr.split(":", 1)[1])
         return tm is not None and tm.state != "dead" and not tm.stop_event.is_set()
 
     def _queued(self, tm: AgentInstance) -> list[dict]:
@@ -1075,9 +1077,10 @@ class AgentRegistry:
         """``debtor`` 가 빚 ``d`` 를 ``text`` 로 갚는다 — `reply(id)` 의 배달(`QuestionPort.reply`). 에러 또는 "".
 
         갚음으로 적고 → 요청자에게 배달하고(main 이면 메일함, 에이전트면 받은편지함 — 되받을 것 없는 회신) →
-        요청자의 기다리는 회신을 닫는다. 닫기는 배달 **뒤**다: 요청자가 그 틈에 기다림을 잃지 않게. 배달 에러는
-        main 이 갚을 때만 돌려준다(에이전트가 갚을 때 요청자가 사라졌으면 조용히 버린다 — 종전 그대로).
-        회신의 배달이 곧 갚음이다(``settles`` — 한 락 구간의 `PostOffice.pay`). 가지 못했으면 `pay_unsent`."""
+        요청자의 기다리는 회신을 닫는다. 닫기는 배달 **뒤**다: 요청자가 그 틈에 기다림을 잃지 않게.
+        회신의 배달이 곧 갚음이다(``settles`` — 한 락 구간의 `PostOffice.pay`). 요청자가 사라졌거나 죽었으면
+        배달하지 못한 채 빚을 닫고(`pay_unsent` — 기다리는 이가 없으니 다시 갚게 하지 않는다) 그 사실을 돌려준다
+        (`REPLY_REQUESTER_GONE`) — main 이 갚든 에이전트가 갚든 같은 문장이다(v10.145.2)."""
         run_id = self._run_of(debtor)
         try:
             return self._pay_debt(debtor, d, text)
@@ -1106,7 +1109,9 @@ class AgentRegistry:
             )
             return ""
         requester = d.to.split(":", 1)[1]
-        self._deliver_peer_reply(requester, key, text, 0, re=d.id, settles=d.id)
+        err = self._deliver_peer_reply(requester, key, text, 0, re=d.id, settles=d.id)
+        if err:
+            return err
         self._log_outbound(key, text, to=requester)
         return ""
 
@@ -2061,9 +2066,8 @@ class AgentRegistry:
         """
         if hop >= _MAX_PEER_HOPS:
             return f"reply dropped — peer hop limit ({_MAX_PEER_HOPS}) reached"
-        tgt = self._agents.get(requester_key)
-        if tgt is None or tgt.state == "dead":
-            return f'agent "{requester_key}" is gone — the reply was not delivered'
+        if not self._agent_alive(f"agent:{requester_key}"):
+            return REPLY_REQUESTER_GONE.format(key=requester_key, rid=re)
         return self.request(
             requester_key,
             output,
@@ -2865,7 +2869,7 @@ class AgentRegistry:
         if in_flight:
             first = in_flight[0]
             author = str(first.get("author") or "main")
-            if tm.ends_after_task and not self._debtor_alive(author):
+            if tm.ends_after_task and not self._agent_alive(author):
                 # 끊긴 run 의 요청자가 돌아오지 않았다 — 회신은 main 메일로 (설계 §2 resume)
                 author = "main"
             if first.get("resumed"):
@@ -3143,6 +3147,11 @@ class AgentRegistry:
 # 모듈 상수인 이유: ``prompts.inventory`` 가 표본으로 읽어 표기 가드(도구·인자 백틱,
 # 값 큰따옴표, 호출 모양 없음, 대문자 강조 없음)가 여기까지 본다. `agent` 모드의 결과 문구는
 # `agent_modes` 에 있다 — 여기는 레지스트리가 직접 짓는 것(`message` 결과·status·중복 거절)이다.
+#: `reply` 가 갈 곳이 없다 — 요청자가 명단에서 사라졌거나 죽었거나 멈추는 중(v10.145.2). 빚은 닫혔다.
+REPLY_REQUESTER_GONE = (
+    'not delivered — agent "{key}" that sent request [{rid}] is gone. [{rid}] is '
+    "closed; there is nothing more to do for it."
+)
 DELIVERED_NOTICE = 'delivered as notice "{rid}" — nothing is owed back'
 DELIVERED_REQUEST = 'delivered as request "{rid}" — its reply will come marked [{rid}]'
 

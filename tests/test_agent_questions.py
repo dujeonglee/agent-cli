@@ -2078,17 +2078,19 @@ class TestPerRequestDebts:
         assert "already replied to [3]" in err and "`message` (`to`" in err
 
     def test_a_reply_to_a_gone_requester_still_counts_as_replied(self, mkreg, renderer):
-        """요청자가 사라져 회신이 가지 못해도 갚음이다 — 같은 런의 둘째 `reply` 는 "이미 회신했다" 로 거부되고,
-        남은 빚은 그대로다(2단계: 우편의 줄은 ``unsent`` 로 닫혀 그 런 끝까지 남는다)."""
+        """요청자가 사라져 회신이 가지 못해도 갚음이다 — 첫 `reply` 는 가지 못했다는 사실을 돌려받고(v10.145.2 —
+        종전엔 조용히 버리고 ""), 같은 런의 둘째 `reply` 는 "이미 회신했다" 로 거부되고, 남은 빚은 그대로다(우편의
+        줄은 ``unsent`` 로 닫혀 그 런 끝까지 남는다)."""
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         me = self._two(reg, b, f"agent:{a}")
         assert reg.kill(a) == ""
         assert wait_until(lambda: reg.get(a).state == "dead")
         port = reg.question_port(b)
-        assert (
-            port.reply("답", id="3") == ""
-        )  # 받을 이가 없다 — 조용히 버린다(종전 그대로)
+        assert port.reply("답", id="3") == (
+            f'not delivered — agent "{a}" that sent request [3] is gone. [3] is closed; '
+            "there is nothing more to do for it."
+        )
         err = port.reply("정정", id="3")
         assert err == (
             f"already replied to [3] (agent:{a}) in this run — a second reply is not "
