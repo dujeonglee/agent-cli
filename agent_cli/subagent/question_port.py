@@ -69,7 +69,7 @@ class QuestionPort:
         """이 런이 아직 갚지 않은 회신 빚 (v9.22.0) — main·상주 **같은 코드**.
 
         ``{"kind": "reply", "to": addr, "id": rid, "text": …}`` — 이 런이 받은
-        요청 중 안 갚은 것(`_reply_debts[me]`). 상주는 시작·흡수 항목, main 은
+        요청 중 안 갚은 것(우편 장부의 빚 줄). 상주는 시작·흡수 항목, main 은
         런에 배달된 `message`; 적는 쪽만 다르고 장부는 하나다. `complete`
         직전에 루프가 물어 독촉한다.
         """

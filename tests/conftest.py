@@ -87,25 +87,15 @@ def _no_files_left_in_repo():
 
 @pytest.fixture(autouse=True)
 def _post_shadow(monkeypatch):
-    """단일 구조 2단계 그림자 비교기(발판 — 조각 1c 에서 지운다): 레지스트리가 저장할 때마다, 그리고 테스트가 끝날
-    때 옛 저장소와 우편이 같은 것을 말하는지 본다(`tests/post_shadow.py`). 저장은 워커 스레드에서도 일어나므로
-    어긋남을 모아 두었다가 정리 때 테스트를 실패시킨다 — 삼키지 않는다."""
+    """단일 구조 2단계 그림자 비교기(발판 — 조각 3 에서 지운다): 레지스트리가 저장할 때마다, 그리고 테스트가 끝날
+    때 아직 남은 옛 저장소(질문·private 메일함)와 우편이 같은 것을 말하는지 본다(`tests/post_shadow.py`). 저장은
+    워커 스레드에서도 일어나므로 어긋남을 모아 두었다가 정리 때 테스트를 실패시킨다 — 삼키지 않는다."""
     from agent_cli.subagent.agents_live import AgentRegistry
     from tests import post_shadow
 
     made: list = []
     mismatches: list[str] = []
-    restored: dict = {}
-    #: 봉투 없이 적힌 빚(테스트가 `note_owes` 로 바로 세운 것) — 옛 구현은 보낸 쪽 기록을 적지 않고 우편의 `owe`
-    #: 줄은 기다림으로 센다. 제품 경로에서는 빚이 언제나 봉투의 줄이라 생기지 않는다.
-    bare: dict = {}
-    init, save, restore, note_owes, deliver = (
-        AgentRegistry.__init__,
-        AgentRegistry._save_state,
-        AgentRegistry.restore,
-        AgentRegistry.note_owes,
-        AgentRegistry.deliver,
-    )
+    init, save = AgentRegistry.__init__, AgentRegistry._save_state
 
     def tracked_init(self, *a, **kw):
         init(self, *a, **kw)
@@ -113,59 +103,21 @@ def _post_shadow(monkeypatch):
 
     def checked_save(self):
         try:
-            post_shadow.compare(
-                self,
-                final=False,
-                restored_main_requests=restored.get(id(self), frozenset()),
-                bare_debts=frozenset(bare.get(self, ())),
-            )
+            post_shadow.compare(self, final=False)
         except AssertionError as exc:
             mismatches.append(f"at save: {exc}")
         return save(self)
 
-    def tracked_note_owes(self, debtor, to, text, **kw):
-        rid = str(kw.get("id") or "")
-        had_row = bool(rid) and self._post.row(rid) is not None
-        d = note_owes(self, debtor, to, text, **kw)
-        if not had_row:
-            bare.setdefault(self, set()).add(d.id)
-        return d
-
-    def tracked_deliver(self, addr, **kw):
-        err = deliver(self, addr, **kw)
-        rid = str(kw.get("mail", {}).get("item_id") or "")
-        if kw.get("expects_reply") and addr == "main" and rid:
-            bare.setdefault(self, set()).add(
-                rid
-            )  # 회신 기대 메일을 `deliver` 로 바로 — 보낸 쪽 기록이 없다
-        return err
-
-    def noted_restore(self, *a, **kw):
-        n = restore(self, *a, **kw)
-        with self._cv:
-            restored[id(self)] = frozenset(
-                e.id for e in self._post.queued("main") if e.expects_reply
-            )
-        return n
-
     monkeypatch.setattr(AgentRegistry, "__init__", tracked_init)
     monkeypatch.setattr(AgentRegistry, "_save_state", checked_save)
-    monkeypatch.setattr(AgentRegistry, "restore", noted_restore)
-    monkeypatch.setattr(AgentRegistry, "note_owes", tracked_note_owes)
-    monkeypatch.setattr(AgentRegistry, "deliver", tracked_deliver)
     yield
     for reg in made:
         try:
-            reg.shutdown_all()  # 워커가 멈춘 뒤에 견준다 — 도는 중이면 두 구현의 락 구간 사이를 본다
+            reg.shutdown_all()  # 워커가 멈춘 뒤에 견준다
         except Exception:
             pass
         try:
-            post_shadow.compare(
-                reg,
-                final=True,
-                restored_main_requests=restored.get(id(reg), frozenset()),
-                bare_debts=frozenset(bare.get(reg, ())),
-            )
+            post_shadow.compare(reg, final=True)
         except AssertionError as exc:
             mismatches.append(f"at teardown: {exc}")
     if mismatches:

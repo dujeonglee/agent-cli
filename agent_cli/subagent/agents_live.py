@@ -48,7 +48,6 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from queue import Empty, SimpleQueue
 from typing import TYPE_CHECKING
 
 from agent_cli import item_ids
@@ -93,7 +92,6 @@ if TYPE_CHECKING:
     from agent_cli.context.manager import ContextManager
 
 # worker 를 inbox 블록에서 깨워 종료시키는 sentinel (identity 비교).
-_SHUTDOWN = object()
 
 
 _DEFAULT_MAX_AGENTS = 10
@@ -180,7 +178,8 @@ class Question:
 
 @dataclass
 class ReplyDebt:
-    """회신 빚 하나 — ``AgentRegistry._reply_debts[debtor]`` 목록의 원소.
+    """회신 빚 하나의 공개 모양 — 우편 장부의 빚 줄(`_debt_view`)을 이 모양으로 보여 준다(v10.145.0 — 장부는
+    `agent_cli.post`).
 
     런이 받은 **요청**(``expects_reply=True`` 항목·main 에 배달된 `message`)
     마다 하나(v9.25.0 — 종전엔 상대별 하나라 같은 상대의 새 요청이 앞 것을
@@ -336,14 +335,11 @@ class AgentInstance:
         self.context_mode = context_mode
         self.home_dir = home_dir
 
-        self.inbox: SimpleQueue = SimpleQueue()
-        # 받은편지함 미러 (v9.24.5) — ``SimpleQueue`` 는 영속이 안 돼 재시작이
-        # 줄 선 요청을 통째로 증발시켰다(보드 1zfgc2: 엔진 앞 8건). 들어올 때
-        # 추가, 처리를 시작할 때 제거 — ``_save_state`` 가 이 목록을 쓴다.
-        self.inbox_items: list[dict] = []
-        # 지금 처리 중인 항목 — 런이 정상 종료하면 비운다. 재시작 때 남아
-        # 있으면 complete 전에 끊긴 런이다(계속하기 안내로 다시 넣는다).
-        self.in_flight: list[dict] = []
+        # 받은편지함·지금 런이 든 항목은 레지스트리의 우편(`AgentRegistry._post`)에 있다 — 주소 ``agent:<key>``
+        # (v10.145.0). 재시작이 되살릴 것은 저장 파일의 ``inbox``·``in_flight`` 로 간다(모양 그대로).
+        #: 지금 런이 턴 경계에서 흡수한 항목 수 — 런 정리(`_close_run`)가 ``handled`` 에 더하고 비운다(런 끝
+        #: 정리가 우편의 든 것을 먼저 비우므로 거기서는 셀 수 없다)
+        self.absorbed_in_run = 0
         #: 평생 정지 — ✕(kill)·세션 종료가 세운다. 런마다의 정지(■)는 ``run_stop`` — 이것에 묶여
         #: 있다(`agent_stop.LinkedStop`). 방 ■·Ctrl+C 한 번은 main 만 멈춘다 (P3, 사용자 결정).
         self.stop_event = threading.Event()
@@ -357,9 +353,6 @@ class AgentInstance:
         #: main 에겐 깨우지 않는 메일(``wakes_main``), 에이전트에겐 런을 열지 않는 항목(``opens_run``)으로 가
         #: 쌓였다가 다음에 일을 받는 런이 함께 읽는다(`_send_stop_reply`).
         self.stop_replies_wake = True
-        #: 런을 열지 않는 받은편지함 항목(``opens_run`` 거짓) — 다음 런이 시작될 때 받은편지함으로 되돌려 그 런의
-        #: 첫 흡수가 읽는다(`_release_held`). 미러(``inbox_items``)에는 그대로 있다.
-        self.held_items: list[dict] = []
         #: 이 정지로 회신을 보낸 상대 ``[(받는 이, 요청 id)]`` — 화면 한 줄이 모아 말한다.
         self.stop_notified: list[tuple[str, str]] = []
         #: 띄운 쪽 주소(``"main"``·``"agent:<key>"``) — ✕ 가 그 에이전트가 띄운 run 을 함께 멈춘다.
@@ -382,7 +375,7 @@ class AgentInstance:
         # (Question.asked_in)가 이 값을 찍는다. 유휴는 "".
         self.current_item = ""
         # 이 런의 회신 빚은 여기 없다 — 레지스트리의 주소별 장부
-        # (`AgentRegistry._reply_debts`, v9.22.1) 가 main 과 같은 자리에서 든다.
+        # (`AgentRegistry._post` — 약속 장부, v10.145.0) 가 main 과 같은 자리에서 든다.
 
     def snapshot(self, *, pending_requests: int) -> dict:
         """status 표시용 스냅샷 (락 없는 근사값 — 표시 용도). ``pending_requests`` 는 레지스트리가 센 앞에 쌓인
@@ -428,7 +421,7 @@ class AgentRegistry:
         max_agents: int | None = None,
         post: PostOffice | None = None,
     ):
-        """``post`` — 우편·장부(`agent_cli.post`). 2단계 그림자 동안은 옛 저장소를 따라가며(읽기는 아직 옛 저장소),
+        """``post`` — 우편·장부(`agent_cli.post`): 받은편지함·메일함·빚·보낸 쪽 기록이 여기 있다(v10.145.0).
         없으면 레지스트리가 만든다. 4a 에서 입력 큐와 같은 조건변수를 쓰게 된다. 레지스트리의 조건변수 ``_cv`` 는
         언제나 ``post.cv`` 다."""
         # 회신을 처리할 provider/모델 등 실행 배선 — spawn 시점이 아니라
@@ -452,9 +445,8 @@ class AgentRegistry:
         self._agents: dict[str, AgentInstance] = {}
         self._post = post if post is not None else PostOffice()
         self._cv = self._post.cv
-        self._shadow_tls = threading.local()  # 2단계 그림자 — `_shadow_as`
-        self._shadow_busy = 0  # 2단계 그림자 — 진행 중인 `_shadow_as` 수
-        self._pending: list[dict] = []  # 미배달 회신 (도착 순서)
+        #: 이 스레드의 다음 배달 하나를 갚기로 보내는 문맥(`_deliver_as`)
+        self._deliver_tls = threading.local()
         #: private 주소(run:·harness:)의 메일함 (v10.84.0) — 그 루프가 턴 경계와
         #: `wait` 에서 읽는다. UI·영속 밖(프로세스 수명). 같은 `_cv` 로 깨운다.
         self._mailboxes: dict[str, list[dict]] = {}
@@ -481,14 +473,7 @@ class AgentRegistry:
         # ``_pending`` 과 같은 규율: 모든 접근은 ``_cv`` 아래. 답 claim 이
         # 원자적이어야 동시 답변자 둘 중 하나만 답이 된다.
         self._questions: dict[str, Question] = {}
-        # 회신 빚 장부 (v9.22.1) — debtor 주소("main"|"agent:<key>") →
-        # {상대 주소 → ReplyDebt}. main 과 상주가 **같은 장부**를 쓴다: 적는
-        # 자리(main = 메일 배달, 상주 = 항목 시작)와 폴백 배관만 다르다.
-        self._reply_debts: dict[str, list[ReplyDebt]] = {}
-        #: 보낸 쪽 기록 (v10.141.0) — 요청자 주소 → {요청 id → {"to", "text"}}. 장부의 "기다리는
-        #: 회신" 이 이것을 읽는다(`awaited_replies`). 빚 장부의 거울이지만 요청이 빚으로 적히기
-        #: **전부터** 있다. 영속하지 않는다 — 복원은 되넣는 요청(`_enqueue`)이 다시 적는다.
-        self._sent: dict[str, dict[str, dict]] = {}
+        # 빚·보낸 쪽 기록·받은편지함·main 메일함은 우편 하나다(`self._post` — 약속 장부와 상자, v10.145.0).
         # resume 이 버린 열린 질문 수 — 부트스트랩이 사람에게 알린다(§3.9).
         self.stale_questions = 0
         # `wait` 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6) — 소유자별 걸린
@@ -578,7 +563,7 @@ class AgentRegistry:
         """idle-reap 가드 (v7.10.0): 에이전트가 working 이거나 inbox 에
         미처리 요청이 있으면 True — main 유휴·무접속이어도 인스턴스를
         자가 종료하면 진행 중 작업이 소실되므로 IdleMonitor 의 is_active
-        에 합류한다. 미배달 회신(_pending)은 게이트하지 않는다 — resume
+        에 합류한다. main 앞 미배달 회신은 게이트하지 않는다 — resume
         시 agents.json pending 미러로 복원·배달되므로 reap 안전."""
         if self.open_human_questions():
             # 사람 주소 질문은 답이 올 때까지 열려 있고 상한도 없다 —
@@ -623,7 +608,7 @@ class AgentRegistry:
 
         **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `arrived_for`.
         종전엔 "그 주소로 가는 미배달 회신" 을 ``to`` 키로 세었는데, main 의
-        메일함(``_pending``)에서 작업·모니터 통지는 ``to`` 가 없어 한 건도
+        메일함에서 작업·모니터 통지는 ``to`` 가 없어 한 건도
         안 잡혔고(벤치 실측: 모니터가 먼저 발화한 뒤의 wait 가 "nothing
         pending" 으로 거부), 잡혔더라도 **곧 배달될 것** 을 깨울 것으로 쳐
         런을 끝내고 바로 다시 깨우는 낭비였다."""
@@ -666,8 +651,7 @@ class AgentRegistry:
             ):
                 out.append(("working", me))
             elif self._holds_unpaid_request_from(self._queued(tm), addr):
-                # 받은편지함 미러(`inbox_items`)로 본다 — `SimpleQueue` 엔 `queue`
-                # 속성이 없어 종전 `getattr(tm.inbox, "queue", [])` 는 늘 비었다.
+                # 받은편지함(우편의 그 주소 상자)에 줄 선 것으로 본다
                 out.append(("queued", me))
         return out
 
@@ -676,9 +660,8 @@ class AgentRegistry:
         것이 있는가 — 읽기만 한다. ``addr`` 의 `wait` 를 깨울 근거는 이것뿐이다(v10.143.0, 사용자 결정): 이미
         회신한 요청·통지로는 그 에이전트가 무엇을 해도 ``addr`` 에게 돌아올 것이 없다.
 
-        보낸 쪽 기록(``_sent`` — 회신을 기대하는 요청이 받은편지함에 들 때 적히고 회신·폴백·버림이 배달된 뒤
-        지워진다)에 남은 항목만 센다. 빚으로 적히기 전 틈도 들어가고 통지는 처음부터 없다. 빚 장부로 보지 않는
-        이유: 런 끝 정리가 빚을 비운 뒤 런이 닫히기까지 갚은 빚과 아직 안 적힌 빚이 구별되지 않는다."""
+        ``addr`` 의 기다리는 회신(우편 장부의 열린 r 줄 — 요청이 상자에 들 때 열리고 회신·폴백·버림과 한 락
+        구간에 닫힌다)만 센다. 통지는 처음부터 줄이 없다."""
         with self._cv:
             awaited = {r.rid for r in self._post.awaited_by(addr)}
             return any(
@@ -815,8 +798,8 @@ class AgentRegistry:
         """``addr`` 가 보낸 요청 중 회신이 아직 오지 않은 것 — 장부의 "기다리는 회신"
         (v10.141.0, docs/agent-engine/DESIGN.md §3). ``[{"id", "from", "text"}]``, 번호 순.
 
-        보낸 쪽 기록(`_sent`)을 읽는다 — 요청이 받은편지함에 들어갈 때 적히고(`_enqueue`·
-        `message_to_main`), 받는 쪽의 빚이 끝날 때 지워진다(`_close_sent` — 갚음·폴백·버림).
+        우편 장부의 열린 r 줄을 읽는다 — 요청이 상자에 들 때 열리고(`_enqueue`·`message_to_main`), 받는 쪽의
+        빚이 끝날 때(갚음·폴백·버림 — 배달과 한 락 구간) 닫힌다(v10.145.0).
         갚음·폴백은 회신을 **배달한 뒤** 지운다: 먼저 지우면 그 틈에 요청자의 `wait` 가 기다릴
         회신도 도착한 메일도 없는 순간을 보고 제자리 대신 런을 끝낸다.
         받는 쪽에서 세면(빚 장부 + 받은편지함) 항목이 받은편지함을 떠나 빚으로 적히기까지의
@@ -832,38 +815,32 @@ class AgentRegistry:
             ]
         return sorted(out, key=lambda r: item_ids.number_of(r["id"]))
 
-    # ── 2단계 그림자 — 옛 저장소가 진실, `self._post` 가 같은 락 구간에서 따라간다 ──────────────────
-    # 범용 배달(`_enqueue`·`_push_reply`·`_push_private`)은 봉투를 `_shadow_put` 으로 우편에 넣는다 — 기본은
-    # `deliver`, 의미 연산(`pay_debt`·`message_handler`·`end_run`·`answer_debts_as_stopped`·
-    # `_answer_queued_as_removed`·`answer_question`)이 `_shadow_as(op)` 로 감싸면 그 안의 다음 배달 하나가
-    # ``op``(`pay`·`pay_by_message`·회신 모으기)로 간다. 인자가 아니라 스레드의 문맥이다 — 범용 배달의 시그니처를
-    # 바꾸지 않는다(테스트가 `request` 의 인자를 그대로 본다). 임시물이다: 조각마다 옛 저장소와 함께 지운다
-    # (`_shadow_as`·`_shadow_put`·`_shadow_tls`·`_pay_as`). 런 끝 폴백·정지 회신은 옛 쪽처럼 **하나씩** 갚는다
-    # (`_pay_as`) — `PostOffice.end_run` 의 ``replies`` 로 끝에 한 번에 넘기면 그 사이에 main 이 옛 쪽의 회신을 꺼내
-    # 우편보다 앞선다. 끝의 `end_run` 은 남은 줄(배달 못 한 빚·사람 말)만 닫는다.
+    # ── 배달과 갚기 — 한 락 구간 (v10.145.0) ────────────────────────────────────────────
+    # 범용 배달(`_enqueue`·`_push_reply`·`_push_private`)은 봉투를 `_post_deliver` 로 우편에 넣는다 — 기본은
+    # `PostOffice.deliver`. 회신·`message` 가 빚을 갚는 자리(`pay_debt`·`message_handler`·`end_run`·
+    # `answer_debts_as_stopped`·`answer_question`)는 `_deliver_as(op)` 로 감싸 그 안의 다음 배달 하나를 ``op``
+    # (`pay`·`pay_by_message`·`answer`)로 보낸다 — 배달과 줄 닫기가 한 락 구간이다. 인자가 아니라 스레드의 문맥인
+    # 이유: 범용 배달의 시그니처가 공개 표면이다(테스트가 `request` 의 인자를 그대로 본다). 런 끝 폴백·정지 회신은
+    # 하나씩 갚는다 — 끝의 `end_run` 은 남은 줄(배달 못 한 빚·사람 말)만 닫는다.
 
     @contextlib.contextmanager
-    def _shadow_as(self, op):
-        """이 스레드의 다음 범용 배달 하나가 봉투를 ``op`` 로 우편에 넣는다."""
-        prev = getattr(self._shadow_tls, "op", None)
-        self._shadow_tls.op = op
-        with self._cv:
-            self._shadow_busy += 1  # 그 연산이 끝나기 전의 저장 지점은 비교하지 않는다(옛 쪽이 하나씩 먼저 배달한다)
+    def _deliver_as(self, op):
+        """이 스레드의 다음 범용 배달 하나가 봉투를 ``op`` 로 우편에 넣는다(한 번 쓰고 풀린다)."""
+        prev = getattr(self._deliver_tls, "op", None)
+        self._deliver_tls.op = op
         try:
             yield
         finally:
-            self._shadow_tls.op = prev
-            with self._cv:
-                self._shadow_busy -= 1
+            self._deliver_tls.op = prev
 
-    def _shadow_put(self, env) -> None:
-        """범용 배달의 그림자 — ``_cv`` 안에서 부른다. `_shadow_as` 가 건 연산을 한 번 쓰고 지운다."""
-        op = getattr(self._shadow_tls, "op", None)
-        self._shadow_tls.op = None
+    def _post_deliver(self, env) -> None:
+        """범용 배달 — ``_cv`` 안에서 부른다. `_deliver_as` 가 건 연산이 있으면 그것으로(한 번), 없으면 `deliver`."""
+        op = getattr(self._deliver_tls, "op", None)
+        self._deliver_tls.op = None
         (op or self._post.deliver)(env)
 
     def _pay_as(self, debtor: str, rid: str):
-        """그 빚을 그 회신으로 갚는 연산 — `_shadow_as` 에 건다."""
+        """그 빚을 그 회신으로 갚는 연산 — `_deliver_as` 에 건다."""
 
         def pay(env) -> None:
             self._post.pay(debtor, rid, env, run_id=self._run_of(debtor))
@@ -871,24 +848,12 @@ class AgentRegistry:
         return pay
 
     def _run_of(self, addr: str) -> str:
-        """그림자의 런 id — 에이전트는 지금 런을 연 배달, main 은 펌프의 런을 레지스트리가 모른다."""
+        """닫는 줄에 적을 런 id — 에이전트는 지금 런을 연 배달, main 은 펌프의 런을 레지스트리가 모른다(주소)."""
         if addr.startswith("agent:"):
             tm = self._agents.get(addr.split(":", 1)[1])
             if tm is not None and tm.current_item:
                 return tm.current_item
         return addr
-
-    def _note_sent(self, requester: str, rid: str, to: str, text: str) -> None:
-        """``requester`` 가 ``to`` 에게 회신을 기다리는 요청 ``rid`` 를 보냈다 — ``_cv`` 아래에서.
-        사람(창의 입력)은 적지 않는다 — 창이 곧 배달이고 장부가 없다."""
-        if not requester or is_human_addr(requester) or not rid:
-            return
-        self._sent.setdefault(requester, {})[str(rid)] = {"to": to, "text": text}
-
-    def _close_sent(self, requester: str, rid: str) -> None:
-        """보낸 쪽 기록 하나를 지운다 — 그 요청의 빚이 끝났다(갚음·폴백·버림). 없으면 no-op."""
-        with self._cv:
-            self._sent.get(requester, {}).pop(str(rid), None)
 
     def _debtor_alive(self, debtor: str) -> bool:
         """빚진 쪽이 아직 회신을 보낼 수 있는가 — main 은 언제나, 에이전트는 죽지 않았으면."""
@@ -937,7 +902,7 @@ class AgentRegistry:
 
     def arrived_for(self, addr: str) -> int:
         """``addr`` 앞에 **이미 도착해 다음 턴 경계에 배달될** 메일 수 (v10.66.2,
-        `wait` 의 둘째 판정 재료). main 은 메일함(``_pending`` — 작업·모니터
+        `wait` 의 둘째 판정 재료). main 은 메일함(작업·모니터
         통지, 에이전트 회신·질문 전부 main 행), 상주 에이전트는 자기 받은편지함.
         이게 0 이 아니면 `wait` 는 받지 않는다: 런을 끝내 봐야 펌프가 바로 다시
         깨우므로, 거부하고 다음 관찰에 배달되게 두는 쪽이 싸고 맥락도 남는다."""
@@ -964,8 +929,8 @@ class AgentRegistry:
         의 정지 회신)은 일이 아니다 — 남아 있어도 `run` 은 끝나고 그 메일은 agents.json 미러에 남는다."""
         if self.has_mail_that_wakes_main():
             return True
-        # 죽은 에이전트의 받은편지함은 세지 않는다 — 런 도중 끝난(■·✕) 워커는 끝내라는 표식(`_SHUTDOWN`)을
-        # 꺼내지 않고 나간다; 세면 `run` 이 끝나지 않는다 (v10.142.0)
+        # 죽은 에이전트의 받은편지함은 세지 않는다 — 런 도중 끝난(■·✕) 워커는 남은 봉투를 꺼내지 않고 나간다;
+        # 세면 `run` 이 끝나지 않는다 (v10.142.0)
         return any(
             tm.state == "busy" or (tm.state != "dead" and self.backlog_of(tm.key) > 0)
             for tm in list(self._agents.values())
@@ -1080,7 +1045,7 @@ class AgentRegistry:
             delivered.append(env)
             self._post.answer(qid, env)
 
-        with self._shadow_as(_answer):
+        with self._deliver_as(_answer):
             self._deliver_answer(q, text)
         if (
             not delivered
@@ -1116,77 +1081,49 @@ class AgentRegistry:
         with self._cv:
             if not id:
                 id = item_ids.next_id(item_ids.REPLY)
-            d = ReplyDebt(
-                to=to, text=text, answers=list(answers or []), hop=hop, id=str(id)
-            )
-            self._reply_debts.setdefault(debtor, []).append(d)
-            # 2단계 그림자 — 봉투가 이미 줄을 열었으면(런 시작·흡수가 집었다) 할 것이 없다
-            if self._post.row(d.id) is None:
-                if is_human_addr(to):
-                    self._post.open_human(d.id, to, debtor, text, answers=d.answers)
-                else:
-                    self._post.owe(d.id, debtor, to, text, hop=hop, answers=d.answers)
-            return d
-
-    def settle(self, debtor: str, to: str) -> ReplyDebt | None:
-        """``to`` 에게 진 **가장 오래된** 미납 빚을 갚는다 — 상대만 고르는 갚기
-        (`message(to)`). 없으면 None."""
-        with self._cv:
-            row = self._post.owes_oldest(debtor, to)
-            return self._settle_old(debtor, row.rid) if row is not None else None
-
-    def _settle_old(self, debtor: str, rid: str) -> ReplyDebt | None:
-        """옛 빚 장부에도 갚음을 적는다(2단계 — 1c 에서 지운다). 고른 것은 우편이다."""
-        for d in self._reply_debts.get(debtor, []):
-            if d.id == rid and not d.settled:
-                d.settled = True
-                return d
-        return None
-
-    def settle_id(self, debtor: str, id: str) -> ReplyDebt | None:
-        """번호로 갚는다(`reply(id)`) — 그 번호의 미납 빚, 없으면 None."""
-        with self._cv:
-            row = self._post.row(str(id))
+            rid = str(id)
+            row = self._post.row(rid)
             if (
                 row is None
-                or row.kind != "r"
-                or row.state == "queued"
-                or row.dst != debtor
-            ):
-                return None
-            # 우편이 먼저 닫았을 수 있다(정지 회신의 그림자 갚기 뒤) — 옛 쪽만 따라 적는다
-            return self._settle_old(debtor, row.rid)
+            ):  # 봉투 없이 적는 빚 — 봉투가 이미 줄을 열었으면(런 시작·흡수가 집었다) 그 줄이다
+                if is_human_addr(to):
+                    row = self._post.open_human(
+                        rid, to, debtor, text, answers=list(answers or [])
+                    )
+                else:
+                    row = self._post.owe(
+                        rid, debtor, to, text, hop=hop, answers=list(answers or [])
+                    )
+            return _debt_view(row)
+
+    def oldest_debt_to(self, debtor: str, to: str) -> ReplyDebt | None:
+        """``to`` 에게 진 **가장 오래된** 미납 빚 — 상대만 고르는 갚기(`message(to)`)가 갚을 것. 읽기만 한다(갚기는
+        그 `message` 의 배달이 한다 — `PostOffice.pay_by_message`). 없으면 None."""
+        row = self._post.owes_oldest(debtor, to)
+        return _debt_view(row) if row is not None else None
 
     def pay_debt(self, debtor: str, d: ReplyDebt, text: str) -> str:
         """``debtor`` 가 빚 ``d`` 를 ``text`` 로 갚는다 — `reply(id)` 의 배달(`QuestionPort.reply`). 에러 또는 "".
 
         갚음으로 적고 → 요청자에게 배달하고(main 이면 메일함, 에이전트면 받은편지함 — 되받을 것 없는 회신) →
         요청자의 기다리는 회신을 닫는다. 닫기는 배달 **뒤**다: 요청자가 그 틈에 기다림을 잃지 않게. 배달 에러는
-        main 이 갚을 때만 돌려준다(에이전트가 갚을 때 요청자가 사라졌으면 조용히 버린다 — 종전 그대로)."""
-        self.settle_id(debtor, d.id)
+        main 이 갚을 때만 돌려준다(에이전트가 갚을 때 요청자가 사라졌으면 조용히 버린다 — 종전 그대로).
+        회신의 배달이 곧 갚음이다(`_deliver_as` — 한 락 구간의 `PostOffice.pay`). 가지 못했으면 `pay_unsent`."""
         run_id = self._run_of(debtor)
-        paid: list = []
-
-        def _pay(env):  # 2단계 그림자 — 회신 배달과 같은 락 구간
-            paid.append(env)
-            self._post.pay(debtor, d.id, env, run_id=run_id)
-
         try:
-            with self._shadow_as(_pay):
+            with self._deliver_as(self._pay_as(debtor, d.id)):
                 return self._pay_debt(debtor, d, text)
         finally:
             row = self._post.row(d.id)
-            if not paid and row is not None and row.state == "picked":
+            if row is not None and row.state == "picked":
                 # 회신이 가지 못했다 — 갚음이다(닫힌 채 그 런 끝까지: "이미 회신했다")
                 self._post.pay_unsent(debtor, d.id, run_id=run_id)
 
     def _pay_debt(self, debtor: str, d: ReplyDebt, text: str) -> str:
         if debtor == "main":
-            err = self._deliver_peer_reply(
+            return self._deliver_peer_reply(
                 d.to.split(":", 1)[1], "main", text, 0, re=d.id
             )
-            self._close_sent(d.to, d.id)
-            return err
         key = debtor.split(":", 1)[1]
         if d.to == "main":
             tm = self._agents.get(key)
@@ -1198,11 +1135,9 @@ class AgentRegistry:
                 answers=d.answers,
                 re=d.id,
             )
-            self._close_sent(d.to, d.id)
             return ""
         requester = d.to.split(":", 1)[1]
         self._deliver_peer_reply(requester, key, text, 0, re=d.id)
-        self._close_sent(d.to, d.id)
         self._log_outbound(key, text, to=requester)
         return ""
 
@@ -1264,23 +1199,15 @@ class AgentRegistry:
         런 끝의 유일한 자리라 main·상주·run·web 이 한 곳이다. ``meta`` 의 ``run``
         키는 그 런을 연 배달 id 이고 `run_started`(런 **시작**)와는 무관하다."""
         if waiting:
-            if (
-                debtor == "main"
-            ):  # 2단계 그림자 — 에이전트는 런 정리(`_close_run`)가 든 것을 비운다
+            if debtor == "main":  # 에이전트는 런 정리(`_close_run`)가 든 것을 비운다
                 self._post.end_run(debtor, run_id=debtor, outcome="wait")
             self.arm_checkin(debtor)
             return 0
         self.run_started(debtor)  # 끝났으니 걸린 것이 있어도 의미가 없다
         if stopped:
-            with self._cv:
-                for d in self._reply_debts.pop(debtor, []):
-                    self._close_sent(
-                        d.to, d.id
-                    )  # 버린 빚 — 요청자는 더 기다리지 않는다
-                # 2단계 그림자 — 옛 동작(빚을 버림 = 버그 3)을 따른다. 5단계에서 outcome="session_end" 로 바뀐다
-                self._post.end_run(
-                    debtor, run_id=self._run_of(debtor), outcome="stopped", replies={}
-                )
+            # 버린 빚 — 요청자는 더 기다리지 않는다(dropped). 세션 종료도 여기다(추정 버그 3 — 5단계에서
+            # outcome="session_end" 로 바뀐다)
+            self._post.end_run(debtor, run_id=self._run_of(debtor), outcome="stopped")
             return 0
         return self.end_run(debtor, output, **meta)
 
@@ -1445,12 +1372,10 @@ class AgentRegistry:
             else f"{run_error_line(str(meta.get('error') or ''))}\n{summary}"
         )
         for d in self.reply_debts(debtor):
-            with self._shadow_as(self._pay_as(debtor, d.id)):  # 2단계 그림자
+            with self._deliver_as(self._pay_as(debtor, d.id)):  # 폴백의 배달이 곧 갚음
                 n += self._fall_back(debtor, d, summary, peer_summary, meta)
-        with self._cv:
-            for d in self._reply_debts.pop(debtor, []):
-                self._close_sent(d.to, d.id)  # 폴백이 나갔거나 사람 주소의 빚
-            self._post.end_run(debtor, run_id=self._run_of(debtor), outcome="done")
+        # 남은 줄(배달 못 한 빚 — dropped, 사람 말 — run_ended)을 닫는다
+        self._post.end_run(debtor, run_id=self._run_of(debtor), outcome="done")
         return n
 
     def _fall_back(
@@ -1780,7 +1705,7 @@ class AgentRegistry:
         # `state` 만 보면 창이 뚫린다: `kill`/`shutdown_all` 은
         # `stop_event` 만 세우고 `state="dead"` 는 워커의 `finally` 에서야
         # 찍히므로, busy 런이면 몇 분 뒤다. 그 사이 큐에 넣은 항목은
-        # `_SHUTDOWN` 뒤에 줄 서서 **영영 안 읽힌다**. `tm.stop_event` 를
+        # 워커가 다시 꺼내지 않아 **영영 안 읽힌다**. `tm.stop_event` 를
         # 세우는 곳은 그 둘뿐이라(SIGINT 핸들러는 메인 스레드 전용, 웹
         # `/api/stop` 은 main 의 이벤트) 죽지 않는데 서는 경로가 없다.
         if tm.state == "dead" or tm.stop_event.is_set():
@@ -1869,29 +1794,14 @@ class AgentRegistry:
         return ""
 
     def _enqueue(self, tm: AgentInstance, item: dict) -> None:
-        """받은편지함에 넣고 미러·``agents.json`` 에 남긴다 (v9.24.5). 회신을 기다리는 요청이면
-        보낸 쪽 기록(`_sent`)에도 적는다 (v10.141.0)."""
+        """받은편지함(우편의 그 주소 상자)에 넣고 ``agents.json`` 에 남긴다 (v9.24.5). 회신을 기다리는 요청이면
+        그 줄이 보낸 쪽의 "기다리는 회신" 이다(v10.141.0 — 넣는 것과 한 락 구간)."""
         with self._cv:
-            tm.inbox_items.append(item)
-            if item.get("expects_reply", True) and not item.get("kind"):
-                self._note_sent(
-                    str(item.get("author") or ""),
-                    str(item.get("id") or ""),
-                    f"agent:{tm.key}",
-                    str(item.get("text") or ""),
-                )
-            # 2단계 그림자
-            self._shadow_put(envelope_of_item(item, f"agent:{tm.key}"))
-        tm.inbox.put(item)
+            self._post_deliver(envelope_of_item(item, f"agent:{tm.key}"))
         self._save_state()
 
     def _begin_items(self, tm: AgentInstance, items: list[dict]) -> None:
-        """이 항목들로 런을 시작한다 — 미러에서 빼고 처리 중으로 적는다.
-        꺼냈지만 아직 시작 안 한 항목(배치 수집의 stash)은 미러에 남는다."""
-        ids = {i.get("id") for i in items}
-        with self._cv:  # 2단계 — 옛 거울도 쓴다(1c 에서 지운다). 우편은 `_next_run_items` 가 이미 집었다
-            tm.inbox_items = [i for i in tm.inbox_items if i.get("id") not in ids]
-            tm.in_flight = [dict(i) for i in items]
+        """이 항목들로 런을 시작한다 — 우편은 `_next_run_items` 가 이미 집었다(처리 중). 그 상태를 저장한다."""
         self._save_state()
 
     def _who(self, author: str) -> str:
@@ -1956,28 +1866,15 @@ class AgentRegistry:
         ``{"user_request": {id, author, text}}`` (사람 창 입력 — main 의 큐
         주입과 같은 회계) 또는 ``{"record": 관찰 레코드}``.
 
-        ``_SHUTDOWN`` 표식은 되넣고 멈춘다(사람 배치 수집기와 같은 방식).
-        ``tool=""`` 은 형식 개입 표식이라 레코드에 절대 쓰지 않는다.
+        ``tool=""`` 은 형식 개입 표식이라 레코드에 절대 쓰지 않는다. 정지가 섰으면 꺼내지 않는다.
         """
         if tm.stop_event.is_set():
             return []
-        old_items: list[dict] = []  # 2단계 — 옛 받은편지함도 비운다(1c 에서 지운다)
-        while tm.inbox.qsize() > 0:
-            try:
-                nxt = tm.inbox.get_nowait()
-            except Empty:
-                break
-            if nxt is _SHUTDOWN:
-                tm.inbox.put(_SHUTDOWN)
-                break
-            old_items.append(nxt)
         me = f"agent:{tm.key}"
         with self._cv:
             envs, _ = self._post.absorb(me)
-            items = [dict(e.payload) for e in envs]  # 도착 순서(2단계 예외 D2)
-            ids = {i.get("id") for i in items}
-            tm.inbox_items = [i for i in tm.inbox_items if i.get("id") not in ids]
-            tm.in_flight.extend(dict(i) for i in items)
+            tm.absorbed_in_run += len(envs)
+        items = [dict(e.payload) for e in envs]  # 도착 순서(v10.145.0 예외 D2)
         if not items:
             return []
         out: list[dict] = []
@@ -2063,9 +1960,9 @@ class AgentRegistry:
         디스크 쓰기가 한 번 더 끼어, 그 사이 idle 로 보이는 창이 넓어진다."""
         with self._cv:
             # 흡수분(v9.25.0)까지 이 런이 처리했다 — 시작 항목 수보다 클 수 있다
-            tm.handled += max(handled, len(tm.in_flight))
-            tm.in_flight = []
-            # 2단계 그림자 — 든 것만 비운다(줄은 런 끝 정리 `run_ended` 가 이미 닫았거나, `wait` 면 그대로)
+            tm.handled += handled + tm.absorbed_in_run
+            tm.absorbed_in_run = 0
+            # 든 것만 비운다(줄은 런 끝 정리 `run_ended` 가 이미 닫았거나, `wait` 면 그대로 — 잠든 빚)
             self._post.end_run(
                 f"agent:{tm.key}",
                 run_id=self._run_of(f"agent:{tm.key}"),
@@ -2134,9 +2031,7 @@ class AgentRegistry:
     def _push_reply(self, reply: dict) -> None:
         with self._cv:
             self._stamp_mail(reply)
-            self._pending.append(reply)
-            self._shadow_put(envelope_of_main_mail(reply))  # 2단계 그림자
-            self._cv.notify_all()
+            self._post_deliver(envelope_of_main_mail(reply))
         self._save_state()  # P3: 미배달분 디스크 미러 — resume 시 유실 없음
         cb = self.on_reply
         if cb is not None:
@@ -2218,8 +2113,8 @@ class AgentRegistry:
         notice: bool = False,
         re: str = "",
     ) -> str:
-        """상주 에이전트 → main 메시지 (v5.11). main 은 inbox 대신 mailbox
-        (_pending)로 받아 턴 경계 관찰로 본다 (peer↔main 대칭).
+        """상주 에이전트 → main 메시지 (v5.11). main 은 자기 메일함(우편의 ``main`` 상자)으로 받아 턴 경계
+        관찰로 본다 (peer↔main 대칭).
 
         ``notice`` (v10.1.0): 빚 없는 통지(`message` with expects_reply=false) —
         main 의 관찰이 "회신" 도 "요청" 도 아닌 세 번째 모양으로 갈린다.
@@ -2248,12 +2143,9 @@ class AgentRegistry:
             rec["notice"] = True
         if re:
             rec["re"] = re  # `reply` — main 의 어느 요청에 대한 답인가
-        self._push_reply(rec)
-        if expects_reply:
-            with self._cv:  # main 이 이 에이전트에게 회신을 빚진다 — 보낸 쪽 기록
-                self._note_sent(
-                    f"agent:{from_key}", str(rec.get("item_id") or ""), "main", text
-                )
+        self._push_reply(
+            rec
+        )  # 회신을 기대하면 그 줄이 보낸 쪽의 기다리는 회신이다(넣는 것과 한 락 구간)
         # ★v7.11.1 (실사고): mailbox 만 채우면 main 챗 관찰로는 보이는데
         # 발신 에이전트의 🤝 대화창·conversation.jsonl 에는 흔적이 없다
         # (재접속/resume 소실). 발신자 창에 out 방향으로 남긴다.
@@ -2338,16 +2230,18 @@ class AgentRegistry:
             # 내 요청자에게 보냈다면 내 빚은 갚는다(fire-and-forget). 상태
             # 공유·인수인계·작별 인사가 여기 간다 — 종전엔 이 말들이 전부 요청이
             # 되어 답이 답을 부르는 핑퐁을 만들었다(실측 cnr60g).
-            settled = self.settle(sender, addr)
+            settled = self.oldest_debt_to(sender, addr)
             run_id = self._run_of(sender)
 
-            def _send(env):  # 2단계 그림자 — 보낸 것과 같은 락 구간에서 갚기까지
+            def _send(
+                env,
+            ):  # 보낸 것과 같은 락 구간에서 갚기까지(`PostOffice.pay_by_message`)
                 self._post.pay_by_message(sender, addr, env, run_id=run_id)
 
             # 결과가 그 배달의 id 를 말한다 (v10.77.0) — 회신이 같은 id 를 달고
             # 돌아오므로(`re [r-17]`) 보낸 쪽이 무엇에 대한 회신인지 안다.
             if to == "main":
-                with self._shadow_as(_send):
+                with self._deliver_as(_send):
                     rec_id = self.message_to_main(
                         me_key,
                         text,
@@ -2357,8 +2251,6 @@ class AgentRegistry:
                         expects_reply=bool(expects_reply),
                         notice=not expects_reply,
                     )
-                if settled is not None:  # 배달 **뒤** 요청자의 기다림을 닫는다
-                    self._close_sent(settled.to, settled.id)
                 return delivered_line(rec_id, expects_reply=bool(expects_reply))
             # Capture the send time BEFORE request() enqueues — the target's
             # worker can start (scope_start) the instant it's queued, so a
@@ -2368,7 +2260,7 @@ class AgentRegistry:
             rec_id = item_ids.next_id(
                 item_ids.REPLY if expects_reply else item_ids.MAIL
             )
-            with self._shadow_as(_send):
+            with self._deliver_as(_send):
                 err = self.request(
                     to,
                     text,
@@ -2377,11 +2269,10 @@ class AgentRegistry:
                     item_id=rec_id,
                     kind="" if expects_reply else "notice",
                 )
-            if settled is not None:  # 배달 **뒤** 요청자의 기다림을 닫는다
-                self._close_sent(settled.to, settled.id)
-                row = self._post.row(settled.id) if err else None
+            if settled is not None and err:
+                row = self._post.row(settled.id)
                 if row is not None and row.state == "picked":
-                    # 2단계 그림자 — 보내지 못했어도 갚음이다
+                    # 보내지 못했어도 갚음이다(닫힌 채 그 런 끝까지)
                     self._post.pay_unsent(sender, settled.id, run_id=run_id)
             if err:
                 return err
@@ -2396,9 +2287,7 @@ class AgentRegistry:
 
     def drain_replies(self) -> list[dict]:
         """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지."""
-        with self._cv:
-            self._pending.clear()  # 2단계 — 옛 쪽도 쓴다(1c 에서 지운다)
-            envs, _ = self._post.absorb("main")
+        envs, _ = self._post.absorb("main")
         out = [dict(e.payload) for e in envs]
         if out:
             self._save_state()  # 배달 완료 → 디스크 미러도 소비
@@ -2413,7 +2302,7 @@ class AgentRegistry:
         with self._cv:
             self._stamp_mail(mail)
             self._mailboxes.setdefault(addr, []).append(mail)
-            self._shadow_put(envelope_of_main_mail(mail, addr))  # 2단계 그림자
+            self._post_deliver(envelope_of_main_mail(mail, addr))  # 2단계 그림자
             self._cv.notify_all()
 
     def take_mail(self, addr: str) -> list[dict]:
@@ -2471,12 +2360,6 @@ class AgentRegistry:
                 env = self._post.take_reply("main", rid)
                 if env is not None:
                     mail = dict(env.payload)
-                    for i, old in enumerate(
-                        self._pending
-                    ):  # 2단계 — 옛 쪽도 쓴다(1c 에서 지운다)
-                        if str(old.get("re") or "") == rid:
-                            del self._pending[i]
-                            break
                 else:
                     mail = None
                     self._cv.wait(timeout=poll_s)
@@ -2586,11 +2469,10 @@ class AgentRegistry:
         self._cancel_checkins(f"agent:{tm.key}")  # 죽은 에이전트에게 알림이 가지 않게
         # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
         # 현재 턴을 마저 돌고(join 은 best-effort), 그 창에 발화하면 항목이
-        # `_SHUTDOWN` 뒤에 줄 서서 영영 안 읽힌다. 그 턴에서 새로 건 감시는
+        # 워커가 다시 꺼내지 않아 영영 안 읽힌다. 그 턴에서 새로 건 감시는
         # 워커의 `finally` 가 잡는다 — 죽음이 확정되는 유일한 지점이다.
         self._drop_monitors(tm.key)
         tm.stop_event.set()
-        tm.inbox.put(_SHUTDOWN)  # 2단계 — 옛 받은편지함의 표식(1c 에서 지운다)
         self._wake_worker()
         if (
             join
@@ -2666,21 +2548,20 @@ class AgentRegistry:
             text = agent_stop.stopped_reply(
                 tm.key, d.id, d.text, activity, notes, by=by
             )
-            with self._shadow_as(self._pay_as(me, d.id)):  # 2단계 그림자
+            with self._deliver_as(self._pay_as(me, d.id)):  # 정지 회신의 배달이 곧 갚음
                 self._send_stop_reply(
                     tm, d.to, d.id, text, mark, hop=d.hop, answers=d.answers
                 )
-            self.settle_id(me, d.id)
 
     def _answer_queued_as_removed(self, tm: AgentInstance) -> None:
         """시작 안 한 대기 요청(받은편지함 미러의 요청 항목)에 removed 회신을 보내고 미러를 비운다."""
         by = tm.stop_by or "user"
         mark = agent_stop.REMOVED_MARK.format(by=by)
         with self._cv:
-            queued, tm.inbox_items = list(tm.inbox_items), []
+            queued = self._queued(tm)
             self._post.remove_queued(
                 f"agent:{tm.key}"
-            )  # 2단계 그림자 — 줄은 버림, 회신은 아래서 배달
+            )  # 줄은 버림(dropped), 회신은 아래서 배달
         for it in queued:
             author = str(it.get("author") or "")
             if it.get("kind") or not it.get("expects_reply", True):
@@ -2742,7 +2623,6 @@ class AgentRegistry:
                 mark=mark,
                 opens_run=tm.stop_replies_wake,
             )
-        self._close_sent(to, rid)
         tm.stop_notified.append((to.removeprefix("agent:"), rid))
 
     def _answer_after_stop(self, tm: AgentInstance) -> None:
@@ -2792,7 +2672,6 @@ class AgentRegistry:
         for tm in list(self._agents.values()):
             self._drop_monitors(tm.key)
             tm.stop_event.set()
-            tm.inbox.put(_SHUTDOWN)  # 2단계 — 옛 받은편지함의 표식(1c 에서 지운다)
         self._wake_worker()
         for tm in list(self._agents.values()):
             if tm.worker is not None:
@@ -2946,10 +2825,7 @@ class AgentRegistry:
                 if not isinstance(item, dict):
                     continue
                 self._stamp_mail(item)
-                self._pending.append(item)
-                self._post.deliver(envelope_of_main_mail(item))  # 2단계 그림자
-            if self._pending:
-                self._cv.notify_all()
+                self._post.deliver(envelope_of_main_mail(item))
             # 열린 질문 복원 — 살릴 수 있는 것만. asker/target 판정은 에이전트
             # 복원 뒤에 해야 하므로 여기서는 담아만 둔다.
             restored = [
@@ -2963,7 +2839,7 @@ class AgentRegistry:
             ]
             # 번호 잇기 (v10.77.0) — 할당기는 저장하지 않고 남은 id 를 본다
             item_ids.observe(
-                *(i.get("item_id") for i in self._pending),
+                *(e.id for e in self._post.queued("main")),
                 *(q.id for q in restored),
             )
 
