@@ -121,6 +121,16 @@ class Recorder:
         #: 원인 미상의 사망을 흉내 낸다(요청 처리기 밖의 기계 사망 — `test_machinery_crash_notifies_main` 과 같은
         #: 수단). 기록은 터지기 전에 남는다.
         self.crash_on_start: dict[str, threading.Event] = {}
+        #: ``(사건 이름, 에이전트 키 또는 "*", 조건)`` — 그 키의 스레드가 그 사건을 적은 뒤 ``조건`` 이 참이 될 때까지 그
+        #: 스레드를 잡는다. 그 스레드가 다음에 짓는 꼬리(로스터의 남의 상태)보다 다른 배우의 사건을 앞세운다.
+        #: 한 번 쓰면 빠진다(`hold`).
+        self.holds: list[list] = []
+        #: 렌더러 메서드 이름 → ``(args, kwargs)`` 를 받아 그 스레드를 잡는 규칙 — 세션이 건다(`Session.settle_rules`).
+        #: 기록되는 사건이든(적은 뒤) 아니든(관찰 카드 등) 같다. 한 번 쓰고 빠지지 않는다 — 모든 시나리오의 규칙이다.
+        self.rules: dict = {}
+
+    def hold(self, event: str, key: str, cond) -> None:
+        self.holds.append([event, key, cond])
 
     def lane(self) -> str:
         t = threading.current_thread()
@@ -132,8 +142,18 @@ class Recorder:
 
     def __getattr__(self, name):
         target = getattr(self._inner, name)
-        if name not in EVENTS or not callable(target):
+        if not callable(target):
             return target
+        if name not in EVENTS:
+            rule = self.rules.get(name)
+            if rule is None:
+                return target
+
+            def ruled(*args, **kwargs):
+                rule(args, kwargs)
+                return target(*args, **kwargs)
+
+            return ruled
 
         def recorded(*args, **kwargs):
             with self._lock:
@@ -141,6 +161,14 @@ class Recorder:
                     [name, _plain(list(args)), _plain(kwargs)]
                 )
                 self.counts[name] = self.counts.get(name, 0) + 1
+            rule = self.rules.get(name)
+            if rule is not None:
+                rule(args, kwargs)
+            for h in list(self.holds):
+                if h[0] == name and h[1] in ("*", kwargs.get("key")):
+                    self.holds.remove(h)
+                    until(h[2], f"held {name}")
+                    break
             if name == "begin_agent_work" and kwargs.get("key") in self.crash_on_start:
                 gate = self.crash_on_start.pop(kwargs["key"])
                 if not gate.wait(_PATIENCE_S):
@@ -234,6 +262,9 @@ class Surface:
         self.stop: threading.Event | None = None
         #: 명령으로 받을 글 → 그때 할 일 — 런을 열지 않는 차례(`/`·`@` 명령)를 흉내 낸다
         self.commands: dict = {}
+        #: 런을 열기 직전(`run_starting` 을 적은 뒤) 부를 것 — ``(req)``. 펌프 스레드를 잡아 그 런의 첫 꼬리보다
+        #: 다른 배우의 사건을 앞세운다.
+        self.before_run = None
 
     def _note(self, *row):
         with self.rec._lock:
@@ -261,6 +292,8 @@ class Surface:
 
     def run_starting(self, req):
         self._note("run_starting", req.text, req.wake, req.author_is_user)
+        if self.before_run is not None:
+            self.before_run(req)
 
     def run_ended(self, result, req):
         self.results.append(result)
@@ -326,6 +359,7 @@ class Session:
             self.spec, self.stores, renderer=self.recorder
         )
         self.reg = self.owners.agent_registry
+        self.recorder.rules.update(self.settle_rules())
         self.surface = Surface(self.recorder)
         if path == "run":
             policy = QuietPolicy(
@@ -353,6 +387,46 @@ class Session:
                 else None
             ),
         )
+
+    def settle_rules(self) -> dict:
+        """모든 시나리오의 순서 규칙 — 띄운 결과 카드(`observation`, 도구 ``agent`` 의 "spawned/started agent")를
+        그린 스레드를 띄운 에이전트가 모두 시작을 마칠 때까지 잡는다. 기대값의 꼬리는 그 뒤의 로스터다 — 막 띄운
+        것은 ``starting``, 과제가 있으면 그것을 집기 전 ``idle`` 인데 구현은 꼬리보다 먼저 끝남을 보장하지 않는다."""
+
+        def agents_settled() -> bool:
+            return all(
+                r["state"] != "starting"
+                and not (r["state"] == "idle" and r.get("pending_requests"))
+                for r in self.reg.roster_snapshot()
+            )
+
+        def after_spawn(args, kwargs):
+            content = str(args[0] if args else kwargs.get("content") or "")
+            tool = args[2] if len(args) > 2 else kwargs.get("tool_name")
+            if tool == "agent" and content.startswith(
+                ("spawned agent", "started agent")
+            ):
+                until(agents_settled, "spawned agents settle")
+
+        return {"observation": after_spawn}
+
+    def close_answered_awaits_before_main_reads(self) -> None:
+        """main 이 제자리 대기에서 깰 때(``wait_in_place(False)``) 도착한 회신이 답하는 "기다리는 회신" 이 닫힐
+        때까지 main 을 잡는다 — 회신한 쪽은 배달한 **뒤** 보낸 쪽 기록을 지운다(`AgentRegistry.awaited_replies`).
+        기대값의 띠(`open_items`)는 그 뒤의 것이다. 회신한 쪽이 그다음 곧바로 런을 끝내는 시나리오에서는 쓰지
+        않는다 — main 의 꼬리가 회신한 쪽의 "바쁨" 을 보는 순서와 함께 강제할 손잡이가 없다."""
+
+        def answered_awaits_closed() -> bool:
+            heads = " ".join(m.get("text") or "" for m in self.reg.pending_mail())
+            return not any(
+                f"re [{r['id']}]" in heads for r in self.reg.awaited_replies("main")
+            )
+
+        def after_wake(args, kwargs):
+            if args and args[0] is False:
+                until(answered_awaits_closed, "answered awaits close")
+
+        self.recorder.rules["wait_in_place"] = after_wake
 
     def say(self, text: str, nickname=None) -> dict:
         """사람의 입력 한 줄 — 입력 큐로 (CLI 의 argv 질의는 ``nickname=None``)."""
@@ -545,6 +619,36 @@ def _after_main_calls(box, n: int, step):
     return go
 
 
+def _after_runs_began(box, n: int, step):
+    """에이전트 런이 모두 ``n`` 번 시작된(``begin_agent_work``) **뒤** ``step`` — 시작은 빚을 적은 뒤다
+    (`ResidentLoop.start` → `open_scope`). 먼저 `wait` 하면 근거가 "working" 하나로 줄어든다(빚 줄이 아직 없다)."""
+
+    def go(msgs):
+        rec = box["s"].recorder
+        until(lambda: rec.counts.get("begin_agent_work", 0) >= n, "agent runs began")
+        return step if isinstance(step, str) else step(msgs)
+
+    return go
+
+
+def _held_peer_message(box, sender: str, to: str, text: str) -> str:
+    """``sender`` 가 ``to`` 에게 회신 기대 `message` — 받는 쪽 런의 첫 꼬리는 보낸 쪽이 `wait` 로 런을 끝낸 뒤
+    (한가함)에, 보낸 쪽의 다음 꼬리는 받는 쪽이 일을 집은 뒤(바쁨)에 짓게 잡는다."""
+    s = box["s"]
+    a, b = _agent_key(s, sender), _agent_key(s, to)
+    s.recorder.hold("begin_agent_work", b, lambda: s.agent_state(a) == "idle")
+    # 요청의 창 줄(`agent_message` — 받는 쪽 키, 보낸 쪽 스레드, 받은편지함에 넣은 뒤)에서 보낸 쪽을 잡는다
+    s.recorder.hold("agent_message", b, lambda: s.agent_state(b) == "busy")
+    return call("message", to=to, text=text)
+
+
+def _pay_before_main_notes(s: Session) -> None:
+    """상주가 main 에게 보내는 회신 기대 `message` 는 자기 과제의 빚도 갚는다 — 갚음(보낸 쪽 기록 지우기)은
+    배달 **뒤**다. main 이 그 요청을 빚으로 적는 자리(`note_request`)에서 main 의 "기다리는 회신" 이 비기까지
+    잡는다 — 기대값의 띠(`open_items`)는 그 뒤의 것이다."""
+    s.recorder.hold("note_request", None, lambda: not s.reg.awaited_replies("main"))
+
+
 def _after_agents_settle(box, step, *, states=("idle", "dead")):
     """에이전트 모두가 한가해지거나 내려온 뒤 ``step(msgs)`` — 그 런의 끝 정리가 main 의 다음 턴보다 먼저."""
 
@@ -567,7 +671,7 @@ def s01_request_to_run_agent_explicit_reply(root: Path, path: str) -> dict:
         {
             "MAIN": [
                 call("agent", mode="run", task="TASK-A find callers"),
-                call("wait", reason="agent"),
+                _after_runs_began(box, 1, call("wait", reason="agent")),
                 _after_agents_settle(
                     box, complete_all("main finished"), states=("dead",)
                 ),
@@ -579,11 +683,13 @@ def s01_request_to_run_agent_explicit_reply(root: Path, path: str) -> dict:
                         "reply", id=owed_id(m), text="3 callers: a.py, b.py"
                     ),
                 ),
-                call("complete", result="replied"),
+                # 회신을 읽은 main 의 꼬리(셋째 호출)가 run 의 "바쁨" 을 본 뒤에 내려온다
+                _after_main_calls(box, 3, lambda m: call("complete", result="replied")),
             ],
         }
     )
     s = box["s"] = Session(root, p, path=path)
+    s.close_answered_awaits_before_main_reads()
     s.say("MAIN go")
     drive(s, path=path, until_done=lambda s: until(lambda: runs_ended(s) >= 1))
     return s.collect()
@@ -597,7 +703,7 @@ def s02_fallback_reply(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="run", task="TASK-B summarize"),
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
                 _after_agents_settle(box, complete_all("ok"), states=("dead",)),
             ],
             "TASK-B": [
@@ -619,6 +725,7 @@ def s03_agent_request_to_main(root: Path, *, main_replies: bool) -> dict:
 
     def agent_asks(msgs):
         assert box["s"].recorder.main_waiting.wait(_PATIENCE_S)
+        _pay_before_main_notes(box["s"])
         return call("message", to="main", text="which file should I use?")
 
     def main_answers(msgs):
@@ -639,7 +746,7 @@ def s03_agent_request_to_main(root: Path, *, main_replies: bool) -> dict:
     # 요청자(main)에게 보낸 `message` 는 상주 자신의 빚도 갚는다 — main 의 기다림은 이 메일로 닫힌다
     main_script = [
         call("agent", mode="spawn", name="helper", task="TASK-C do the work"),
-        call("wait"),
+        _after_runs_began(box, 1, call("wait")),
     ]
     if main_replies:
         main_script += [
@@ -654,7 +761,8 @@ def s03_agent_request_to_main(root: Path, *, main_replies: bool) -> dict:
             "MAIN": main_script,
             "TASK-C": [
                 agent_asks,
-                call("wait"),
+                # main 이 그 요청을 읽어 빚을 적은 뒤(셋째 호출) — 먼저 기다리면 근거가 없어 거절된다
+                _after_main_calls(box, 3, lambda m: call("wait")),
                 # 깬 런 — main 의 회신(또는 폴백)을 읽고 끝낸다
                 complete_all("read the answer"),
             ],
@@ -686,16 +794,8 @@ def s04_notices_both_ways(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="spawn", name="helper", task="TASK-D build it"),
-                call("wait"),
-                _after_agents_settle(
-                    box,
-                    lambda m: call(
-                        "message",
-                        to="helper",
-                        text="TASK-D fyi: the build passed",
-                        expects_reply=False,
-                    ),
-                ),
+                _after_runs_began(box, 1, call("wait")),
+                _after_agents_settle(box, lambda m: _notice_to_helper(box)),
                 _after_agents_settle(box, complete_all("main finished")),
             ],
             "TASK-D": [
@@ -706,7 +806,8 @@ def s04_notices_both_ways(root: Path) -> dict:
                     ),
                 ),
                 complete_all("ok"),
-                complete_all("noted"),
+                # 통지를 보낸 main 의 꼬리(넷째 호출)가 그 런의 "바쁨" 을 본 뒤에 끝낸다
+                _after_main_calls(box, 4, complete_all("noted")),
             ],
         }
     )
@@ -714,6 +815,24 @@ def s04_notices_both_ways(root: Path) -> dict:
     s.say("MAIN go")
     drive(s, path="run", until_done=None)
     return s.collect()
+
+
+def _reply_then_settle(box, me: str, to: str, rid: str, text: str) -> str:
+    """``me`` 가 ``to`` 에게 `reply` — 회신이 깨운 ``to`` 의 새 런은 ``me`` 가 런을 끝낸(한가한) 뒤에 연다."""
+    s = box["s"]
+    a, b = _agent_key(s, me), _agent_key(s, to)
+    s.recorder.hold("begin_agent_work", b, lambda: s.agent_state(a) == "idle")
+    return call("reply", id=rid, text=text)
+
+
+def _notice_to_helper(box) -> str:
+    """main → helper 통지 — 통지의 창 줄(`agent_message`)에서 main 을 helper 가 그것을 집을 때까지 잡는다."""
+    s = box["s"]
+    key = _agent_key(s, "helper")
+    s.recorder.hold("agent_message", key, lambda: s.agent_state(key) == "busy")
+    return call(
+        "message", to="helper", text="TASK-D fyi: the build passed", expects_reply=False
+    )
 
 
 def s05_agent_to_agent(root: Path) -> dict:
@@ -724,26 +843,29 @@ def s05_agent_to_agent(root: Path) -> dict:
             "MAIN": [
                 call("agent", mode="spawn", name="yy"),
                 call("agent", mode="spawn", name="xx", task="TASK-E1 ask yy"),
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
                 _after_agents_settle(box, complete_all("main finished")),
             ],
             "TASK-E1": [
                 _main_waits_then(
                     box,
-                    lambda m: call("message", to="yy", text="TASK-E2 compute 6*7"),
+                    lambda m: _held_peer_message(
+                        box, "xx", "yy", "TASK-E2 compute 6*7"
+                    ),
                 ),
-                call("wait"),
+                _after_runs_began(box, 2, call("wait")),
                 lambda m: call("reply", id=owed_ids(m)[0], text="yy says 42"),
                 # 회신으로 깬 main 의 다음 호출(넷째)이 시작될 때까지 내려오지 않는다
                 _after_main_calls(box, 4, lambda m: call("complete", result="ok")),
             ],
             "TASK-E2": [
-                lambda m: call("reply", id=owed_id(m), text="TASK-E1 42"),
+                lambda m: _reply_then_settle(box, "yy", "xx", owed_id(m), "TASK-E1 42"),
                 call("complete", result="ok"),
             ],
         }
     )
     s = box["s"] = Session(root, p)
+    s.close_answered_awaits_before_main_reads()
     s.say("MAIN go")
     drive(s, path="run", until_done=None)
     return s.collect()
@@ -790,7 +912,7 @@ def s07_question_to_human(root: Path) -> dict:
                 call(
                     "agent", mode="spawn", name="helper", task="TASK-G pick a version"
                 ),
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
                 _after_agents_settle(box, complete_all("main finished")),
             ],
             "TASK-G": [
@@ -838,7 +960,7 @@ def s08_mid_run_absorption(root: Path) -> dict:
 
     def main_wait(msgs):
         second_sent.set()
-        return call("wait")
+        return _after_runs_began(box, 1, call("wait"))(msgs)
 
     def agent_first(msgs):
         assert second_sent.wait(_PATIENCE_S)
@@ -869,11 +991,15 @@ def s08_mid_run_absorption(root: Path) -> dict:
                 agent_first,
                 lambda m: call("reply", id=owed_ids(m)[0], text="a.py ok"),
                 agent_reply_second,
-                call("complete", result="ok"),
+                # 둘째 회신을 읽은 main 의 꼬리(다섯째 호출)가 상주의 "바쁨" 을 본 뒤에 끝낸다
+                _after_main_calls(box, 5, lambda m: call("complete", result="ok")),
             ],
         }
     )
     s = box["s"] = Session(root, p)
+    s.close_answered_awaits_before_main_reads()
+    # 상주의 첫 런은 main 의 셋째 호출이 시작된 뒤 — 그 꼬리가 줄 선 둘째 요청을 보고, 첫 턴 경계가 그것을 흡수한다
+    s.recorder.hold("begin_agent_work", "*", lambda: len(p.calls.get("MAIN", [])) >= 3)
     s.say("MAIN go")
     drive(s, path="run", until_done=None)
     return s.collect()
@@ -893,7 +1019,7 @@ def s09_stop_square(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="spawn", name="helper", task="TASK-J slow work"),
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
                 _after_agents_settle(box, complete_all("main finished")),
             ],
             "TASK-J": [stop_me],
@@ -911,12 +1037,18 @@ def s10_kill_x(root: Path) -> dict:
 
     def kill_me(msgs):
         s = box["s"]
-        until(lambda: len(s.reg.pending_mail()) == 0 and box.get("queued"), "queued")
+        # main 이 둘째 요청을 보내고 다음 호출을 시작한 뒤(그 꼬리가 줄 선 요청을 본다)
+        until(
+            lambda: (
+                len(s.reg.pending_mail()) == 0
+                and len(s.provider.calls.get("MAIN", [])) >= 3
+            ),
+            "queued",
+        )
         box["kill"] = s.reg.kill(s.agent_keys()[0])
         return call("shell", command="true")
 
     def main_queue_second(msgs):
-        box["queued"] = True
         return call("message", to="helper", text="TASK-K second job")
 
     def main_wait_after_both(msgs):
@@ -964,7 +1096,7 @@ def s11_stop_everything(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="run", task="TASK-L slow work"),
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
                 complete_all("read the stopped reply"),
             ],
             "TASK-L": [stop_everything],
@@ -1076,7 +1208,7 @@ def s13_wait_refusals_and_wakes(root: Path) -> dict:
                 complete_all("job seen"),
                 # 둘째 런(사람): 느린 run 에이전트를 기다리다 사람 말에 깨고, 다시 기다리다 회신에 깬다
                 call("agent", mode="run", task="TASK-N slow work"),
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
                 call("wait"),
                 complete_all("read the stopped reply"),
                 # 셋째 런(메일 런): 한가한 main 을 작업 통지가 깨웠다
@@ -1307,6 +1439,12 @@ def s17_mail_to_an_idle_main_on_the_run_path(root: Path) -> dict:
         }
     )
     s = box["s"] = Session(root, p)
+    # 통지가 연 메일 런의 꼬리는 통지를 보낸 상주가 런을 끝낸(한가한) 뒤의 것이다
+    s.surface.before_run = lambda req: (
+        until(lambda: s.agent_state(_agent_key(s, "helper")) == "idle", "helper done")
+        if req.wake
+        else None
+    )
     s.say("MAIN go")
     drive(s, path="run", until_done=None)
     return s.collect()
@@ -1339,6 +1477,7 @@ def s21_main_stop_owes_agent(root: Path) -> dict:
 
     def agent_asks(msgs):
         assert box["s"].recorder.main_waiting.wait(_PATIENCE_S)
+        _pay_before_main_notes(box["s"])
         return call("message", to="main", text="which file should I use?")
 
     def main_is_stopped(msgs):
@@ -1351,10 +1490,14 @@ def s21_main_stop_owes_agent(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="spawn", name="helper", task="TASK-S1 do the work"),
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
                 main_is_stopped,
             ],
-            "TASK-S1": [agent_asks, call("wait"), complete_all("read the answer")],
+            "TASK-S1": [
+                agent_asks,
+                _after_main_calls(box, 3, lambda m: call("wait")),
+                complete_all("read the answer"),
+            ],
         }
     )
     s = box["s"] = Session(root, p, path="web")
@@ -1398,8 +1541,8 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
       은 died 통지를 받고, aa 는 아무것도 받지 않는다.
     - ``who="requester"`` (나) `[단계 4c 에서 바뀜 — 변화 10]`: aa 가 bb 에게 요청한 뒤 aa 사망. bb 는 죽은 쪽에
       빚진 회신을 Open Items 에 든 채 일한다.
-    - ``who="main_waits"`` (다): main 이 bb 에게 요청하고 제자리 대기 중 bb 사망 — main 이 같은 런에서 깨어 died
-      통지를 읽고, 기다리던 회신이 닫히는가."""
+    - ``who="main_waits"`` (다) `[단계 4c 에서 바뀔 수 있음 — died 가 회신 모양이 되면]`: main 이 bb 에게 요청하고
+      제자리 대기 중 bb 사망 — main 이 같은 런에서 깨어 died 통지를 읽고, 기다리던 회신이 닫히는가."""
     box: dict = {}
     facts: dict = {}
     crash = threading.Event()
@@ -1429,14 +1572,17 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
                     arm("bb"),
                     call("agent", mode="spawn", name="aa", task="TASK-D1 ask bb"),
                 )[1],
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
             ]
             + [complete_all("main read it")] * 10,
             "TASK-D1": [
                 _main_waits_then(
                     box, lambda m: call("message", to="bb", text="TASK-D2 compute")
                 ),
-                _bb_dead_then(box, crash, call("wait")),
+                # main 이 died 통지를 읽고 되묻기를 다 받은 뒤(열두째 호출) — aa 는 그동안 바쁘다
+                _bb_dead_then(
+                    box, crash, _after_main_calls(box, 12, lambda m: call("wait"))
+                ),
                 lambda m: call("reply", id=owed_id(m), text="aa: bb did not answer"),
                 call("complete", result="ok"),
             ],
@@ -1448,14 +1594,15 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
             "MAIN": [
                 call("agent", mode="spawn", name="bb"),
                 call("agent", mode="spawn", name="aa", task="TASK-E1 ask bb"),
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
             ]
             + [complete_all("main read it")] * 10,
             "TASK-E1": [
                 _main_waits_then(
-                    box, lambda m: call("message", to="bb", text="TASK-E2 slow job")
+                    box,
+                    lambda m: _held_peer_message(box, "aa", "bb", "TASK-E2 slow job"),
                 ),
-                call("wait"),
+                _after_runs_began(box, 2, call("wait")),
             ],
             "TASK-E2": [
                 lambda m: (
@@ -1472,7 +1619,7 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
                 lambda m: (arm("bb"), call("message", to="bb", text="TASK-F1 compute"))[
                     1
                 ],
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
             ]
             + [complete_all("main read it")] * 10,
         }
@@ -1497,12 +1644,16 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
                 ),
                 "aa parked",
             )
+            # bb 의 첫 호출이 시작된 뒤(한가한 aa 를 본 꼬리) — 먼저 죽이면 bb 가 aa 의 한가함을 못 본다
+            until(lambda: len(p.calls.get("TASK-E2", [])) >= 1, "bb's first call")
             s.recorder.crash_on_start[aa] = crash
             crash.set()
             facts["notice"] = s.reg.request(
                 aa, "TASK-E1 fyi", author="main", expects_reply=False
             )
             until(lambda: s.agent_state(aa) == "dead", "aa died")
+            # 제자리에서 기다리던 main 이 died 통지를 읽은 뒤
+            until(lambda: not s.reg.pending_mail(), "main read the death")
             snapshot("after_death")
             box["bb_go"].set()
             until(lambda: s.agent_state(_agent_key(s, "bb")) == "idle", "bb done")
@@ -1553,7 +1704,7 @@ def s23_checkin_main_in_place(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="run", task="TASK-G slow work"),
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
                 call("wait"),
                 _after_agents_settle(
                     box, complete_all("main finished"), states=("dead",)
@@ -1564,16 +1715,22 @@ def s23_checkin_main_in_place(root: Path) -> dict:
                     go.wait(_PATIENCE_S),
                     call("reply", id=owed_id(m), text="G done"),
                 )[1],
-                call("complete", result="ok"),
+                # 회신을 읽은 main 의 꼬리(넷째 호출)가 run 의 "바쁨" 을 본 뒤에 내려온다
+                _after_main_calls(box, 4, lambda m: call("complete", result="ok")),
             ],
         }
     )
     s = box["s"] = Session(root, p, path="web")
+    s.close_answered_awaits_before_main_reads()
     s.reg.checkin_timer_factory = _HeldTimer
+    # run 의 런은 체크인이 나간 뒤에 첫 기록을 남긴다 — 그 앞이면 체크인 글에 "last step … ago" 가 붙는다
+    fired = threading.Event()
+    s.recorder.hold("begin_agent_work", "*", fired.is_set)
 
     def done(s):
         assert s.recorder.main_waiting.wait(_PATIENCE_S)
         facts["checkin"] = s.reg.fire_checkin("main")
+        fired.set()
         facts["persisted_kinds"] = _agents_file_kinds(s)
         until(
             lambda: (
@@ -1604,7 +1761,7 @@ def s24_commands_while_waiting(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="run", task="TASK-H slow work"),
-                call("wait"),
+                _after_runs_began(box, 1, call("wait")),
                 call("wait"),
                 # 메일 런(■ 뒤 run 에이전트의 회신)
                 _after_agents_settle(
@@ -1789,8 +1946,8 @@ def s27_restart_after_wait(root: Path) -> dict:
                 complete_all("spawned"),
             ],
             "TASK-W1": [
-                lambda m: call("message", to="bb", text="TASK-W2 compute 6*7"),
-                call("wait"),
+                lambda m: _held_peer_message(box, "aa", "bb", "TASK-W2 compute 6*7"),
+                _after_runs_began(box, 2, call("wait")),
             ],
             "TASK-W2": [
                 lambda m: (

@@ -9,6 +9,7 @@ v10.144.0 — 1단계 기준 보강).
 from __future__ import annotations
 
 import ast
+import difflib
 import hashlib
 import json
 from pathlib import Path
@@ -183,6 +184,20 @@ def test_current_implementation_matches_the_oracle(produced, name):
     want = (EXPECTED / f"{name}.json").read_text(encoding="utf-8")
     if got != want:
         g, w = json.loads(got), json.loads(want)
-        diff = [k for k in sorted(set(g) | set(w)) if g.get(k) != w.get(k)]
-        pytest.fail(f"{name}: differs from the oracle in {diff}")
+        keys = [k for k in sorted(set(g) | set(w)) if g.get(k) != w.get(k)]
+
+        # 어긋난 키 이름만으로는 CI 에서만 보이는 흔들림을 읽을 수 없다 — unified diff 앞 60줄. 글 속의
+        # 줄바꿈(``\\n``)도 줄로 펴서 비교한다: 꼬리 한 통이 한 줄이라 펴지 않으면 그 한 줄 전체가 찍힌다.
+        def lines_of(text: str) -> list[str]:
+            return text.replace("\\n", "\n").splitlines()
+
+        lines = list(
+            difflib.unified_diff(
+                lines_of(want), lines_of(got), "expected", "produced", lineterm=""
+            )
+        )[:60]
+        pytest.fail(
+            f"{name}: differs from the oracle in {keys}\n" + "\n".join(lines),
+            pytrace=False,
+        )
     assert sums[name] == _sums()[f"{name}.json"]
