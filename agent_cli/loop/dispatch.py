@@ -1473,9 +1473,11 @@ class TurnDispatcher:
         잇는다. 주소는 언제나 사람이다(v10.77.0, B) — 종전의 ``to`` 는 지웠다.
         """
         lines = []
+        refused = 0
         for q in questions:
             qid, err = port.ask(q)
             if err:
+                refused += 1
                 lines.append(f"could not ask: {err}")
             else:
                 lines.append(f'question "{qid}" sent — "{q}"')
@@ -1485,7 +1487,8 @@ class TurnDispatcher:
             "on the answer; it will arrive as a new message. If nothing else "
             "can proceed, `complete` — you will be resumed when it arrives."
         )
-        return self._emit_obs(record, accumulate, "ask", obs, True)
+        # 질문이 전부 올라갔을 때만 성공으로 적는다 — ``_op_message`` 와 같다. 관찰 글은 그대로다.
+        return self._emit_obs(record, accumulate, "ask", obs, not refused)
 
     def _op_reply(self, llm_text: str, turn, op, accumulate):
         """``reply`` op (v9.21.0) — 이 런을 시킨 쪽에게 빚진 회신을 갚는다.

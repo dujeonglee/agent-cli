@@ -287,3 +287,76 @@ class TestMessageIsRecordedAsWhatHappened:
         finally:
             door.set()
             reg.shutdown_all()
+
+
+_NOT_BLOCKED = (
+    "\nYou are not blocked. Continue with whatever does not depend "
+    "on the answer; it will arrive as a new message. If nothing else "
+    "can proceed, `complete` — you will be resumed when it arrives."
+)
+
+
+class TestResidentAskIsRecordedAsWhatHappened:
+    """상주 에이전트의 막지 않는 ``ask`` — 질문이 전부 올라갔을 때만 성공.
+
+    빈 질문은 실제 루프로 닿는다: ``_extract_questions`` 는 ``""`` 만 거르고
+    공백뿐인 ``"   "`` 은 통과시킨다 — 레지스트리가 strip 한 뒤 "empty question"
+    으로 거부한다. 그래서 가짜 포트 없이 실제 ``question_port`` 로 몬다.
+    관찰 글은 바뀌지 않는다 — 아래 기대 글은 고치기 전의 출력과 같다.
+    """
+
+    def _ports(self, reg, b):
+        from tests.loop_ports import make_ports
+
+        return make_ports(owner=f"agent:{b}", questions=reg.question_port(b))
+
+    def _qid(self, reg, text):
+        (q,) = [q for q in reg.open_human_questions() if q.text == text]
+        return q.id
+
+    def test_all_questions_sent_is_recorded_as_success(self, tmp_path):
+        reg, _a, b, door = _two_idle_agents(tmp_path)
+        try:
+            ops = json.dumps({"action": "ask", "questions": ["first?", "second?"]})
+            (obs,) = _run_one_turn(tmp_path, ops, self._ports(reg, b))
+            assert obs["tool"] == "ask" and obs["success"] is True
+            q1, q2 = self._qid(reg, "first?"), self._qid(reg, "second?")
+            assert obs["content"] == (
+                f'Observation: question "{q1}" sent — "first?"\n'
+                f'question "{q2}" sent — "second?"' + _NOT_BLOCKED
+            )
+        finally:
+            door.set()
+            reg.shutdown_all()
+
+    def test_one_refused_question_is_recorded_as_failed(self, tmp_path):
+        reg, _a, b, door = _two_idle_agents(tmp_path)
+        try:
+            ops = json.dumps({"action": "ask", "questions": ["first?", "   "]})
+            (obs,) = _run_one_turn(tmp_path, ops, self._ports(reg, b))
+            assert obs["tool"] == "ask" and obs["success"] is False
+            q1 = self._qid(reg, "first?")
+            assert obs["content"] == (
+                f'Observation: question "{q1}" sent — "first?"\n'
+                "could not ask: empty question" + _NOT_BLOCKED
+            )
+        finally:
+            door.set()
+            reg.shutdown_all()
+
+    def test_in_a_batch_the_refused_ask_is_failed(self, tmp_path):
+        reg, _a, b, door = _two_idle_agents(tmp_path)
+        try:
+            ops = json.dumps(
+                [
+                    {"action": "ask", "questions": ["first?"]},
+                    {"action": "ask", "questions": ["   "]},
+                ]
+            )
+            (obs,) = _run_one_turn(tmp_path, ops, self._ports(reg, b))
+            assert obs["success"] is False
+            assert "[1/2] ask — OK" in obs["content"]
+            assert "[2/2] ask — FAILED" in obs["content"]
+        finally:
+            door.set()
+            reg.shutdown_all()
