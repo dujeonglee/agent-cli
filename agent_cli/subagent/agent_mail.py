@@ -362,7 +362,7 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
     content = envelope("reply", mid, label, body, re=str(reply.get("run") or ""))
     tm = registry.get(key) if registry is not None else None
     if tm is not None and getattr(tm, "state", "dead") != "dead":
-        queued = tm.inbox.qsize()
+        queued = registry.backlog_of(key)
         if queued > 0 or state_is_active(tm.state):
             tail = (
                 f"(agent status: {tm.state} · {queued} queued — remaining "

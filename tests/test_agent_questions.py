@@ -1601,10 +1601,10 @@ class TestMainRunEnd:
         reg.message_to_main(a, "보고", expects_reply=False)
         recs = reg.drain_replies()
         assert [r["expects_reply"] for r in recs] == [True, False]
-        # 배달을 흉내 낸다 — core 의 _deliver_agent_mail 이 하는 일
+        # 배달을 흉내 낸다 — core 의 `_inject_mail` 이 하는 일(빚의 id = 그 배달의 id)
         for r in recs:
             if r["expects_reply"]:
-                reg.note_owes("main", f"agent:{r['key']}", r["output"])
+                reg.note_owes("main", f"agent:{r['key']}", r["output"], id=r["item_id"])
         port = reg.question_port(None)
         assert [d["kind"] for d in port.debts()] == ["reply"]
         assert port.debts()[0]["to"] == f"agent:{a}"

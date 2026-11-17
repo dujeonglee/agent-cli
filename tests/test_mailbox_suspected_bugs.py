@@ -141,12 +141,10 @@ class TestRestoredAgentToMainRequest:
         finally:
             fresh.shutdown_all()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="복원은 받은편지함 항목만 보낸 쪽 기록(_sent)을 다시 적는다 — main 메일함의 요청은 빠져 보낸 "
-        "에이전트의 기다리는 회신이 사라진다(시안 §0 의도된 변경 ③) — 새 구조에서 통과해야 함",
-    )
     def test_the_sender_still_awaits_the_reply(self, tmp_path):
+        """`[v10.145.0 에서 고쳐짐 — 2단계 예외 D1]` 재시작이 main 메일함에 되넣은 요청의 보낸 쪽은 그 회신을
+        기다리는 것으로 선다 — 우편에서는 상자에 든 요청마다 줄이 있다. 옛 구현은 받은편지함 항목만 보낸 쪽 기록을
+        다시 적어 그 기다림이 사라졌다."""
         fresh, key, rid, _before = self._sent_then_restored(tmp_path)
         try:
             assert [r["id"] for r in fresh.awaited_replies(f"agent:{key}")] == [rid]
@@ -228,11 +226,9 @@ class TestReplyInTheMessageToMainGap:
         finally:
             reg.shutdown_all()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="보낸 쪽 기록(_sent)을 메일을 넣은 뒤에 적어 그 틈에 온 회신을 놓친다 — 새 구조에서 통과해야 함",
-    )
     def test_a_reply_in_the_gap_closes_the_wait(self, tmp_path):
+        """`[v10.145.0 에서 고쳐짐 — 2단계: 배달과 줄 열기가 한 락 구간]` 옛 구현은 메일을 넣은 뒤에 보낸 쪽
+        기록을 적어 그 틈에 온 회신을 놓쳤다."""
         reg, key = self._registry_with_agent(tmp_path)
 
         def main_answers_at_once(mail):
@@ -301,11 +297,8 @@ class TestStoppedReplyOrder:
         reg = cleanup[-1]
         assert reg.arrived_for("main") == 1
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="정지 회신은 배달한 뒤에 빚을 갚음으로 적어, 배달 순간 요청자의 판정 재료(pending_for)에 "
-        "'owes you a reply' 가 남는다 — pay_debt 와 순서가 다르다 — 새 구조에서 통과해야 함",
-    )
     def test_a_stopped_reply_is_already_paid_when_it_lands(self, tmp_path, cleanup):
+        """`[v10.145.0 에서 고쳐짐 — 2단계: 정지 회신의 배달과 갚음이 한 락 구간(`pay`)]` 옛 구현은 배달한 뒤에
+        갚음으로 적어 배달 순간의 판정 재료에 "owes you a reply" 가 남았다."""
         view, key = self._run(tmp_path, cleanup, stop=True)
         assert f"agent:{key} owes you a reply" not in view

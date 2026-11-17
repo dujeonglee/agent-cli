@@ -135,6 +135,10 @@ def compare(
                 - set(bare_debts)
             )
             extra_old, extra_new = old_s - new_s, new_s - old_s
+            # 버그 4 — 옛 쪽에만 남은, 우편에서는 이미 닫혔거나 사라진 기다림(옛 쪽이 회신이 온 뒤에 기록을 적었다)
+            extra_old = {
+                i for i in extra_old if (row := post.row(i)) and row.state != "closed"
+            }
             if not final:
                 # 옛 두 락 구간 사이: 회신·폴백·정지·removed 를 배달한 뒤 보낸 쪽 기록을 지우기 전(우편의 줄은 이미
                 # 닫혔다), 요청을 넣은 뒤 보낸 쪽 기록을 적기 전(우편의 줄은 이미 queued — 추정 버그 4 의 자리)
@@ -146,7 +150,7 @@ def compare(
                 extra_new = {
                     i
                     for i in extra_new
-                    if (row := post.row(i)) and row.state != "queued"
+                    if (row := post.row(i)) and row.state not in ("queued", "picked")
                 }
             if extra_old or extra_new:
                 problems.append(f"{req} awaits {sorted(old_s)} != {sorted(new_s)}")
