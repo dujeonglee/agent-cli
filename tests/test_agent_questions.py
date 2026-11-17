@@ -1432,16 +1432,23 @@ class TestCompleteIsLocal:
         assert to_a[0]["message"].startswith("답:완료")
         assert to_a[0]["expects_reply"] is False, "reply 가 새 빚을 지웠다"
 
-    def test_message_to_requester_settles_and_opens_their_debt(self, mkreg, renderer):
-        """끝말잇기 규칙 — 항목 하나로 양쪽이 빚진다."""
+    def test_message_to_requester_does_not_settle_and_opens_their_debt(
+        self, mkreg, renderer
+    ):
+        """`message` 는 빚을 갚지 않는다(v10.145.1 — 갚는 것은 `reply` 하나): 요청자에게 되물은 `message` 는 상대를
+        빚지게 할 뿐이고, 내 빚은 런 끝 폴백이 대신 갚는다(종전 v9.21.0 의 끝말잇기 규칙은 이 `message` 로 갚았다)."""
+        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
+
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         calls = self._run(
             reg, b, f"agent:{a}", lambda: self._handler(reg, b)(a, "늘그막, 네 차례")
         )
         to_a = [c for c in calls if c["key"] == a]
-        assert len(to_a) == 1, f"폴백까지 갔다(빚이 안 갚혔다): {to_a}"
-        assert to_a[0]["expects_reply"] is True
+        assert [c["expects_reply"] for c in to_a] == [True, False]
+        assert to_a[1]["message"].startswith(_NO_REPLY_LABEL), (
+            "빚이 열린 채인데 폴백이 없다"
+        )
 
     def test_message_to_a_third_party_leaves_the_debt(self, mkreg, renderer):
         from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
@@ -1574,10 +1581,12 @@ class TestCompleteIsLocal:
         tm = reg.get(b)
         tm.current_author = f"agent:{a}"
         port = reg.question_port(b)
-        reg.note_owes(me, f"agent:{a}", "일감")
+        debt = reg.note_owes(me, f"agent:{a}", "일감")
         assert [d["to"] for d in port.debts()] == [f"agent:{a}"]
-        # 요청자에게 보낸 `message` 가 그 빚을 갚는다(공개 길 — `message` 도구의 라우팅)
+        # 요청자에게 보낸 `message`(통지)는 갚지 않는다(v10.145.1) — 갚는 것은 `reply` 하나
         assert "delivered" in reg.message_handler(me)(a, "결과", expects_reply=False)
+        assert [d["to"] for d in port.debts()] == [f"agent:{a}"]
+        assert port.reply("결과", id=debt.id) == ""
         assert port.debts() == []
         assert reg.reply_debt(me, f"agent:{a}").settled  # "이미 갚았다" 의 근거
         assert port.debts() == []
@@ -2105,22 +2114,15 @@ class TestPerRequestDebts:
         assert mail["output"] == "main 에게" and mail["re"] == "3"
         assert reg.reply_debts(me) == []
 
-    def test_message_settles_the_oldest_but_main_request_settles_nothing(
-        self, mkreg, renderer
-    ):
+    def test_neither_message_nor_main_request_settles(self, mkreg, renderer):
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         me = self._two(reg, b, f"agent:{a}")
-        send = reg.message_handler(
-            me
-        )  # 요청자에게 보낸 `message` 가 가장 오래된 빚을 갚는다
+        send = reg.message_handler(me)
+        # 요청자에게 보낸 `message` 는 요청이든 통지든 빚을 갚지 않는다(v10.145.1 — 갚는 것은 `reply` 하나)
         assert "delivered" in send(a, "하나", expects_reply=False)
-        assert [d.id for d in reg.reply_debts(me)] == ["5"]  # "3" 이 닫혔다
-        assert "delivered" in send(a, "둘", expects_reply=False)
-        assert reg.reply_debts(me) == []  # 이어서 "5"
-        assert "delivered" in send(a, "셋", expects_reply=False)
-        # 갚을 빚이 없으면 아무것도 닫지 않는다 — 가장 최근 빚은 여전히 "5"
-        assert reg.reply_debt(me, f"agent:{a}").id == "5"
+        assert "delivered" in send(a, "둘", expects_reply=True)
+        assert [d.id for d in reg.reply_debts(me)] == ["3", "5"]
         # main 쪽 (v10.56.0): 메일마다 빚(`r-…`), `agent request` 는 갚지 않는다 —
         # 갚는 도구는 `reply(id)` 하나다
         d1 = reg.note_owes("main", f"agent:{a}", "결정 1")

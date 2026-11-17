@@ -358,8 +358,10 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
 
     if not reply.get("success"):
         body = f"{run_error_line(str(reply.get('error') or ''))}\n{body}"
-    # 런의 회신(라벨 붙은 런 요약 폴백 포함) — 그 런을 연 요청이 ``run``
-    content = envelope("reply", mid, label, body, re=str(reply.get("run") or ""))
+    # 런 끝 폴백 — 표지는 이 회신이 갚는 요청(``re``)이다. 그 런을 연 배달(``run``)이 아니다: 체크인·하위 회신이 연
+    # 런이나 런 도중 흡수한 둘째 요청의 폴백이면 둘이 다르고, main 은 ``run`` 을 본 적이 없다(v10.145.1). 이 분기로
+    # 오는 메일은 `_fall_back` 의 것뿐이고 언제나 ``re`` 를 단다.
+    content = envelope("reply", mid, label, body, re=str(reply.get("re") or ""))
     tm = registry.get(key) if registry is not None else None
     if tm is not None and getattr(tm, "state", "dead") != "dead":
         queued = registry.backlog_of(key)

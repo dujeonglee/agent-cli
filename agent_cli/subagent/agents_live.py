@@ -115,9 +115,6 @@ def clamp_max_agents(value) -> int:
 # 명시적으로 서로 request 를 주고받는 사이클의 안전망일 뿐 — 데드락은
 # 비동기라 구조적으로 불가.
 _MAX_PEER_HOPS = 6
-#: ``settles`` 의 값 — `message` 의 배달: 받는 쪽에 진 가장 오래된 빚을 갚는다(어느 줄인지는 우편이 락 안에서 고른다).
-#: 줄 id(``r-``·``q-``…)와 겹치지 않는다.
-SETTLES_OLDEST = "<oldest debt to the recipient>"
 
 
 # ── 비동기 ask (docs/agent-ask/DESIGN.md) ──────────────
@@ -815,21 +812,15 @@ class AgentRegistry:
 
     # ── 배달과 갚기 — 한 락 구간 (v10.145.0) ────────────────────────────────────────────
     # 범용 배달(`_enqueue`·`_push_reply`·`_push_private`)은 봉투를 `_post_deliver` 로 우편에 넣는다. 갚는 자리
-    # (`pay_debt`·`message_handler`·`end_run`·`answer_debts_as_stopped`·`answer_question`)만 ``settles`` 로 그 배달이
-    # 닫는 줄(id, `message` 는 `SETTLES_OLDEST`)을 말한다 — 같은 모양의 봉투라도 위임·removed 회신·재배달은 갚지
-    # 않으므로 호출자가 아는 사실이다. ``settles`` 는 배달 지시라 봉투·저장 파일·모델이 읽는 글에 실리지 않는다.
+    # (`pay_debt`·`end_run`·`answer_debts_as_stopped`·`answer_question`)만 ``settles`` 로 그 배달이 닫는 줄의 id 를
+    # 말한다 — 같은 모양의 봉투라도 위임·`message`·removed 회신·재배달은 갚지 않으므로 호출자가 아는 사실이다(갚는
+    # 것은 `reply` 와 그 대신인 폴백·정지 회신, v10.145.1). 배달 지시라 봉투·저장 파일·모델이 읽는 글에 실리지 않는다.
 
     def _post_deliver(self, env, *, settles: str = "") -> None:
-        """봉투를 우편에 넣는다 — ``_cv`` 안에서 부른다. 닫는 연산은 배달과 한 락 구간이다: 없음 → `deliver`,
-        `SETTLES_OLDEST` → `pay_by_message`(가장 오래된 빚이 있으면 닫고 어쨌든 배달 — 판정이 우편의 락 안), 줄 id →
+        """봉투를 우편에 넣는다 — ``_cv`` 안에서 부른다. 닫는 연산은 배달과 한 락 구간이다: 없음 → `deliver`, 줄 id →
         q 줄은 `answer`·r 줄은 `pay`. 없는 줄·r/q 가 아닌 줄은 `RowError`(닫힌 줄은 그 연산이 거절 — "already replied")."""
         if not settles:
             self._post.deliver(env)
-            return
-        if settles == SETTLES_OLDEST:
-            self._post.pay_by_message(
-                env.src, env.dst, env, run_id=self._run_of(env.src)
-            )
             return
         row = self._post.row(settles)
         if row is None or row.kind not in ("q", "r"):
@@ -1079,12 +1070,6 @@ class AgentRegistry:
                         rid, debtor, to, text, hop=hop, answers=list(answers or [])
                     )
             return _debt_view(row)
-
-    def oldest_debt_to(self, debtor: str, to: str) -> ReplyDebt | None:
-        """``to`` 에게 진 **가장 오래된** 미납 빚 — 상대만 고르는 갚기(`message(to)`)가 갚을 것. 읽기만 한다(갚기는
-        그 `message` 의 배달이 한다 — `PostOffice.pay_by_message`). 없으면 None."""
-        row = self._post.owes_oldest(debtor, to)
-        return _debt_view(row) if row is not None else None
 
     def pay_debt(self, debtor: str, d: ReplyDebt, text: str) -> str:
         """``debtor`` 가 빚 ``d`` 를 ``text`` 로 갚는다 — `reply(id)` 의 배달(`QuestionPort.reply`). 에러 또는 "".
@@ -1646,8 +1631,8 @@ class AgentRegistry:
     ) -> str:
         """request 큐잉 — 에러 메시지 또는 빈 문자열.
 
-        ``settles`` (v10.145.0): 이 배달이 닫는 줄 — 갚는 빚·답하는 질문의 id, `message` 는 `SETTLES_OLDEST` — 갚는
-        자리만 준다(`_post_deliver`). 항목에 실리지 않는다.
+        ``settles`` (v10.145.0): 이 배달이 닫는 줄 — 갚는 빚·답하는 질문의 id. 갚는 자리만 준다(`_post_deliver`).
+        항목에 실리지 않는다.
 
         ``ledger`` (v10.79.0): ``"none"`` 이면 장부 밖 메일 — agents.json 미러에
         남지 않는다(`agents_state.persists`). 첫 사용자는 `wait` 의 중간 깨우기(``checkin``):
@@ -2212,17 +2197,11 @@ class AgentRegistry:
                 return "cannot message yourself"
             tm = self._agents.get(me_key) if me_key else None
             # `message` 는 기본으로 **요청**이다 — 상대에게 회신을 빚지운다
-            # (v9.21.0). 내 요청자에게 보내는 것이면 내 빚도 같이 갚는다:
-            # "여기 내 수, 이제 네 차례" — 항목 하나로 양쪽이 빚진다(끝말잇기가
-            # 성립하는 규칙). 돌려받을 것이 없는 답은 `reply` 다.
-            # ``expects_reply=False`` (v10.1.0) 는 **통지**: 상대가 빚지지 않고,
-            # 내 요청자에게 보냈다면 내 빚은 갚는다(fire-and-forget). 상태
-            # 공유·인수인계·작별 인사가 여기 간다 — 종전엔 이 말들이 전부 요청이
-            # 되어 답이 답을 부르는 핑퐁을 만들었다(실측 cnr60g).
-            settled = self.oldest_debt_to(sender, addr)
-            run_id = self._run_of(sender)
-            # 갚기는 보낸 것과 같은 락 구간에서 우편이 고른다(`SETTLES_OLDEST` → `PostOffice.pay_by_message`) —
-            # ``settled`` 는 귀속(``answers``)과 배달 실패 때의 `pay_unsent` 에만 쓴다.
+            # (v9.21.0). ``expects_reply=False`` (v10.1.0) 는 **통지**: 상대가
+            # 빚지지 않는다 — 상태 공유·인수인계·작별 인사가 여기 간다(실측 cnr60g).
+            # 어느 쪽이든 **내 빚은 갚지 않는다**(v10.145.1, 사용자 결정): 갚는 것은
+            # `reply` 하나다 — 요청자에게 되물은 `message` 가 원 요청을 조용히 닫아
+            # 정작 `reply` 가 거절되던 길(종전 v9.21.0 의 끝말잇기 규칙)을 지웠다.
 
             # 결과가 그 배달의 id 를 말한다 (v10.77.0) — 회신이 같은 id 를 달고
             # 돌아오므로(`re [r-17]`) 보낸 쪽이 무엇에 대한 회신인지 안다.
@@ -2232,10 +2211,8 @@ class AgentRegistry:
                     text,
                     profile=tm.profile_name if tm else "",
                     name=tm.instance_name if tm else "",
-                    answers=settled.answers if settled is not None else None,
                     expects_reply=bool(expects_reply),
                     notice=not expects_reply,
-                    settles=SETTLES_OLDEST,
                 )
                 return delivered_line(rec_id, expects_reply=bool(expects_reply))
             # Capture the send time BEFORE request() enqueues — the target's
@@ -2253,13 +2230,7 @@ class AgentRegistry:
                 expects_reply=bool(expects_reply),
                 item_id=rec_id,
                 kind="" if expects_reply else "notice",
-                settles=SETTLES_OLDEST,
             )
-            if settled is not None and err:
-                row = self._post.row(settled.id)
-                if row is not None and row.state == "picked":
-                    # 보내지 못했어도 갚음이다(닫힌 채 그 런 끝까지)
-                    self._post.pay_unsent(sender, settled.id, run_id=run_id)
             if err:
                 return err
             if me_key:

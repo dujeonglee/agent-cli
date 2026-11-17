@@ -86,10 +86,6 @@ class Twin:
             o.absorb(args["addr"], human_first=args.get("human_first", False))
         elif op == "pay":
             o.pay(args["debtor"], args["rid"], args["reply"], run_id=args["run_id"])
-        elif op == "pay_by_message":
-            o.pay_by_message(
-                args["debtor"], args["to"], args["env"], run_id=args["run_id"]
-            )
         elif op == "complete":
             o.complete(args["addr"], args["ids"], run_id=args["run_id"])
         elif op == "end_run":

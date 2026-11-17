@@ -106,20 +106,6 @@ class TestRuns:
             _rows(office) == [("r-1", "picked", None)] and office.queued("main") == ()
         )
 
-    def test_pay_by_message_pays_the_oldest_and_delivers(self, office):
-        office.deliver(E.request("r-1", "main", A, "one"))
-        office.deliver(E.request("r-2", "main", A, "two"))
-        office.absorb(A)
-        row = office.pay_by_message(
-            A, "main", E.notice("n-3", A, "main", "x"), run_id="r-1"
-        )
-        assert row.rid == "r-1" and row.how == "by_message"
-        assert [r.rid for r in office.owed_by(A)] == ["r-2"]
-        row = office.pay_by_message(
-            A, "agent:b", E.request("r-4", A, "agent:b", "y"), run_id="r-1"
-        )
-        assert row is None and [r.rid for r in office.awaited_by(A)] == ["r-4"]
-
     def test_complete_closes_open_u_and_n(self, office):
         office.deliver(E.human("u-1", "user:dj", A, "hi"))
         office.start_run(A)

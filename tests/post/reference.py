@@ -25,7 +25,6 @@ KIND = {
 IN_RUN = {
     "reply",
     "unsent",
-    "by_message",
     "completed",
     "fallback",
     "stopped",
@@ -49,7 +48,6 @@ def _may_close(kind: str, state: str, how: str) -> bool:
             "reply",
             "unsent",
             "fallback",
-            "by_message",
             "stopped",
             "dropped",
             "died",
@@ -169,16 +167,6 @@ class Model:
             raise Refused("pay")
         self._close(rid, "reply", run_id)
         self._put(reply)
-
-    def pay_by_message(self, debtor, to, env, run_id):
-        if self._anywhere(env["id"]) or (
-            env["closes_by"] is not None and env["id"] in self.rows
-        ):
-            raise Refused("dup")
-        owed = [rid for rid in self._owed(debtor) if self.rows[rid]["src"] == to]
-        if owed:
-            self._close(owed[0], "by_message", run_id)
-        self._put(env)
 
     def complete(self, addr, ids, run_id):
         for rid in ids:

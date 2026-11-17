@@ -2,7 +2,7 @@
 
 봉투 모양이 같아도 뜻이 다르다: `agent` 도구의 위임은 `message` 의 요청과 같은 봉투지만 빚을 갚지 않는다(v10.56.0
 결정 — `test_agent_questions.py::TestCompleteIsLocal::test_reply_settles_the_debt_and_agent_request_does_not`).
-그래서 그 배달이 닫는 줄은 호출자가 ``settles`` 로 말하고(줄 id, `message` 는 `SETTLES_OLDEST`), 말하지 않은 배달은 닫지 않는다. ``settles`` 는 배달
+그래서 그 배달이 닫는 줄은 호출자가 ``settles`` 로 말하고(줄 id — `message` 는 갚지 않는다, `tests/test_message_does_not_settle.py`), 말하지 않은 배달은 닫지 않는다. ``settles`` 는 배달
 지시라 항목·저장 파일에 실리지 않는다.
 
 워커는 문(``door``)에서 멈춘다 — 배달된 항목이 런으로 소비되며 상자가 바뀌는 것과 단언이 경주하지 않게.
@@ -16,7 +16,6 @@ import threading
 import pytest
 
 from agent_cli.post.request_book import RowError
-from agent_cli.subagent.agents_live import SETTLES_OLDEST
 from tests.test_agents_live import _FakeLoopResult, make_registry
 from tests.test_engine_p2 import wait_until
 
@@ -76,24 +75,6 @@ def test_settles_closes_that_row_only(two):
     assert err == ""
     assert _owed(reg, me) == [d1.id]
     assert reg.debt_by_id(me, d2.id).settled
-
-
-def test_a_message_settles_the_oldest_debt_the_post_office_finds(two):
-    """`message` 는 줄을 지목하지 않는다 — `SETTLES_OLDEST` 면 우편이 락 안에서 받는 쪽에 진 가장 오래된 빚을 닫고
-    (먼저 닫힌 줄이 있으면 그다음 것), 빚이 없으면 배달만 한다. 같은 봉투에 지시가 없으면 닫지 않는다."""
-    reg, a, _b, me, d1, d2 = two
-    them = f"agent:{a}"
-    assert reg.request(a, "fyi", author=me, kind="notice", expects_reply=False) == ""
-    assert _owed(reg, me) == [d1.id, d2.id]  # 지시 없음 — 닫지 않는다
-    assert reg.request(a, "move one", author=me, settles=SETTLES_OLDEST) == ""
-    assert _owed(reg, me) == [d2.id]  # 가장 오래된 d1
-    assert reg.request(a, "move two", author=me, settles=SETTLES_OLDEST) == ""
-    assert _owed(reg, me) == []
-    before = len(reg.queued_for(them)) + len(reg.taken_by(them))
-    assert reg.request(a, "move three", author=me, settles=SETTLES_OLDEST) == ""
-    assert (
-        len(reg.queued_for(them)) + len(reg.taken_by(them)) == before + 1
-    )  # 빚 없음 — 배달만
 
 
 def test_settles_is_not_written_into_the_item_or_the_state_file(two, tmp_path):

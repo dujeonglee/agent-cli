@@ -23,7 +23,6 @@ How = Literal[
     "reply",
     "unsent",
     "fallback",
-    "by_message",
     "stopped",
     "removed",
     "dropped",
@@ -47,7 +46,7 @@ CLOSES: dict[tuple[RowKind, State], frozenset[str]] = {
     ("u", "queued"): frozenset({"dropped", "died"}),
     ("n", "queued"): frozenset({"dropped", "died"}),
     ("r", "picked"): frozenset(
-        {"reply", "unsent", "fallback", "by_message", "stopped", "dropped", "died"}
+        {"reply", "unsent", "fallback", "stopped", "dropped", "died"}
     ),
     ("u", "picked"): frozenset({"completed", "run_ended", "dropped"}),
     ("n", "picked"): frozenset({"completed", "run_ended", "dropped"}),
@@ -56,7 +55,7 @@ CLOSES: dict[tuple[RowKind, State], frozenset[str]] = {
 
 #: 런 안에서 닫는 방법 — 닫힌 줄의 ``closed_in_run`` 이 비면 안 된다(불변식 I5)
 IN_RUN: frozenset[str] = frozenset(
-    {"reply", "unsent", "by_message", "completed", "fallback", "stopped", "run_ended"}
+    {"reply", "unsent", "completed", "fallback", "stopped", "run_ended"}
 )
 
 #: 닫힌 뒤에도 그 빚진 쪽의 런 끝까지 남기는 방법 — 런 안에서 닫는 것 전부. "이미 갚았다" 거부 사유가
@@ -182,13 +181,6 @@ class RequestBook:
             r
             for r in self._rows.values()
             if r.kind == "r" and r.state != "closed" and r.src == requester
-        )
-
-    def owes_oldest(self, debtor: str, to: str) -> Row | None:
-        """``debtor`` 가 ``to`` 에게 빚진 가장 오래된 집힌 r 줄 — 상대만 고르는 갚기(`message`)."""
-        return next(
-            (r for r in self.owed_by(debtor) if r.src == to),
-            None,
         )
 
     def open_requests(self, addr: str) -> tuple[Row, ...]:
