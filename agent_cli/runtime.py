@@ -168,6 +168,8 @@ def build_snapshot_store(session_id: str | None = None):
     라벨에 — 저장소가 세션을 넘어 이어지므로 `list` 의 경계가 된다(v10.80.0).
 
     끔(`AGENT_CLI_SNAPSHOT=0`)·git 없음·init 실패 → None 을 두고 사람에게 한 줄.
+    그 까닭은 `reset_snapshot(off=(cause, detail))` 로 남긴다 — 웹 Changes 입구가 읽는다
+    (v10.144.2, `snapshot.snapshot_off`).
     모델에겐 도구도 안내도 가지 않는다(없는 기능을 약속하지 않는다)."""
     from pathlib import Path
 
@@ -175,15 +177,21 @@ def build_snapshot_store(session_id: str | None = None):
     from agent_cli.render import get_renderer
     from agent_cli.snapshot import get_snapshot, reset_snapshot
 
-    reset_snapshot()
     if not snapshot_knobs()["enabled"]:
+        reset_snapshot(off=("disabled", ""))
         return None
+    reset_snapshot()  # 까닭 없음 — 지금 세운다
     store = get_snapshot(Path.cwd(), create=True, session_id=session_id)
     if store is None or not store.enabled:
         get_renderer().status(
             "running", f"📸 Snapshots off — {store.reason if store else 'unavailable'}"
         )
-        reset_snapshot()
+        # 실패한 저장소는 남기지 않는다(도구 광고·훅이 get_snapshot 을 본다) — 까닭만 남긴다
+        reset_snapshot(
+            off=(store.off_cause or "init_failed", store.reason)
+            if store
+            else ("init_failed", "unavailable")
+        )
         return None
     get_renderer().status(
         "running",

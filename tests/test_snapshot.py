@@ -660,3 +660,84 @@ def test_scan_cost_is_bounded_when_unchanged(ws):
     for _ in range(3):
         assert s.checkpoint("idle", force=True) is None
     assert (time.monotonic() - t0) / 3 < 1.0
+
+
+class TestOffCause:
+    """저장소가 서지 못한 까닭 (v10.144.2) — 발생 지점이 닫힌 어휘로 정하고, runtime 이
+    ``reset_snapshot(off=…)`` 로 남기고, ``snapshot_off()`` 가 읽는다."""
+
+    def _build(self, ws, monkeypatch):
+        from unittest.mock import patch
+
+        from agent_cli.runtime import build_snapshot_store
+
+        monkeypatch.chdir(ws)
+        with patch("agent_cli.render.get_renderer", return_value=MagicMock()):
+            return build_snapshot_store("sess-off")
+
+    def test_knob_off(self, ws, monkeypatch):
+        from agent_cli.snapshot import snapshot_off
+
+        monkeypatch.setenv("AGENT_CLI_SNAPSHOT", "0")
+        assert self._build(ws, monkeypatch) is None
+        assert snapshot_off() == ("disabled", "")
+
+    def test_git_missing(self, ws, monkeypatch):
+        from agent_cli.snapshot import snapshot_off
+
+        monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        monkeypatch.setattr("agent_cli.snapshot.shutil.which", lambda _n: None)
+        assert self._build(ws, monkeypatch) is None
+        assert snapshot_off() == ("git_missing", "git not found")
+        assert get_snapshot(ws) is None  # 실패한 저장소는 남지 않는다
+
+    def test_git_broken(self, ws, monkeypatch):
+        from agent_cli.snapshot import snapshot_off
+
+        def broken(*_a, **_k):
+            raise OSError(8, "Exec format error")
+
+        monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        monkeypatch.setattr("agent_cli.snapshot.shutil.which", lambda _n: "/x/git")
+        monkeypatch.setattr("agent_cli.snapshot.subprocess.run", broken)
+        assert self._build(ws, monkeypatch) is None
+        cause, detail = snapshot_off()
+        assert cause == "git_broken" and detail.startswith("git --version failed: ")
+
+    def test_init_failed(self, ws, monkeypatch):
+        from agent_cli.snapshot import snapshot_off
+
+        monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        (ws / ".agent-cli").write_text("a file where the folder should be")
+        assert self._build(ws, monkeypatch) is None
+        cause, detail = snapshot_off()
+        assert cause == "init_failed" and detail.startswith("FileExistsError: ")
+
+    def test_success_clears_the_cause(self, ws, monkeypatch):
+        from agent_cli.snapshot import snapshot_off
+
+        reset_snapshot(off=("disabled", ""))
+        monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
+        assert self._build(ws, monkeypatch) is not None
+        assert snapshot_off() is None
+
+    def test_reset_sets_exactly_what_it_is_given(self):
+        from agent_cli.snapshot import OFF_CAUSES, snapshot_off
+
+        for cause in OFF_CAUSES:
+            reset_snapshot(off=(cause, "d"))
+            assert snapshot_off() == (cause, "d")
+        reset_snapshot()
+        assert snapshot_off() is None
+        with pytest.raises(ValueError):
+            reset_snapshot(off=("bogus", "d"))
+        assert snapshot_off() is None  # 거절된 호출은 아무것도 바꾸지 않는다
+
+    def test_init_failure_names_its_cause(self, ws, monkeypatch):
+        monkeypatch.setattr("agent_cli.snapshot.shutil.which", lambda _n: None)
+        s = GitSnapshot(ws)
+        assert s.init("x") is False
+        assert (s.off_cause, s.reason) == ("git_missing", "git not found")
+        ok = GitSnapshot(ws / "src")
+        monkeypatch.undo()
+        assert ok.init("y") is True and ok.off_cause is None

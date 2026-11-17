@@ -1,7 +1,8 @@
 """Δ Changes 패널 (v10.137.0 · 입구 v10.137.1) — 실브라우저 e2e.
 
 입구 둘: 📁(`#files-btn`) 안의 숫자 배지(누르면 패널, 아이콘은 Workspace files 그대로)와
-main 채널의 가장 최근 `complete` 카드 안의 한 줄. 패널 → 파일 diff → Clear(빈 상태·Undo
+main 채널의 가장 최근 `complete` 카드 안의 한 줄 — v10.144.2 에 셋째, 📁 서랍 머리 아래 늘
+서 있는 한 줄(바뀐 것 있음·0·추적 꺼짐). 패널 → 파일 diff → Clear(빈 상태·Undo
 토스트, 파일 그대로) → Undo → 복귀, 런 끝(main 은 `worker_state` 바쁨→한가, 그 밖은
 `scope_end`) 뒤 갱신, 긴 diff 가 목록을 누르지 않음. v10.138.0: 고른 행을 다시 누르면 접힘(▸/▾),
 📁 Workspace files 트리의 변경 표시(파일 M·A, 폴더 ●) — 글자를 누르면 그 파일 diff.
@@ -939,3 +940,181 @@ def test_unborn_repo_and_failing_snapshots_notices(stack, page, tmp_path):
     finally:
         os.chmod(bad, 0o644)
         reset_snapshot()
+
+
+# ── 📁 서랍 머리 아래 Changes 입구 한 줄 (v10.144.2) ──
+
+
+@pytest.fixture(autouse=True)
+def _no_off_cause_leaks():
+    """꺼진 까닭(`reset_snapshot(off=…)`)은 프로세스 전역 — 다음 테스트로 새지 않게."""
+    yield
+    reset_snapshot()
+
+
+_ENTRY = """() => {
+    const e = document.querySelector('#changes-entry');
+    const t = c => e.querySelector('.chg-entry-' + c).textContent;
+    return {
+        hidden: e.hidden,
+        state: ['has', 'zero', 'off'].filter(c => e.classList.contains(c)),
+        what: t('what'), since: t('since'), go: t('go'), title: e.title,
+        disabled: e.getAttribute('aria-disabled'), tab: e.tabIndex,
+        prev: e.previousElementSibling.className, next: e.nextElementSibling.id,
+    };
+}"""
+
+
+def _entry_state(page, state):
+    page.wait_for_function(
+        "s => document.querySelector('#changes-entry').classList.contains(s)",
+        arg=state,
+        timeout=8000,
+    )
+    return page.evaluate(_ENTRY)
+
+
+def _files_drawer(page):
+    page.click("#files-btn", position={"x": 6, "y": 14})  # 배지는 오른쪽 위
+    page.wait_for_selector("#download-drawer.open", timeout=8000)
+    # 미끄러져 들어오는 전환이 끝날 때까지(상태로 기다린다 — 서랍이 화면 안에 다 들어옴)
+    page.wait_for_function(
+        """() => { const r = document.querySelector('#download-drawer').getBoundingClientRect();
+                   return Math.abs(r.right - innerWidth) < 1; }""",
+        timeout=8000,
+    )
+
+
+def test_entry_line_with_changes_opens_the_panel(stack, page, ws):
+    _edit(ws)
+    errors = _open(page, stack)
+    _files_drawer(page)
+    e = _entry_state(page, "has")
+    assert e["hidden"] is False and e["state"] == ["has"]
+    assert e["what"] == "3 files changed" and e["go"] == "View changes ›"
+    assert e["since"].startswith("· since session start · ")
+    assert e["disabled"] == "false" and e["tab"] == 0
+    assert e["prev"] == "dl-head" and e["next"] == "dl-tree"  # 머리와 트리 사이
+    assert e["title"].startswith("3 files changed on disk since session start · ")
+    page.click("#changes-entry")
+    page.wait_for_selector("#changes-drawer.open .chg-row", timeout=8000)
+    assert page.locator("#changes-list .chg-row").count() == 3
+    assert errors == []
+
+
+def test_entry_line_without_changes_opens_the_empty_panel(stack, page, ws):
+    errors = _open(page, stack)
+    _files_drawer(page)
+    e = _entry_state(page, "zero")
+    assert e["what"] == "No changes" and e["go"] == "Open ›"
+    assert e["since"].startswith("· since session start · ")
+    assert e["disabled"] == "false"
+    assert page.evaluate("() => document.querySelector('#changes-badge').hidden")
+    page.click("#changes-entry")
+    page.wait_for_selector("#changes-drawer.open .chg-empty", timeout=8000)
+    assert page.inner_text("#changes-list .chg-empty").startswith(
+        "No changes since session start · "
+    )
+    clear = page.evaluate(
+        """() => [document.querySelector('#changes-clear').disabled,
+                  document.querySelector('#changes-clear').title,
+                  document.querySelector('#changes-refresh').disabled]"""
+    )
+    assert clear == [True, "Nothing to clear", False]
+    assert errors == []
+
+
+def test_undo_stays_alive_after_clearing_to_zero(stack, page, ws):
+    """Clear 로 0 이 되면 Clear 는 꺼지지만 그 직후의 Undo 토스트는 살아 있다."""
+    _edit(ws)
+    errors = _open(page, stack)
+    _files_drawer(page)
+    _entry_state(page, "has")
+    page.click("#changes-entry")
+    page.wait_for_selector("#changes-drawer.open .chg-row", timeout=8000)
+    title = page.get_attribute("#changes-clear", "title")
+    assert title != "Nothing to clear"
+    page.click("#changes-clear")
+    page.wait_for_selector("#changes-toast:not([hidden]) .chg-undo", timeout=8000)
+    page.wait_for_function(
+        "() => document.querySelector('#changes-clear').disabled", timeout=8000
+    )
+    assert page.get_attribute("#changes-clear", "title") == "Nothing to clear"
+    assert _entry_state(page, "zero")["what"] == "No changes"
+    page.click("#changes-toast .chg-undo")
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '3'", timeout=8000)
+    assert page.evaluate("() => !document.querySelector('#changes-clear').disabled"), (
+        "Undo 로 목록이 돌아오면 Clear 도 돌아온다"
+    )
+    assert page.get_attribute("#changes-clear", "title") == title
+    assert _entry_state(page, "has")["what"] == "3 files changed"
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "off, reason",
+    [
+        (("disabled", ""), "turned off (AGENT_CLI_SNAPSHOT=0)"),
+        (("git_missing", "git not found"), "git not found"),
+        (
+            ("init_failed", "git init failed: fatal: <b>cannot</b> mkdir"),
+            "could not create the snapshot repository",
+        ),
+    ],
+)
+def test_entry_line_when_tracking_is_off(stack, page, off, reason):
+    """꺼진 방: 누를 수 없는 점선 줄, 서버의 까닭 문장, 원문은 title 에만(글로만 넣는다)."""
+    reset_snapshot(off=off)
+    errors = _open(page, stack)
+    _files_drawer(page)
+    e = _entry_state(page, "off")
+    assert e["what"] == "Change tracking is off"
+    assert e["since"] == "· " + reason and e["go"] == ""
+    assert e["disabled"] == "true" and e["tab"] == -1
+    # 원문은 title 에만 — 문장과 같으면 되풀이하지 않는다
+    assert e["title"] == (
+        reason + " — " + off[1] if off[1] not in ("", reason) else reason
+    )
+    assert page.locator("#changes-entry b").count() == 0  # 마크업으로 읽지 않는다
+    # 사람의 클릭 그대로(playwright 는 aria-disabled 를 누르지 않으려 한다 — force)
+    page.click("#changes-entry", force=True)
+    assert page.get_attribute("#changes-drawer", "aria-hidden") == "true"
+    assert _drawers(page) == {"changes": False, "files": True}
+    assert errors == []
+
+
+@pytest.mark.parametrize("width", [320, 390])
+@pytest.mark.parametrize("state", ["has", "off"])
+def test_entry_line_stays_one_line_on_narrow_screens(
+    stack, page, tmp_path, width, state
+):
+    if state == "has":
+        w = tmp_path / "ws"
+        w.mkdir()
+        (w / "a.txt").write_text("1\n")
+        reset_snapshot()
+        assert get_snapshot(w, create=True, session_id="sess-narrow").enabled
+        stack.server.workspace = w.resolve()
+        (w / "a.txt").write_text("2\n")
+    else:
+        reset_snapshot(off=("init_failed", "PermissionError: " + "x" * 300))
+    page.set_viewport_size({"width": width, "height": 844})
+    errors = _open(page, stack)
+    _files_drawer(page)
+    _entry_state(page, state)
+    box = page.evaluate(
+        """() => {
+            const e = document.querySelector('#changes-entry');
+            const r = e.getBoundingClientRect();
+            const d = document.querySelector('#download-drawer').getBoundingClientRect();
+            const go = e.querySelector('.chg-entry-go').getBoundingClientRect();
+            const what = e.querySelector('.chg-entry-what').getBoundingClientRect();
+            return {over: e.scrollWidth - e.clientWidth, h: r.height, right: r.right,
+                    drawer: d.right, goRight: go.right, whatRight: what.right, entryRight: r.right};
+        }"""
+    )
+    assert box["over"] <= 0 and box["h"] < 40  # 한 줄, 가로로 넘치지 않는다
+    assert box["right"] <= box["drawer"]
+    assert box["goRight"] <= box["entryRight"] and box["whatRight"] <= box["entryRight"]
+    reset_snapshot()
+    assert errors == []

@@ -3867,11 +3867,67 @@ class TestChangesEndpoints:
 
         reset_snapshot()
         _, _, client = server_and_client
-        assert client.get("/api/changes?token=testtoken").json() == {"enabled": False}
+        # 까닭이 남지 않은 채 저장소가 없다 — 이 프로세스가 세운 적이 없다
+        assert client.get("/api/changes?token=testtoken").json() == {
+            "enabled": False,
+            "cause": "init_failed",
+            "reason": "could not create the snapshot repository",
+            "detail": "no snapshot repository",
+        }
         for path in ("/api/changes/clear", "/api/changes/undo"):
             assert client.post(path + "?token=testtoken").status_code == 409
         r = client.get("/api/changes/diff?path=a.py&token=testtoken")
         assert r.status_code == 409
+
+    def test_off_text_covers_exactly_the_closed_causes(self):
+        """꺼진 까닭 → 화면 문장 표는 한 곳이고 키가 닫힌 어휘와 같다(v10.144.2)."""
+        from agent_cli.snapshot import OFF_CAUSES
+        from agent_cli.web.server import CHANGES_OFF_TEXT
+
+        assert set(CHANGES_OFF_TEXT) == set(OFF_CAUSES)
+        assert all(t and t.isascii() for t in CHANGES_OFF_TEXT.values())
+
+    @pytest.mark.parametrize(
+        "off",
+        [
+            ("disabled", ""),
+            ("git_missing", "git not found"),
+            ("git_broken", "git --version failed: [Errno 8] Exec format error"),
+            ("init_failed", "git init failed: fatal: could not create work tree"),
+        ],
+    )
+    def test_off_cause_recorded_by_runtime_is_served(self, server_and_client, off):
+        from agent_cli.snapshot import reset_snapshot
+        from agent_cli.web.server import CHANGES_OFF_TEXT
+
+        reset_snapshot(off=off)
+        try:
+            _, _, client = server_and_client
+            got = client.get("/api/changes?token=testtoken").json()
+        finally:
+            reset_snapshot()
+        assert got == {
+            "enabled": False,
+            "cause": off[0],
+            "reason": CHANGES_OFF_TEXT[off[0]],
+            "detail": off[1],
+        }
+
+    def test_store_that_cannot_count_is_unreadable(self, ws, monkeypatch):
+        """저장소는 있으나 기준점·목록을 못 센다 → ``unreadable``(웹이 정한다)."""
+        _, client, store = ws
+        q = "/api/changes?token=testtoken"
+        monkeypatch.setattr(store, "report", lambda: None)
+        store.stats.failure = "fatal: index file corrupt"
+        got = client.get(q).json()
+        assert got == {
+            "enabled": False,
+            "cause": "unreadable",
+            "reason": "could not read the workspace",
+            "detail": "fatal: index file corrupt",
+        }
+        monkeypatch.setattr(store, "baseline", lambda: None)
+        assert client.get(q).json()["detail"] == "no baseline commit"
 
     def test_list_diff_clear_undo_round_trip(self, ws):
         w, client, store = ws

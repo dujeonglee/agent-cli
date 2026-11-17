@@ -100,6 +100,11 @@
       <div class="dl-title">📁 Workspace files</div>
       <button id="dl-close" type="button" class="btn-icon" title="Close">✕</button>
     </div>
+    <!-- Changes 입구 한 줄 (v10.144.2, js/changes.js renderEntryLine) — 늘 선다: 바뀐 파일 N·0·
+         추적 꺼짐(누를 수 없음, 서버가 준 까닭). workspace.js 는 이 줄을 모른다. -->
+    <button id="changes-entry" type="button" class="chg-entry" hidden>
+      <span class="chg-entry-d">Δ</span><span class="chg-entry-what"></span><span class="chg-entry-since"></span><span class="chg-entry-go"></span>
+    </button>
     <div id="dl-tree" class="dl-tree"></div>
     <div class="dl-foot">
       <span id="dl-count">0 selected</span>

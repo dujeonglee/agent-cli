@@ -211,7 +211,7 @@ def test_concurrent_listing_leaves_no_temp_index(ws):
 def test_snapshots_off(ws, monkeypatch):
     import agent_cli.snapshot as snap
 
-    monkeypatch.setattr(snap, "git_available", lambda: (False, "git not found"))
+    monkeypatch.setattr(snap, "_probe_git", lambda: ("git_missing", "git not found"))
     s = GitSnapshot(ws)
     assert s.init("s-1") is False
     assert s.baseline() is None

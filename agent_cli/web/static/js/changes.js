@@ -2,7 +2,7 @@
 // 순환 밖 잎이다 — dom·sse·markdown 만 import 한다.
 // (v10.137.0, docs/snapshot/DESIGN.md §7 · docs/web-modules/DESIGN.md §8)
 //
-// 입구(v10.137.1): ① 📁(`#files-btn`) 안의 숫자 배지 — 배지를 누르면 이 패널, 아이콘을
+// 입구 셋(v10.137.1·v10.144.2): ① 📁(`#files-btn`) 안의 숫자 배지 — 배지를 누르면 이 패널, 아이콘을
 // 누르면 workspace.js 의 Workspace files 드로어 그대로(배지 클릭은 버블링을 막는다).
 // ② main 채널의 가장 최근 `complete` 카드 안의 한 줄 `Δ N files changed · View changes`.
 // 둘 다 다른 모듈의 화면이라 import 없이 **DOM 으로만** 붙는다(선택자). 줄은 하나뿐이다 —
@@ -10,6 +10,9 @@
 // 셈보다 늦게 그려질 수 있어(재생·라이브 둘 다) `#messages` 의 직계 자식 추가만 보는
 // MutationObserver 하나가 새 main 최종답 카드를 보면 다시 붙인다. 줄은 화면 전용이다 —
 // 대화 복사는 카드의 `_md`(원문)에서 만들어 이 줄이 들어가지 않는다.
+// ③ 📁 Workspace files 서랍 머리 아래 늘 서 있는 한 줄(`#changes-entry`, v10.144.2): 바뀐
+// 파일 N(강조, `View changes ›`)·0(흐림, `Open ›` — 빈 패널)·추적 꺼짐(점선, 누를 수 없음 —
+// 서버가 준 까닭 `reason`, 원문 `detail` 은 title 에만). 배지·런 끝 줄과 달리 0 에도 선다.
 //
 // 목록은 "스냅샷 저장소의 기준점 커밋 ↔ 지금 디스크" 다(api/changes). 누가 바꿨든 —
 // 모델·상주 에이전트·사람의 IDE — 디스크가 바뀌면 오른다. 그래서 입구는 "모델이 바꾼
@@ -61,6 +64,7 @@ const $list = document.getElementById("changes-list");
 const $diff = document.getElementById("changes-diff");
 const $toast = document.getElementById("changes-toast");
 const $clear = document.getElementById("changes-clear");
+const $entry = document.getElementById("changes-entry"); // 📁 서랍 머리 아래 한 줄
 const $tree = document.getElementById("dl-tree"); // workspace.js 의 트리 — 행을 꾸미기만 한다
 // 런 끝 신호를 한 번으로 합치는 간격 — 재생이 끝난 스코프를 몰아 보낸다
 const RECOUNT_MS = 400;
@@ -123,9 +127,37 @@ if ($badge && $drawer) {
       card.insertBefore($line, anchor.nextSibling);
     }
   }
+  // 📁 서랍의 한 줄 — 세 상태. 서버에서 온 글은 textContent 로만
+  function renderEntryLine() {
+    if (!$entry) return;
+    $entry.hidden = !data;
+    if (!data) return;
+    const on = !!data.enabled;
+    const n = count();
+    const state = !on ? "off" : n ? "has" : "zero";
+    $entry.classList.remove("has", "zero", "off");
+    $entry.classList.add(state);
+    $entry.setAttribute("aria-disabled", on ? "false" : "true");
+    $entry.tabIndex = on ? 0 : -1;
+    const part = function (cls, text) { $entry.querySelector(".chg-entry-" + cls).textContent = text; };
+    if (!on) {
+      part("what", "Change tracking is off");
+      part("since", "· " + (data.reason || ""));
+      part("go", "");
+      const detail = data.detail && data.detail !== data.reason ? data.detail : "";
+      $entry.title = (data.reason || "") + (detail ? " — " + detail : "");
+      return;
+    }
+    const since = sinceText(data.baseline);
+    part("what", n ? n + (n === 1 ? " file" : " files") + " changed" : "No changes");
+    part("since", "· " + since);
+    part("go", n ? "View changes ›" : "Open ›");
+    $entry.title = n ? tip(n) : "No files changed on disk " + since + " — open Changes";
+  }
   function renderEntries() {
     renderBadge();
     placeLine();
+    renderEntryLine();
     decorateTree();
   }
 
@@ -228,10 +260,20 @@ if ($badge && $drawer) {
     return s;
   }
 
+  // Clear 는 비울 것이 있을 때만 — 목록 0 이고 보이는 하위 저장소 그룹도 0 이면 끈다
+  // (0 에서 누르면 빈 기준점 커밋과 "List cleared (0 files)" 가 생겼다). Undo 토스트는 따로 산다.
+  const clearTitle = $clear.title;
+  function syncClear() {
+    const on = !!(data && data.enabled);
+    const some = on && (data.files.length > 0 || shownRepos().length > 0);
+    $clear.disabled = !some;
+    $clear.title = !on || some ? clearTitle : "Nothing to clear";
+  }
+
   function renderPanel() {
     $list.textContent = "";
     const on = !!(data && data.enabled);
-    $clear.disabled = !on;
+    syncClear();
     $drawer.querySelector("#changes-refresh").disabled = !on;
     if (!on) {
       $since.textContent = "";
@@ -419,7 +461,7 @@ if ($badge && $drawer) {
       .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
       .then(function (d) { selected = null; apply(d); toast(n); })
       .catch(recount)
-      .then(function () { $clear.disabled = !(data && data.enabled); });
+      .then(syncClear);
   });
   document.getElementById("changes-refresh").addEventListener("click", recount);
 
@@ -447,6 +489,11 @@ if ($badge && $drawer) {
     open();
   });
   $line.addEventListener("click", function () { open(); });
+  if ($entry) {
+    $entry.addEventListener("click", function () {
+      if ($entry.getAttribute("aria-disabled") !== "true") open();
+    });
+  }
   // 📁 트리에 새로 그려진 행만 꾸민다(폴더 펼침의 늦은 fetch 포함). 트리가 처음 그려질 때
   // (루트 행) 목록이 아직 없으면 한 번 센다. 표시 버튼 자체의 추가는 행이 아니라 지나친다.
   if ($tree) {

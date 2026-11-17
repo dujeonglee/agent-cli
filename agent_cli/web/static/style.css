@@ -2000,6 +2000,23 @@ body.loading #messages { visibility: hidden; }
 }
 .final-changes:hover { color: var(--accent-hover); text-decoration: underline; }
 @media (max-width: 560px) { .final-changes { margin-left: 0; margin-right: 0; } }
+/* 📁 서랍 머리 아래 Changes 입구 한 줄(v10.144.2) — 바뀐 것 있음(강조)·0(흐림)·꺼짐(점선, 누를
+   수 없음). 한 줄을 넘지 않는다: since·까닭이 말줄임되고 Δ·이동 글자는 늘 보인다. */
+.chg-entry {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0;
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: transparent;
+  color: var(--text-2); font-size: 12.5px; text-align: left; cursor: pointer; white-space: nowrap;
+}
+.chg-entry[hidden] { display: none; }
+.chg-entry-d, .chg-entry-what, .chg-entry-go { flex: none; }
+.chg-entry-since { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.chg-entry-go { margin-left: auto; }
+.chg-entry.has { border-color: var(--accent-soft-border); background: var(--accent-soft-bg); color: var(--accent-soft-text); }
+.chg-entry.has .chg-entry-what, .chg-entry.has .chg-entry-go { font-weight: 600; }
+.chg-entry.has:hover { border-color: var(--accent); }
+.chg-entry.zero { opacity: .75; }
+.chg-entry.zero:hover { opacity: 1; border-color: var(--border-2); }
+.chg-entry.off { border-style: dashed; opacity: .7; cursor: default; }
 .chg-row {
   display: grid; grid-template-columns: 10px 16px minmax(0, 1fr) auto; gap: 6px; align-items: center;
   width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent;

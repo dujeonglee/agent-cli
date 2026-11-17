@@ -179,17 +179,36 @@ def failing_notice_text(since: int, why: str) -> str:
     )
 
 
-def git_available() -> tuple[bool, str]:
+#: 저장소가 서지 못한 까닭 — 닫힌 어휘(v10.144.2). 발생 지점이 정하고, 사람에게 보일
+#: 문장은 웹 서버의 표 한 곳이 정한다(원문 문자열로 가르지 않는다).
+#: ``disabled`` 노브로 끔 · ``git_missing`` git 실행 파일 없음 · ``git_broken`` git 이
+#: 돌지 않음 · ``init_failed`` 저장소를 못 만듦 · ``unreadable`` 저장소는 있으나 셀 수 없음.
+OFF_CAUSES: tuple[str, ...] = (
+    "disabled",
+    "git_missing",
+    "git_broken",
+    "init_failed",
+    "unreadable",
+)
+
+
+def _probe_git() -> tuple[str | None, str]:
+    """``(cause, 문장)`` — 쓸 수 있으면 cause 가 None 이고 문장은 ``git --version``."""
     exe = shutil.which("git")
     if not exe:
-        return False, "git not found"
+        return "git_missing", "git not found"
     try:
         out = subprocess.run(
             [exe, "--version"], capture_output=True, text=True, timeout=10, check=False
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
-        return False, f"git --version failed: {exc}"
-    return True, out
+        return "git_broken", f"git --version failed: {exc}"
+    return None, out
+
+
+def git_available() -> tuple[bool, str]:
+    cause, why = _probe_git()
+    return cause is None, why
 
 
 class GitSnapshot:
@@ -217,6 +236,9 @@ class GitSnapshot:
         self.exclude_dirs = tuple(exclude_dirs)
         self.enabled = False
         self.reason = "not initialised"
+        self.off_cause: str | None = (
+            None  # init 실패의 까닭(``OFF_CAUSES``) — 성공이면 None
+        )
         self.nested: list[NestedRepo] = []
         self.stats = SnapshotStats()
         self.per_turn = True  # 파일 수 상한을 넘으면 시작 스냅샷만
@@ -350,9 +372,9 @@ class GitSnapshot:
         시작 커밋은 변경이 없어도(빈 워크스페이스여도) 찍는다 — 저장소가 세션을 넘어
         이어지므로 `list` 에서 세션의 경계가 되고, 라벨이 세션 id 를 말한다."""
         self.session_id = session_id
-        ok, why = git_available()
-        if not ok:
-            self.enabled, self.reason = False, why
+        cause, why = _probe_git()
+        if cause is not None:
+            self.enabled, self.reason, self.off_cause = False, why, cause
             return False
         t0 = time.monotonic()
         try:
@@ -374,9 +396,10 @@ class GitSnapshot:
                     check=False,
                 )
                 if r.returncode != 0:
-                    self.enabled, self.reason = (
+                    self.enabled, self.reason, self.off_cause = (
                         False,
                         f"git init failed: {r.stderr.strip()}",
+                        "init_failed",
                     )
                     return False
             self.nested = self._scan_nested()
@@ -390,6 +413,7 @@ class GitSnapshot:
             return True
         except (OSError, subprocess.SubprocessError) as exc:
             self.enabled, self.reason = False, f"{type(exc).__name__}: {exc}"
+            self.off_cause = "init_failed"
             return False
 
     def _apply_caps(self) -> None:
@@ -1014,6 +1038,9 @@ class GitSnapshot:
 
 _STORE: GitSnapshot | None = None
 _STORE_LOCK = threading.Lock()
+#: 저장소가 없는 까닭 ``(cause, detail)`` — ``reset_snapshot(off=…)`` 만 쓴다. 웹 Changes
+#: 입구가 "왜 꺼졌나" 를 읽는 자리(runtime 은 실패한 저장소를 남기지 않는다).
+_OFF: tuple[str, str] | None = None
 
 
 def get_snapshot(
@@ -1045,7 +1072,19 @@ def get_snapshot(
         return store
 
 
-def reset_snapshot() -> None:
-    global _STORE
+def reset_snapshot(off: tuple[str, str] | None = None) -> None:
+    """세션 저장소를 내리고, 저장소가 없는 까닭을 ``off`` 로 **바꿔 둔다** —
+    ``(cause, detail)``(cause 는 ``OFF_CAUSES``) 또는 None(까닭 없음: 새로 세울 참이거나
+    테스트 정리). 까닭을 쓰는 곳은 이 함수 하나다."""
+    global _STORE, _OFF
+    if off is not None and off[0] not in OFF_CAUSES:
+        raise ValueError(f"unknown snapshot off cause: {off[0]!r}")
     with _STORE_LOCK:
         _STORE = None
+        _OFF = off
+
+
+def snapshot_off() -> tuple[str, str] | None:
+    """마지막 ``reset_snapshot(off=…)`` 이 남긴 ``(cause, detail)`` — 없으면 None."""
+    with _STORE_LOCK:
+        return _OFF
