@@ -228,8 +228,21 @@ class TestReplyInTheMessageToMainGap:
 
     def test_a_reply_in_the_gap_closes_the_wait(self, tmp_path):
         """`[v10.145.0 에서 고쳐짐 — 2단계: 배달과 줄 열기가 한 락 구간]` 옛 구현은 메일을 넣은 뒤에 보낸 쪽
-        기록을 적어 그 틈에 온 회신을 놓쳤다."""
-        reg, key = self._registry_with_agent(tmp_path)
+        기록을 적어 그 틈에 온 회신을 놓쳤다.
+
+        회신을 받은 런은 문에서 멈춘다 — 안 그러면 워커가 그 런을 끝내 상자가 비는 것과 단언이 경주한다(부하 아래
+        200회에 2회, 2026-11-17)."""
+        from tests.test_agents_live import _FakeLoopResult
+
+        door = threading.Event()
+
+        def runner(kind, start, ctx):
+            door.wait()
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg = make_registry(tmp_path, runner=runner)
+        key, _ = reg.spawn(name="asker")
+        assert wait_until(lambda: _state(reg, key) == "idle")
 
         def main_answers_at_once(mail):
             # main 의 턴 경계가 하는 일 — 꺼내고(빚이 적힌다), 바로 그 id 로 갚는다
@@ -246,6 +259,7 @@ class TestReplyInTheMessageToMainGap:
             assert reg.awaited_replies(f"agent:{key}") == []
         finally:
             reg.on_reply = None
+            door.set()
             reg.shutdown_all()
 
 

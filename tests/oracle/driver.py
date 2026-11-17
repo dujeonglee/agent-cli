@@ -1491,7 +1491,15 @@ def s17_mail_to_an_idle_main_on_the_run_path(root: Path) -> dict:
     box: dict = {}
 
     def notify_after_main_ended(msgs):
-        until(lambda: runs_ended(box["s"]) >= 1, "main run ended")
+        # 런 끝의 기록(`surface.run_ended`)은 펌프가 한가함을 세우기(`waker.mark_idle`) **전**이다 — 그 사이에
+        # 통지가 오면 busy=True 로 찍힌다(컨테이너 cpus 0.5·부하 아래 1회, 2026-11-17). 한가함까지 잡는다.
+        until(
+            lambda: (
+                runs_ended(box["s"]) >= 1
+                and box["s"].wired.pump.deps.waker.idle.is_set()
+            ),
+            "main run ended and idle",
+        )
         return call("message", to="main", text="all done", expects_reply=False)
 
     p = Provider(
