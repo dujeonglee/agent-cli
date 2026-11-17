@@ -1501,7 +1501,7 @@ class TestCompleteIsLocal:
         a, b = spawn_idle(reg), spawn_idle(reg)
         reg.request(a, "원 일감")
         assert wait_until(lambda: got, timeout=5.0)
-        rid = box["res"].split('delivered as request "')[1].split('"')[0]
+        rid = box["res"][0].split('delivered as request "')[1].split('"')[0]
         assert rid.startswith("r-")
         head, _, body = got[0].partition("\n")
         assert head.startswith("── reply [n-") and head.endswith(f"re [{rid}] ──")
@@ -1584,7 +1584,8 @@ class TestCompleteIsLocal:
         debt = reg.note_owes(me, f"agent:{a}", "일감")
         assert [d["to"] for d in port.debts()] == [f"agent:{a}"]
         # 요청자에게 보낸 `message`(통지)는 갚지 않는다(v10.145.1) — 갚는 것은 `reply` 하나
-        assert "delivered" in reg.message_handler(me)(a, "결과", expects_reply=False)
+        receipt, err = reg.message_handler(me)(a, "결과", expects_reply=False)
+        assert err == "" and "delivered" in receipt
         assert [d["to"] for d in port.debts()] == [f"agent:{a}"]
         assert port.reply("결과", id=debt.id) == ""
         assert port.debts() == []
@@ -1734,7 +1735,7 @@ class TestUnifiedDebtRules:
         b = spawn_idle(reg)
         ports = ResidentLoop.make_ports(
             key=b,
-            message_handler=lambda to, text, **kw: "",
+            message_handler=lambda to, text, **kw: ("", ""),
             questions=reg.question_port(b),
             inbox=lambda: reg.absorb_pending(reg.get(b)),
             peer_roster=None,
@@ -1801,7 +1802,7 @@ class TestUnifiedDebtRules:
         a, b = spawn_idle(reg), spawn_idle(reg)
         ports = ResidentLoop.make_ports(
             key=b,
-            message_handler=lambda to, text, **kw: "",
+            message_handler=lambda to, text, **kw: ("", ""),
             questions=reg.question_port(b),
             inbox=lambda: reg.absorb_pending(reg.get(b)),
             peer_roster=None,
@@ -2078,23 +2079,22 @@ class TestPerRequestDebts:
         assert "already replied to [3]" in err and "`message` (`to`" in err
 
     def test_a_reply_to_a_gone_requester_still_counts_as_replied(self, mkreg, renderer):
-        """요청자가 사라져 회신이 가지 못해도 갚음이다 — 같은 런의 둘째 `reply` 는 "이미 회신했다" 로 거부되고,
-        남은 빚은 그대로다(2단계: 우편의 줄은 ``unsent`` 로 닫혀 그 런 끝까지 남는다)."""
+        """요청자가 사라져 회신이 가지 못해도 빚은 닫힌다 — 첫 `reply` 는 가지 못했다는 사실을 돌려받고(v10.145.2 —
+        종전엔 조용히 버리고 ""), 같은 런의 둘째 `reply` 도 같은 사실을 듣는다("이미 회신했다" 가 아니다 — 우편의
+        줄은 ``unsent`` 로 닫혀 그 런 끝까지 남는다). 남은 빚은 그대로다."""
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         me = self._two(reg, b, f"agent:{a}")
         assert reg.kill(a) == ""
         assert wait_until(lambda: reg.get(a).state == "dead")
         port = reg.question_port(b)
-        assert (
-            port.reply("답", id="3") == ""
-        )  # 받을 이가 없다 — 조용히 버린다(종전 그대로)
-        err = port.reply("정정", id="3")
-        assert err == (
-            f"already replied to [3] (agent:{a}) in this run — a second reply is not "
-            f'delivered. If you must correct it, send the correction with `message` (`to` "{a}", '
-            "`text` your correction)."
+        gone = (
+            f'not delivered — agent "{a}", which sent request [3], was already gone. '
+            "[3] is closed; there is nothing more to do for it."
         )
+        assert port.reply("답", id="3") == gone
+        # 다시 해도 같은 사실 — "이미 회신했다" 가 아니다(가지 못했다, contract-b)
+        assert port.reply("정정", id="3") == gone
         assert [d.id for d in reg.reply_debts(me)] == ["5"]
 
     def test_id_alone_routes_the_reply(self, mkreg, renderer):
@@ -2120,8 +2120,8 @@ class TestPerRequestDebts:
         me = self._two(reg, b, f"agent:{a}")
         send = reg.message_handler(me)
         # 요청자에게 보낸 `message` 는 요청이든 통지든 빚을 갚지 않는다(v10.145.1 — 갚는 것은 `reply` 하나)
-        assert "delivered" in send(a, "하나", expects_reply=False)
-        assert "delivered" in send(a, "둘", expects_reply=True)
+        assert "delivered" in send(a, "하나", expects_reply=False)[0]
+        assert "delivered" in send(a, "둘", expects_reply=True)[0]
         assert [d.id for d in reg.reply_debts(me)] == ["3", "5"]
         # main 쪽 (v10.56.0): 메일마다 빚(`r-…`), `agent request` 는 갚지 않는다 —
         # 갚는 도구는 `reply(id)` 하나다

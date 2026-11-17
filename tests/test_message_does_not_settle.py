@@ -50,7 +50,8 @@ def test_asking_back_leaves_the_request_open_and_reply_answers_it(ab):
     """되물은 `message`(회신 기대) 뒤에도 빚은 열려 있고, `reply(id)` 가 갚아 요청자에게 ``re [id]`` 로 간다."""
     reg, a, b, debt = ab
     me, them = f"agent:{b}", f"agent:{a}"
-    assert "delivered" in reg.message_handler(me)(a, "which branch do you mean?", True)
+    receipt, err = reg.message_handler(me)(a, "which branch do you mean?", True)
+    assert err == "" and "delivered" in receipt
     assert [d.id for d in reg.reply_debts(me)] == [debt.id]
     assert [r["id"] for r in reg.awaited_replies(them)] == [debt.id]
     assert reg.question_port(b).reply("X is decided: use main", id=debt.id) == ""
@@ -61,7 +62,8 @@ def test_asking_back_leaves_the_request_open_and_reply_answers_it(ab):
 
 def test_a_notice_to_the_requester_does_not_settle_either(ab):
     reg, a, b, debt = ab
-    assert "delivered" in reg.message_handler(f"agent:{b}")(a, "fyi: started", False)
+    receipt, err = reg.message_handler(f"agent:{b}")(a, "fyi: started", False)
+    assert err == "" and "delivered" in receipt
     assert [d.id for d in reg.reply_debts(f"agent:{b}")] == [debt.id]
 
 

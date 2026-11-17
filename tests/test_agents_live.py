@@ -965,8 +965,8 @@ class TestToolTeammate:
         """v10.141.0: main 의 일 맡기기는 `message` 다(종전 `agent` "request")."""
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
-        out = reg.message_handler("main")(key, "go")
-        assert out.startswith('delivered as request "r-')
+        out, err = reg.message_handler("main")(key, "go")
+        assert err == "" and out.startswith('delivered as request "r-')
         # 결과는 사실만("회신 표지") — "기다리는 법"은 꼬리가 말한다(agent 검토 PR B, T2).
         assert "`wait`" not in out
         assert wait_until(reg.has_pending_replies)
@@ -2505,8 +2505,8 @@ class TestPeerMessaging:
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
         handler = reg.message_handler(f"agent:{a}")
-        out = handler(b, ">")
-        assert "no words" in out and "nothing sent" in out
+        out, err = handler(b, ">")
+        assert out == "" and "no words" in err and "nothing sent" in err
         assert not wait_until(lambda: reg.get(b).handled >= 1, timeout=0.4)
         me = f"agent:{a}"
         reg.note_owes(me, f"agent:{b}", "do it", id="1")
@@ -2525,7 +2525,7 @@ class TestPeerMessaging:
         reg, a, b = self._reg_two(tmp_path, runner)
         handler = reg.message_handler(f"agent:{a}")
         out = handler(b, "fyi: I am done", expects_reply=False)
-        assert out == 'delivered as notice "n-1" — nothing is owed back'
+        assert out == ('delivered as notice "n-1" — nothing is owed back', "")
         assert wait_until(lambda: reg.get(b).handled >= 1)
         q = next(q for q in runner.queries() if "fyi: I am done" in q)
         assert q == f"── notice [n-1] from {a} (alpha) ──\nfyi: I am done"
@@ -2542,8 +2542,8 @@ class TestPeerMessaging:
         runner = _RecordingRunner()
         reg, a, _b = self._reg_two(tmp_path, runner)
         handler = reg.message_handler(f"agent:{a}")
-        out = handler("main", "status: half done", expects_reply=False)
-        assert out.startswith('delivered as notice "n-')
+        out, err = handler("main", "status: half done", expects_reply=False)
+        assert err == "" and out.startswith('delivered as notice "n-')
         (rec,) = [
             r for r in reg.drain_replies() if "half done" in (r.get("output") or "")
         ]
@@ -2585,15 +2585,17 @@ class TestPeerMessaging:
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
         handler = reg.message_handler(f"agent:{a}")
-        assert handler(f"agent:{b}", "by prefix").startswith('delivered as request "r-')
-        assert handler("beta", "by name").startswith('delivered as request "r-')
+        assert handler(f"agent:{b}", "by prefix")[0].startswith(
+            'delivered as request "r-'
+        )
+        assert handler("beta", "by name")[0].startswith('delivered as request "r-')
         assert wait_until(lambda: reg.get(b).handled >= 2)
         qs = runner.queries()
         assert any("by prefix" in q for q in qs) and any("by name" in q for q in qs)
         # 자기 이름으로 자기에게는 거부
-        assert "yourself" in handler("alpha", "x")
+        assert handler("alpha", "x")[0] == "" and "yourself" in handler("alpha", "x")[1]
         # 미지 주소는 로스터를 가리킨다
-        assert "## Live Agents" in handler("gamma", "x")
+        assert "## Live Agents" in handler("gamma", "x")[1]
         # main 의 `agent request` 경로도 같은 해석
         assert reg.request("beta", "from main by name") == ""
         assert wait_until(lambda: reg.get(b).handled >= 3)
@@ -2630,7 +2632,7 @@ class TestPeerMessaging:
 
         def handler(to, text, expects_reply=True):
             sent.append((to, text, expects_reply))
-            return "ok"
+            return "ok", ""
 
         ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
         provider = MagicMock()
@@ -2702,7 +2704,10 @@ class TestPeerMessaging:
 
         # peer 로 전송 → 대상이 author=agent:A 로 받음
         out = handler(b, "ping")
-        assert out == 'delivered as request "r-1" — its reply will come marked [r-1]'
+        assert out == (
+            'delivered as request "r-1" — its reply will come marked [r-1]',
+            "",
+        )
         assert wait_until(lambda: reg.get(b).handled >= 1)
         assert any(
             "ping" in q and q.startswith(f"── request [r-1] from {a}")
@@ -2710,12 +2715,12 @@ class TestPeerMessaging:
         )
 
         # 자기 자신 / 빈 메시지 / 미지 대상 거부
-        assert "yourself" in handler(a, "x").lower()
-        assert "empty" in handler(b, "   ").lower()
-        assert "unknown" in handler("no-such", "x").lower()
+        assert "yourself" in handler(a, "x")[1].lower()
+        assert "empty" in handler(b, "   ")[1].lower()
+        assert "unknown" in handler("no-such", "x")[1].lower()
 
         # main 으로 → main mailbox
-        assert handler("main", "hello main").startswith('delivered as request "r-')
+        assert handler("main", "hello main")[0].startswith('delivered as request "r-')
         recs = reg.drain_replies()
         assert any("hello main" in (r.get("output") or "") for r in recs)
         reg.shutdown_all()
@@ -2797,7 +2802,7 @@ class TestPeerMessaging:
         reg.request(key, "first")  # worker 가 집어 busy 로 블록
         wait_until(lambda: reg.get(key).state == "busy")
         reg.request(key, "second")  # inbox 1 적체
-        out = reg.message_handler("main")(key, "third")
+        out, _err = reg.message_handler("main")(key, "third")
         gate.set()
         assert "queued requests" in out  # 적체 수 명시
         assert "reaches you on its own" in out
@@ -2845,7 +2850,7 @@ class TestPeerMessaging:
             capabilities=None,
             model="m",
             active_tools=["read_file"],
-            ports=make_ports(message_handler=lambda to, text, **kw: ""),
+            ports=make_ports(message_handler=lambda to, text, **kw: ("", "")),
         )
         assert "message" in loop2._config.tools_list
 
@@ -2874,7 +2879,7 @@ class TestPeerMessaging:
 
         def handler(to, text, expects_reply=True):
             sent.append((to, text))
-            return f"delivered to {to}"
+            return f"delivered to {to}", ""
 
         ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
         provider = MagicMock()
@@ -3386,8 +3391,8 @@ class TestResultsAreFactsOnly:
         assert "wakes you" in r.output
         for banned in ("`wait`", "poll", "finish the rest", "re-send"):
             assert banned not in r.output, banned
-        out = reg.message_handler("main")(key, "more")
-        assert out.startswith('delivered as request "r-')
+        out, err = reg.message_handler("main")(key, "more")
+        assert err == "" and out.startswith('delivered as request "r-')
         from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(32768, 4096, False)

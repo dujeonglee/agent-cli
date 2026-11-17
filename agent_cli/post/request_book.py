@@ -6,8 +6,9 @@ main 의 답을 받을 사람이 기다림), q-(에이전트가 사람의 답을
 
 상태: ``queued``(봉투가 받는 쪽 상자에 줄 섰다) → ``picked``(빚으로 적혔다 — 런이 집었다) → 닫힘. 닫힌 줄은
 쌓지 않는다: 런 안에서 닫힌 것(:data:`IN_RUN` — 명시 회신·갚음·complete)만 그 빚진 쪽의 런이 끝날 때까지 남고
-(:meth:`RequestBook.purge_closed` — "이미 갚았다" 거부 문구가 읽는 구간), 런 밖에서 닫힌 것(removed·dropped·질문의 답 등)은 바로 지운다. `wait` 로 끝난 런은 비우지 않는다 —
-잠든 빚과 함께 다음 런으로 간다. 락이 없다 — `PostOffice` 의 조건변수 아래서만 바꾼다.
+(:meth:`RequestBook.purge_closed` — "이미 갚았다" 거부 문구가 읽는 구간), 런 밖에서 닫힌 것(removed·dropped·질문의 답 등)은 바로 지운다. 런이
+어떻게 끝나든(`wait` 로 끝나도) 그 런에서 닫힌 줄은 버린다 — 열린 빚(잠든 빚)만 다음 런으로 간다. 락이 없다 —
+`PostOffice` 의 조건변수 아래서만 바꾼다.
 """
 
 from __future__ import annotations

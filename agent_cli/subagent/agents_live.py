@@ -77,7 +77,7 @@ from agent_cli.subagent.agent_mail import (
     view_of_main_mail,
 )
 from agent_cli.subagent.delegation_checks import depth_or_recursion_refusal
-from agent_cli.subagent.question_port import QuestionPort
+from agent_cli.subagent.question_port import REPLY_REQUESTER_GONE, QuestionPort
 from agent_cli.terminate import wait_left
 from agent_cli.tools.result import ToolResult
 from agent_cli.wake import (
@@ -198,6 +198,9 @@ class ReplyDebt:
     hop: int = 0  # peer 폴백 배달의 hop
     settled: bool = False
     id: str = ""  # 요청 번호 — `reply(id=…)` 가 가리키는 값
+    #: 닫힌 줄이면 닫힌 사유(장부의 ``Row.how`` — "reply"·"unsent"·…), 열린 줄이면 "". "unsent" 는 회신이
+    #: 요청자에게 가지 못한 채 닫힌 것이다 — 다시 `reply` 할 때 "이미 회신했다" 가 아니라 그 사실을 말한다.
+    closed_by: str = ""
 
     @property
     def human(self) -> bool:
@@ -213,6 +216,7 @@ def _debt_view(row) -> ReplyDebt:
         hop=row.hop,
         settled=row.state == "closed",
         id=row.rid,
+        closed_by=row.how or "",
     )
 
 
@@ -806,7 +810,7 @@ class AgentRegistry:
             out = [
                 {"id": r.rid, "from": r.dst, "text": r.text}
                 for r in self._post.awaited_by(addr)
-                if self._debtor_alive(r.dst)
+                if self._agent_alive(r.dst)
             ]
         return sorted(out, key=lambda r: item_ids.number_of(r["id"]))
 
@@ -838,11 +842,13 @@ class AgentRegistry:
                 return tm.current_item
         return addr
 
-    def _debtor_alive(self, debtor: str) -> bool:
-        """빚진 쪽이 아직 회신을 보낼 수 있는가 — main 은 언제나, 에이전트는 죽지 않았으면."""
-        if not debtor.startswith("agent:"):
+    def _agent_alive(self, addr: str) -> bool:
+        """이 주소가 아직 말을 주고받을 수 있는가 — main(과 에이전트 아닌 주소)은 언제나, 에이전트는 명단에 있고
+        죽지 않았고 멈추는 중이 아니면. 빚진 쪽이면 "회신을 보낼 수 있다", 요청자면 "회신을 받을 수 있다" 는 같은
+        조건이다(`request` 의 dead 거절과도 같다). 읽기만 한다."""
+        if not addr.startswith("agent:"):
             return True
-        tm = self._agents.get(debtor.split(":", 1)[1])
+        tm = self._agents.get(addr.split(":", 1)[1])
         return tm is not None and tm.state != "dead" and not tm.stop_event.is_set()
 
     def _queued(self, tm: AgentInstance) -> list[dict]:
@@ -1075,9 +1081,10 @@ class AgentRegistry:
         """``debtor`` 가 빚 ``d`` 를 ``text`` 로 갚는다 — `reply(id)` 의 배달(`QuestionPort.reply`). 에러 또는 "".
 
         갚음으로 적고 → 요청자에게 배달하고(main 이면 메일함, 에이전트면 받은편지함 — 되받을 것 없는 회신) →
-        요청자의 기다리는 회신을 닫는다. 닫기는 배달 **뒤**다: 요청자가 그 틈에 기다림을 잃지 않게. 배달 에러는
-        main 이 갚을 때만 돌려준다(에이전트가 갚을 때 요청자가 사라졌으면 조용히 버린다 — 종전 그대로).
-        회신의 배달이 곧 갚음이다(``settles`` — 한 락 구간의 `PostOffice.pay`). 가지 못했으면 `pay_unsent`."""
+        요청자의 기다리는 회신을 닫는다. 닫기는 배달 **뒤**다: 요청자가 그 틈에 기다림을 잃지 않게.
+        회신의 배달이 곧 갚음이다(``settles`` — 한 락 구간의 `PostOffice.pay`). 요청자가 사라졌거나 죽었으면
+        배달하지 못한 채 빚을 닫고(`pay_unsent` — 기다리는 이가 없으니 다시 갚게 하지 않는다) 그 사실을 돌려준다
+        (`REPLY_REQUESTER_GONE`) — main 이 갚든 에이전트가 갚든 같은 문장이다(v10.145.2)."""
         run_id = self._run_of(debtor)
         try:
             return self._pay_debt(debtor, d, text)
@@ -1106,7 +1113,9 @@ class AgentRegistry:
             )
             return ""
         requester = d.to.split(":", 1)[1]
-        self._deliver_peer_reply(requester, key, text, 0, re=d.id, settles=d.id)
+        err = self._deliver_peer_reply(requester, key, text, 0, re=d.id, settles=d.id)
+        if err:
+            return err
         self._log_outbound(key, text, to=requester)
         return ""
 
@@ -1151,9 +1160,10 @@ class AgentRegistry:
         """런 끝의 **유일한** 정리 (v10.77.0) — 상주 단건·사람 배치·main 펌프가
         모두 여기로 온다. 처리한 빚 수를 돌려준다.
 
-        - ``waiting`` (`wait` 로 끝남): 아무것도 하지 않는다 — 갚을 차례가 아니다.
-          빚은 열린 채 다음 런으로 가고 깨어난 런이 `reply` 로 갚는다. 폴백을
-          지금 보내면 요청자가 "⏸ waiting" 을 답으로 받는다.
+        - ``waiting`` (`wait` 로 끝남): 갚을 차례가 아니다 — 열린 빚은 다음 런으로 가고 깨어난
+          런이 `reply` 로 갚는다. 폴백을 지금 보내면 요청자가 "⏸ waiting" 을 답으로 받는다. 이 런에서
+          닫힌 줄은 다른 끝과 같이 버린다(`PostOffice.end_run` 의 ``wait`` — main 은 여기서, 에이전트는
+          `_close_run` 에서).
         - ``stopped`` (정지로 끊김): 남은 빚을 버린다. 사람·모델의 정지(■·✕)는 런의 정리가
           먼저 빚진 상대 모두에게 회신했다(`answer_debts_as_stopped` — 여기 남는 것은 사람 주소의
           빚뿐). 세션 종료의 빚은 재시작이 끊긴 요청을 새 id 로 다시 넣으며 다시 적는다 — 남기면
@@ -1934,7 +1944,8 @@ class AgentRegistry:
             # 흡수분(v9.25.0)까지 이 런이 처리했다 — 시작 항목 수보다 클 수 있다
             tm.handled += handled + tm.absorbed_in_run
             tm.absorbed_in_run = 0
-            # 든 것만 비운다(줄은 런 끝 정리 `run_ended` 가 이미 닫았거나, `wait` 면 그대로 — 잠든 빚)
+            # 든 것을 비우고 이 런에서 닫힌 줄을 버린다(열린 줄은 런 끝 정리 `run_ended` 가 이미 닫았거나,
+            # `wait` 면 그대로 — 잠든 빚)
             self._post.end_run(
                 f"agent:{tm.key}",
                 run_id=self._run_of(f"agent:{tm.key}"),
@@ -2059,9 +2070,8 @@ class AgentRegistry:
         """
         if hop >= _MAX_PEER_HOPS:
             return f"reply dropped — peer hop limit ({_MAX_PEER_HOPS}) reached"
-        tgt = self._agents.get(requester_key)
-        if tgt is None or tgt.state == "dead":
-            return f'agent "{requester_key}" is gone — the reply was not delivered'
+        if not self._agent_alive(f"agent:{requester_key}"):
+            return REPLY_REQUESTER_GONE.format(key=requester_key, rid=re)
         return self.request(
             requester_key,
             output,
@@ -2163,23 +2173,25 @@ class AgentRegistry:
 
     def message_handler(self, sender: str):
         """``message`` 도구의 라우팅 훅 — 보내는 주소(``"main"`` | ``"agent:<key>"``) 하나에
-        하나 (v5.11; v10.141.0 main 에도). ``(to, text, expects_reply) -> 결과 한 줄``.
+        하나 (v5.11; v10.141.0 main 에도). ``(to, text, expects_reply) -> (receipt, err)`` — 보냈으면 ``(배달
+        영수증 한 줄, "")``, 못 보냈으면 ``("", 사유)`` (v10.145.2 — 종전엔 한 줄 글이라 루프가 성공·실패를
+        가르지 못해 실패도 성공으로 기록했다).
 
         상대의 받은편지함(또는 main 메일함)으로 비동기 전송하고 즉시 반환한다. 상대의
         회신은 보낸 쪽에게 새 메시지로 온다(보낸 쪽은 막히지 않는다)."""
         me_key = sender.split(":", 1)[1] if sender.startswith("agent:") else ""
 
-        def handler(to: str, text: str, expects_reply: bool = True) -> str:
+        def handler(to: str, text: str, expects_reply: bool = True) -> tuple[str, str]:
             to = (to or "").strip()
             text = (text or "").strip()
             if not to:
-                return 'message needs a `to` agent key or name (or "main")'
+                return "", 'message needs a `to` agent key or name (or "main")'
             if not text:
-                return "empty message — nothing sent"
+                return "", "empty message — nothing sent"
             if not has_words(text):
                 # v10.1.2: 구두점뿐인 메시지(실측 `>`)는 보내지 않는다 — 받은
                 # 쪽이 뜻을 찾느라 턴을 쓴다.
-                return (
+                return "", (
                     f"message has no words ({text[:20]!r}) — nothing sent; say it "
                     "in words"
                 )
@@ -2187,14 +2199,14 @@ class AgentRegistry:
                 # v10.1.0: 키·`agent:` 접두·이름 전부 받는다 (resolve_key).
                 resolved = self.resolve_key(to)
                 if resolved is None:
-                    return (
+                    return "", (
                         f'unknown agent "{to}" — use a key or name from '
                         '`## Live Agents` (or "main")'
                     )
                 to = resolved
             addr = "main" if to == "main" else f"agent:{to}"
             if addr == sender:
-                return "cannot message yourself"
+                return "", "cannot message yourself"
             tm = self._agents.get(me_key) if me_key else None
             # `message` 는 기본으로 **요청**이다 — 상대에게 회신을 빚지운다
             # (v9.21.0). ``expects_reply=False`` (v10.1.0) 는 **통지**: 상대가
@@ -2214,7 +2226,7 @@ class AgentRegistry:
                     expects_reply=bool(expects_reply),
                     notice=not expects_reply,
                 )
-                return delivered_line(rec_id, expects_reply=bool(expects_reply))
+                return delivered_line(rec_id, expects_reply=bool(expects_reply)), ""
             # Capture the send time BEFORE request() enqueues — the target's
             # worker can start (scope_start) the instant it's queued, so a
             # later timestamp on this arrow would render the request AFTER
@@ -2232,13 +2244,14 @@ class AgentRegistry:
                 kind="" if expects_reply else "notice",
             )
             if err:
-                return err
+                return "", err
             if me_key:
                 self._log_outbound(me_key, text, to=to, ts=send_ts)  # 발신자 창 out
             line = delivered_line(rec_id, expects_reply=bool(expects_reply))
             target = self._agents.get(to)
             backlog = self.backlog_of(to) if target is not None else 0
-            return line + (REQUEST_STACKED.format(n=backlog) if backlog >= 2 else "")
+            stacked = REQUEST_STACKED.format(n=backlog) if backlog >= 2 else ""
+            return line + stacked, ""
 
         return handler
 
@@ -2863,7 +2876,7 @@ class AgentRegistry:
         if in_flight:
             first = in_flight[0]
             author = str(first.get("author") or "main")
-            if tm.ends_after_task and not self._debtor_alive(author):
+            if tm.ends_after_task and not self._agent_alive(author):
                 # 끊긴 run 의 요청자가 돌아오지 않았다 — 회신은 main 메일로 (설계 §2 resume)
                 author = "main"
             if first.get("resumed"):

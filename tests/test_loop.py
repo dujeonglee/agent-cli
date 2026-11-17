@@ -1991,7 +1991,7 @@ class TestToolPolicyDeclarations:
         from agent_cli.context.manager import ContextManager
 
         ctx_real = ContextManager(session_dir=tmp_path)
-        handler = lambda to, text: "ok"
+        handler = lambda to, text: ("ok", "")
         active_variants = [
             None,  # 전체 레지스트리
             ["shell", "read_file"],  # 특수 도구 없음
