@@ -181,7 +181,8 @@ list→at 우회 시퀀스 수, db-wal·financial 통과(35B 가 민감). 테스
   — 빈 패널)·꺼짐(점선, 누를 수 없음, 까닭 한 줄).
 - **Clear 는 늘 눌린다**(v10.144.2, 사용자 결정): 화면 숫자는 마지막으로 센 때의 것이라 밖에서 디스크가 바뀌면
   (git reset 등) 화면 0·실제 N 일 수 있다. 토스트의 수는 `clear()` 가 돌려주는 `(기준점, 비운 수)` 의 수 — 새
-  기준점으로 찍는 **같은 트리**로 `report(disk)` 가 센 것이라 셈과 기준 잡기 사이에 틈이 없다. 웹 응답 `cleared`.
+  기준점으로 찍는 **같은 트리**로 `report(disk)` 가 센 것이라 셈과 기준 잡기 사이에 틈이 없다(서버는 실행기
+  한 번). 웹 응답 `cleared` — 셀 수 없었으면 싣지 않고 토스트는 수 없이 `List cleared.`
 - **꺼진 까닭**: runtime 은 실패한 저장소를 남기지 않는다(도구 광고·훅이 `get_snapshot` 을 본다). 대신
   `reset_snapshot(off=(cause, detail))` 로 까닭만 남기고 웹은 `snapshot_off()` 를 읽는다. cause 는 닫힌 어휘
   `OFF_CAUSES` — 발생 지점이 정한다: `disabled`(노브) · `git_missing`·`git_broken`(`_probe_git`) ·

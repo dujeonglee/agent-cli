@@ -926,7 +926,7 @@ class GitSnapshot:
             lines = lines[:max_lines] + [f"… truncated, {more} more lines"]
         return "\n".join(lines), ""
 
-    def clear(self) -> tuple[tuple[str, str, int], int] | None:
+    def clear(self) -> tuple[tuple[str, str, int], int | None] | None:
         """지금 디스크를 새 기준점으로 — 그 트리를 커밋(부모 HEAD, 라벨
         ``BASELINE_LABEL``)하고 ``BASELINE_REF`` 를 옮긴다. 옮기기 전 기준점 커밋은
         ``BASELINE_PREV_REF`` 에(Undo 한 단계). 하위 저장소도 지금 상태로 다시 기록해
@@ -934,7 +934,7 @@ class GitSnapshot:
         트랜잭션으로. HEAD·색인·파일은 건드리지 않는다. ``(새 기준점, 비운 항목 수)`` 를
         돌려준다(실패 None) — 수는 이전 기준점 ↔ 새 기준점으로 찍는 **같은 트리**로 센다
         (:meth:`report` 의 항목 수, v10.144.2): 화면의 낡은 목록이 아니고 셈과 기준 잡기
-        사이에 디스크가 바뀌는 틈도 없다."""
+        사이에 디스크가 바뀌는 틈도 없다. 셀 수 없으면(``report`` 가 None) 수는 None."""
         if not self.enabled:
             return None
         with self._lock:  # Clear·Undo 끼리의 순서 — ref 들을 함께 옮긴다
@@ -946,7 +946,7 @@ class GitSnapshot:
             if not tree:
                 return None
             before = self.report(disk)
-            cleared = len(before.files) if before else 0
+            cleared = len(before.files) if before is not None else None
             head = self.head()
             args = ["commit-tree", tree, "-m", BASELINE_LABEL]
             if head:

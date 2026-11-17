@@ -269,3 +269,12 @@ def test_clear_counts_what_is_on_disk_now_not_the_last_listing(ws):
     assert s.changes() == []
     _, again = s.clear()
     assert again == 0
+
+
+def test_clear_without_a_count_when_the_list_cannot_be_read(ws, monkeypatch):
+    """셀 수 없으면(report 가 None) 수는 None — 기준점은 그대로 잡는다."""
+    s = _store(ws)
+    (ws / "inventory.py").write_text("x\n")
+    monkeypatch.setattr(s, "report", lambda disk=None: None)
+    base, n = s.clear()
+    assert n is None and base[1] == "cleared"

@@ -430,7 +430,9 @@ if ($badge && $drawer) {
   function toast(n) {
     clearTimeout(toastTimer);
     $toast.textContent = "";
-    $toast.appendChild(el("span", [], "List cleared (" + n + (n === 1 ? " file" : " files") + ")."));
+    // 서버가 셀 수 없었으면(`cleared` 없음) 수 없이 — 낡은 화면 수로 돌아가지 않는다
+    const what = typeof n === "number" ? " (" + n + (n === 1 ? " file" : " files") + ")" : "";
+    $toast.appendChild(el("span", [], "List cleared" + what + "."));
     const undo = el("button", ["btn-ghost", "chg-undo"], "Undo");
     undo.type = "button";
     undo.addEventListener("click", function () {

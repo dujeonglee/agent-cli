@@ -1047,6 +1047,23 @@ def test_clear_counts_the_disk_not_the_stale_list(stack, page, ws):
     assert errors == []
 
 
+def test_clear_toast_without_a_count(stack, page, ws, monkeypatch):
+    """서버가 셀 수 없었으면 토스트는 수 없이 "List cleared." — 화면 수를 쓰지 않는다."""
+    _edit(ws)
+    store = get_snapshot(ws)
+    orig = store.clear
+    monkeypatch.setattr(store, "clear", lambda: (orig()[0], None))
+    errors = _open(page, stack)
+    page.wait_for_function(f"() => {_BADGE_EXPR} === '3'", timeout=8000)
+    page.click("#changes-badge")
+    page.wait_for_selector("#changes-drawer.open .chg-row", timeout=8000)
+    page.click("#changes-clear")
+    page.wait_for_selector("#changes-toast:not([hidden]) .chg-undo", timeout=8000)
+    assert page.inner_text("#changes-toast").startswith("List cleared.")
+    assert "file" not in page.inner_text("#changes-toast")
+    assert errors == []
+
+
 @pytest.mark.parametrize(
     "off, reason",
     [
