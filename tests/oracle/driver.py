@@ -410,13 +410,53 @@ class Session:
 
         return {"observation": after_spawn}
 
-    def close_answered_awaits_before_main_reads(self) -> None:
+    def settle_repliers_before_main_reads(self) -> None:
+        """main 이 제자리 대기에서 깰 때(``wait_in_place(False)``) 바쁜 에이전트가 없어질 때까지 main 을 잡는다 —
+        회신·정지 회신을 배달한 쪽은 배달(`end_run`·`answer_debts_as_stopped`) **뒤** 런을 정리(`_close_run`, idle)
+        한다. 그 틈에서 main 이 꼬리를 지으면 [busy], 뒤면 [idle] — 제품의 비결정이라 정착된 쪽을 강제한다."""
+
+        def after_wake(args, kwargs):
+            if args and args[0] is False:
+                until(
+                    lambda: all(
+                        r["state"] != "busy" for r in self.reg.roster_snapshot()
+                    ),
+                    "repliers settle",
+                )
+
+        self.recorder.rules["wait_in_place"] = after_wake
+
+    def dead_stopped_runs_before_main_reads(self) -> None:
+        """main 이 정지 회신("stopped by user")에 깰 때 멈춘 run 이 내려올 때까지 main 을 잡는다 — 정지 회신을 보낸
+        뒤 run 이 런을 정리하고(idle) 내려오기(dead)까지의 틈을 꼬리가 보지 않게."""
+
+        def stopped_mail() -> bool:
+            return any(
+                "stopped by user" in (m.get("text") or "")
+                for m in self.reg.pending_mail()
+            )
+
+        def after_wake(args, kwargs):
+            if args and args[0] is False and stopped_mail():
+                until(
+                    lambda: all(
+                        r["state"] == "dead" for r in self.reg.roster_snapshot()
+                    ),
+                    "stopped run came down",
+                )
+
+        self.recorder.rules["wait_in_place"] = after_wake
+
+    def close_answered_awaits_before_main_reads(self, *, paid: bool = False) -> None:
         """main 이 제자리 대기에서 깰 때(``wait_in_place(False)``) 도착한 회신이 답하는 "기다리는 회신" 이 닫힐
         때까지 main 을 잡는다 — 회신한 쪽은 배달한 **뒤** 보낸 쪽 기록을 지운다(`AgentRegistry.awaited_replies`).
         기대값의 띠(`open_items`)는 그 뒤의 것이다. 회신한 쪽이 그다음 곧바로 런을 끝내는 시나리오에서는 쓰지
         않는다 — main 의 꼬리가 회신한 쪽의 "바쁨" 을 보는 순서와 함께 강제할 손잡이가 없다."""
 
         def answered_awaits_closed() -> bool:
+            if paid:
+                # 깨운 메일이 통지(`message`)로 빚을 갚았다 — 회신 머리(``re [r-…]``)가 없어 전부 닫힐 때까지
+                return not self.reg.awaited_replies("main")
             heads = " ".join(m.get("text") or "" for m in self.reg.pending_mail())
             return not any(
                 f"re [{r['id']}]" in heads for r in self.reg.awaited_replies("main")
@@ -805,13 +845,15 @@ def s04_notices_both_ways(root: Path) -> dict:
                         "message", to="main", text="built it", expects_reply=False
                     ),
                 ),
-                complete_all("ok"),
+                # 통지로 깬 main 의 꼬리(셋째 호출)가 이 런의 "바쁨" 을 본 뒤에 끝낸다
+                _after_main_calls(box, 3, complete_all("ok")),
                 # 통지를 보낸 main 의 꼬리(넷째 호출)가 그 런의 "바쁨" 을 본 뒤에 끝낸다
                 _after_main_calls(box, 4, complete_all("noted")),
             ],
         }
     )
     s = box["s"] = Session(root, p)
+    s.close_answered_awaits_before_main_reads(paid=True)
     s.say("MAIN go")
     drive(s, path="run", until_done=None)
     return s.collect()
@@ -927,6 +969,7 @@ def s07_question_to_human(root: Path) -> dict:
         }
     )
     s = box["s"] = Session(root, p, path="web")
+    s.close_answered_awaits_before_main_reads()
     s.say("MAIN go", nickname="dj")
     facts: dict = {}
 
@@ -1006,7 +1049,10 @@ def s08_mid_run_absorption(root: Path) -> dict:
 
 
 def s09_stop_square(root: Path) -> dict:
-    """§4 정지 ■: 런만 멈춘다 — 지금 일의 요청자에게 stopped 회신, 기다리던 main 이 깬다."""
+    """§4 정지 ■: 런만 멈춘다 — 지금 일의 요청자에게 stopped 회신, 기다리던 main 이 깬다.
+
+    정지 회신을 읽은 main 꼬리의 로스터는 지금 구현에서 `answer_debts_as_stopped`↔`_close_run` 틈 때문에
+    [busy]/[idle] 둘 다 나올 수 있다 — 기대값은 정착된 쪽(멈춘 상주가 idle)을 강제해 기록한다(v10.144.1 에서 재기록)."""
     box: dict = {}
 
     def stop_me(msgs):
@@ -1026,6 +1072,8 @@ def s09_stop_square(root: Path) -> dict:
         }
     )
     s = box["s"] = Session(root, p)
+    # 정지 회신을 보낸 상주가 런을 정리(idle)한 뒤 main 이 읽는다
+    s.settle_repliers_before_main_reads()
     s.say("MAIN go")
     drive(s, path="run", until_done=None)
     return s.collect({"stop_run": box.get("stop")})
@@ -1224,6 +1272,7 @@ def s13_wait_refusals_and_wakes(root: Path) -> dict:
     )
     box["agent_go"] = threading.Event()
     s = box["s"] = Session(root, p, path="web")
+    s.dead_stopped_runs_before_main_reads()
     s.say("MAIN first", nickname="dj")
     facts: dict = {}
 
@@ -1320,6 +1369,11 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
     def main_replies_to_asker(msgs):
         main_started.set()
         until(lambda: box2["s"].agent_state(worker) == "idle", "worker replied")
+        # 회신의 창 줄에서 main 을 asker 가 그것을 집을 때까지 잡는다 — main 의 다음 꼬리가 asker 의 "바쁨" 을 본다
+        s2 = box2["s"]
+        s2.recorder.hold(
+            "agent_message", asker, lambda: s2.agent_state(asker) == "busy"
+        )
         return call("reply", id=owed_id(msgs), text="TASK-P use main")
 
     def worker_replies(msgs):
@@ -1334,7 +1388,13 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
             ],
             # 배우는 컨텍스트의 첫 사용자 메시지로 가른다 — 되살린 worker 의 런은 TASK-O1 의 대본이다
             "TASK-O1": [worker_replies],
-            "TASK-P": [lambda m: call("complete", result="got the branch", answers=[])],
+            "TASK-P": [
+                _after_main_calls(
+                    box2,
+                    2,
+                    lambda m: call("complete", result="got the branch", answers=[]),
+                )
+            ],
         }
     )
     s2 = box2["s"] = Session(
@@ -1783,6 +1843,15 @@ def s24_commands_while_waiting(root: Path) -> dict:
     )
     s = box["s"] = Session(root, p, path="web")
     s.reg.checkin_timer_factory = _HeldTimer
+    # ■ 뒤 회신이 연 메일 런의 꼬리는 회신한 run 이 내려온 뒤의 것이다
+    s.surface.before_run = lambda req: (
+        until(
+            lambda: all(s.agent_state(k) == "dead" for k in s.agent_keys()),
+            "run came down",
+        )
+        if req.wake
+        else None
+    )
     s.surface.commands["@helper note"] = lambda: None
     s.surface.commands["/noop"] = lambda: None
 
