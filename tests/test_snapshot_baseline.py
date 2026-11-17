@@ -112,8 +112,8 @@ def test_clear_empties_the_list_and_touches_nothing_else(ws):
     files = _files(ws)
     assert len(s.changes()) == 2
 
-    new = s.clear()
-    assert new is not None and new[1] == "cleared"
+    new, n = s.clear()
+    assert new[1] == "cleared" and n == 2  # 비운 수는 같은 트리로 센 것
     assert s.changes() == []
     assert s.baseline() == new
     # 파일·HEAD·실제 색인·체크포인트 간격 불변, 모델의 `list` 에 사람의 커밋이 없다
@@ -141,7 +141,7 @@ def test_undo_restores_the_previous_baseline_once(ws):
     assert s.undo_clear() is False  # 한 단계만
     assert s.baseline() == start
     # Clear 두 번 → Undo 는 첫 Clear 로
-    first = s.clear()
+    first, _ = s.clear()
     (ws / "old.csv").write_text("two\n")
     s.clear()
     assert s.undo_clear() is True
@@ -170,7 +170,7 @@ def test_resume_keeps_the_first_session_start(ws):
 def test_clear_survives_a_new_process(ws):
     s = _store(ws, sid="s-1")
     (ws / "inventory.py").write_text("x\n")
-    cleared = s.clear()
+    cleared, _ = s.clear()
     again = _store(ws, sid="s-1")
     assert again.baseline() == cleared
     assert again.changes() == []
@@ -211,7 +211,7 @@ def test_concurrent_listing_leaves_no_temp_index(ws):
 def test_snapshots_off(ws, monkeypatch):
     import agent_cli.snapshot as snap
 
-    monkeypatch.setattr(snap, "git_available", lambda: (False, "git not found"))
+    monkeypatch.setattr(snap, "_probe_git", lambda: ("git_missing", "git not found"))
     s = GitSnapshot(ws)
     assert s.init("s-1") is False
     assert s.baseline() is None
@@ -254,3 +254,27 @@ def test_same_size_edit_in_the_same_second_is_seen(ws):
     (ws / "inventory.py").write_text("a\nb\nc\n")
     for _ in range(3):
         assert [c["path"] for c in s.changes()] == ["inventory.py"]
+
+
+def test_clear_counts_what_is_on_disk_now_not_the_last_listing(ws):
+    """Clear 가 돌려주는 수는 Clear 가 기준으로 찍은 트리로 센 것 — 마지막 셈 뒤에
+    밖에서 바뀐 것도 든다(화면 0·실제 N 에서 "0 files" 로 틀리지 않게, v10.144.2)."""
+    s = _store(ws)
+    assert s.changes() == []  # 마지막 셈: 0
+    (ws / "inventory.py").write_text("x\n")
+    (ws / "old.csv").unlink()
+    (ws / "new.txt").write_text("n\n")
+    base, n = s.clear()
+    assert n == 3 and base[1] == "cleared"
+    assert s.changes() == []
+    _, again = s.clear()
+    assert again == 0
+
+
+def test_clear_without_a_count_when_the_list_cannot_be_read(ws, monkeypatch):
+    """셀 수 없으면(report 가 None) 수는 None — 기준점은 그대로 잡는다."""
+    s = _store(ws)
+    (ws / "inventory.py").write_text("x\n")
+    monkeypatch.setattr(s, "report", lambda disk=None: None)
+    base, n = s.clear()
+    assert n is None and base[1] == "cleared"

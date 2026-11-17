@@ -2,7 +2,7 @@
 // 순환 밖 잎이다 — dom·sse·markdown 만 import 한다.
 // (v10.137.0, docs/snapshot/DESIGN.md §7 · docs/web-modules/DESIGN.md §8)
 //
-// 입구(v10.137.1): ① 📁(`#files-btn`) 안의 숫자 배지 — 배지를 누르면 이 패널, 아이콘을
+// 입구 셋(v10.137.1·v10.144.2): ① 📁(`#files-btn`) 안의 숫자 배지 — 배지를 누르면 이 패널, 아이콘을
 // 누르면 workspace.js 의 Workspace files 드로어 그대로(배지 클릭은 버블링을 막는다).
 // ② main 채널의 가장 최근 `complete` 카드 안의 한 줄 `Δ N files changed · View changes`.
 // 둘 다 다른 모듈의 화면이라 import 없이 **DOM 으로만** 붙는다(선택자). 줄은 하나뿐이다 —
@@ -10,6 +10,9 @@
 // 셈보다 늦게 그려질 수 있어(재생·라이브 둘 다) `#messages` 의 직계 자식 추가만 보는
 // MutationObserver 하나가 새 main 최종답 카드를 보면 다시 붙인다. 줄은 화면 전용이다 —
 // 대화 복사는 카드의 `_md`(원문)에서 만들어 이 줄이 들어가지 않는다.
+// ③ 📁 Workspace files 서랍 머리 아래 늘 서 있는 한 줄(`#changes-entry`, v10.144.2): 바뀐
+// 파일 N(강조, `View changes ›`)·0(흐림, `Open ›` — 빈 패널)·추적 꺼짐(점선, 누를 수 없음 —
+// 서버가 준 까닭 `reason`, 원문 `detail` 은 title 에만). 배지·런 끝 줄과 달리 0 에도 선다.
 //
 // 목록은 "스냅샷 저장소의 기준점 커밋 ↔ 지금 디스크" 다(api/changes). 누가 바꿨든 —
 // 모델·상주 에이전트·사람의 IDE — 디스크가 바뀌면 오른다. 그래서 입구는 "모델이 바꾼
@@ -44,7 +47,9 @@
 // false 라 ✕ 가 없고, 스냅샷 실패(`cause` `snapshot_failing`)는 색만 빨갛다.
 // 📁 트리의 하위 저장소 폴더 행에는 작은 `git` 배지를 단다(`data-rel` 로, 표시와 같은 길).
 //
-// 다시 세는 때: 페이지 로드(스냅샷 재생 끝), 패널을 열 때, ↻, 런 끝. 런 끝은 기존 SSE 로
+// 다시 세는 때: 페이지 로드(스냅샷 재생 끝), 패널을 열 때, 📁 서랍을 열 때(v10.144.2 — 늘 서
+// 있는 줄이 보이는 순간; 서랍의 `aria-hidden` 이 "false" 로 바뀌는 것을 DOM 으로 본다,
+// workspace.js 를 import 하지 않는다), ↻, 런 끝. 런 끝은 기존 SSE 로
 // 안다 — main 런은 `worker_state` 가 바쁨 → 한가로 바뀔 때(main 런은 `scope_end` 를 내지
 // 않는다), 에이전트·스킬·상주 런은 `scope_end`. 도구 호출마다 세지 않는다. 재생이
 // `scope_end` 를 몰아 보내도 한 번으로 합친다(RECOUNT_MS).
@@ -61,7 +66,9 @@ const $list = document.getElementById("changes-list");
 const $diff = document.getElementById("changes-diff");
 const $toast = document.getElementById("changes-toast");
 const $clear = document.getElementById("changes-clear");
+const $entry = document.getElementById("changes-entry"); // 📁 서랍 머리 아래 한 줄
 const $tree = document.getElementById("dl-tree"); // workspace.js 의 트리 — 행을 꾸미기만 한다
+const $filesDrawer = document.getElementById("download-drawer"); // 열림만 본다(aria-hidden)
 // 런 끝 신호를 한 번으로 합치는 간격 — 재생이 끝난 스코프를 몰아 보낸다
 const RECOUNT_MS = 400;
 // Clear 뒤 Undo 토스트가 서 있는 시간
@@ -123,9 +130,37 @@ if ($badge && $drawer) {
       card.insertBefore($line, anchor.nextSibling);
     }
   }
+  // 📁 서랍의 한 줄 — 세 상태. 서버에서 온 글은 textContent 로만
+  function renderEntryLine() {
+    if (!$entry) return;
+    $entry.hidden = !data;
+    if (!data) return;
+    const on = !!data.enabled;
+    const n = count();
+    const state = !on ? "off" : n ? "has" : "zero";
+    $entry.classList.remove("has", "zero", "off");
+    $entry.classList.add(state);
+    $entry.setAttribute("aria-disabled", on ? "false" : "true");
+    $entry.tabIndex = on ? 0 : -1;
+    const part = function (cls, text) { $entry.querySelector(".chg-entry-" + cls).textContent = text; };
+    if (!on) {
+      part("what", "Change tracking is off");
+      part("since", "· " + (data.reason || ""));
+      part("go", "");
+      const detail = data.detail && data.detail !== data.reason ? data.detail : "";
+      $entry.title = (data.reason || "") + (detail ? " — " + detail : "");
+      return;
+    }
+    const since = sinceText(data.baseline);
+    part("what", n ? n + (n === 1 ? " file" : " files") + " changed" : "No changes");
+    part("since", "· " + since);
+    part("go", n ? "View changes ›" : "Open ›");
+    $entry.title = n ? tip(n) : "No files changed on disk " + since + " — open Changes";
+  }
   function renderEntries() {
     renderBadge();
     placeLine();
+    renderEntryLine();
     decorateTree();
   }
 
@@ -398,7 +433,9 @@ if ($badge && $drawer) {
   function toast(n) {
     clearTimeout(toastTimer);
     $toast.textContent = "";
-    $toast.appendChild(el("span", [], "List cleared (" + n + (n === 1 ? " file" : " files") + ")."));
+    // 서버가 셀 수 없었으면(`cleared` 없음) 수 없이 — 낡은 화면 수로 돌아가지 않는다
+    const what = typeof n === "number" ? " (" + n + (n === 1 ? " file" : " files") + ")" : "";
+    $toast.appendChild(el("span", [], "List cleared" + what + "."));
     const undo = el("button", ["btn-ghost", "chg-undo"], "Undo");
     undo.type = "button";
     undo.addEventListener("click", function () {
@@ -412,12 +449,13 @@ if ($badge && $drawer) {
     $toast.hidden = false;
     toastTimer = setTimeout(function () { $toast.hidden = true; }, UNDO_MS);
   }
+  // 토스트의 수는 서버가 Clear 할 때 센 것(`cleared`) — 화면 목록은 마지막으로 센 때의 것이라
+  // 밖에서 디스크가 바뀌었으면(git reset 등) 틀린다(v10.144.2). Clear 는 늘 눌린다.
   $clear.addEventListener("click", function () {
-    const n = data && data.files ? data.files.length : 0;
     $clear.disabled = true;
     fetch("api/changes/clear", { method: "POST" })
       .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
-      .then(function (d) { selected = null; apply(d); toast(n); })
+      .then(function (d) { selected = null; apply(d); toast(d.cleared); })
       .catch(recount)
       .then(function () { $clear.disabled = !(data && data.enabled); });
   });
@@ -447,6 +485,11 @@ if ($badge && $drawer) {
     open();
   });
   $line.addEventListener("click", function () { open(); });
+  if ($entry) {
+    $entry.addEventListener("click", function () {
+      if ($entry.getAttribute("aria-disabled") !== "true") open();
+    });
+  }
   // 📁 트리에 새로 그려진 행만 꾸민다(폴더 펼침의 늦은 fetch 포함). 트리가 처음 그려질 때
   // (루트 행) 목록이 아직 없으면 한 번 센다. 표시 버튼 자체의 추가는 행이 아니라 지나친다.
   if ($tree) {
@@ -464,6 +507,13 @@ if ($badge && $drawer) {
       });
       if (fresh && !data) recount();
     }).observe($tree, { childList: true, subtree: true });
+  }
+  // 📁 서랍이 열리면 다시 센다 — 밖에서 디스크가 바뀌었어도 서랍의 줄이 지금 수를 말하게.
+  // workspace.js 는 열 때 aria-hidden 을 "false" 로 둔다(클래스 open 은 전환용이라 이것을 본다)
+  if ($filesDrawer) {
+    new MutationObserver(function () {
+      if ($filesDrawer.getAttribute("aria-hidden") === "false") recountSoon();
+    }).observe($filesDrawer, { attributes: true, attributeFilter: ["aria-hidden"] });
   }
   // 새 main 최종답 카드가 그려지면 줄을 그리로 — 직계 자식 추가만 본다(subtree 아님)
   new MutationObserver(function (records) {

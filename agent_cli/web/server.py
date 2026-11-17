@@ -63,7 +63,7 @@ from agent_cli.input_queue import InputQueue
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
 from agent_cli.session_slots import get_job_registry, get_schedule_registry
-from agent_cli.snapshot import get_snapshot
+from agent_cli.snapshot import get_snapshot, snapshot_off
 
 # C3: 도메인 로직은 분리 모듈 소유 — server 는 전송(라우팅·SSE·미들웨어) 전용.
 from agent_cli.web.directives import generate_directive_section
@@ -73,6 +73,17 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+
+#: Changes 입구가 꺼진 방에서 보일 문장 — ``snapshot.OFF_CAUSES`` 와 키가 같다(테스트가
+#: 막는다). 원문(git stderr·예외)은 ``detail`` 로 따로 가고 화면은 title 에만 싣는다.
+CHANGES_OFF_TEXT: dict[str, str] = {
+    "disabled": "turned off (AGENT_CLI_SNAPSHOT=0)",
+    "git_missing": "git not found",
+    "git_broken": "git is not working",
+    "init_failed": "could not create the snapshot repository",
+    "unreadable": "could not read the workspace",
+}
 
 
 async def _json_object(request: Request) -> dict:
@@ -1312,16 +1323,30 @@ def create_app(server: WebServer) -> FastAPI:
         store = get_snapshot(server.workspace)
         return store if store is not None and store.enabled else None
 
+    def _changes_off(cause: str, detail: str) -> dict:
+        """꺼진 방의 payload — 문장은 ``CHANGES_OFF_TEXT`` 한 곳, 원문은 ``detail``."""
+        return {
+            "enabled": False,
+            "cause": cause,
+            "reason": CHANGES_OFF_TEXT[cause],
+            "detail": detail,
+        }
+
     def _changes_payload(store) -> dict:
         """다시 셀 때 하위 저장소 기록을 지금과 맞추고(``sync_nested_records`` — 기준 잃음·
-        새 저장소) 센다(``report`` — 읽기만). 목록을 돌려주는 경로는 모두 이것을 거친다."""
+        새 저장소) 센다(``report`` — 읽기만). 목록을 돌려주는 경로는 모두 이것을 거친다.
+        저장소가 없으면 runtime 이 남긴 까닭(``snapshot_off``) — 남긴 것이 없으면 이
+        프로세스가 저장소를 세운 적이 없는 것이라 ``init_failed``."""
         if store is None:
-            return {"enabled": False}
+            off = snapshot_off() or ("init_failed", "no snapshot repository")
+            return _changes_off(*off)
         store.sync_nested_records()
         base = store.baseline()
-        rep = store.report() if base else None
-        if base is None or rep is None:
-            return {"enabled": False}
+        if base is None:
+            return _changes_off("unreadable", "no baseline commit")
+        rep = store.report()
+        if rep is None:
+            return _changes_off("unreadable", store.stats.failure or "git diff failed")
         return {
             "enabled": True,
             "baseline": {"kind": base[1], "when": base[2], "commit": base[0][:8]},
@@ -1340,7 +1365,8 @@ def create_app(server: WebServer) -> FastAPI:
         repos, notices}``. ``files`` 의 하위 저장소 항목은 ``repo``(그 경로)·요약 줄은
         ``summary``, ``repos`` 는 하위 저장소 그룹 머리, ``notices`` 는 기준을 잃은 저장소의
         안내 줄(docs/snapshot/DESIGN.md §8)과 셀 때마다 정하는 안내(커밋 없는 저장소·스냅샷
-        실패 — ``dismissable: false``, §9). 스냅샷이 꺼진 방은 ``{enabled: false}``.
+        실패 — ``dismissable: false``, §9). 스냅샷이 꺼진 방은 ``{enabled: false, cause,
+        reason, detail}``(v10.144.2 — ``CHANGES_OFF_TEXT``).
         다시 셀 때 하위 저장소 기록을 지금과 맞춘다(기준 잃음·새 저장소)."""
         return await _in_executor(_changes_payload, _changes_store())
 
@@ -1357,14 +1383,17 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.post("/api/changes/clear")
     async def changes_clear():
-        """지금 디스크를 새 기준점으로 — 목록만 비운다(파일은 그대로). 새 목록을 준다.
-        다시 셀 때 하위 저장소 기록을 지금과 맞춘다(기준 잃음·새 저장소)."""
+        """지금 디스크를 새 기준점으로 — 목록만 비운다(파일은 그대로). 새 목록과
+        ``cleared``(비운 항목 수 — Clear 가 기준으로 찍은 트리로 센 것, 화면 목록이 아니다;
+        셀 수 없었으면 null)를 준다. 셈과 기준 잡기는 ``store.clear`` 한 호출(실행기
+        한 번) 안이라 다른 뷰어의 Clear·Undo 가 그 사이에 끼지 않는다. 다시 셀 때 하위 저장소 기록을 지금과 맞춘다(기준 잃음·새 저장소)."""
         store = _changes_store()
         if store is None:
             raise HTTPException(status_code=409, detail="snapshots are off")
-        if await _in_executor(store.clear) is None:
+        done = await _in_executor(store.clear)
+        if done is None:
             raise HTTPException(status_code=500, detail="clear failed")
-        return await _in_executor(_changes_payload, store)
+        return {"cleared": done[1], **await _in_executor(_changes_payload, store)}
 
     @app.post("/api/changes/notices/dismiss")
     async def changes_dismiss(request: Request):

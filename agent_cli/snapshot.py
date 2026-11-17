@@ -179,17 +179,36 @@ def failing_notice_text(since: int, why: str) -> str:
     )
 
 
-def git_available() -> tuple[bool, str]:
+#: 저장소가 서지 못한 까닭 — 닫힌 어휘(v10.144.2). 발생 지점이 정하고, 사람에게 보일
+#: 문장은 웹 서버의 표 한 곳이 정한다(원문 문자열로 가르지 않는다).
+#: ``disabled`` 노브로 끔 · ``git_missing`` git 실행 파일 없음 · ``git_broken`` git 이
+#: 돌지 않음 · ``init_failed`` 저장소를 못 만듦 · ``unreadable`` 저장소는 있으나 셀 수 없음.
+OFF_CAUSES: tuple[str, ...] = (
+    "disabled",
+    "git_missing",
+    "git_broken",
+    "init_failed",
+    "unreadable",
+)
+
+
+def _probe_git() -> tuple[str | None, str]:
+    """``(cause, 문장)`` — 쓸 수 있으면 cause 가 None 이고 문장은 ``git --version``."""
     exe = shutil.which("git")
     if not exe:
-        return False, "git not found"
+        return "git_missing", "git not found"
     try:
         out = subprocess.run(
             [exe, "--version"], capture_output=True, text=True, timeout=10, check=False
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
-        return False, f"git --version failed: {exc}"
-    return True, out
+        return "git_broken", f"git --version failed: {exc}"
+    return None, out
+
+
+def git_available() -> tuple[bool, str]:
+    cause, why = _probe_git()
+    return cause is None, why
 
 
 class GitSnapshot:
@@ -217,6 +236,9 @@ class GitSnapshot:
         self.exclude_dirs = tuple(exclude_dirs)
         self.enabled = False
         self.reason = "not initialised"
+        self.off_cause: str | None = (
+            None  # init 실패의 까닭(``OFF_CAUSES``) — 성공이면 None
+        )
         self.nested: list[NestedRepo] = []
         self.stats = SnapshotStats()
         self.per_turn = True  # 파일 수 상한을 넘으면 시작 스냅샷만
@@ -350,9 +372,9 @@ class GitSnapshot:
         시작 커밋은 변경이 없어도(빈 워크스페이스여도) 찍는다 — 저장소가 세션을 넘어
         이어지므로 `list` 에서 세션의 경계가 되고, 라벨이 세션 id 를 말한다."""
         self.session_id = session_id
-        ok, why = git_available()
-        if not ok:
-            self.enabled, self.reason = False, why
+        cause, why = _probe_git()
+        if cause is not None:
+            self.enabled, self.reason, self.off_cause = False, why, cause
             return False
         t0 = time.monotonic()
         try:
@@ -374,9 +396,10 @@ class GitSnapshot:
                     check=False,
                 )
                 if r.returncode != 0:
-                    self.enabled, self.reason = (
+                    self.enabled, self.reason, self.off_cause = (
                         False,
                         f"git init failed: {r.stderr.strip()}",
+                        "init_failed",
                     )
                     return False
             self.nested = self._scan_nested()
@@ -390,6 +413,7 @@ class GitSnapshot:
             return True
         except (OSError, subprocess.SubprocessError) as exc:
             self.enabled, self.reason = False, f"{type(exc).__name__}: {exc}"
+            self.off_cause = "init_failed"
             return False
 
     def _apply_caps(self) -> None:
@@ -786,7 +810,7 @@ class GitSnapshot:
             )  # 그 사이 다른 셈·Clear 가 기록을 옮겼다 — 다시
         return False
 
-    def report(self) -> ChangeReport | None:
+    def report(self, disk: DiskTree | None = None) -> ChangeReport | None:
         """기준점 ↔ 지금 디스크 — 워크스페이스 파일 + 기록이 있는 하위 저장소 안의 파일,
         하위 저장소 그룹 머리와 안내 줄. 읽기만 한다(기록·ref·실제 색인 불변) — 기록을
         지금과 맞추는 것은 :meth:`sync_nested_records`. 비교할 수 없으면 None.
@@ -794,12 +818,14 @@ class GitSnapshot:
         안내 줄은 기록에 남은 것(기준 잃음 — ✕ 로 닫는다) 앞에 셀 때마다 정하는 것
         (``dismissable: False`` — 닫을 수 없다): 체크포인트가 실패하고 있음
         (``snapshot_failing``), 커밋 없는 하위 저장소.
-        지금 디스크를 못 읽으면(``add`` 실패) 마지막 스냅샷(HEAD)까지의 목록 + 실패 안내."""
+        지금 디스크를 못 읽으면(``add`` 실패) 마지막 스냅샷(HEAD)까지의 목록 + 실패 안내.
+        ``disk`` 를 주면 그 트리로 센다(:meth:`clear` 가 기준으로 찍을 바로 그 트리)."""
         base = self.baseline()
         if not base:
             return None
         _, _, record = self._active_record(base)
-        disk = self._disk_tree()
+        if disk is None:
+            disk = self._disk_tree()
         tree = disk.tree or self.head()
         ws = self._workspace_diff(base[0], tree, record) if tree else None
         if tree is None or ws is None:
@@ -900,21 +926,27 @@ class GitSnapshot:
             lines = lines[:max_lines] + [f"… truncated, {more} more lines"]
         return "\n".join(lines), ""
 
-    def clear(self) -> tuple[str, str, int] | None:
+    def clear(self) -> tuple[tuple[str, str, int], int | None] | None:
         """지금 디스크를 새 기준점으로 — 그 트리를 커밋(부모 HEAD, 라벨
         ``BASELINE_LABEL``)하고 ``BASELINE_REF`` 를 옮긴다. 옮기기 전 기준점 커밋은
         ``BASELINE_PREV_REF`` 에(Undo 한 단계). 하위 저장소도 지금 상태로 다시 기록해
         ``NESTED_BASELINE_REF`` 로(이전 기록은 ``NESTED_BASELINE_PREV_REF``) — ref 넷을 한
-        트랜잭션으로. HEAD·색인·파일은 건드리지 않는다. 새 기준점을 돌려준다(실패 None)."""
+        트랜잭션으로. HEAD·색인·파일은 건드리지 않는다. ``(새 기준점, 비운 항목 수)`` 를
+        돌려준다(실패 None) — 수는 이전 기준점 ↔ 새 기준점으로 찍는 **같은 트리**로 센다
+        (:meth:`report` 의 항목 수, v10.144.2): 화면의 낡은 목록이 아니고 셈과 기준 잡기
+        사이에 디스크가 바뀌는 틈도 없다. 셀 수 없으면(``report`` 가 None) 수는 None."""
         if not self.enabled:
             return None
         with self._lock:  # Clear·Undo 끼리의 순서 — ref 들을 함께 옮긴다
             prev = self.baseline()
             # .git 이 지워진 폴더는 새 기준점 트리에 일반 파일로 담긴다(_disk_tree 의 경계 맞춤)
             # — 일반 폴더 기록이 따로 필요 없다
-            tree = self._disk_tree().tree
+            disk = self._disk_tree()
+            tree = disk.tree
             if not tree:
                 return None
+            before = self.report(disk)
+            cleared = len(before.files) if before is not None else None
             head = self.head()
             args = ["commit-tree", tree, "-m", BASELINE_LABEL]
             if head:
@@ -939,7 +971,7 @@ class GitSnapshot:
             ]
             if not self._update_refs(ops):
                 return None
-            return new, "cleared", when
+            return (new, "cleared", when), cleared
 
     def undo_clear(self) -> bool:
         """마지막 Clear 를 되돌린다 — 한 단계만(두 번째는 무동작, False). 이전 기준점이
@@ -1014,6 +1046,9 @@ class GitSnapshot:
 
 _STORE: GitSnapshot | None = None
 _STORE_LOCK = threading.Lock()
+#: 저장소가 없는 까닭 ``(cause, detail)`` — ``reset_snapshot(off=…)`` 만 쓴다. 웹 Changes
+#: 입구가 "왜 꺼졌나" 를 읽는 자리(runtime 은 실패한 저장소를 남기지 않는다).
+_OFF: tuple[str, str] | None = None
 
 
 def get_snapshot(
@@ -1045,7 +1080,19 @@ def get_snapshot(
         return store
 
 
-def reset_snapshot() -> None:
-    global _STORE
+def reset_snapshot(off: tuple[str, str] | None = None) -> None:
+    """세션 저장소를 내리고, 저장소가 없는 까닭을 ``off`` 로 **바꿔 둔다** —
+    ``(cause, detail)``(cause 는 ``OFF_CAUSES``) 또는 None(까닭 없음: 새로 세울 참이거나
+    테스트 정리). 까닭을 쓰는 곳은 이 함수 하나다."""
+    global _STORE, _OFF
+    if off is not None and off[0] not in OFF_CAUSES:
+        raise ValueError(f"unknown snapshot off cause: {off[0]!r}")
     with _STORE_LOCK:
         _STORE = None
+        _OFF = off
+
+
+def snapshot_off() -> tuple[str, str] | None:
+    """마지막 ``reset_snapshot(off=…)`` 이 남긴 ``(cause, detail)`` — 없으면 None."""
+    with _STORE_LOCK:
+        return _OFF

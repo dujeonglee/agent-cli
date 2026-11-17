@@ -176,9 +176,24 @@ list→at 우회 시퀀스 수, db-wal·financial 통과(35B 가 민감). 테스
   `baseline-prev` 는 지운다 — 두 번째 Undo 는 무동작.
 - 저장소가 세션을 넘어 이어지므로 Clear 한 기준점은 방을 다시 띄워도·`--resume` 해도 남는다. 스냅샷이 꺼지면
   (`AGENT_CLI_SNAPSHOT=0`·git 없음) 패널도 없다.
+- **입구 셋**(v10.144.2): 헤더 📁 의 숫자 배지·main 의 마지막 `complete` 카드 안의 한 줄(둘 다 바뀐 것이 있을 때만),
+  그리고 📁 Workspace files 서랍 머리 아래 **늘 서 있는 한 줄** — N(강조, `View changes ›`)·0(흐림, `Open ›`
+  — 빈 패널)·꺼짐(점선, 누를 수 없음, 까닭 한 줄).
+- **Clear 는 늘 눌린다**(v10.144.2, 사용자 결정): 화면 숫자는 마지막으로 센 때의 것이라 밖에서 디스크가 바뀌면
+  (git reset 등) 화면 0·실제 N 일 수 있다. 토스트의 수는 `clear()` 가 돌려주는 `(기준점, 비운 수)` 의 수 — 새
+  기준점으로 찍는 **같은 트리**로 `report(disk)` 가 센 것이라 셈과 기준 잡기 사이에 틈이 없다(서버는 실행기
+  한 번). 웹 응답 `cleared` — 셀 수 없었으면 `null` 이고 토스트는 수 없이 `List cleared.`
+- **꺼진 까닭**: runtime 은 실패한 저장소를 남기지 않는다(도구 광고·훅이 `get_snapshot` 을 본다). 대신
+  `reset_snapshot(off=(cause, detail))` 로 까닭만 남기고 웹은 `snapshot_off()` 를 읽는다. cause 는 닫힌 어휘
+  `OFF_CAUSES` — 발생 지점이 정한다: `disabled`(노브) · `git_missing`·`git_broken`(`_probe_git`) ·
+  `init_failed`(`git init` 실패·init 중 예외, 까닭이 남지 않은 채 저장소가 없을 때도) · `unreadable`(저장소는 있으나
+  기준점·목록을 못 셈 — 웹이 정한다). 화면 문장은 웹 서버의 표 `CHANGES_OFF_TEXT` 한 곳이고(키가 `OFF_CAUSES` 와
+  같은지 테스트가 본다), 원문(`detail` — git stderr·예외)은 줄의 title 에만. payload `{enabled: false, cause,
+  reason, detail}`.
 
 웹(`/api/changes`·`/diff`·`/clear`·`/undo`)은 저장소 메서드를 실행기에서 부르는 얇은 층이고, 프런트 `js/changes.js`
-는 페이지 로드·패널 열기·↻·런 끝(main 은 `worker_state` 바쁨→한가, 그 밖은 `scope_end`)에만 다시 센다.
+는 페이지 로드·패널 열기·📁 서랍 열기(v10.144.2 — 서랍의 `aria-hidden` 변화를 DOM 으로)·↻·런 끝(main 은
+`worker_state` 바쁨→한가, 그 밖은 `scope_end`)에만 다시 센다.
 테스트 `tests/test_snapshot_baseline.py`, `tests/test_web_server.py::TestChangesEndpoints`,
 `tests/browser/test_changes_panel.py`.
 
