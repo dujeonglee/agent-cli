@@ -3,7 +3,8 @@
 - 런이 어떻게 끝나든(`wait` 로 끝나도) 그 런에서 닫힌 줄은 버린다 — 다음 런의 같은 id `reply` 에 "in this run"
   이라고 말하지 않는다.
 - 요청자가 죽었거나 사라졌으면 `reply` 는 "not delivered" 를 말하고 실패로 기록된다 — 에이전트가 갚든 main 이
-  갚든 같은 문장. 빚은 닫힌다(기다리는 이가 없다).
+  갚든 같은 문장. 빚은 닫힌다(기다리는 이가 없다). 그 id 에 다시 `reply` 해도 같은 문장이다 — "이미 회신했다" 가
+  아니다(닫힌 사유 ``closed_by == "unsent"`` 로 가른다).
 - `message` 는 보냈을 때만 성공으로 기록된다 — 핸들러가 ``(receipt, err)`` 를 돌려준다. 관찰 글은 그대로.
 """
 
@@ -58,8 +59,8 @@ class TestClosedRowsGoAtEveryRunEnd:
 
 def _gone(key: str, rid: str) -> str:
     return (
-        f'not delivered — agent "{key}" that sent request [{rid}] is gone. [{rid}] is '
-        "closed; there is nothing more to do for it."
+        f'not delivered — agent "{key}", which sent request [{rid}], was already gone. '
+        f"[{rid}] is closed; there is nothing more to do for it."
     )
 
 
@@ -99,6 +100,44 @@ class TestReplyToAGoneRequester:
             assert wait_until(lambda: reg.get(a).state == "dead")
             assert reg.question_port(None).reply("late", id=d.id) == _gone(a, d.id)
             assert reg.reply_debts("main") == []
+        finally:
+            door.set()
+            reg.shutdown_all()
+
+    def test_replying_again_by_id_repeats_the_fact(self, tmp_path):
+        """빚이 남아 있을 때(id 길) — 가지 못한 회신에 다시 `reply` 해도 "already replied" 가 아니다."""
+        reg, a, b, door = _two_idle_agents(tmp_path)
+        try:
+            me, them = f"agent:{b}", f"agent:{a}"
+            d = reg.note_owes(me, them, "please decide X")
+            other = reg.note_owes(me, "main", "keep this one open")
+            assert reg.kill(a) == ""
+            assert wait_until(lambda: reg.get(a).state == "dead")
+            port = reg.question_port(b)
+            assert port.reply("the answer", id=d.id) == _gone(a, d.id)
+            assert port.reply("the answer, again", id=d.id) == _gone(a, d.id)
+            assert [x.id for x in reg.reply_debts(me)] == [other.id]
+        finally:
+            door.set()
+            reg.shutdown_all()
+
+    def test_replying_again_with_nothing_left_owed_repeats_the_fact(self, tmp_path):
+        """빚이 하나도 안 남았을 때 — 이 런을 연 요청자(a)가 죽어 가지 못한 회신 뒤 다시 `reply`."""
+        reg, a, b, door = _two_idle_agents(tmp_path)
+        try:
+            me = f"agent:{b}"
+            _receipt, err = reg.message_handler(f"agent:{a}")(b, "please decide X")
+            assert err == ""
+            assert wait_until(
+                lambda: reg.get(b).state == "busy"
+            )  # b 의 런 — a 의 요청으로
+            (d,) = reg.reply_debts(me)
+            assert reg.kill(a) == ""
+            assert wait_until(lambda: reg.get(a).state == "dead")
+            port = reg.question_port(b)
+            assert port.reply("the answer", id=d.id) == _gone(a, d.id)
+            assert reg.reply_debts(me) == []
+            assert port.reply("the answer, again", id=d.id) == _gone(a, d.id)
         finally:
             door.set()
             reg.shutdown_all()

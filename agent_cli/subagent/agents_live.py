@@ -77,7 +77,7 @@ from agent_cli.subagent.agent_mail import (
     view_of_main_mail,
 )
 from agent_cli.subagent.delegation_checks import depth_or_recursion_refusal
-from agent_cli.subagent.question_port import QuestionPort
+from agent_cli.subagent.question_port import REPLY_REQUESTER_GONE, QuestionPort
 from agent_cli.terminate import wait_left
 from agent_cli.tools.result import ToolResult
 from agent_cli.wake import (
@@ -198,6 +198,9 @@ class ReplyDebt:
     hop: int = 0  # peer 폴백 배달의 hop
     settled: bool = False
     id: str = ""  # 요청 번호 — `reply(id=…)` 가 가리키는 값
+    #: 닫힌 줄이면 닫힌 사유(장부의 ``Row.how`` — "reply"·"unsent"·…), 열린 줄이면 "". "unsent" 는 회신이
+    #: 요청자에게 가지 못한 채 닫힌 것이다 — 다시 `reply` 할 때 "이미 회신했다" 가 아니라 그 사실을 말한다.
+    closed_by: str = ""
 
     @property
     def human(self) -> bool:
@@ -213,6 +216,7 @@ def _debt_view(row) -> ReplyDebt:
         hop=row.hop,
         settled=row.state == "closed",
         id=row.rid,
+        closed_by=row.how or "",
     )
 
 
@@ -3150,11 +3154,6 @@ class AgentRegistry:
 # 모듈 상수인 이유: ``prompts.inventory`` 가 표본으로 읽어 표기 가드(도구·인자 백틱,
 # 값 큰따옴표, 호출 모양 없음, 대문자 강조 없음)가 여기까지 본다. `agent` 모드의 결과 문구는
 # `agent_modes` 에 있다 — 여기는 레지스트리가 직접 짓는 것(`message` 결과·status·중복 거절)이다.
-#: `reply` 가 갈 곳이 없다 — 요청자가 명단에서 사라졌거나 죽었거나 멈추는 중(v10.145.2). 빚은 닫혔다.
-REPLY_REQUESTER_GONE = (
-    'not delivered — agent "{key}" that sent request [{rid}] is gone. [{rid}] is '
-    "closed; there is nothing more to do for it."
-)
 DELIVERED_NOTICE = 'delivered as notice "{rid}" — nothing is owed back'
 DELIVERED_REQUEST = 'delivered as request "{rid}" — its reply will come marked [{rid}]'
 

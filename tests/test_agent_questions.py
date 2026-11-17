@@ -2079,25 +2079,22 @@ class TestPerRequestDebts:
         assert "already replied to [3]" in err and "`message` (`to`" in err
 
     def test_a_reply_to_a_gone_requester_still_counts_as_replied(self, mkreg, renderer):
-        """요청자가 사라져 회신이 가지 못해도 갚음이다 — 첫 `reply` 는 가지 못했다는 사실을 돌려받고(v10.145.2 —
-        종전엔 조용히 버리고 ""), 같은 런의 둘째 `reply` 는 "이미 회신했다" 로 거부되고, 남은 빚은 그대로다(우편의
-        줄은 ``unsent`` 로 닫혀 그 런 끝까지 남는다)."""
+        """요청자가 사라져 회신이 가지 못해도 빚은 닫힌다 — 첫 `reply` 는 가지 못했다는 사실을 돌려받고(v10.145.2 —
+        종전엔 조용히 버리고 ""), 같은 런의 둘째 `reply` 도 같은 사실을 듣는다("이미 회신했다" 가 아니다 — 우편의
+        줄은 ``unsent`` 로 닫혀 그 런 끝까지 남는다). 남은 빚은 그대로다."""
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         me = self._two(reg, b, f"agent:{a}")
         assert reg.kill(a) == ""
         assert wait_until(lambda: reg.get(a).state == "dead")
         port = reg.question_port(b)
-        assert port.reply("답", id="3") == (
-            f'not delivered — agent "{a}" that sent request [3] is gone. [3] is closed; '
-            "there is nothing more to do for it."
+        gone = (
+            f'not delivered — agent "{a}", which sent request [3], was already gone. '
+            "[3] is closed; there is nothing more to do for it."
         )
-        err = port.reply("정정", id="3")
-        assert err == (
-            f"already replied to [3] (agent:{a}) in this run — a second reply is not "
-            f'delivered. If you must correct it, send the correction with `message` (`to` "{a}", '
-            "`text` your correction)."
-        )
+        assert port.reply("답", id="3") == gone
+        # 다시 해도 같은 사실 — "이미 회신했다" 가 아니다(가지 못했다, contract-b)
+        assert port.reply("정정", id="3") == gone
         assert [d.id for d in reg.reply_debts(me)] == ["5"]
 
     def test_id_alone_routes_the_reply(self, mkreg, renderer):

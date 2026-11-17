@@ -14,6 +14,19 @@ from agent_cli.constants import has_words
 if TYPE_CHECKING:
     from agent_cli.subagent.agents_live import AgentRegistry
 
+#: `reply` 가 요청자에게 가지 못했다 — 그때 요청자가 명단에서 사라졌거나 죽었거나 멈추는 중이었다(v10.145.2). 빚은
+#: 닫혔다. 같은 키가 나중에 되살아날 수 있으므로(`resume`·재시작) 과거형이다 — 그 요청자도 더는 이 회신을
+#: 기다리지 않는다. 처음 갚을 때(`AgentRegistry.pay_debt`)와 그 id 에 다시 `reply` 할 때 같은 문장이다.
+REPLY_REQUESTER_GONE = (
+    'not delivered — agent "{key}", which sent request [{rid}], was already gone. '
+    "[{rid}] is closed; there is nothing more to do for it."
+)
+
+
+def _not_delivered(d) -> str:
+    """회신이 가지 못한 채 닫힌 빚(``closed_by == "unsent"``)에 다시 `reply` 했다 — 처음과 같은 사실."""
+    return REPLY_REQUESTER_GONE.format(key=d.to.split(":", 1)[-1], rid=d.id)
+
 
 class QuestionPort:
     """루프가 질문 목록에 닿는 **유일한 seam** (DESIGN.md §4).
@@ -152,6 +165,8 @@ class QuestionPort:
                     "nothing to send — your requester is a person watching this "
                     "window, and they see your `complete` here. Just `complete`."
                 )
+            if d is not None and d.settled and d.closed_by == "unsent":
+                return _not_delivered(d)
             if d is not None and d.settled:
                 # 이미 갚았다 — 실측(a209hq): player 가 "칙령" 을 보낸 뒤 "칙명"
                 # 으로 정정하려다 "요청으로 시작되지 않은 런" 이라는 거짓
@@ -177,6 +192,8 @@ class QuestionPort:
         d = next((x for x in owed if x.id == id), None)
         if d is None:
             prior = self._reg.debt_by_id(self.me, id)
+            if prior is not None and prior.settled and prior.closed_by == "unsent":
+                return _not_delivered(prior)
             if prior is not None and prior.settled:
                 return (
                     f"already replied to [{id}] ({prior.to}) in this run — a second "
