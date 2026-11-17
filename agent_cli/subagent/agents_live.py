@@ -1151,9 +1151,10 @@ class AgentRegistry:
         """런 끝의 **유일한** 정리 (v10.77.0) — 상주 단건·사람 배치·main 펌프가
         모두 여기로 온다. 처리한 빚 수를 돌려준다.
 
-        - ``waiting`` (`wait` 로 끝남): 아무것도 하지 않는다 — 갚을 차례가 아니다.
-          빚은 열린 채 다음 런으로 가고 깨어난 런이 `reply` 로 갚는다. 폴백을
-          지금 보내면 요청자가 "⏸ waiting" 을 답으로 받는다.
+        - ``waiting`` (`wait` 로 끝남): 갚을 차례가 아니다 — 열린 빚은 다음 런으로 가고 깨어난
+          런이 `reply` 로 갚는다. 폴백을 지금 보내면 요청자가 "⏸ waiting" 을 답으로 받는다. 이 런에서
+          닫힌 줄은 다른 끝과 같이 버린다(`PostOffice.end_run` 의 ``wait`` — main 은 여기서, 에이전트는
+          `_close_run` 에서).
         - ``stopped`` (정지로 끊김): 남은 빚을 버린다. 사람·모델의 정지(■·✕)는 런의 정리가
           먼저 빚진 상대 모두에게 회신했다(`answer_debts_as_stopped` — 여기 남는 것은 사람 주소의
           빚뿐). 세션 종료의 빚은 재시작이 끊긴 요청을 새 id 로 다시 넣으며 다시 적는다 — 남기면
@@ -1934,7 +1935,8 @@ class AgentRegistry:
             # 흡수분(v9.25.0)까지 이 런이 처리했다 — 시작 항목 수보다 클 수 있다
             tm.handled += handled + tm.absorbed_in_run
             tm.absorbed_in_run = 0
-            # 든 것만 비운다(줄은 런 끝 정리 `run_ended` 가 이미 닫았거나, `wait` 면 그대로 — 잠든 빚)
+            # 든 것을 비우고 이 런에서 닫힌 줄을 버린다(열린 줄은 런 끝 정리 `run_ended` 가 이미 닫았거나,
+            # `wait` 면 그대로 — 잠든 빚)
             self._post.end_run(
                 f"agent:{tm.key}",
                 run_id=self._run_of(f"agent:{tm.key}"),

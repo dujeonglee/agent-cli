@@ -168,7 +168,8 @@ class PostOffice:
         - ``done``·``stopped``: 집힌 r 줄마다 ``replies`` 에 그 rid 가 있으면 그 회신을 배달하고 닫는다(``done`` →
           fallback, ``stopped`` → stopped), 없으면 dropped. 집힌 u·n 줄은 run_ended. 들고 있던 봉투를 비우고,
           남겨 둔 닫힌 줄(명시 회신)을 버린다.
-        - ``wait``: 줄은 그대로(잠든 빚), 들고 있던 봉투만 비운다.
+        - ``wait``: 열린 줄은 그대로(잠든 빚), 들고 있던 봉투를 비우고, 이 런에서 닫힌 줄은 버린다 — 다음 런에서
+          같은 id 에 "이 런에서 이미 회신했다" 고 말하지 않게(v10.145.2, 런 끝의 규칙은 하나다).
         - ``session_end`` [단계 5 에서 쓰임 — 지금 제품은 부르지 않는다]: 아무것도 건드리지 않는다 — 들고 있던 봉투와
           줄은 재시작이 되살린다.
 
@@ -198,6 +199,7 @@ class PostOffice:
                 for row in self._book.open_requests(addr):
                     changed = True
                     self._book.close(row.rid, "run_ended", in_run=run_id)
+            if outcome in ("done", "stopped", "wait"):
                 changed = bool(self._book.purge_closed(addr)) or changed
             if outcome != "session_end":
                 changed = bool(box.finish_run()) or changed

@@ -157,14 +157,17 @@ class TestEndRun:
         assert [r.state for r in office.rows()] == ["picked"] * 3
         assert office.taken(A) == ()  # 스스로 잠든 빚 — 들고 있는 봉투는 없다
 
-    def test_wait_keeps_a_paid_debt_for_the_already_replied_refusal(self, office):
+    def test_wait_drops_a_paid_debt_like_any_run_end(self, office):
+        """v10.145.2: 런이 어떻게 끝나든 그 런에서 닫힌 줄은 버린다 — `wait` 로 끝난 뒤 다음 런이 같은 id 에
+        "이 런에서 이미 회신했다" 는 거짓 사유를 받지 않게. 열린 빚(잠든 빚)은 남는다."""
         office.deliver(E.request("r-1", "main", A, "do"))
+        office.deliver(E.request("r-2", "main", A, "and this"))
         office.start_run(A)
-        office.pay(A, "r-1", E.reply("n-2", A, "main", "ok", re="r-1"), run_id="r-1")
+        office.absorb(A)
+        office.pay(A, "r-1", E.reply("n-3", A, "main", "ok", re="r-1"), run_id="r-1")
         office.end_run(A, run_id="r-1", outcome="wait")
-        assert office.row("r-1").how == "reply"
-        office.end_run(A, run_id="r-5", outcome="done")
         assert office.row("r-1") is None
+        assert office.row("r-2").state == "picked"  # 잠든 빚은 다음 런으로
 
     def test_session_end_touches_nothing(self, office):
         """버그 3 의 구조 수준 짝 — 세션 끝은 들고 있던 봉투도 줄도 남긴다(재시작이 되살린다)."""
