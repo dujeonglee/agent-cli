@@ -78,8 +78,6 @@ class Twin:
 
     def _impl(self, op: str, args: dict) -> None:
         o = self.office
-        if op == "close_box":
-            return o.close_box(args["addr"])
         if op == "deliver":
             o.deliver(args["e"])
         elif op == "start_run":
@@ -103,8 +101,6 @@ class Twin:
             )
         elif op == "remove_queued":
             o.remove_queued(args["addr"], args["replies"])
-        elif op == "drop":
-            o.drop(args["rid"])
         elif op == "owe":
             o.owe(args["rid"], args["debtor"], args["creditor"], "t")
         elif op == "take":

@@ -193,12 +193,6 @@ class TestQuestions:
         assert book.owes_oldest("agent:a", "agent:b").rid == "r-2"
         assert book.owes_oldest("agent:a", "agent:c") is None
 
-    def test_last_to_still_sees_a_paid_debt(self):
-        book = self._book()
-        book.close("r-1", "reply", in_run="run-1")
-        last = book.last_to("agent:a", "main")
-        assert last.rid == "r-1" and last.how == "reply"
-
     def test_open_requests_are_the_picked_u_and_n(self):
         book = self._book()
         assert [r.rid for r in book.open_requests("agent:a")] == ["u-4"]

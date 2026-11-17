@@ -5,8 +5,8 @@
 락 밖에서 호출자가 `Changed` 를 보고 한다. 조건변수는 주어지면 그것을(입력 큐와 공유), 아니면 기본
 `threading.Condition()`(재진입 락)을 쓴다.
 
-hop 상한·요청자 부재·사람 주소 같은 판정은 호출자의 몫이다 — 여기서는 회신 없이 닫으라는 지시(`drop`·빈
-``replies``)로 받는다.
+hop 상한·요청자 부재·사람 주소 같은 판정은 호출자의 몫이다 — 여기서는 회신 없이 닫으라는 지시(빈 ``replies``)로
+받는다.
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ class PostOffice:
             return row
 
     def take(self, addr: str) -> tuple[tuple[Envelope, ...], Changed]:
-        """줄 선 것 전부를 꺼내고 잊는다 — 런이 들지 않는다(private 메일함: 그 루프가 턴 경계마다 읽는다).
+        """줄 선 것 전부를 꺼내고 잊는다 — 런이 들지 않는다(private 주소의 상자: 그 루프가 턴 경계마다 읽는다).
         줄이 있는 봉투가 섞여 있으면 아무것도 바꾸지 않고 `RowError` — 줄을 닫을 길이 없어지기 때문이다."""
         with self.cv:
             box = self._box(addr)
@@ -200,7 +200,8 @@ class PostOffice:
           fallback, ``stopped`` → stopped), 없으면 dropped. 집힌 u·n 줄은 run_ended. 들고 있던 봉투를 비우고,
           남겨 둔 닫힌 줄(명시 회신)을 버린다.
         - ``wait``: 줄은 그대로(잠든 빚), 들고 있던 봉투만 비운다.
-        - ``session_end``: 아무것도 건드리지 않는다 — 들고 있던 봉투와 줄은 재시작이 되살린다.
+        - ``session_end`` [단계 5 에서 쓰임 — 지금 제품은 부르지 않는다]: 아무것도 건드리지 않는다 — 들고 있던 봉투와
+          줄은 재시작이 되살린다.
 
         쓰이지 않을 회신은 받지 않는다: ``replies`` 의 rid 가 이번에 닫는 r 줄이 아니거나, ``wait``·``session_end``
         인데 ``replies`` 가 있으면 아무것도 바꾸지 않고 `RowError`."""
@@ -264,17 +265,6 @@ class PostOffice:
             self.cv.notify_all()
             return changed
 
-    def drop(self, rid: str) -> Changed:
-        """줄 ``rid`` 를 회신 없이 닫는다(hop 상한·요청자 부재·main 정지) — 봉투가 상자에 있으면 함께 뺀다."""
-        with self.cv:
-            row = self._book.close(rid, "dropped")
-            changed = Changed()
-            box = self._boxes.get(row.dst)
-            if box is not None and box.discard(rid) is not None:
-                changed = Changed(frozenset({row.dst}), True)
-            self.cv.notify_all()
-            return changed
-
     def take_reply(self, addr: str, rid: str) -> Envelope | None:
         """``addr`` 앞의 요청 ``rid`` 에 대한 회신 하나를 꺼낸다(런이 들지 않는다)."""
         with self.cv:
@@ -319,19 +309,6 @@ class PostOffice:
             self.cv.notify_all()
             return gone, Changed(frozenset(), bool(gone))
 
-    # ── 닫기 ─────────────────────────────────────────
-
-    def close_box(self, addr: str) -> None:
-        with self.cv:
-            self._box(addr).close()
-            self.cv.notify_all()
-
-    def close_all(self) -> None:
-        with self.cv:
-            for box in self._boxes.values():
-                box.close()
-            self.cv.notify_all()
-
     # ── 묻기 (락 안 사본) ────────────────────────────
 
     def queued(self, addr: str) -> tuple[Envelope, ...]:
@@ -354,10 +331,6 @@ class PostOffice:
         with self.cv:
             return self._box_or_empty(addr).has_waking()
 
-    def is_closed(self, addr: str) -> bool:
-        with self.cv:
-            return self._box_or_empty(addr).closed
-
     def owed_by(self, debtor: str) -> tuple[Row, ...]:
         with self.cv:
             return self._book.owed_by(debtor)
@@ -369,10 +342,6 @@ class PostOffice:
     def owes_oldest(self, debtor: str, to: str) -> Row | None:
         with self.cv:
             return self._book.owes_oldest(debtor, to)
-
-    def last_to(self, debtor: str, to: str) -> Row | None:
-        with self.cv:
-            return self._book.last_to(debtor, to)
 
     def open_requests(self, addr: str) -> tuple[Row, ...]:
         with self.cv:

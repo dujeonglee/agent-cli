@@ -124,20 +124,6 @@ class TestOrders:
 
         assert run([("deliver", {"e": REQ})], remover, worker, check) == 2
 
-    def test_close_with_envelopes_left(self):
-        """`close` 는 깨우기만 한다 — 그 앞뒤로 온 봉투는 버려지지 않는다."""
-        closer = [("close_box", {"addr": "main"})]
-        sender = [
-            ("deliver", {"e": E.notice("n-1", A, "main", "a")}),
-            ("deliver", {"e": E.notice("n-2", A, "main", "b")}),
-        ]
-
-        def check(twin, order, _):
-            assert [e.id for e in twin.office.queued("main")] == ["n-1", "n-2"]
-            assert twin.office.is_closed("main")
-
-        assert run([], closer, sender, check) == 3
-
     def test_take_reply_while_the_requested_agent_dies(self):
         """`@agent` 명령이 회신을 꺼내려는 동안 받은 쪽이 멈춘다 — 정지 회신은 꺼내지거나 줄에 남는다, 둘 중 하나."""
         taker = [("take_reply", {"addr": "main", "rid": "r-1"})]
@@ -295,14 +281,6 @@ class TestThreads:
         _in_thread(first)
         second()
         assert len(o.rows()) == (1 if taker_first else 0)
-        o.check_consistency()
-
-    def test_close_from_another_thread_keeps_the_mail(self):
-        o = Twin(ADDRS).office
-        o.deliver(E.notice("n-1", A, "main", "a"))
-        _in_thread(lambda: o.close_box("main"))
-        o.deliver(E.notice("n-2", A, "main", "b"))
-        assert [e.id for e in o.queued("main")] == ["n-1", "n-2"]
         o.check_consistency()
 
     def test_take_reply_waiter_and_a_dying_agent(self):

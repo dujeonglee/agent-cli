@@ -84,7 +84,6 @@ class TestRuns:
         )
         assert ch.addrs == frozenset({"main"})
         assert _rows(office) == [("r-1", "closed", "reply")]  # 그 런 끝까지 남는다
-        assert office.last_to(A, "main").how == "reply"
         assert office.awaited_by("main") == ()
 
     def test_pay_unsent_closes_and_keeps_the_row_without_delivering(self, office):
@@ -93,7 +92,6 @@ class TestRuns:
         office.start_run(A)
         assert office.pay_unsent(A, "r-1", run_id="r-1") == Changed()
         assert _rows(office) == [("r-1", "closed", "unsent")]
-        assert office.last_to(A, "agent:b").how == "unsent"
         assert office.queued("agent:b") == () and office.owed_by(A) == ()
         office.end_run(A, run_id="r-1", outcome="done")
         assert _rows(office) == []
@@ -182,9 +180,9 @@ class TestEndRun:
         office.start_run(A)
         office.pay(A, "r-1", E.reply("n-2", A, "main", "ok", re="r-1"), run_id="r-1")
         office.end_run(A, run_id="r-1", outcome="wait")
-        assert office.last_to(A, "main").how == "reply"
+        assert office.row("r-1").how == "reply"
         office.end_run(A, run_id="r-5", outcome="done")
-        assert office.last_to(A, "main") is None
+        assert office.row("r-1") is None
 
     def test_session_end_touches_nothing(self, office):
         """버그 3 의 구조 수준 짝 — 세션 끝은 들고 있던 봉투도 줄도 남긴다(재시작이 되살린다)."""
@@ -293,11 +291,6 @@ class TestStops:
         assert office.rows() == () and office.queued(A) == ()
         assert [e.mark for e in office.queued("main")] == ["removed by user"]
 
-    def test_drop_takes_the_envelope_with_it(self, office):
-        office.deliver(E.request("r-1", "agent:b", A, "deep", hop=6))
-        office.drop("r-1")
-        assert office.rows() == () and office.queued(A) == ()
-
     def test_take_reply_leaves_the_box(self, office):
         office.deliver(E.reply("n-1", A, "main", "ans", re="r-7"))
         assert office.take_reply("main", "r-7").id == "n-1"
@@ -337,9 +330,7 @@ class TestConsistency:
     def test_the_checker_names_what_is_broken(self):
         o = PostOffice()
         o.deliver(E.request("r-1", "main", A, "do"))
-        o._box(A).discard(
-            "r-1"
-        )  # 줄은 queued 인데 봉투가 없다 — 테스트만 일부러 깨뜨린다
+        o._box(A).take_away()  # 줄은 queued 인데 봉투가 없다 — 테스트만 일부러 깨뜨린다
         with pytest.raises(ConsistencyError) as err:
             o.check_consistency()
         assert any(p.startswith("I2 r-1") for p in err.value.problems)

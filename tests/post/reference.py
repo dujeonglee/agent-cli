@@ -241,18 +241,6 @@ class Model:
             else:
                 self._close(e["id"], "dropped")
 
-    def drop(self, rid):
-        r = self.rows.get(rid)
-        if r is None:
-            raise Refused("drop")
-        dst = r["dst"]
-        self._close(rid, "dropped")
-        for lst in (self._q(dst), self._t(dst)):
-            lst[:] = [e for e in lst if e["id"] != rid]
-
-    def close_box(self, addr):
-        """표지만 — 봉투는 그대로(관찰값에 닫힘은 들지 않는다)."""
-
     def owe(self, rid, debtor, creditor):
         if rid in self.rows:
             raise Refused("dup row")

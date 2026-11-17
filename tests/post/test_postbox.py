@@ -1,4 +1,4 @@
-"""상자 — 봉투 위치 전이표의 모든 칸, 꺼내는 순서, 이름 있는 수, close 는 버리지 않는다."""
+"""상자 — 봉투 위치 전이표의 모든 칸, 꺼내는 순서, 이름 있는 수."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from agent_cli.post.postbox import BoxError, Postbox
 X = E.reply("x-1", "agent:a", "main", "ans", re="r-9")
 OPS = (
     "put", "take_next", "take_all", "take_all_human_first", "take_reply",
-    "drop_queued", "finish_run", "discard", "take_away",
+    "drop_queued", "finish_run", "take_away",
 )  # fmt: skip
 
 #: (위치, 연산) → 새 위치. "error" 는 BoxError. 시안 §3 에서 따로 적은 표.
@@ -24,7 +24,6 @@ EXPECT = {
     ("queued", "take_reply"): "none",
     ("queued", "drop_queued"): "none",
     ("queued", "finish_run"): "queued",
-    ("queued", "discard"): "none",
     ("queued", "take_away"): "none",
     ("taken", "put"): "error",
     **{
@@ -39,7 +38,6 @@ EXPECT = {
         )
     },
     ("taken", "finish_run"): "none",
-    ("taken", "discard"): "none",
 }
 
 
@@ -67,7 +65,6 @@ def test_envelope_location_table(place, op):
     call = {
         "put": lambda: box.put(X),
         "take_reply": lambda: box.take_reply("r-9"),
-        "discard": lambda: box.discard(X.id),
     }.get(op, getattr(box, op))
     if want == "error":
         with pytest.raises(BoxError):
@@ -79,7 +76,7 @@ def test_envelope_location_table(place, op):
 
 
 def test_table_size():
-    assert len(EXPECT) == 3 * len(OPS) == 27
+    assert len(EXPECT) == 3 * len(OPS) == 24
 
 
 def _h(i):
@@ -156,15 +153,6 @@ class TestCounts:
         assert not box.has_waking()
         box.put(_r(2))
         assert box.has_waking()
-
-
-def test_close_only_marks_and_keeps_the_envelopes():
-    box = Postbox()
-    box.put(_r(1))
-    box.close()
-    assert box.closed and [e.id for e in box.queued()] == ["n-1"]
-    box.put(_r(2))  # 닫힌 상자도 받는다 — 남은 메일은 저장돼 다음에 읽힌다
-    assert box.arrived() == 2
 
 
 def test_views_are_copies():

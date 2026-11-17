@@ -6,8 +6,7 @@ main 의 답을 받을 사람이 기다림), q-(에이전트가 사람의 답을
 
 상태: ``queued``(봉투가 받는 쪽 상자에 줄 섰다) → ``picked``(빚으로 적혔다 — 런이 집었다) → 닫힘. 닫힌 줄은
 쌓지 않는다: 런 안에서 닫힌 것(:data:`IN_RUN` — 명시 회신·갚음·complete)만 그 빚진 쪽의 런이 끝날 때까지 남고
-(:meth:`RequestBook.purge_closed` — "이미 갚았다" 거부 문구가 읽는 구간, 지금 `_reply_debts` 의 settled 빚과
-같은 범위), 런 밖에서 닫힌 것(removed·dropped·질문의 답 등)은 바로 지운다. `wait` 로 끝난 런은 비우지 않는다 —
+(:meth:`RequestBook.purge_closed` — "이미 갚았다" 거부 문구가 읽는 구간), 런 밖에서 닫힌 것(removed·dropped·질문의 답 등)은 바로 지운다. `wait` 로 끝난 런은 비우지 않는다 —
 잠든 빚과 함께 다음 런으로 간다. 락이 없다 — `PostOffice` 의 조건변수 아래서만 바꾼다.
 """
 
@@ -191,15 +190,6 @@ class RequestBook:
             (r for r in self.owed_by(debtor) if r.src == to),
             None,
         )
-
-    def last_to(self, debtor: str, to: str) -> Row | None:
-        """``debtor`` 와 ``to`` 사이의 가장 최근 r 줄 — 열렸든 갚았든(거부 사유: "이미 갚았다")."""
-        hits = [
-            r
-            for r in self._rows.values()
-            if r.kind == "r" and r.dst == debtor and r.src == to and r.state != "queued"
-        ]
-        return hits[-1] if hits else None
 
     def open_requests(self, addr: str) -> tuple[Row, ...]:
         """``addr`` 의 런이 `complete` 의 ``answers`` 로 닫을 집힌 u·n 줄 — 연 순서(Open Requests)."""
