@@ -737,7 +737,11 @@ def s01_request_to_run_agent_explicit_reply(root: Path, path: str) -> dict:
 
 def s02_fallback_reply(root: Path) -> dict:
     """§4 요청 r-: 도구 없이 닫힘 — 런 끝 폴백(라벨 붙은 런 요약). `reply` 없이 `complete` 하면 빚 독촉이
-    되돌리고, 예산이 다하면 요약이 요청자에게 간다."""
+    되돌리고, 예산이 다하면 요약이 요청자에게 간다.
+
+    폴백을 읽은 main 꼬리의 로스터는 지금 구현에서 `end_run`↔`_close_run` 틈 때문에 [busy]/[idle] 둘 다 나올 수
+    있다 — 기대값은 정착된 쪽(회신한 run 이 idle)을 강제해 기록한다(v10.144.1 에서 재기록). 회신 레코드의 상태
+    꼬리줄("(agent status: …)")도 회신 시점이 아니라 main 이 흡수할 때의 상태를 읽어 함께 움직인다."""
     box: dict = {}
     p = Provider(
         {
@@ -753,6 +757,9 @@ def s02_fallback_reply(root: Path) -> dict:
         }
     )
     s = box["s"] = Session(root, p)
+    # 폴백을 보낸 run 이 런을 정리(idle)한 뒤 main 이 읽는다 — run 은 main 의 셋째 호출까지 내려오지 않는다
+    s.settle_repliers_before_main_reads()
+    s.recorder.hold("end_agent_work", "*", lambda: len(p.calls.get("MAIN", [])) >= 3)
     s.say("MAIN go")
     drive(s, path="run", until_done=None)
     return s.collect()
