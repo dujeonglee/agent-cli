@@ -212,6 +212,7 @@ class TestBuildReplyRecord:
             "key": "agt-abc",
             "profile": "researcher",
             "run": "r-1",
+            "re": "r-1",  # 갚는 요청 — 런 끝 폴백(`_fall_back`)은 언제나 단다; 표지는 이것이다(v10.145.1)
             "success": True,
             "output": "findings",
             "duration_s": 0.5,
