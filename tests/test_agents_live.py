@@ -2216,7 +2216,7 @@ class TestMultiInstance:
         k2, e2 = reg.spawn(profile="", name="api")
         assert e1 == e2 == "" and k1 != k2
         assert reg.get(k1).instance_name == "ui"
-        assert reg.get(k2).snapshot()["name"] == "api"
+        assert reg.get(k2).snapshot(pending_requests=0)["name"] == "api"
         reg.shutdown_all()
 
     def test_invalid_instance_name_rejected(self, tmp_path, renderer):
@@ -4248,11 +4248,11 @@ def test_roster_snapshot_snapshots_agents_before_iterating(tmp_path):
             self.key = key
             self.state = "idle"
 
-        def snapshot(self):
+        def snapshot(self, *, pending_requests):
             return {"key": self.key}
 
     class _Mutating(_Inert):
-        def snapshot(self):
+        def snapshot(self, *, pending_requests):
             # A concurrent spawn landing mid-iteration.
             k = f"z{len(reg._agents)}"
             reg._agents[k] = _Inert(k)

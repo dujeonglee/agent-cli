@@ -384,7 +384,7 @@ class AgentInstance:
         # 이 런의 회신 빚은 여기 없다 — 레지스트리의 주소별 장부
         # (`AgentRegistry._reply_debts`, v9.22.1) 가 main 과 같은 자리에서 든다.
 
-    def snapshot(self, *, pending_requests: int = 0) -> dict:
+    def snapshot(self, *, pending_requests: int) -> dict:
         """status 표시용 스냅샷 (락 없는 근사값 — 표시 용도). ``pending_requests`` 는 레지스트리가 센 앞에 쌓인
         할 일(`AgentRegistry.backlog_of` — 받은편지함은 레지스트리의 우편에 있다)."""
         est_tokens = 0
@@ -906,10 +906,8 @@ class AgentRegistry:
         return [dict(e.payload) for e in self._post.taken(f"agent:{tm.key}")]
 
     def _snapshot_of(self, tm) -> dict:
-        """에이전트 하나의 표시용 스냅샷 — 앞에 쌓인 할 일을 우편에서 센다(명단의 대역은 그대로 부른다)."""
-        if isinstance(tm, AgentInstance):
-            return tm.snapshot(pending_requests=self.backlog_of(tm.key))
-        return tm.snapshot()
+        """에이전트 하나의 표시용 스냅샷 — 앞에 쌓인 할 일을 우편에서 센다."""
+        return tm.snapshot(pending_requests=self.backlog_of(tm.key))
 
     def backlog_of(self, key: str) -> int:
         """에이전트 ``key`` 앞에 쌓인 할 일 — 깨우는 봉투만 센다(런을 열지 않는 정지 회신은 일이 아니다)."""

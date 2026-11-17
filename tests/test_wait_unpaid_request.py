@@ -3,9 +3,9 @@
 에이전트 A 가 요청자 X 에게 갚을 것이 하나도 없으면(회신했다·통지로 돈다·대기열엔 통지뿐) A 의 진행 중 런과
 받은편지함은 X 의 `wait` 를 깨울 근거가 아니다 — 그 런이 끝나도 X 에게 갈 것이 없다. 종전엔 "A 가 X 의 일로 바쁘다"(`current_author`)를
 그대로 근거로 쳐, 회신을 먼저 받은 main 의 `wait` 가 제자리 대신 런을 끝냈다(CI min-deps 실측). 받은편지함을
-떠나 빚으로 적히기 전 틈은 여전히 근거다(보낸 쪽 기록 `_sent` — P2 의 기다리는 회신과 같은 회계).
+떠나는 순간이 곧 빚이다(v10.145.0 — 옛 구현은 빚을 적기 전 틈이 있었다).
 
-에이전트는 워커 없이 세운다 — 상태는 레지스트리의 진짜 메서드(`request`·`_begin_items`·`note_owes`·
+에이전트는 워커 없이 세운다 — 상태는 레지스트리의 진짜 메서드(`request`·`absorb_pending`·`note_owes`·
 `pay_debt`)로만 옮긴다. 시간에 기대는 것은 없다. 끝의 둘은 실제 엔진으로 모델이 받는 바이트를 본다.
 """
 
@@ -72,21 +72,14 @@ def _idle_agent(reg, key):
     return tm
 
 
-def _pick_up(reg, tm, *, note: bool):
-    """워커가 하는 것 — 받은편지함의 항목으로 런을 시작한다. ``note`` 면 공개 길(`absorb_pending` — 런 시작과
-    같은 회계: 처리 중으로 옮기고 요청이면 빚을 적는다)로 줄 선 것 전부를, 아니면 빚을 적기 **전**의 틈을
-    세운다(첫 항목만 처리 중으로 — 그 틈은 공개 흐름으로 세울 수 없다)."""
+def _pick_up(reg, tm):
+    """워커가 하는 것 — 받은편지함의 항목으로 런을 시작한다. 공개 길(`absorb_pending` — 런 시작과 같은 회계:
+    처리 중으로 옮기고 요청이면 빚을 적는다)로 줄 선 것 전부를."""
     (first, *_rest) = reg.queued_for(f"agent:{tm.key}")
     tm.state = "busy"
     tm.current_author = first.src
-    if note:
-        reg.absorb_pending(tm)
-        return {"id": first.id, "author": first.src, "text": first.text}
-    # 4단계 예외: 빚을 적기 전의 틈은 `ResidentLoop.start` 안(처리 중으로 옮긴 뒤 `note_owes` 전)에만 있다 —
-    # 공개 입구가 없다. 새 구조는 꺼내기와 빚 적기가 한 메서드라 이 틈 자체가 없다.
-    item = tm.inbox_items[0]
-    reg._begin_items(tm, [item])
-    return item
+    reg.absorb_pending(tm)
+    return {"id": first.id, "author": first.src, "text": first.text}
 
 
 def _relations(reg, addr) -> dict[str, str]:
@@ -112,7 +105,7 @@ class TestWhoWakesTheRequester:
             _idle_agent(reg, "agt-req")
         tm = _idle_agent(reg, "agt-w")
         assert reg.request("agt-w", "find callers", author=requester) == ""
-        item = _pick_up(reg, tm, note=True)
+        item = _pick_up(reg, tm)
         assert wake_sources(requester, agents=reg) != []  # 일하는 동안은 근거
         (d,) = reg.reply_debts("agent:agt-w")
         assert reg.pay_debt("agent:agt-w", d, "3 callers") == ""
@@ -133,25 +126,24 @@ class TestWhoWakesTheRequester:
         reg.request("agt-w", "first", author=requester)
         reg.request("agt-w", "second", author=requester)
         # 첫 항목으로 런을 시작하고 둘째는 런 도중 흡수 — 같은 회계(`absorb_pending`)라 한 번에
-        _pick_up(reg, tm, note=True)
+        _pick_up(reg, tm)
         first = next(d for d in reg.reply_debts("agent:agt-w") if d.text == "first")
         reg.pay_debt("agent:agt-w", first, "done 1")
         relations = _relations(reg, requester)
         assert relations.get("agent:agt-w") in ("owes", "working")
         assert any("agt-w" in s for s in wake_sources(requester, agents=reg))
 
-    def test_gap_before_the_debt_is_noted_still_wakes(self, reg):
-        """③ 받은편지함을 떠나 빚으로 적히기 전 틈 — 빚은 아직 없지만 보낸 쪽 기록이 있다."""
+    def test_picking_a_request_is_owing_it(self, reg):
+        """③ 받은편지함을 떠나는 순간이 곧 빚이다 — `[v10.145.0 에서 바뀜 — 옛 구현은 집은 뒤 빚을 적기까지 틈이
+        있어 그 순간 근거가 "working on your request" 하나였다]`. 정착된 근거는 그때도 지금도 둘이다."""
         tm = _idle_agent(reg, "agt-w")
         reg.request("agt-w", "find callers", author="main")
-        _pick_up(reg, tm, note=False)
-        assert (
-            reg.reply_debts("agent:agt-w") == []
-            and list(reg.queued_for("agent:agt-w")) == []
-        )
-        assert _relations(reg, "main").get("agent:agt-w") == "working"
+        item = _pick_up(reg, tm)
+        assert [d.id for d in reg.reply_debts("agent:agt-w")] == [item["id"]]
+        assert list(reg.queued_for("agent:agt-w")) == []
         assert wake_sources("main", agents=reg) == [
-            "agent:agt-w working on your request"
+            "agent:agt-w owes you a reply",
+            "agent:agt-w working on your request",
         ]
 
     def test_notice_run_does_not_wake_the_sender(self, reg):
@@ -164,7 +156,7 @@ class TestWhoWakesTheRequester:
             expects_reply=False,
             kind="notice",
         )
-        _pick_up(reg, tm, note=True)
+        _pick_up(reg, tm)
         assert tm.state == "busy" and tm.current_author == "main"
         assert wake_sources("main", agents=reg) == []
 
@@ -186,15 +178,17 @@ class TestWhoWakesTheRequester:
         ]
 
     def test_others_requests_do_not_count(self, reg):
-        """다른 요청자의 갚지 않은 요청은 그 요청자의 근거일 뿐이다."""
+        """다른 요청자의 갚지 않은 요청은 그 요청자의 근거일 뿐이다. `[v10.145.0 에서 바뀜 — 옛 구현은 집은 뒤 빚을
+        적기까지 틈이 있어 그 순간 근거가 "working on your request" 하나였다]`"""
         _idle_agent(reg, "agt-req")
         tm = _idle_agent(reg, "agt-w")
         reg.request("agt-w", "for agt-req", author="agent:agt-req")
-        _pick_up(reg, tm, note=False)
+        _pick_up(reg, tm)
         tm.current_author = "main"  # 화자 표시가 main 이어도
         assert wake_sources("main", agents=reg) == []
         assert wake_sources("agent:agt-req", agents=reg) == [
-            "agent:agt-w working on your request"
+            "agent:agt-w owes you a reply",
+            "agent:agt-w working on your request",
         ]
 
 
