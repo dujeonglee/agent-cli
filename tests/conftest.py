@@ -88,7 +88,7 @@ def _no_files_left_in_repo():
 @pytest.fixture(autouse=True)
 def _post_shadow(monkeypatch):
     """단일 구조 2단계 그림자 비교기(발판 — 조각 3 에서 지운다): 레지스트리가 저장할 때마다, 그리고 테스트가 끝날
-    때 아직 남은 옛 저장소(질문·private 메일함)와 우편이 같은 것을 말하는지 본다(`tests/post_shadow.py`). 저장은
+    때 아직 남은 옛 저장소(private 메일함)와 우편이 같은 것을 말하는지 본다(`tests/post_shadow.py`). 저장은
     워커 스레드에서도 일어나므로 어긋남을 모아 두었다가 정리 때 테스트를 실패시킨다 — 삼키지 않는다."""
     from agent_cli.subagent.agents_live import AgentRegistry
     from tests import post_shadow

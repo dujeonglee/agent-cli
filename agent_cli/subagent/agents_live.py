@@ -59,6 +59,7 @@ from agent_cli.constants import (
 )
 from agent_cli.loop.kind import LoopKindError
 from agent_cli.post.office import PostOffice
+from agent_cli.post.request_book import RowError
 from agent_cli.session.store import AGENTS_DIR
 from agent_cli.session_slots import get_job_registry
 from agent_cli.subagent import agent_stop, agents_state
@@ -129,7 +130,7 @@ _MAX_PEER_HOPS = 6
 
 @dataclass
 class Question:
-    """열린 질문 하나 — ``AgentRegistry._questions`` 의 값. 주소는 언제나 사람
+    """열린 질문 하나 — 우편 장부의 질문 줄(q-)의 ``meta``. 주소는 언제나 사람
     (v10.77.0, B) — ❓ 트레이가 보여 주고 사람이 답한다.
 
     ``asked_in`` = asker 가 이 질문을 건 런(을 연 배달의 id) — 그 런의 결과에
@@ -469,10 +470,8 @@ class AgentRegistry:
         # 소비한 런의 ``answers`` 에 합류한다(🤝 웨이크 런 포함). 시간이
         # 아니라 요청↔회신 쌍에 묶이므로 인터리빙에 안전.
         self._current_run_authors: list[str] = []
-        # 열린 질문 (비동기 ask/answer, DESIGN.md §3) — id → Question.
-        # ``_pending`` 과 같은 규율: 모든 접근은 ``_cv`` 아래. 답 claim 이
-        # 원자적이어야 동시 답변자 둘 중 하나만 답이 된다.
-        self._questions: dict[str, Question] = {}
+        # 열린 질문(비동기 ask/answer, DESIGN.md §3)은 우편 장부의 q 줄이다 — ``meta`` 가 `Question`(v10.145.0).
+        # 답은 줄을 닫는 것과 배달이 한 락 구간이라(`PostOffice.answer`) 동시 답변자 둘 중 하나만 답이 된다.
         # 빚·보낸 쪽 기록·받은편지함·main 메일함은 우편 하나다(`self._post` — 약속 장부와 상자, v10.145.0).
         # resume 이 버린 열린 질문 수 — 부트스트랩이 사람에게 알린다(§3.9).
         self.stale_questions = 0
@@ -526,7 +525,7 @@ class AgentRegistry:
 
     def roster_snapshot(self) -> list[dict]:
         # ``AgentInstance.snapshot`` 은 인스턴스 메서드라 레지스트리의
-        # ``_questions``/``_cv`` 에 닿지 못한다 — 열린 질문은 여기서 합류.
+        # 우편에 닿지 못한다 — 열린 질문은 여기서 합류.
 
         # Snapshot the values first: this runs on worker/web threads while the
         # main thread may spawn/resume/restore into ``_agents``. Iterating the
@@ -963,7 +962,7 @@ class AgentRegistry:
             # 중복 접기 — **같은 런 안에서만**. ``_op_ask`` 는 루프 탐지기
             # 앞에서 반환하므로(dispatch.py) 한 런이 같은 질문을 반복해도
             # 구조적으로 안 잡힌다. 런 경계를 넘으면 접지 않는다.
-            for q in self._questions.values():
+            for q in self.open_human_questions():
                 if q.asker == asker and q.text == text and q.asked_in == asked_in:
                     return q.id, ""
             q = Question(
@@ -973,10 +972,7 @@ class AgentRegistry:
                 text=text,
                 asked_in=asked_in,
             )
-            self._questions[q.id] = q
-            self._post.ask(
-                q.id, f"agent:{asker}", q.target, text, meta=q
-            )  # 2단계 그림자
+            self._post.ask(q.id, f"agent:{asker}", q.target, text, meta=q)
         self._render_question(q)
         self._save_state()
         # 트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
@@ -1029,27 +1025,25 @@ class AgentRegistry:
         text = (text or "").strip()
         if not text:
             return "empty answer"
-        with self._cv:
-            row = self._post.row(qid)
-            q = row.meta if row is not None and row.kind == "q" else None
-            if q is None or qid not in self._questions:
-                return f'unknown or already-answered question "{qid}"'
-            if not is_human_addr(by):
-                return f'question "{qid}" is addressed to the person, not "{by}"'
-            del self._questions[
-                qid
-            ]  # 원자적 claim — 동시 답변자 중 하나만(옛 쪽, 1c 에서 우편의 답으로)
+        unknown = f'unknown or already-answered question "{qid}"'
+        row = self._post.row(qid)
+        q = row.meta if row is not None and row.kind == "q" else None
+        if q is None:
+            return unknown
+        if not is_human_addr(by):
+            return f'question "{qid}" is addressed to the person, not "{by}"'
         delivered: list = []
 
-        def _answer(env):  # 2단계 그림자 — 답 배달과 같은 락 구간
-            delivered.append(env)
+        def _answer(env):  # 답의 배달이 곧 질문 줄 닫기(한 락 구간)
             self._post.answer(qid, env)
+            delivered.append(env)
 
-        with self._deliver_as(_answer):
-            self._deliver_answer(q, text)
-        if (
-            not delivered
-        ):  # 묻는 쪽이 사라져 답이 가지 않았다 — 옛 쪽은 질문을 이미 지웠다
+        try:
+            with self._deliver_as(_answer):
+                self._deliver_answer(q, text)
+        except RowError:
+            return unknown  # 다른 답변자가 먼저 답했다 — 줄이 이미 닫혔다
+        if not delivered:  # 묻는 쪽이 사라져 답이 가지 않았다 — 질문을 버린다
             self._post.forget_questions_of(f"agent:{q.asker}")
         self._save_state()
         return ""
@@ -1437,11 +1431,7 @@ class AgentRegistry:
         세션 종료(``shutdown_all``)에서 지우면 직후의 ``_save_state`` 가 빈 목록을
         저장해 resume 이 질문을 되살리지 못한다.
         """
-        with self._cv:
-            outgoing = [q.id for q in self._questions.values() if q.asker == key]
-            for qid in outgoing:
-                self._questions.pop(qid, None)
-            self._post.forget_questions_of(f"agent:{key}")  # 2단계 그림자
+        outgoing, _ = self._post.forget_questions_of(f"agent:{key}")
         if outgoing:
             self._save_state()
             self._notify_roster()
@@ -2957,10 +2947,7 @@ class AgentRegistry:
                 if tm is None or tm.state == "dead":
                     dropped += 1
                     continue
-                self._questions[q.id] = q
-                self._post.ask(
-                    q.id, f"agent:{q.asker}", q.target, q.text, meta=q
-                )  # 2단계 그림자
+                self._post.ask(q.id, f"agent:{q.asker}", q.target, q.text, meta=q)
         self.stale_questions = dropped
 
     # ── worker ──────────────────────────────────
