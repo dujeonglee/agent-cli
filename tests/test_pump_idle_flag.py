@@ -47,3 +47,32 @@ def test_idle_stays_on_through_an_empty_poll_and_goes_off_for_an_item():
         ("run", False),  # 항목이 오면 꺼진다
         ("loop top", False),  # 런 뒤 다음 바퀴 — 다시 세우기 전
     ]
+
+
+class SkippingWaker(FakeWaker):
+    """깨우기 문구를 꺼내면 "skip"(이미 다른 런이 배달했다)으로 판정하는 대역."""
+
+    def handle_dequeued(self, text):
+        return "skip" if text == self.WAKE_TEXT else None
+
+
+def test_a_wake_that_is_skipped_leaves_idle_on():
+    """건너뛸 깨우기를 꺼낸 바퀴는 런을 열지 않는다 — 한가함도 꺼지지 않는다(꺼지면 그 바퀴 동안 온 메일이 "바쁨"
+    으로 보인다). 판정 뒤에 끈다."""
+    waker = SkippingWaker()
+    seen: list[tuple[str, bool]] = []
+
+    class Policy:
+        poll_secs = 0.05
+
+        def should_stop(self):
+            seen.append(("loop top", waker.idle.is_set()))
+            return False
+
+    def run_main(req):  # pragma: no cover — 열리면 안 된다
+        seen.append(("run", waker.idle.is_set()))
+        return SimpleNamespace(output="ok", success=True, waiting=False)
+
+    queue = ScriptedQueue([{"text": waker.WAKE_TEXT}, InputQueue.SHUTDOWN])
+    make_pump(queue=queue, run_main=run_main, waker=waker, policy=Policy()).run()
+    assert seen == [("loop top", False), ("loop top", True)]

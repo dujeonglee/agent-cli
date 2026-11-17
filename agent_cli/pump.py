@@ -229,11 +229,11 @@ class SessionPump:
                 return
             if item is None:
                 continue  # timeout — 정지 조건을 다시 판정(한가함은 그대로 — 끄면 그 사이 온 메일이 "바쁨" 으로 보인다)
-            d.waker.idle.clear()
             text = item.get("text") or ""
             verdict = d.waker.handle_dequeued(text)
             if verdict == "skip":
-                continue  # 이미 다른 런이 배달한 깨우기 — 빈 런을 열지 않는다
+                continue  # 이미 다른 런이 배달한 깨우기 — 빈 런을 열지 않는다(한가함도 그대로)
+            d.waker.idle.clear()  # 한가함은 런이 실제로 열릴 때만 꺼진다
             wake = verdict == "run"
             d.surface.busy()
             d.surface.echo(item, wake=wake)
