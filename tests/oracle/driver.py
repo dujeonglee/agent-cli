@@ -682,6 +682,16 @@ def _held_peer_message(box, sender: str, to: str, text: str) -> str:
     return call("message", to=to, text=text)
 
 
+def _held_request_to(box, to: str, text: str) -> str:
+    """보내는 쪽이 ``to`` 에게 회신 기대 `message` — 보낸 쪽의 다음 꼬리는 받는 쪽이 일을 집은 뒤(바쁨)에 짓게
+    잡는다(요청의 창 줄 `agent_message` 에서). 안 잡으면 부하 아래 그 꼬리가 "idle · 1 queued" 로 찍힌다(s22 가,
+    컨테이너 cpus 0.5·부하 1회, 2026-11-17)."""
+    s = box["s"]
+    b = _agent_key(s, to)
+    s.recorder.hold("agent_message", b, lambda: s.agent_state(b) == "busy")
+    return call("message", to=to, text=text)
+
+
 def _pay_before_main_notes(s: Session) -> None:
     """상주가 main 에게 보내는 회신 기대 `message` 는 자기 과제의 빚도 갚는다 — 갚음(보낸 쪽 기록 지우기)은
     배달 **뒤**다. main 이 그 요청을 빚으로 적는 자리(`note_request`)에서 main 의 "기다리는 회신" 이 비기까지
@@ -1657,7 +1667,7 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
             + [complete_all("main read it")] * 10,
             "TASK-D1": [
                 _main_waits_then(
-                    box, lambda m: call("message", to="bb", text="TASK-D2 compute")
+                    box, lambda m: _held_request_to(box, "bb", "TASK-D2 compute")
                 ),
                 # main 이 died 통지를 읽고 되묻기를 다 받은 뒤(열두째 호출) — aa 는 그동안 바쁘다
                 _bb_dead_then(
