@@ -260,20 +260,10 @@ if ($badge && $drawer) {
     return s;
   }
 
-  // Clear 는 비울 것이 있을 때만 — 목록 0 이고 보이는 하위 저장소 그룹도 0 이면 끈다
-  // (0 에서 누르면 빈 기준점 커밋과 "List cleared (0 files)" 가 생겼다). Undo 토스트는 따로 산다.
-  const clearTitle = $clear.title;
-  function syncClear() {
-    const on = !!(data && data.enabled);
-    const some = on && (data.files.length > 0 || shownRepos().length > 0);
-    $clear.disabled = !some;
-    $clear.title = !on || some ? clearTitle : "Nothing to clear";
-  }
-
   function renderPanel() {
     $list.textContent = "";
     const on = !!(data && data.enabled);
-    syncClear();
+    $clear.disabled = !on;
     $drawer.querySelector("#changes-refresh").disabled = !on;
     if (!on) {
       $since.textContent = "";
@@ -454,14 +444,15 @@ if ($badge && $drawer) {
     $toast.hidden = false;
     toastTimer = setTimeout(function () { $toast.hidden = true; }, UNDO_MS);
   }
+  // 토스트의 수는 서버가 Clear 할 때 센 것(`cleared`) — 화면 목록은 마지막으로 센 때의 것이라
+  // 밖에서 디스크가 바뀌었으면(git reset 등) 틀린다(v10.144.2). Clear 는 늘 눌린다.
   $clear.addEventListener("click", function () {
-    const n = data && data.files ? data.files.length : 0;
     $clear.disabled = true;
     fetch("api/changes/clear", { method: "POST" })
       .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
-      .then(function (d) { selected = null; apply(d); toast(n); })
+      .then(function (d) { selected = null; apply(d); toast(d.cleared); })
       .catch(recount)
-      .then(syncClear);
+      .then(function () { $clear.disabled = !(data && data.enabled); });
   });
   document.getElementById("changes-refresh").addEventListener("click", recount);
 

@@ -1383,14 +1383,16 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.post("/api/changes/clear")
     async def changes_clear():
-        """지금 디스크를 새 기준점으로 — 목록만 비운다(파일은 그대로). 새 목록을 준다.
-        다시 셀 때 하위 저장소 기록을 지금과 맞춘다(기준 잃음·새 저장소)."""
+        """지금 디스크를 새 기준점으로 — 목록만 비운다(파일은 그대로). 새 목록과
+        ``cleared``(비운 항목 수 — Clear 가 기준으로 찍은 트리로 센 것, 화면 목록이 아니다)를
+        준다. 다시 셀 때 하위 저장소 기록을 지금과 맞춘다(기준 잃음·새 저장소)."""
         store = _changes_store()
         if store is None:
             raise HTTPException(status_code=409, detail="snapshots are off")
-        if await _in_executor(store.clear) is None:
+        done = await _in_executor(store.clear)
+        if done is None:
             raise HTTPException(status_code=500, detail="clear failed")
-        return await _in_executor(_changes_payload, store)
+        return {"cleared": done[1], **await _in_executor(_changes_payload, store)}
 
     @app.post("/api/changes/notices/dismiss")
     async def changes_dismiss(request: Request):

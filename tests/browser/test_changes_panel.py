@@ -1015,39 +1015,35 @@ def test_entry_line_without_changes_opens_the_empty_panel(stack, page, ws):
     assert page.inner_text("#changes-list .chg-empty").startswith(
         "No changes since session start · "
     )
-    clear = page.evaluate(
-        """() => [document.querySelector('#changes-clear').disabled,
-                  document.querySelector('#changes-clear').title,
-                  document.querySelector('#changes-refresh').disabled]"""
-    )
-    assert clear == [True, "Nothing to clear", False]
     assert errors == []
 
 
-def test_undo_stays_alive_after_clearing_to_zero(stack, page, ws):
-    """Clear 로 0 이 되면 Clear 는 꺼지지만 그 직후의 Undo 토스트는 살아 있다."""
-    _edit(ws)
+def test_clear_counts_the_disk_not_the_stale_list(stack, page, ws):
+    """화면은 0 인데 밖에서 디스크가 바뀌었다(↻ 없이) — Clear 는 늘 눌리고, 토스트의 수는
+    서버가 Clear 할 때 센 실제 수, 다시 세면 0, Undo 로 이전 기준점이 돌아온다."""
     errors = _open(page, stack)
     _files_drawer(page)
-    _entry_state(page, "has")
+    _entry_state(page, "zero")
     page.click("#changes-entry")
-    page.wait_for_selector("#changes-drawer.open .chg-row", timeout=8000)
-    title = page.get_attribute("#changes-clear", "title")
-    assert title != "Nothing to clear"
+    page.wait_for_selector("#changes-drawer.open .chg-empty", timeout=8000)
+    assert page.evaluate("() => !document.querySelector('#changes-clear').disabled")
+    _edit(ws)  # 화면 모르게 셋
     page.click("#changes-clear")
     page.wait_for_selector("#changes-toast:not([hidden]) .chg-undo", timeout=8000)
+    assert "List cleared (3 files)." in page.inner_text("#changes-toast")
+    assert page.inner_text("#changes-since").endswith(" · cleared")
+    # 다시 세도 0 — 기준점이 지금 디스크. 셈의 응답까지 기다린다(그 응답이 Undo 뒤에
+    # 도착해 화면을 덮지 않게)
+    with page.expect_response(lambda r: r.url.endswith("/api/changes")):
+        page.click("#changes-refresh")
     page.wait_for_function(
-        "() => document.querySelector('#changes-clear').disabled", timeout=8000
+        "() => !!document.querySelector('#changes-list .chg-empty')", timeout=8000
     )
-    assert page.get_attribute("#changes-clear", "title") == "Nothing to clear"
-    assert _entry_state(page, "zero")["what"] == "No changes"
+    assert page.locator("#changes-list .chg-row").count() == 0
     page.click("#changes-toast .chg-undo")
     page.wait_for_function(f"() => {_BADGE_EXPR} === '3'", timeout=8000)
-    assert page.evaluate("() => !document.querySelector('#changes-clear').disabled"), (
-        "Undo 로 목록이 돌아오면 Clear 도 돌아온다"
-    )
-    assert page.get_attribute("#changes-clear", "title") == title
-    assert _entry_state(page, "has")["what"] == "3 files changed"
+    assert page.locator("#changes-list .chg-row").count() == 3
+    assert page.inner_text("#changes-since").startswith("since session start · ")
     assert errors == []
 
 

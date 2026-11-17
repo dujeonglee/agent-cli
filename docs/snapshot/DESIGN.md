@@ -178,8 +178,10 @@ list→at 우회 시퀀스 수, db-wal·financial 통과(35B 가 민감). 테스
   (`AGENT_CLI_SNAPSHOT=0`·git 없음) 패널도 없다.
 - **입구 셋**(v10.144.2): 헤더 📁 의 숫자 배지·main 의 마지막 `complete` 카드 안의 한 줄(둘 다 바뀐 것이 있을 때만),
   그리고 📁 Workspace files 서랍 머리 아래 **늘 서 있는 한 줄** — N(강조, `View changes ›`)·0(흐림, `Open ›`
-  — 빈 패널)·꺼짐(점선, 누를 수 없음, 까닭 한 줄). 0 이고 보이는 하위 저장소 그룹도 없으면 `Clear list` 는 꺼진다
-  (`Nothing to clear`) — Clear 직후의 Undo 토스트는 그대로 산다.
+  — 빈 패널)·꺼짐(점선, 누를 수 없음, 까닭 한 줄).
+- **Clear 는 늘 눌린다**(v10.144.2, 사용자 결정): 화면 숫자는 마지막으로 센 때의 것이라 밖에서 디스크가 바뀌면
+  (git reset 등) 화면 0·실제 N 일 수 있다. 토스트의 수는 `clear()` 가 돌려주는 `(기준점, 비운 수)` 의 수 — 새
+  기준점으로 찍는 **같은 트리**로 `report(disk)` 가 센 것이라 셈과 기준 잡기 사이에 틈이 없다. 웹 응답 `cleared`.
 - **꺼진 까닭**: runtime 은 실패한 저장소를 남기지 않는다(도구 광고·훅이 `get_snapshot` 을 본다). 대신
   `reset_snapshot(off=(cause, detail))` 로 까닭만 남기고 웹은 `snapshot_off()` 를 읽는다. cause 는 닫힌 어휘
   `OFF_CAUSES` — 발생 지점이 정한다: `disabled`(노브) · `git_missing`·`git_broken`(`_probe_git`) ·

@@ -810,7 +810,7 @@ class GitSnapshot:
             )  # 그 사이 다른 셈·Clear 가 기록을 옮겼다 — 다시
         return False
 
-    def report(self) -> ChangeReport | None:
+    def report(self, disk: DiskTree | None = None) -> ChangeReport | None:
         """기준점 ↔ 지금 디스크 — 워크스페이스 파일 + 기록이 있는 하위 저장소 안의 파일,
         하위 저장소 그룹 머리와 안내 줄. 읽기만 한다(기록·ref·실제 색인 불변) — 기록을
         지금과 맞추는 것은 :meth:`sync_nested_records`. 비교할 수 없으면 None.
@@ -818,12 +818,14 @@ class GitSnapshot:
         안내 줄은 기록에 남은 것(기준 잃음 — ✕ 로 닫는다) 앞에 셀 때마다 정하는 것
         (``dismissable: False`` — 닫을 수 없다): 체크포인트가 실패하고 있음
         (``snapshot_failing``), 커밋 없는 하위 저장소.
-        지금 디스크를 못 읽으면(``add`` 실패) 마지막 스냅샷(HEAD)까지의 목록 + 실패 안내."""
+        지금 디스크를 못 읽으면(``add`` 실패) 마지막 스냅샷(HEAD)까지의 목록 + 실패 안내.
+        ``disk`` 를 주면 그 트리로 센다(:meth:`clear` 가 기준으로 찍을 바로 그 트리)."""
         base = self.baseline()
         if not base:
             return None
         _, _, record = self._active_record(base)
-        disk = self._disk_tree()
+        if disk is None:
+            disk = self._disk_tree()
         tree = disk.tree or self.head()
         ws = self._workspace_diff(base[0], tree, record) if tree else None
         if tree is None or ws is None:
@@ -924,21 +926,27 @@ class GitSnapshot:
             lines = lines[:max_lines] + [f"… truncated, {more} more lines"]
         return "\n".join(lines), ""
 
-    def clear(self) -> tuple[str, str, int] | None:
+    def clear(self) -> tuple[tuple[str, str, int], int] | None:
         """지금 디스크를 새 기준점으로 — 그 트리를 커밋(부모 HEAD, 라벨
         ``BASELINE_LABEL``)하고 ``BASELINE_REF`` 를 옮긴다. 옮기기 전 기준점 커밋은
         ``BASELINE_PREV_REF`` 에(Undo 한 단계). 하위 저장소도 지금 상태로 다시 기록해
         ``NESTED_BASELINE_REF`` 로(이전 기록은 ``NESTED_BASELINE_PREV_REF``) — ref 넷을 한
-        트랜잭션으로. HEAD·색인·파일은 건드리지 않는다. 새 기준점을 돌려준다(실패 None)."""
+        트랜잭션으로. HEAD·색인·파일은 건드리지 않는다. ``(새 기준점, 비운 항목 수)`` 를
+        돌려준다(실패 None) — 수는 이전 기준점 ↔ 새 기준점으로 찍는 **같은 트리**로 센다
+        (:meth:`report` 의 항목 수, v10.144.2): 화면의 낡은 목록이 아니고 셈과 기준 잡기
+        사이에 디스크가 바뀌는 틈도 없다."""
         if not self.enabled:
             return None
         with self._lock:  # Clear·Undo 끼리의 순서 — ref 들을 함께 옮긴다
             prev = self.baseline()
             # .git 이 지워진 폴더는 새 기준점 트리에 일반 파일로 담긴다(_disk_tree 의 경계 맞춤)
             # — 일반 폴더 기록이 따로 필요 없다
-            tree = self._disk_tree().tree
+            disk = self._disk_tree()
+            tree = disk.tree
             if not tree:
                 return None
+            before = self.report(disk)
+            cleared = len(before.files) if before else 0
             head = self.head()
             args = ["commit-tree", tree, "-m", BASELINE_LABEL]
             if head:
@@ -963,7 +971,7 @@ class GitSnapshot:
             ]
             if not self._update_refs(ops):
                 return None
-            return new, "cleared", when
+            return (new, "cleared", when), cleared
 
     def undo_clear(self) -> bool:
         """마지막 Clear 를 되돌린다 — 한 단계만(두 번째는 무동작, False). 이전 기준점이

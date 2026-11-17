@@ -3950,6 +3950,7 @@ class TestChangesEndpoints:
         head = store.head()
         cleared = client.post("/api/changes/clear" + q).json()
         assert cleared["files"] == [] and cleared["baseline"]["kind"] == "cleared"
+        assert cleared["cleared"] == 2  # Clear 가 센 수(a.py·new.md)
         assert (w / "a.py").read_text() == "one\nTWO\n"  # 파일은 그대로
         assert store.head() == head
         undo = client.post("/api/changes/undo" + q).json()
