@@ -225,11 +225,11 @@ class SessionPump:
             # on_run_end()→idle window re-arms here, else web parks forever.
             d.waker.mark_idle()
             item = d.queue.dequeue_blocking(timeout=d.policy.poll_secs)
-            d.waker.idle.clear()
             if item is InputQueue.SHUTDOWN:
                 return
             if item is None:
-                continue  # timeout — 정지 조건을 다시 판정
+                continue  # timeout — 정지 조건을 다시 판정(한가함은 그대로 — 끄면 그 사이 온 메일이 "바쁨" 으로 보인다)
+            d.waker.idle.clear()
             text = item.get("text") or ""
             verdict = d.waker.handle_dequeued(text)
             if verdict == "skip":
