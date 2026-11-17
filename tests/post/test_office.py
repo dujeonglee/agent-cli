@@ -10,7 +10,7 @@ import threading
 import pytest
 
 from agent_cli.post import envelope as E
-from agent_cli.post.office import Changed, ConsistencyError, PostOffice
+from agent_cli.post.office import ConsistencyError, PostOffice
 from agent_cli.post.postbox import BoxError
 from agent_cli.post.request_book import RowError
 
@@ -30,8 +30,7 @@ def _rows(o):
 
 class TestDeliver:
     def test_a_request_opens_a_queued_row(self, office):
-        ch = office.deliver(E.request("r-1", "main", A, "do"))
-        assert ch == Changed(frozenset({A}), True)
+        office.deliver(E.request("r-1", "main", A, "do"))
         assert _rows(office) == [("r-1", "queued", None)]
 
     def test_main_n_items_open_their_row_at_put_too(self, office):
@@ -46,10 +45,10 @@ class TestDeliver:
     def test_notices_replies_and_checkins_open_no_row(self, office):
         office.deliver(E.notice("n-1", A, "main", "fyi"))
         office.deliver(E.reply("n-2", A, "main", "ok", re="r-0"))
-        ch = office.deliver(
+        office.deliver(
             E.system("n-3", "harness", A, "⏰", opens_row=False, persists=False)
         )
-        assert office.rows() == () and ch.persist is False
+        assert office.rows() == ()
 
     def test_a_duplicate_id_changes_nothing(self, office):
         office.deliver(E.request("r-1", "main", A, "do"))
@@ -62,27 +61,25 @@ class TestRuns:
     def test_start_run_picks_and_absorb_takes_the_rest(self, office):
         office.deliver(E.request("r-1", "main", A, "one"))
         office.deliver(E.request("r-2", "main", A, "two"))
-        envs, ch = office.start_run(A)
-        assert [e.id for e in envs] == ["r-1"] and ch.addrs == frozenset({A})
+        envs = office.start_run(A)
+        assert [e.id for e in envs] == ["r-1"]
         assert _rows(office) == [("r-1", "picked", None), ("r-2", "queued", None)]
-        envs, _ = office.absorb(A)
+        envs = office.absorb(A)
         assert [e.id for e in envs] == ["r-2"]
         assert [e.id for e in office.taken(A)] == ["r-1", "r-2"]
 
     def test_start_run_returns_a_tuple_of_people(self, office):
         office.deliver(E.human("u-1", "user:dj", A, "a"))
         office.deliver(E.human("u-2", "user:dj", A, "b"))
-        envs, _ = office.start_run(A)
+        envs = office.start_run(A)
         assert [e.id for e in envs] == ["u-1", "u-2"]
-        assert office.start_run(A) == ((), Changed())
+        assert office.start_run(A) == ()
 
     def test_pay_closes_and_delivers(self, office):
         office.deliver(E.request("r-1", "main", A, "do"))
         office.start_run(A)
-        ch = office.pay(
-            A, "r-1", E.reply("n-2", A, "main", "done", re="r-1"), run_id="r-1"
-        )
-        assert ch.addrs == frozenset({"main"})
+        office.pay(A, "r-1", E.reply("n-2", A, "main", "done", re="r-1"), run_id="r-1")
+        assert [e.id for e in office.queued("main")] == ["n-2"]
         assert _rows(office) == [("r-1", "closed", "reply")]  # 그 런 끝까지 남는다
         assert office.awaited_by("main") == ()
 
@@ -90,7 +87,7 @@ class TestRuns:
         """갚았는데 회신이 가지 못했다(요청자가 사라짐) — 닫힌 채 그 런 끝까지 남는다("이미 회신했다"), 배달 없음."""
         office.deliver(E.request("r-1", "agent:b", A, "do"))
         office.start_run(A)
-        assert office.pay_unsent(A, "r-1", run_id="r-1") == Changed()
+        office.pay_unsent(A, "r-1", run_id="r-1")
         assert _rows(office) == [("r-1", "closed", "unsent")]
         assert office.queued("agent:b") == () and office.owed_by(A) == ()
         office.end_run(A, run_id="r-1", outcome="done")
@@ -113,12 +110,12 @@ class TestRuns:
         office.deliver(E.request("r-1", "main", A, "one"))
         office.deliver(E.request("r-2", "main", A, "two"))
         office.absorb(A)
-        row, _ = office.pay_by_message(
+        row = office.pay_by_message(
             A, "main", E.notice("n-3", A, "main", "x"), run_id="r-1"
         )
         assert row.rid == "r-1" and row.how == "by_message"
         assert [r.rid for r in office.owed_by(A)] == ["r-2"]
-        row, _ = office.pay_by_message(
+        row = office.pay_by_message(
             A, "agent:b", E.request("r-4", A, "agent:b", "y"), run_id="r-1"
         )
         assert row is None and [r.rid for r in office.awaited_by(A)] == ["r-4"]
@@ -149,13 +146,12 @@ class TestEndRun:
         self, office, outcome, how
     ):
         self._two_debts(office)
-        ch = office.end_run(
+        office.end_run(
             A,
             run_id="r-1",
             outcome=outcome,
             replies={"r-1": E.reply("n-4", A, "main", "summary", re="r-1")},
         )
-        assert ch.addrs == frozenset({"main", A})
         assert (
             office.rows() == ()
         )  # fallback/stopped·run_ended 는 그 런 끝에 버려지고, r-2 는 dropped
@@ -223,10 +219,10 @@ class TestOweAndTake:
 
     def test_take_empties_a_private_box_without_holding(self, office):
         office.deliver(E.system("n-1", "job", "harness:j", "done", opens_row=False))
-        envs, ch = office.take("harness:j")
-        assert [e.id for e in envs] == ["n-1"] and ch.addrs == frozenset({"harness:j"})
+        envs = office.take("harness:j")
+        assert [e.id for e in envs] == ["n-1"]
         assert office.queued("harness:j") == () == office.taken("harness:j")
-        assert office.take("harness:j") == ((), Changed())
+        assert office.take("harness:j") == ()
 
     def test_take_refuses_to_orphan_a_row(self, office):
         office.deliver(E.request("r-1", "main", "harness:j", "x"))
@@ -299,19 +295,15 @@ class TestStops:
 
 class TestQuestions:
     def test_ask_answer_forget(self, office):
-        row, ch = office.ask("q-1", A, "user:dj", "v1 or v2?")
-        assert row.kind == "q" and ch == Changed(frozenset(), True)  # 질문은 저장된다
+        row = office.ask("q-1", A, "user:dj", "v1 or v2?")
+        assert row.kind == "q"
         office.ask("q-2", A, "user:dj", "another?")
-        ch = office.answer("q-1", E.human("u-3", "user:dj", A, "v2"))
-        assert ch.persist and ch.addrs == frozenset({A})
+        office.answer("q-1", E.human("u-3", "user:dj", A, "v2"))
         assert [r.rid for r in office.open_questions()] == ["q-2"]
         assert [e.id for e in office.queued(A)] == ["u-3"]
-        assert office.forget_questions_of(A) == (("q-2",), Changed(frozenset(), True))
+        assert office.forget_questions_of(A) == ("q-2",)
         assert office.open_questions() == ()
-        assert office.forget_questions_of(A) == (
-            (),
-            Changed(),
-        )  # 닫은 것이 없으면 저장할 것도 없다
+        assert office.forget_questions_of(A) == ()
 
     def test_meta_is_handed_back_untouched(self, office):
         """질문의 meta(물은 때·런 — D3)는 해석하지 않는다: 아무 객체나 그대로 돌아오고 비교에도 들지 않는다."""

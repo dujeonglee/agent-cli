@@ -104,7 +104,7 @@ class Twin:
         elif op == "owe":
             o.owe(args["rid"], args["debtor"], args["creditor"], "t")
         elif op == "take":
-            return o.take(args["addr"])[0]
+            return o.take(args["addr"])
         elif op == "take_reply":
             return o.take_reply(args["addr"], args["rid"])
         elif op == "ask":

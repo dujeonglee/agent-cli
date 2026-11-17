@@ -160,7 +160,7 @@ agent_cli/
 │   ├── envelope.py          봉투 `Envelope`(머리 + 불투명 payload)와 종류별 만드는 함수 — 닫는 법(`closes_by`)은 여기서만 정한다
 │   ├── request_book.py      요청 장부 `RequestBook`·줄 `Row` — 줄 전이표(`CLOSES`)와 이름 있는 질문(빚·기다림·열린 요청·질문)
 │   ├── postbox.py           주소 하나의 상자 `Postbox` — 줄 선 것·런이 든 것, 꺼내는 순서와 이름 있는 수(락 없음)
-│   └── office.py            창구 `PostOffice` — 모든 변경이 이름 있는 메서드 하나(바뀐 주소 `Changed`), 불변식 `check_consistency`
+│   └── office.py            창구 `PostOffice` — 모든 변경이 이름 있는 메서드 하나(한 락 구간), 불변식 `check_consistency`
 ├── prompts/                 모델이 읽는 글 — 시스템 프롬프트·꼬리·압축 지침 (docs/prompt-notation/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── system_prompt.py     능력에 맞춘 시스템 프롬프트 섹션 조립, 지시사항 파일 읽기·쓰기, 도구 설명 교체

@@ -275,7 +275,7 @@ class TestThreads:
             return o.remove_queued(A, {"r-1": reply} if "r-1" in queued else {})
 
         def take():
-            return o.start_run(A)[0]
+            return o.start_run(A)
 
         first, second = (take, remove) if taker_first else (remove, take)
         _in_thread(first)

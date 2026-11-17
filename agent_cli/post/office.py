@@ -1,8 +1,7 @@
 """창구 — 상자들과 장부를 조건변수 하나 아래 함께 바꾼다 (시안 §2·§5·§6).
 
 모든 변경은 이름 있는 메서드 하나다: 그 안에서 배달과 줄 열기·닫기가 한 락 구간으로 일어나고(밖에서는 순서가
-보이지 않는다), 바뀐 주소 집합(`Changed`)을 돌려주며 기다리는 이를 깨운다. 저장·렌더·콜백은 하지 않는다 —
-락 밖에서 호출자가 `Changed` 를 보고 한다. 조건변수는 주어지면 그것을(입력 큐와 공유), 아니면 기본
+보이지 않는다) 기다리는 이를 깨운다. 저장·렌더·콜백은 하지 않는다 — 락 밖에서 호출자가 한다. 조건변수는 주어지면 그것을(입력 큐와 공유), 아니면 기본
 `threading.Condition()`(재진입 락)을 쓴다.
 
 hop 상한·요청자 부재·사람 주소 같은 판정은 호출자의 몫이다 — 여기서는 회신 없이 닫으라는 지시(빈 ``replies``)로
@@ -13,7 +12,6 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_cli.post.envelope import Envelope
@@ -28,17 +26,6 @@ from agent_cli.post.request_book import (
 )
 
 Outcome = Literal["done", "stopped", "wait", "session_end"]
-
-
-@dataclass(frozen=True)
-class Changed:
-    """한 변경이 건드린 것 — ``addrs`` 는 상자가 바뀐 주소, ``persist`` 는 저장할 것이 바뀌었는가."""
-
-    addrs: frozenset[str] = frozenset()
-    persist: bool = False
-
-    def __or__(self, other: Changed) -> Changed:
-        return Changed(self.addrs | other.addrs, self.persist or other.persist)
 
 
 class ConsistencyError(AssertionError):
@@ -57,31 +44,30 @@ class PostOffice:
 
     # ── 배달 ─────────────────────────────────────────
 
-    def deliver(self, env: Envelope) -> Changed:
+    def deliver(self, env: Envelope) -> None:
         """``env.dst`` 의 상자에 넣는다 — 닫는 법이 있는 봉투면 그 줄을 queued 로 연다."""
         with self.cv:
             self._ensure_new([env])
-            changed = self._deliver(env)
+            self._deliver(env)
             self.cv.notify_all()
-            return changed
 
     # ── 런 ───────────────────────────────────────────
 
-    def start_run(self, addr: str) -> tuple[tuple[Envelope, ...], Changed]:
+    def start_run(self, addr: str) -> tuple[Envelope, ...]:
         """런 하나를 열 봉투를 꺼낸다(사람의 말은 묶음) — 그 줄은 picked. 없으면 빈 튜플. 런 id 는 닫을 때
         (`pay`·`complete`·`end_run`) 받는다 — 집을 때는 필요 없다."""
         with self.cv:
             envs = self._box(addr).take_next()
-            return envs, self._picked(addr, envs)
+            self._picked(envs)
+            return envs
 
-    def absorb(
-        self, addr: str, *, human_first: bool = False
-    ) -> tuple[tuple[Envelope, ...], Changed]:
+    def absorb(self, addr: str, *, human_first: bool = False) -> tuple[Envelope, ...]:
         """턴 경계 — 줄 선 것 전부를 지금 런으로(``human_first`` 면 사람의 말 먼저). 그 줄은 picked."""
         with self.cv:
             box = self._box(addr)
             envs = box.take_all_human_first() if human_first else box.take_all()
-            return envs, self._picked(addr, envs)
+            self._picked(envs)
+            return envs
 
     def open_human(
         self,
@@ -93,7 +79,7 @@ class PostOffice:
         answers: Iterable[str] = (),
     ) -> Row:
         """입력 큐를 지난 사람의 말(main 의 u-) — 봉투 없이 곧바로 picked 줄. 저장 대상이 아니다(main 앞 사람
-        입력은 큐에만 있다 — 시안 §6) — 그래서 `Changed` 를 돌려주지 않는다."""
+        입력은 큐에만 있다 — 시안 §6)."""
         with self.cv:
             row = self._book.open_human(rid, src, dst, text, answers=tuple(answers))
             self.cv.notify_all()
@@ -118,7 +104,7 @@ class PostOffice:
             self.cv.notify_all()
             return row
 
-    def take(self, addr: str) -> tuple[tuple[Envelope, ...], Changed]:
+    def take(self, addr: str) -> tuple[Envelope, ...]:
         """줄 선 것 전부를 꺼내고 잊는다 — 런이 들지 않는다(private 주소의 상자: 그 루프가 턴 경계마다 읽는다).
         줄이 있는 봉투가 섞여 있으면 아무것도 바꾸지 않고 `RowError` — 줄을 닫을 길이 없어지기 때문이다."""
         with self.cv:
@@ -128,13 +114,9 @@ class PostOffice:
                 raise RowError(f"take({addr}) would orphan rows: {with_rows}")
             envs = box.take_away()
             self.cv.notify_all()
-            if not envs:
-                return (), Changed()
-            return envs, Changed(frozenset({addr}), any(e.persists for e in envs))
+            return envs
 
-    def pay(
-        self, debtor: str, rid: str, reply_env: Envelope, *, run_id: str
-    ) -> Changed:
+    def pay(self, debtor: str, rid: str, reply_env: Envelope, *, run_id: str) -> None:
         """``debtor`` 가 요청 ``rid`` 를 ``reply_env`` 로 갚는다 — 줄을 닫고 회신을 배달한다(한 락 구간)."""
         with self.cv:
             row = self._book.get(rid)
@@ -144,11 +126,10 @@ class PostOffice:
                 raise RowError(f"{reply_env.id}: does not answer {rid} to {row.src}")
             self._ensure_new([reply_env])
             self._book.close(rid, "reply", in_run=run_id)
-            changed = self._deliver(reply_env)
+            self._deliver(reply_env)
             self.cv.notify_all()
-            return changed
 
-    def pay_unsent(self, debtor: str, rid: str, *, run_id: str) -> Changed:
+    def pay_unsent(self, debtor: str, rid: str, *, run_id: str) -> None:
         """``debtor`` 가 요청 ``rid`` 를 갚았는데 회신이 가지 못했다(요청자가 사라졌다) — 줄을 갚음으로 닫아
         그 런 끝까지 남긴다("이미 회신했다" 거부 사유가 사실이어야 한다). 배달할 것은 없다."""
         with self.cv:
@@ -157,11 +138,10 @@ class PostOffice:
                 raise RowError(f"{rid}: {debtor} owes no such reply")
             self._book.close(rid, "unsent", in_run=run_id)
             self.cv.notify_all()
-            return Changed()
 
     def pay_by_message(
         self, debtor: str, to: str, env: Envelope, *, run_id: str
-    ) -> tuple[Row | None, Changed]:
+    ) -> Row | None:
         """``debtor`` 가 ``to`` 에게 `message` 를 보낸다 — ``to`` 에게 진 가장 오래된 빚이 있으면 갚음으로 닫고,
         봉투(요청·통지)를 배달한다(한 락 구간). 닫은 줄을 돌려준다."""
         with self.cv:
@@ -169,15 +149,15 @@ class PostOffice:
             row = self._book.owes_oldest(debtor, to)
             if row is not None:
                 row = self._book.close(row.rid, "by_message", in_run=run_id)
-            changed = self._deliver(env)
+            self._deliver(env)
             self.cv.notify_all()
-            return row, changed
+            return row
 
     def complete(
         self, addr: str, ids: Iterable[str], *, run_id: str
     ) -> tuple[str, ...]:
         """``addr`` 의 런이 `complete` 의 ``answers`` 로 닫은 u·n 줄 — 닫은 id(없는 id 는 건너뛴다). 줄은 저장
-        대상이 아니고(장부는 q- 만 저장 — 시안 §7) 상자도 그대로라 `Changed` 를 돌려주지 않는다."""
+        대상이 아니다(장부는 q- 만 저장 — 시안 §7)."""
         with self.cv:
             open_ids = {r.rid for r in self._book.open_requests(addr)}
             done = tuple(i for i in ids if i in open_ids)
@@ -193,7 +173,7 @@ class PostOffice:
         run_id: str,
         outcome: Outcome,
         replies: Mapping[str, Envelope] | None = None,
-    ) -> Changed:
+    ) -> None:
         """``addr`` 의 런이 끝났다. 규칙 하나:
 
         - ``done``·``stopped``: 집힌 r 줄마다 ``replies`` 에 그 rid 가 있으면 그 회신을 배달하고 닫는다(``done`` →
@@ -207,7 +187,6 @@ class PostOffice:
         인데 ``replies`` 가 있으면 아무것도 바꾸지 않고 `RowError`."""
         replies = replies or {}
         with self.cv:
-            changed = Changed()
             box = self._box(addr)
             closing = (
                 {r.rid for r in self._book.owed_by(addr)}
@@ -224,20 +203,19 @@ class PostOffice:
                         self._book.close(row.rid, "dropped")
                         continue
                     self._book.close(row.rid, how, in_run=run_id)
-                    changed |= self._deliver(env)
+                    self._deliver(env)
                 for row in self._book.open_requests(addr):
                     self._book.close(row.rid, "run_ended", in_run=run_id)
                 self._book.purge_closed(addr)
-            if outcome != "session_end" and box.finish_run():
-                changed |= Changed(frozenset({addr}), True)
+            if outcome != "session_end":
+                box.finish_run()
             self.cv.notify_all()
-            return changed
 
     # ── 정지·버림 ────────────────────────────────────
 
     def remove_queued(
         self, addr: str, replies: Mapping[str, Envelope] | None = None
-    ) -> Changed:
+    ) -> None:
         """✕ — 줄 선 봉투를 모두 뺀다. r 줄은 ``replies`` 의 회신을 배달하고 removed(회신이 없으면 dropped),
         그 밖에 줄이 있는 봉투(사람의 말 등)는 dropped, 줄 없는 봉투는 그냥 지운다. ``replies`` 의 rid 가 줄 선
         r 줄이 아니면 아무것도 바꾸지 않고 `RowError`."""
@@ -251,7 +229,6 @@ class PostOffice:
             self._ensure_used(replies, queued_r)
             self._ensure_new(replies.values())
             gone = self._box(addr).drop_queued()
-            changed = Changed(frozenset({addr}), True) if gone else Changed()
             for env in gone:
                 if env.closes_by is None:
                     continue
@@ -259,11 +236,10 @@ class PostOffice:
                 row = self._book.get(env.id)
                 if row is not None and row.kind == "r" and reply_env is not None:
                     self._book.close(env.id, "removed")
-                    changed |= self._deliver(reply_env)
+                    self._deliver(reply_env)
                 else:
                     self._book.close(env.id, "dropped")
             self.cv.notify_all()
-            return changed
 
     def take_reply(self, addr: str, rid: str) -> Envelope | None:
         """``addr`` 앞의 요청 ``rid`` 에 대한 회신 하나를 꺼낸다(런이 들지 않는다)."""
@@ -276,17 +252,16 @@ class PostOffice:
 
     def ask(
         self, qid: str, asker: str, target: str, text: str, *, meta: Any = None
-    ) -> tuple[Row, Changed]:
-        """사람에게 묻는다 — q 줄을 연다. 질문은 저장된다(시안 §7) — ``persist`` 가 참이다. ``meta`` 는 부르는
+    ) -> Row:
+        """사람에게 묻는다 — q 줄을 연다. 질문은 저장된다(시안 §7). ``meta`` 는 부르는
         쪽의 것(물은 때·런)이다 — 해석하지 않고 `open_questions` 의 줄에 그대로 돌려준다."""
         with self.cv:
             row = self._book.open_question(qid, asker, target, text, meta=meta)
             self.cv.notify_all()
-            return row, Changed(frozenset(), True)
+            return row
 
-    def answer(self, qid: str, answer_env: Envelope) -> Changed:
-        """사람의 답 — 질문 줄을 닫고 답 봉투를 묻는 쪽에게 배달한다(한 락 구간). 저장된 질문이 사라지므로
-        ``persist`` 는 언제나 참이다."""
+    def answer(self, qid: str, answer_env: Envelope) -> None:
+        """사람의 답 — 질문 줄을 닫고 답 봉투를 묻는 쪽에게 배달한다(한 락 구간)."""
         with self.cv:
             row = self._book.get(qid)
             if row is None or row.kind != "q":
@@ -295,19 +270,17 @@ class PostOffice:
                 raise RowError(f"{answer_env.id}: the answer goes to {row.src}")
             self._ensure_new([answer_env])
             self._book.close(qid, "user_answered")
-            changed = self._deliver(answer_env) | Changed(frozenset(), True)
+            self._deliver(answer_env)
             self.cv.notify_all()
-            return changed
 
-    def forget_questions_of(self, asker: str) -> tuple[tuple[str, ...], Changed]:
-        """묻는 쪽이 사라졌다 — 그 질문 줄을 undeliverable 로 닫는다. 닫은 id 와, 닫은 것이 있으면 저장할
-        것이 바뀌었다는 `Changed`."""
+    def forget_questions_of(self, asker: str) -> tuple[str, ...]:
+        """묻는 쪽이 사라졌다 — 그 질문 줄을 undeliverable 로 닫는다. 닫은 id 를 돌려준다."""
         with self.cv:
             gone = tuple(r.rid for r in self._book.open_questions() if r.src == asker)
             for qid in gone:
                 self._book.close(qid, "undeliverable")
             self.cv.notify_all()
-            return gone, Changed(frozenset(), bool(gone))
+            return gone
 
     # ── 묻기 (락 안 사본) ────────────────────────────
 
@@ -453,18 +426,15 @@ class PostOffice:
                 if self._book.get(env.id) is not None:
                     raise RowError(f"{env.id}: a row with this id already exists")
 
-    def _deliver(self, env: Envelope) -> Changed:
+    def _deliver(self, env: Envelope) -> None:
         """검사를 마친 봉투를 넣는다(`_ensure_new` 뒤) — 닫는 법이 있으면 줄을 연다."""
         if env.closes_by is not None:
             self._book.open(env)
         self._box(env.dst).put(env)
-        return Changed(frozenset({env.dst}), env.persists)
 
-    def _picked(self, addr: str, envs: tuple[Envelope, ...]) -> Changed:
+    def _picked(self, envs: tuple[Envelope, ...]) -> None:
+        """꺼낸 봉투들의 줄을 picked 로 — 기다리는 이를 깨운다."""
         for env in envs:
             if env.closes_by is not None:
                 self._book.pick(env.id)
         self.cv.notify_all()
-        if not envs:
-            return Changed()
-        return Changed(frozenset({addr}), any(e.persists for e in envs))

@@ -1430,7 +1430,7 @@ class AgentRegistry:
         세션 종료(``shutdown_all``)에서 지우면 직후의 ``_save_state`` 가 빈 목록을
         저장해 resume 이 질문을 되살리지 못한다.
         """
-        outgoing, _ = self._post.forget_questions_of(f"agent:{key}")
+        outgoing = self._post.forget_questions_of(f"agent:{key}")
         if outgoing:
             self._save_state()
             self._notify_roster()
@@ -1861,7 +1861,7 @@ class AgentRegistry:
             return []
         me = f"agent:{tm.key}"
         with self._cv:
-            envs, _ = self._post.absorb(me)
+            envs = self._post.absorb(me)
             tm.absorbed_in_run += len(envs)
         items = [dict(e.payload) for e in envs]  # 도착 순서(v10.145.0 예외 D2)
         if not items:
@@ -2276,7 +2276,7 @@ class AgentRegistry:
 
     def drain_replies(self) -> list[dict]:
         """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지."""
-        envs, _ = self._post.absorb("main")
+        envs = self._post.absorb("main")
         out = [dict(e.payload) for e in envs]
         if out:
             self._save_state()  # 배달 완료 → 디스크 미러도 소비
@@ -2295,7 +2295,7 @@ class AgentRegistry:
     def take_mail(self, addr: str) -> list[dict]:
         """private 메일함을 비우며 전부 돌려준다 — 루프의 메일함 포트(``mailbox.take``)가 턴
         경계마다 부른다. 도착 순서."""
-        envs, _ = self._post.take(addr)
+        envs = self._post.take(addr)
         return [dict(e.payload) for e in envs]
 
     def wait_mail(
@@ -2369,7 +2369,7 @@ class AgentRegistry:
                 return (
                     0  # 에이전트 주소의 받은편지함은 그대로 — private 메일함만 버린다
                 )
-            envs, _ = self._post.take(addr)
+            envs = self._post.take(addr)
             return len(envs)
 
     # ── status / kill / 종료 ────────────────────
@@ -3101,7 +3101,7 @@ class AgentRegistry:
             while True:
                 if tm.stop_event.is_set():
                     return []
-                envs, _ = self._post.start_run(addr)
+                envs = self._post.start_run(addr)
                 if envs:
                     tm.state = "busy"
                     return [dict(e.payload) for e in envs]
