@@ -1351,6 +1351,8 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
     s.reg.request(asker, "TASK-P ask main about the branch")
     until(lambda: len(s.reg.pending_mail()) == 1, "asker's request")
     until(lambda: s.agent_state(asker) == "idle")
+    # worker 의 첫 일은 세션 종료가 멈춘다 — 그 런의 시작을 종료(로스터의 dead)까지 잡아, 모델 호출 전에 멈추게 한다
+    s.recorder.hold("begin_agent_work", worker, lambda: s.agent_state(worker) == "dead")
     s.reg.request(worker, "TASK-O1 first job")
     until(lambda: s.agent_state(worker) == "busy")
     s.reg.request(worker, "TASK-O2 second job")
