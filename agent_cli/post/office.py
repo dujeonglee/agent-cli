@@ -1,7 +1,8 @@
 """창구 — 상자들과 장부를 조건변수 하나 아래 함께 바꾼다 (시안 §2·§5·§6).
 
 모든 변경은 이름 있는 메서드 하나다: 그 안에서 배달과 줄 열기·닫기가 한 락 구간으로 일어나고(밖에서는 순서가
-보이지 않는다) 기다리는 이를 깨운다. 저장·렌더·콜백은 하지 않는다 — 락 밖에서 호출자가 한다. 조건변수는 주어지면 그것을(입력 큐와 공유), 아니면 기본
+보이지 않는다) 기다리는 이를 깨운다 — **바뀐 것이 있을 때만**(아무것도 바꾸지 않은 호출이 깨우면 기다리는 이들이
+서로를 깨우며 돈다). 저장·렌더·콜백은 하지 않는다 — 락 밖에서 호출자가 한다. 조건변수는 주어지면 그것을(입력 큐와 공유), 아니면 기본
 `threading.Condition()`(재진입 락)을 쓴다.
 
 hop 상한·요청자 부재·사람 주소 같은 판정은 호출자의 몫이다 — 여기서는 회신 없이 닫으라는 지시(빈 ``replies``)로
@@ -113,7 +114,8 @@ class PostOffice:
             if with_rows:
                 raise RowError(f"take({addr}) would orphan rows: {with_rows}")
             envs = box.take_away()
-            self.cv.notify_all()
+            if envs:
+                self.cv.notify_all()
             return envs
 
     def pay(self, debtor: str, rid: str, reply_env: Envelope, *, run_id: str) -> None:
@@ -163,7 +165,8 @@ class PostOffice:
             done = tuple(i for i in ids if i in open_ids)
             for rid in done:
                 self._book.close(rid, "completed", in_run=run_id)
-            self.cv.notify_all()
+            if done:
+                self.cv.notify_all()
             return done
 
     def end_run(
@@ -194,10 +197,12 @@ class PostOffice:
                 else set()
             )
             self._ensure_used(replies, closing)
+            changed = False
             if outcome in ("done", "stopped"):
                 self._ensure_new(replies.values())
                 how = "fallback" if outcome == "done" else "stopped"
                 for row in self._book.owed_by(addr):
+                    changed = True
                     env = replies.get(row.rid)
                     if env is None:
                         self._book.close(row.rid, "dropped")
@@ -205,11 +210,13 @@ class PostOffice:
                     self._book.close(row.rid, how, in_run=run_id)
                     self._deliver(env)
                 for row in self._book.open_requests(addr):
+                    changed = True
                     self._book.close(row.rid, "run_ended", in_run=run_id)
-                self._book.purge_closed(addr)
+                changed = bool(self._book.purge_closed(addr)) or changed
             if outcome != "session_end":
-                box.finish_run()
-            self.cv.notify_all()
+                changed = bool(box.finish_run()) or changed
+            if changed:
+                self.cv.notify_all()
 
     # ── 정지·버림 ────────────────────────────────────
 
@@ -229,6 +236,8 @@ class PostOffice:
             self._ensure_used(replies, queued_r)
             self._ensure_new(replies.values())
             gone = self._box(addr).drop_queued()
+            if not gone:
+                return
             for env in gone:
                 if env.closes_by is None:
                     continue
@@ -245,7 +254,8 @@ class PostOffice:
         """``addr`` 앞의 요청 ``rid`` 에 대한 회신 하나를 꺼낸다(런이 들지 않는다)."""
         with self.cv:
             env = self._box(addr).take_reply(rid)
-            self.cv.notify_all()
+            if env is not None:
+                self.cv.notify_all()
             return env
 
     # ── 질문 ─────────────────────────────────────────
@@ -279,7 +289,8 @@ class PostOffice:
             gone = tuple(r.rid for r in self._book.open_questions() if r.src == asker)
             for qid in gone:
                 self._book.close(qid, "undeliverable")
-            self.cv.notify_all()
+            if gone:
+                self.cv.notify_all()
             return gone
 
     # ── 묻기 (락 안 사본) ────────────────────────────
@@ -433,7 +444,11 @@ class PostOffice:
         self._box(env.dst).put(env)
 
     def _picked(self, envs: tuple[Envelope, ...]) -> None:
-        """꺼낸 봉투들의 줄을 picked 로 — 기다리는 이를 깨운다."""
+        """꺼낸 봉투들의 줄을 picked 로 — 꺼낸 것이 있을 때만 기다리는 이를 깨운다. 빈손의 `start_run` 이 깨우면
+        같은 조건변수를 기다리는 다른 한가한 워커가 깨어 다시 빈손으로 깨우고, 그렇게 서로를 영원히 깨운다
+        (v10.145.0 1b' 부터 있던 바쁜 회전 — 한가한 에이전트 둘이면 CPU 한 코어)."""
+        if not envs:
+            return
         for env in envs:
             if env.closes_by is not None:
                 self._book.pick(env.id)
