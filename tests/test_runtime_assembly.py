@@ -367,18 +367,27 @@ class TestRegistryAssembly:
         assert (revived, auto) == (2, 1)
         registry.restore.assert_called_once_with(parent_ctx=ctx)
         registry.auto_spawn.assert_called_once_with(parent_ctx=ctx)
-        # on_reply 훅: 알림 먼저(바쁨 = waker 가 유휴 아님), waker.on_mail 다음
+        # 배달 구간에서 읽을 조회는 waker 의 한가함 그 자체다(읽기만)
+        assert registry.main_is_idle == waker.idle.is_set
+        # on_reply 훅: 알림 먼저(바쁨 = 배달 순간 유휴 아님 — 레지스트리가 배달 구간에서 읽어 넘긴 값), waker.on_mail
+        # 다음. 지금의 idle 은 알림 판정에 쓰지 않는다(v10.145.x — 그 사이 펌프가 이 메일로 런을 열 수 있다)
         with patch.object(waker, "on_mail") as om:
-            registry.on_reply({"kind": "reply"})
-            waker.idle.set()
-            registry.on_reply({"kind": "reply"})
+            waker.idle.set()  # 지금은 한가하지만 배달 순간엔 바빴다
+            registry.on_reply({"kind": "reply"}, idle_at_delivery=False)
+            waker.idle.clear()  # 지금은 바쁘지만 배달 순간엔 한가했다
+            registry.on_reply({"kind": "reply"}, idle_at_delivery=True)
+            registry.on_reply(
+                {"kind": "reply"}, idle_at_delivery=None
+            )  # 모름 — 찍지 않는다
             assert notices == [({"kind": "reply"}, True), ({"kind": "reply"}, False)]
-            assert om.call_count == 2
+            assert om.call_count == 3
         # web 은 알림을 걸지 않는다 — 대기열이 그 자리 (v10.51.0)
         reg2 = MagicMock()
         w2, *_ = wire_agent_mail(reg2, enqueue_wake=enq, parent_ctx=ctx)
         with patch.object(w2, "on_mail") as om2:
-            reg2.on_reply({"kind": "reply"})  # 알림 없이 깨우기만
+            reg2.on_reply(
+                {"kind": "reply"}, idle_at_delivery=True
+            )  # 알림 없이 깨우기만
             om2.assert_called_once()
 
     def test_monitor_delivery_is_wired_at_registry_build(self):

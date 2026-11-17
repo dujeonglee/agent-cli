@@ -275,15 +275,18 @@ def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice=None, parent_ctx=N
     # 깨울 메일만 센다 — "Stop everything" 의 정지 회신(``wakes_main`` 거짓)은 다음 사람 입력 런에 (v10.142.0)
     waker = MailWaker(enqueue_wake, registry.has_mail_that_wakes_main)
 
-    def _on_agent_mail(reply: dict) -> None:
+    def _on_agent_mail(reply: dict, *, idle_at_delivery: bool | None) -> None:
         # ``on_mail_notice(reply, busy)`` — CLI 만 건다(v10.51.0): main 이 바쁠
         # 때만 대기 줄을 찍는다. web 은 None — 미배달 메일이 입력창 위
         # 대기열에 사용자 요청과 같은 줄로 선다(`registry.on_pending_change`).
-        if on_mail_notice is not None:
-            on_mail_notice(reply, not waker.idle.is_set())
+        # busy 는 "그 메일이 도착한 순간 main 이 바빴는가" — 배달 구간에서 읽은 값이다(지금의 idle 을 읽으면 펌프가
+        # 이미 이 메일로 런을 연 뒤일 수 있다). 모름(None — 조회가 걸리지 않은 레지스트리)이면 찍지 않는다.
+        if on_mail_notice is not None and idle_at_delivery is not None:
+            on_mail_notice(reply, not idle_at_delivery)
         if reply.get("wakes_main", True):
-            waker.on_mail()
+            waker.on_mail()  # 무장은 지금의 idle 로 — 놓친 것은 펌프의 `mark_idle` 재확인이 잡는다
 
+    registry.main_is_idle = waker.idle.is_set
     registry.on_reply = _on_agent_mail
     # P3 (D7): resume 세션이면 이전 에이전트 자동 재생성 + 미배달 회신
     # 복원 (fresh 세션은 agents.json 이 없어 no-op).

@@ -451,8 +451,9 @@ class AgentRegistry:
         self._cv = self._post.cv
         # private 주소(run:·harness:)의 메일함(v10.84.0)도 우편의 상자다 — 그 루프가 턴 경계와 `wait` 에서 읽는다.
         # UI·영속 밖(프로세스 수명 — 저장 파일은 에이전트와 main 의 상자만 쓴다).
-        # 회신 도착 알림 (CLI 대기 줄) — 부트스트랩 주입.
-        self.on_reply: Callable[[dict], None] | None = None
+        # 회신 도착 알림(CLI 대기 줄)과 main 이 한가한가(읽기만, 락 없음) — 부트스트랩(`wire_agent_mail`) 주입.
+        self.on_reply: Callable[..., None] | None = None
+        self.main_is_idle: Callable[[], bool] | None = None
         #: 미배달 메일이 늘거나 비워졌다 (v10.51.0) — web 이 입력창 위 대기열을
         #: 다시 그린다(`WebServer.broadcast_queue`). 락 밖에서 부른다.
         self.on_pending_change: Callable[[], None] | None = None
@@ -2012,14 +2013,15 @@ class AgentRegistry:
         return f'unroutable address "{addr}"'
 
     def _push_reply(self, reply: dict, *, settles: str = "") -> None:
-        with self._cv:
+        with self._cv:  # 배달 순간의 한가함은 배달 구간에서 읽는다 — 락을 놓으면 펌프가 이 메일로 런을 열 수 있다
             self._stamp_mail(reply)
             self._post_deliver(envelope_of_main_mail(reply), settles=settles)
+            idle_at_delivery = self.main_is_idle() if self.main_is_idle else None
         self._save_state()  # P3: 미배달분 디스크 미러 — resume 시 유실 없음
         cb = self.on_reply
         if cb is not None:
             try:
-                cb(reply)
+                cb(reply, idle_at_delivery=idle_at_delivery)
             except Exception:
                 pass  # 알림은 best-effort — 배달 경로를 막지 않는다
         self._pending_changed()

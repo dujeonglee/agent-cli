@@ -219,7 +219,9 @@ class TestReplyInTheMessageToMainGap:
         """사전 조건 — 틈을 여는 자리가 실제로 그 사이에 있다(메일은 들었고 함수는 아직 돌아오지 않았다)."""
         reg, key = self._registry_with_agent(tmp_path)
         seen: list = []
-        reg.on_reply = lambda mail: seen.append([m.id for m in reg.queued_for("main")])
+        reg.on_reply = lambda mail, **_: seen.append(
+            [m.id for m in reg.queued_for("main")]
+        )
         try:
             rid = reg.message_to_main(key, "which branch?", expects_reply=True)
             assert seen == [[rid]]
@@ -244,7 +246,7 @@ class TestReplyInTheMessageToMainGap:
         key, _ = reg.spawn(name="asker")
         assert wait_until(lambda: _state(reg, key) == "idle")
 
-        def main_answers_at_once(mail):
+        def main_answers_at_once(mail, **_):
             # main 의 턴 경계가 하는 일 — 꺼내고(빚이 적힌다), 바로 그 id 로 갚는다
             (got,) = reg.drain_replies()
             debt = reg.note_owes("main", f"agent:{key}", "q", id=got["item_id"])
@@ -287,7 +289,7 @@ class TestStoppedReplyOrder:
         assert wait_until(lambda: _state(reg, key) == "idle")
         seen: list = []
 
-        def at_delivery(mail):
+        def at_delivery(mail, **_):
             if mail.get("re"):
                 seen.append(reg.pending_for("main"))
 
