@@ -14,7 +14,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from agent_cli.post.envelope import Envelope
 from agent_cli.post.postbox import BoxError, Postbox
@@ -273,10 +273,13 @@ class PostOffice:
 
     # ── 질문 ─────────────────────────────────────────
 
-    def ask(self, qid: str, asker: str, target: str, text: str) -> tuple[Row, Changed]:
-        """사람에게 묻는다 — q 줄을 연다. 질문은 저장된다(시안 §7) — ``persist`` 가 참이다."""
+    def ask(
+        self, qid: str, asker: str, target: str, text: str, *, meta: Any = None
+    ) -> tuple[Row, Changed]:
+        """사람에게 묻는다 — q 줄을 연다. 질문은 저장된다(시안 §7) — ``persist`` 가 참이다. ``meta`` 는 부르는
+        쪽의 것(물은 때·런)이다 — 해석하지 않고 `open_questions` 의 줄에 그대로 돌려준다."""
         with self.cv:
-            row = self._book.open_question(qid, asker, target, text)
+            row = self._book.open_question(qid, asker, target, text, meta=meta)
             self.cv.notify_all()
             return row, Changed(frozenset(), True)
 

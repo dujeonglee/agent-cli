@@ -39,6 +39,7 @@ P1 경계: teammate 안 teammate 금지(레지스트리 미전파로 도구가 �
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import threading
@@ -58,6 +59,7 @@ from agent_cli.constants import (
     is_private_owner,
 )
 from agent_cli.loop.kind import LoopKindError
+from agent_cli.post.office import PostOffice
 from agent_cli.session.store import AGENTS_DIR
 from agent_cli.session_slots import get_job_registry
 from agent_cli.subagent import agent_stop, agents_state
@@ -65,6 +67,8 @@ from agent_cli.subagent.agent_mail import (
     _NO_REPLY_LABEL,
     MailView,
     envelope,
+    envelope_of_item,
+    envelope_of_main_mail,
     format_agent_label,
     is_human_addr,
     mail_queue_item,
@@ -409,7 +413,11 @@ class AgentRegistry:
         runtime: dict | None = None,
         runner: Callable | None = None,
         max_agents: int | None = None,
+        post: PostOffice | None = None,
     ):
+        """``post`` — 우편·장부(`agent_cli.post`). 2단계 그림자 동안은 옛 저장소를 따라가며(읽기는 아직 옛 저장소),
+        없으면 레지스트리가 만든다. 4a 에서 입력 큐와 같은 조건변수를 쓰게 된다. 레지스트리의 조건변수 ``_cv`` 는
+        언제나 ``post.cv`` 다."""
         # 회신을 처리할 provider/모델 등 실행 배선 — spawn 시점이 아니라
         # 레지스트리 생성 시점(부트스트랩)에 고정할 수도 있으나, provider
         # 는 tool_bridge 인터셉트에서만 완전하므로 spawn 마다 갱신 수용.
@@ -429,7 +437,10 @@ class AgentRegistry:
         )
 
         self._agents: dict[str, AgentInstance] = {}
-        self._cv = threading.Condition()
+        self._post = post if post is not None else PostOffice()
+        self._cv = self._post.cv
+        self._shadow_tls = threading.local()  # 2단계 그림자 — `_shadow_as`
+        self._shadow_busy = 0  # 2단계 그림자 — 진행 중인 `_shadow_as` 수
         self._pending: list[dict] = []  # 미배달 회신 (도착 순서)
         #: private 주소(run:·harness:)의 메일함 (v10.84.0) — 그 루프가 턴 경계와
         #: `wait` 에서 읽는다. UI·영속 밖(프로세스 수명). 같은 `_cv` 로 깨운다.
@@ -809,6 +820,52 @@ class AgentRegistry:
             ]
         return sorted(out, key=lambda r: item_ids.number_of(r["id"]))
 
+    # ── 2단계 그림자 — 옛 저장소가 진실, `self._post` 가 같은 락 구간에서 따라간다 ──────────────────
+    # 범용 배달(`_enqueue`·`_push_reply`·`_push_private`)은 봉투를 `_shadow_put` 으로 우편에 넣는다 — 기본은
+    # `deliver`, 의미 연산(`pay_debt`·`message_handler`·`end_run`·`answer_debts_as_stopped`·
+    # `_answer_queued_as_removed`·`answer_question`)이 `_shadow_as(op)` 로 감싸면 그 안의 다음 배달 하나가
+    # ``op``(`pay`·`pay_by_message`·회신 모으기)로 간다. 인자가 아니라 스레드의 문맥이다 — 범용 배달의 시그니처를
+    # 바꾸지 않는다(테스트가 `request` 의 인자를 그대로 본다). 임시물이다: 조각마다 옛 저장소와 함께 지운다
+    # (`_shadow_as`·`_shadow_put`·`_shadow_tls`·`_pay_as`). 런 끝 폴백·정지 회신은 옛 쪽처럼 **하나씩** 갚는다
+    # (`_pay_as`) — `PostOffice.end_run` 의 ``replies`` 로 끝에 한 번에 넘기면 그 사이에 main 이 옛 쪽의 회신을 꺼내
+    # 우편보다 앞선다. 끝의 `end_run` 은 남은 줄(배달 못 한 빚·사람 말)만 닫는다.
+
+    @contextlib.contextmanager
+    def _shadow_as(self, op):
+        """이 스레드의 다음 범용 배달 하나가 봉투를 ``op`` 로 우편에 넣는다."""
+        prev = getattr(self._shadow_tls, "op", None)
+        self._shadow_tls.op = op
+        with self._cv:
+            self._shadow_busy += 1  # 그 연산이 끝나기 전의 저장 지점은 비교하지 않는다(옛 쪽이 하나씩 먼저 배달한다)
+        try:
+            yield
+        finally:
+            self._shadow_tls.op = prev
+            with self._cv:
+                self._shadow_busy -= 1
+
+    def _shadow_put(self, env) -> None:
+        """범용 배달의 그림자 — ``_cv`` 안에서 부른다. `_shadow_as` 가 건 연산을 한 번 쓰고 지운다."""
+        op = getattr(self._shadow_tls, "op", None)
+        self._shadow_tls.op = None
+        (op or self._post.deliver)(env)
+
+    def _pay_as(self, debtor: str, rid: str):
+        """그 빚을 그 회신으로 갚는 연산 — `_shadow_as` 에 건다."""
+
+        def pay(env) -> None:
+            self._post.pay(debtor, rid, env, run_id=self._run_of(debtor))
+
+        return pay
+
+    def _run_of(self, addr: str) -> str:
+        """그림자의 런 id — 에이전트는 지금 런을 연 배달, main 은 펌프의 런을 레지스트리가 모른다."""
+        if addr.startswith("agent:"):
+            tm = self._agents.get(addr.split(":", 1)[1])
+            if tm is not None and tm.current_item:
+                return tm.current_item
+        return addr
+
     def _note_sent(self, requester: str, rid: str, to: str, text: str) -> None:
         """``requester`` 가 ``to`` 에게 회신을 기다리는 요청 ``rid`` 를 보냈다 — ``_cv`` 아래에서.
         사람(창의 입력)은 적지 않는다 — 창이 곧 배달이고 장부가 없다."""
@@ -940,6 +997,9 @@ class AgentRegistry:
                 asked_in=asked_in,
             )
             self._questions[q.id] = q
+            self._post.ask(
+                q.id, f"agent:{asker}", q.target, text, meta=q
+            )  # 2단계 그림자
         self._render_question(q)
         self._save_state()
         # 트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
@@ -1001,7 +1061,18 @@ class AgentRegistry:
             if not is_human_addr(by):
                 return f'question "{qid}" is addressed to the person, not "{by}"'
             del self._questions[qid]  # 원자적 claim — 동시 답변자 중 하나만
-        self._deliver_answer(q, text)
+        delivered: list = []
+
+        def _answer(env):  # 2단계 그림자 — 답 배달과 같은 락 구간
+            delivered.append(env)
+            self._post.answer(qid, env)
+
+        with self._shadow_as(_answer):
+            self._deliver_answer(q, text)
+        if (
+            not delivered
+        ):  # 묻는 쪽이 사라져 답이 가지 않았다 — 옛 쪽은 질문을 이미 지웠다
+            self._post.forget_questions_of(f"agent:{q.asker}")
         self._save_state()
         return ""
 
@@ -1036,6 +1107,12 @@ class AgentRegistry:
                 to=to, text=text, answers=list(answers or []), hop=hop, id=str(id)
             )
             self._reply_debts.setdefault(debtor, []).append(d)
+            # 2단계 그림자 — 봉투가 이미 줄을 열었으면(런 시작·흡수가 집었다) 할 것이 없다
+            if self._post.row(d.id) is None:
+                if is_human_addr(to):
+                    self._post.open_human(d.id, to, debtor, text, answers=d.answers)
+                else:
+                    self._post.owe(d.id, debtor, to, text, hop=hop, answers=d.answers)
             return d
 
     def settle(self, debtor: str, to: str) -> ReplyDebt | None:
@@ -1064,6 +1141,22 @@ class AgentRegistry:
         요청자의 기다리는 회신을 닫는다. 닫기는 배달 **뒤**다: 요청자가 그 틈에 기다림을 잃지 않게. 배달 에러는
         main 이 갚을 때만 돌려준다(에이전트가 갚을 때 요청자가 사라졌으면 조용히 버린다 — 종전 그대로)."""
         self.settle_id(debtor, d.id)
+        run_id = self._run_of(debtor)
+        paid: list = []
+
+        def _pay(env):  # 2단계 그림자 — 회신 배달과 같은 락 구간
+            paid.append(env)
+            self._post.pay(debtor, d.id, env, run_id=run_id)
+
+        try:
+            with self._shadow_as(_pay):
+                return self._pay_debt(debtor, d, text)
+        finally:
+            row = self._post.row(d.id)
+            if not paid and row is not None and row.state != "closed":
+                self._post.drop(d.id)  # 회신이 가지 못했다 — 옛 쪽은 갚음으로 적었다
+
+    def _pay_debt(self, debtor: str, d: ReplyDebt, text: str) -> str:
         if debtor == "main":
             err = self._deliver_peer_reply(
                 d.to.split(":", 1)[1], "main", text, 0, re=d.id
@@ -1147,6 +1240,10 @@ class AgentRegistry:
         런 끝의 유일한 자리라 main·상주·run·web 이 한 곳이다. ``meta`` 의 ``run``
         키는 그 런을 연 배달 id 이고 `run_started`(런 **시작**)와는 무관하다."""
         if waiting:
+            if (
+                debtor == "main"
+            ):  # 2단계 그림자 — 에이전트는 런 정리(`_close_run`)가 든 것을 비운다
+                self._post.end_run(debtor, run_id=debtor, outcome="wait")
             self.arm_checkin(debtor)
             return 0
         self.run_started(debtor)  # 끝났으니 걸린 것이 있어도 의미가 없다
@@ -1156,6 +1253,10 @@ class AgentRegistry:
                     self._close_sent(
                         d.to, d.id
                     )  # 버린 빚 — 요청자는 더 기다리지 않는다
+                # 2단계 그림자 — 옛 동작(빚을 버림 = 버그 3)을 따른다. 5단계에서 outcome="session_end" 로 바뀐다
+                self._post.end_run(
+                    debtor, run_id=self._run_of(debtor), outcome="stopped", replies={}
+                )
             return 0
         return self.end_run(debtor, output, **meta)
 
@@ -1320,35 +1421,42 @@ class AgentRegistry:
             else f"{run_error_line(str(meta.get('error') or ''))}\n{summary}"
         )
         for d in self.reply_debts(debtor):
-            if debtor == "main":
-                if not self._deliver_peer_reply(
-                    d.to.split(":", 1)[1], "main", summary, 0, re=d.id
-                ):
-                    n += 1
-                continue
-            key = debtor.split(":", 1)[1]
-            tm = self._agents.get(key)
-            if d.to == "main":
-                self._push_reply(
-                    {
-                        "kind": "reply",
-                        "key": key,
-                        "profile": tm.profile_name if tm else "",
-                        "output": summary,
-                        "answers": list(d.answers),
-                        **meta,
-                        "re": d.id,  # 이 요약이 대신하는 회신의 요청
-                    }
-                )
-            else:
-                self._deliver_peer_reply(
-                    d.to.split(":", 1)[1], key, peer_summary, d.hop, re=d.id
-                )
-            n += 1
+            with self._shadow_as(self._pay_as(debtor, d.id)):  # 2단계 그림자
+                n += self._fall_back(debtor, d, summary, peer_summary, meta)
         with self._cv:
             for d in self._reply_debts.pop(debtor, []):
                 self._close_sent(d.to, d.id)  # 폴백이 나갔거나 사람 주소의 빚
+            self._post.end_run(debtor, run_id=self._run_of(debtor), outcome="done")
         return n
+
+    def _fall_back(
+        self, debtor: str, d: ReplyDebt, summary: str, peer_summary: str, meta: dict
+    ) -> int:
+        """빚 하나의 폴백 회신 — 배달했으면 1. main 은 상대에게(받은편지함), 상주는 main(메일함)·요청자에게."""
+        if debtor == "main":
+            err = self._deliver_peer_reply(
+                d.to.split(":", 1)[1], "main", summary, 0, re=d.id
+            )
+            return 0 if err else 1
+        key = debtor.split(":", 1)[1]
+        tm = self._agents.get(key)
+        if d.to == "main":
+            self._push_reply(
+                {
+                    "kind": "reply",
+                    "key": key,
+                    "profile": tm.profile_name if tm else "",
+                    "output": summary,
+                    "answers": list(d.answers),
+                    **meta,
+                    "re": d.id,  # 이 요약이 대신하는 회신의 요청
+                }
+            )
+        else:
+            self._deliver_peer_reply(
+                d.to.split(":", 1)[1], key, peer_summary, d.hop, re=d.id
+            )
+        return 1
 
     def _deliver_answer(self, q: Question, text: str) -> None:
         """사람의 답을 asker 에게 — 새 배달(사람 발신이라 ``u-``)로.
@@ -1384,6 +1492,7 @@ class AgentRegistry:
             outgoing = [q.id for q in self._questions.values() if q.asker == key]
             for qid in outgoing:
                 self._questions.pop(qid, None)
+            self._post.forget_questions_of(f"agent:{key}")  # 2단계 그림자
         if outgoing:
             self._save_state()
             self._notify_roster()
@@ -1747,6 +1856,8 @@ class AgentRegistry:
                     f"agent:{tm.key}",
                     str(item.get("text") or ""),
                 )
+            # 2단계 그림자
+            self._shadow_put(envelope_of_item(item, f"agent:{tm.key}"))
         tm.inbox.put(item)
         self._save_state()
 
@@ -1757,6 +1868,7 @@ class AgentRegistry:
         with self._cv:
             tm.inbox_items = [i for i in tm.inbox_items if i.get("id") not in ids]
             tm.in_flight = [dict(i) for i in items]
+            self._post.start_run(f"agent:{tm.key}")  # 2단계 그림자
         self._save_state()
 
     def _who(self, author: str) -> str:
@@ -1843,6 +1955,7 @@ class AgentRegistry:
             ids = {i.get("id") for i in items}
             tm.inbox_items = [i for i in tm.inbox_items if i.get("id") not in ids]
             tm.in_flight.extend(dict(i) for i in items)
+            self._post.absorb(me)  # 2단계 그림자
         out: list[dict] = []
         from agent_cli.render import get_renderer
 
@@ -1928,6 +2041,12 @@ class AgentRegistry:
             # 흡수분(v9.25.0)까지 이 런이 처리했다 — 시작 항목 수보다 클 수 있다
             tm.handled += max(handled, len(tm.in_flight))
             tm.in_flight = []
+            # 2단계 그림자 — 든 것만 비운다(줄은 런 끝 정리 `run_ended` 가 이미 닫았거나, `wait` 면 그대로)
+            self._post.end_run(
+                f"agent:{tm.key}",
+                run_id=self._run_of(f"agent:{tm.key}"),
+                outcome="wait",
+            )
         self._save_state()  # ``handled`` 를 싣는다 — 증가 뒤에
         tm.state = "idle"
         tm.current_author = "main"
@@ -1992,6 +2111,7 @@ class AgentRegistry:
         with self._cv:
             self._stamp_mail(reply)
             self._pending.append(reply)
+            self._shadow_put(envelope_of_main_mail(reply))  # 2단계 그림자
             self._cv.notify_all()
         self._save_state()  # P3: 미배달분 디스크 미러 — resume 시 유실 없음
         cb = self.on_reply
@@ -2197,18 +2317,24 @@ class AgentRegistry:
             # 공유·인수인계·작별 인사가 여기 간다 — 종전엔 이 말들이 전부 요청이
             # 되어 답이 답을 부르는 핑퐁을 만들었다(실측 cnr60g).
             settled = self.settle(sender, addr)
+            run_id = self._run_of(sender)
+
+            def _send(env):  # 2단계 그림자 — 보낸 것과 같은 락 구간에서 갚기까지
+                self._post.pay_by_message(sender, addr, env, run_id=run_id)
+
             # 결과가 그 배달의 id 를 말한다 (v10.77.0) — 회신이 같은 id 를 달고
             # 돌아오므로(`re [r-17]`) 보낸 쪽이 무엇에 대한 회신인지 안다.
             if to == "main":
-                rec_id = self.message_to_main(
-                    me_key,
-                    text,
-                    profile=tm.profile_name if tm else "",
-                    name=tm.instance_name if tm else "",
-                    answers=settled.answers if settled is not None else None,
-                    expects_reply=bool(expects_reply),
-                    notice=not expects_reply,
-                )
+                with self._shadow_as(_send):
+                    rec_id = self.message_to_main(
+                        me_key,
+                        text,
+                        profile=tm.profile_name if tm else "",
+                        name=tm.instance_name if tm else "",
+                        answers=settled.answers if settled is not None else None,
+                        expects_reply=bool(expects_reply),
+                        notice=not expects_reply,
+                    )
                 if settled is not None:  # 배달 **뒤** 요청자의 기다림을 닫는다
                     self._close_sent(settled.to, settled.id)
                 return delivered_line(rec_id, expects_reply=bool(expects_reply))
@@ -2220,16 +2346,21 @@ class AgentRegistry:
             rec_id = item_ids.next_id(
                 item_ids.REPLY if expects_reply else item_ids.MAIL
             )
-            err = self.request(
-                to,
-                text,
-                author=sender,
-                expects_reply=bool(expects_reply),
-                item_id=rec_id,
-                kind="" if expects_reply else "notice",
-            )
+            with self._shadow_as(_send):
+                err = self.request(
+                    to,
+                    text,
+                    author=sender,
+                    expects_reply=bool(expects_reply),
+                    item_id=rec_id,
+                    kind="" if expects_reply else "notice",
+                )
             if settled is not None:  # 배달 **뒤** 요청자의 기다림을 닫는다
                 self._close_sent(settled.to, settled.id)
+                row = self._post.row(settled.id) if err else None
+                if row is not None and row.state != "closed":
+                    # 2단계 그림자 — 보내지 못했어도 옛 쪽은 갚음으로 적었다
+                    self._post.drop(settled.id)
             if err:
                 return err
             if me_key:
@@ -2246,6 +2377,7 @@ class AgentRegistry:
         with self._cv:
             out = list(self._pending)
             self._pending.clear()
+            self._post.absorb("main")  # 2단계 그림자
         if out:
             self._save_state()  # 배달 완료 → 디스크 미러도 소비
             self._pending_changed()  # 대기열에서 빠진다 = 주입됐다
@@ -2259,12 +2391,14 @@ class AgentRegistry:
         with self._cv:
             self._stamp_mail(mail)
             self._mailboxes.setdefault(addr, []).append(mail)
+            self._shadow_put(envelope_of_main_mail(mail, addr))  # 2단계 그림자
             self._cv.notify_all()
 
     def take_mail(self, addr: str) -> list[dict]:
         """private 메일함을 비우며 전부 돌려준다 — 루프의 메일함 포트(``mailbox.take``)가 턴
         경계마다 부른다. 도착 순서."""
         with self._cv:
+            self._post.take(addr)  # 2단계 그림자
             return list(self._mailboxes.pop(addr, []))
 
     def wait_mail(
@@ -2314,6 +2448,7 @@ class AgentRegistry:
                 for i, mail in enumerate(self._pending):
                     if str(mail.get("re") or "") == rid:
                         del self._pending[i]
+                        self._post.take_reply("main", rid)  # 2단계 그림자
                         break
                 else:
                     mail = None
@@ -2335,6 +2470,10 @@ class AgentRegistry:
         self._cancel_checkins(addr)
         with self._cv:
             self._checkin_last.pop(addr, None)
+            if (
+                addr in self._mailboxes
+            ):  # 2단계 그림자 — private 메일함만(에이전트 주소의 받은편지함은 그대로)
+                self._post.take(addr)
             return len(self._mailboxes.pop(addr, []))
 
     # ── status / kill / 종료 ────────────────────
@@ -2498,9 +2637,10 @@ class AgentRegistry:
             text = agent_stop.stopped_reply(
                 tm.key, d.id, d.text, activity, notes, by=by
             )
-            self._send_stop_reply(
-                tm, d.to, d.id, text, mark, hop=d.hop, answers=d.answers
-            )
+            with self._shadow_as(self._pay_as(me, d.id)):  # 2단계 그림자
+                self._send_stop_reply(
+                    tm, d.to, d.id, text, mark, hop=d.hop, answers=d.answers
+                )
             self.settle_id(me, d.id)
 
     def _answer_queued_as_removed(self, tm: AgentInstance) -> None:
@@ -2509,6 +2649,9 @@ class AgentRegistry:
         mark = agent_stop.REMOVED_MARK.format(by=by)
         with self._cv:
             queued, tm.inbox_items = list(tm.inbox_items), []
+            self._post.remove_queued(
+                f"agent:{tm.key}"
+            )  # 2단계 그림자 — 줄은 버림, 회신은 아래서 배달
         for it in queued:
             author = str(it.get("author") or "")
             if it.get("kind") or not it.get("expects_reply", True):
@@ -2556,7 +2699,7 @@ class AgentRegistry:
                     "mark": mark,
                     # "Stop everything" 의 회신은 main 을 깨우지 않는다 — 다음 사람 입력 런에 함께 배달된다
                     **({} if tm.stop_replies_wake else {"wakes_main": False}),
-                }
+                },
             )
             self._log_outbound(tm.key, text, to="main")
         elif to.startswith("agent:"):
@@ -2737,7 +2880,10 @@ class AgentRegistry:
         # the main thread mutates ``_agents``; iterating the live view raced a
         # spawn and killed an UNRELATED agent via the worker's except-handler
         # (AUDIT S-1). ``list(...)`` can't raise mid-iteration.
-        entries = [agents_state.agent_entry(tm) for tm in list(self._agents.values())]
+        entries = [
+            agents_state.agent_entry(tm, inbox=tm.inbox_items, in_flight=tm.in_flight)
+            for tm in list(self._agents.values())
+        ]
         with self._cv:
             pending = [dict(r) for r in self._pending if agents_state.persists(r)]
             # 열린 질문은 resume 이 **되살린다**(§3.9) — 그러려면 남아야
@@ -2777,6 +2923,7 @@ class AgentRegistry:
                     continue
                 self._stamp_mail(item)
                 self._pending.append(item)
+                self._post.deliver(envelope_of_main_mail(item))  # 2단계 그림자
             if self._pending:
                 self._cv.notify_all()
             # 열린 질문 복원 — 살릴 수 있는 것만. asker/target 판정은 에이전트
@@ -2911,6 +3058,9 @@ class AgentRegistry:
                     dropped += 1
                     continue
                 self._questions[q.id] = q
+                self._post.ask(
+                    q.id, f"agent:{q.asker}", q.target, q.text, meta=q
+                )  # 2단계 그림자
         self.stale_questions = dropped
 
     # ── worker ──────────────────────────────────

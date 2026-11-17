@@ -13,8 +13,8 @@ main 의 답을 받을 사람이 기다림), q-(에이전트가 사람의 답을
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import Literal
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal
 
 from agent_cli.post.envelope import Envelope
 
@@ -82,6 +82,8 @@ class Row:
     state: State = "queued"
     how: How | None = None
     closed_in_run: str = ""
+    #: 부르는 쪽의 것 — 장부는 읽지도 비교하지도 않고 그대로 돌려준다(질문의 물은 때·런 등, D3)
+    meta: Any = field(default=None, compare=False)
 
 
 class RequestBook:
@@ -121,9 +123,11 @@ class RequestBook:
             Row(rid, creditor, debtor, "r", text, tuple(answers), hop, state="picked")
         )
 
-    def open_question(self, qid: str, asker: str, target: str, text: str) -> Row:
-        """에이전트가 사람에게 묻는다(q-) — 봉투 없이 picked. 사람의 답이 닫는다."""
-        return self._add(Row(qid, asker, target, "q", text, state="picked"))
+    def open_question(
+        self, qid: str, asker: str, target: str, text: str, *, meta: Any = None
+    ) -> Row:
+        """에이전트가 사람에게 묻는다(q-) — 봉투 없이 picked. 사람의 답이 닫는다. ``meta`` 는 해석하지 않는다."""
+        return self._add(Row(qid, asker, target, "q", text, state="picked", meta=meta))
 
     def pick(self, rid: str) -> Row:
         """런이 집었다 — queued → picked."""

@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from agent_cli.post import envelope as post_envelope
+from agent_cli.post.envelope import Envelope
 from agent_cli.subagent.agent_stop import one_line
 from agent_cli.subagent.agents_state import persists, state_is_active
 from agent_cli.token_estimator import estimate_tokens
@@ -132,6 +134,90 @@ def view_of_inbox_item(item: dict) -> MailView:
         expects_reply=bool(item.get("expects_reply", True))
         and not is_human_addr(author),
     )
+
+
+# ── 옛 저장 모양 → 봉투 (단일 구조 2단계 — 받은편지함·메일함이 우편(`agent_cli.post`)으로 옮겨 간다) ──────
+#
+# 봉투의 ``payload`` 는 옛 항목·메일 dict 의 사본이다 — 글 짓기(`view_of_*`·`build_reply_record`)와 저장(`agents.json`
+# 의 옛 모양)이 그것을 읽는다. 우편·장부는 payload 를 열지 않는다.
+#
+# 규칙은 지금 동작에서 정했다(줄 번호는 agents_live.py·resident_loop.py·loop/core.py):
+# - 에이전트 항목: 사람 author(답 ``kind: "answer"`` 포함) → `human` — 런 시작(resident_loop.py:208-220)과 흡수
+#   (agents_live.py:1866-1868)가 사람 주소의 빚을 적는다(`_deliver_answer` :1359-1367 은 author=사람·
+#   expects_reply=True). 봉투 재료 없는 회신 기대 요청 → `request` — `_enqueue`(:1738-1744)가 보낸 쪽 기록을,
+#   시작·흡수가 빚을 적는다. ``kind`` reply → `reply`, notice 또는 회신 기대 없음 → `notice`, 그 밖의 종류
+#   (job·monitor·checkin) → `system`(줄 없음 — 하니스 통지는 에이전트에서 항목이 아니다, :1900-1909).
+#   ``opens_run`` 거짓 → 깨우지 않음, ``ledger: "none"`` → 저장 안 함.
+# - main·private 메일: peer_message 의 ``expects_reply`` → `request` — main 이 빚을 적는다(loop/core.py:891-901);
+#   ``notice`` → `notice`; ``re`` 가 있으면(명시 회신·정지 회신) 또는 kind reply(폴백) → `reply`; 그 밖
+#   (job·monitor·harness·died·checkin) → `system`, 줄 없음 — main 앞 메일의 n- 항목은 루프 장부(`Ledger`)가 들고
+#   있다(4c 에서 옮긴다). ``wakes_main`` 거짓 → 깨우지 않음, ``ledger: "none"`` → 저장 안 함.
+
+
+def envelope_of_item(item: dict, dst: str) -> Envelope:
+    """에이전트 받은편지함 항목 → 봉투. 읽기만 한다."""
+    author = str(item.get("author") or "main")
+    kind = str(item.get("kind") or "")
+    common = {
+        "id": str(item.get("id") or ""),
+        "src": author,
+        "dst": dst,
+        "text": str(item.get("text") or ""),
+        "ts": float(item.get("ts") or 0.0),
+        "payload": dict(item),
+    }
+    wakes = item.get("opens_run", True) is not False
+    if is_human_addr(author) and kind in ("", "answer"):
+        env = post_envelope.human(
+            **common, re=str(item.get("re") or ""), answers=item.get("answers") or ()
+        )
+    elif not kind and item.get("expects_reply", True):
+        env = post_envelope.request(
+            **common,
+            hop=int(item.get("hop", 0) or 0),
+            answers=item.get("answers") or (),
+        )
+    elif kind == "reply":
+        env = post_envelope.reply(
+            **common,
+            re=str(item.get("re") or ""),
+            mark=str(item.get("mark") or ""),
+            hop=int(item.get("hop", 0) or 0),
+            wakes=wakes,
+        )
+    elif kind in ("", "notice"):
+        env = post_envelope.notice(**common, hop=int(item.get("hop", 0) or 0))
+    else:
+        env = post_envelope.system(**common, opens_row=False)
+    return replace(env, wakes=wakes and env.wakes, persists=persists(item))
+
+
+def envelope_of_main_mail(mail: dict, dst: str = "main") -> Envelope:
+    """main(또는 private) 메일함의 메일 → 봉투. 읽기만 한다 — ``item_id`` 가 찍힌 뒤에 부른다."""
+    key = str(mail.get("key") or "")
+    kind = str(mail.get("kind") or "")
+    common = {
+        "id": str(mail.get("item_id") or ""),
+        "src": f"agent:{key}" if key else kind,
+        "dst": dst,
+        "text": str(mail.get("output") or mail.get("text") or ""),
+        "payload": dict(mail),
+    }
+    wakes = bool(mail.get("wakes_main", True))
+    if kind == "peer_message" and mail.get("expects_reply"):
+        env = post_envelope.request(**common, answers=mail.get("answers") or ())
+    elif kind == "peer_message" and mail.get("notice"):
+        env = post_envelope.notice(**common)
+    elif kind == "reply" or (kind == "peer_message" and mail.get("re")):
+        env = post_envelope.reply(
+            **common,
+            re=str(mail.get("re") or ""),
+            mark=str(mail.get("mark") or ""),
+            answers=mail.get("answers") or (),
+        )
+    else:
+        env = post_envelope.system(**common, opens_row=False)
+    return replace(env, wakes=wakes and env.wakes, persists=persists(mail))
 
 
 def mail_queue_item(reply: dict) -> dict:

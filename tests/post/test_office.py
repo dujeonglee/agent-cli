@@ -309,6 +309,13 @@ class TestQuestions:
             Changed(),
         )  # 닫은 것이 없으면 저장할 것도 없다
 
+    def test_meta_is_handed_back_untouched(self, office):
+        """질문의 meta(물은 때·런 — D3)는 해석하지 않는다: 아무 객체나 그대로 돌아오고 비교에도 들지 않는다."""
+        token = object()
+        office.ask("q-1", A, "user:dj", "v1 or v2?", meta=token)
+        (row,) = office.open_questions()
+        assert row.meta is token
+
     def test_an_answer_must_go_to_the_asker(self, office):
         office.ask("q-1", A, "user:dj", "?")
         with pytest.raises(RowError):

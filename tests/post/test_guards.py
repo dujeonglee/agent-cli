@@ -18,7 +18,12 @@ ROOT = Path(__file__).resolve().parents[2]
 POST = ROOT / "agent_cli" / "post"
 
 #: post 를 import 해도 되는 agent_cli 모듈 — 3a 에서 여기에 한 줄씩 더한다
-ALLOWED_USERS: frozenset[str] = frozenset()
+ALLOWED_USERS: frozenset[str] = frozenset(
+    {
+        "agent_cli/subagent/agents_live.py",  # 3a 그림자
+        "agent_cli/subagent/agent_mail.py",  # 3a 그림자 — 옛 저장 모양 → 봉투
+    }
+)
 
 #: 문자열로 해석하면 안 되는 머리 이름 — 주소·id·본문
 OPAQUE = {
