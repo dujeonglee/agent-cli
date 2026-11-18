@@ -2018,7 +2018,7 @@ class AgentRegistry:
             **({"mark": mark} if mark else {}),  # 정지 회신만 표지를 단다
             **({} if opens_run else {"opens_run": False}),
             settles=settles,
-            lines=lines,
+            **({"lines": lines} if lines else {}),  # 보낸 쪽 out 은 `_pay_debt` 만
         )
 
     def message_to_main(
