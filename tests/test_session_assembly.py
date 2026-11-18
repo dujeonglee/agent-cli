@@ -405,3 +405,27 @@ class TestSpecHooks:
             )
         assert runtimes[0].hooks_config is hooks
         assert loops[0]["hooks_config"] is hooks
+
+
+class TestOnePostOfficeForReal:
+    """실제 조립(대역 없음)에서 레지스트리의 창구가 main 앞 사람의 말의 창구다 — run 수명(QuietPolicy)과 web 수명
+    (ForeverPolicy) 둘 다. 따로 서면 메일이 다른 상자로 가 한가한 펌프가 깨지 않는다."""
+
+    @pytest.mark.parametrize("path", ["run", "web"])
+    def test_registry_and_main_input_share_the_post_office(
+        self, tmp_path, monkeypatch, path
+    ):
+        from agent_cli.render import get_renderer, set_renderer
+        from tests.oracle.driver import Provider, Session
+
+        before = get_renderer()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AGENT_CLI_SNAPSHOT", "0")
+        s = Session(tmp_path, Provider({"MAIN": []}), path=path)
+        try:
+            assert s.reg._post is s.main_input.post
+            assert s.wired.pump.deps.main_input is s.main_input
+        finally:
+            s.close()
+            set_renderer(before)
