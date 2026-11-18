@@ -1878,7 +1878,11 @@ def s23_checkin_main_in_place(root: Path) -> dict:
 
     def done(s):
         assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        # 대기 표시(`wait_in_place(True)`)는 체크인을 걸기(`arm_checkin`) 전이다 — 걸린 뒤에 쏜다(걸기 전이면
+        # `fire_checkin` 이 빈 채로 돌아오고 체크인은 영영 오지 않는다, 컨테이너 cpus 0.5 300회 중 4회)
+        until(lambda: "main" in s.reg._checkin_armed, "checkin armed")
         facts["checkin"] = s.reg.fire_checkin("main")
+        assert facts["checkin"], "checkin fired before it was armed"
         fired.set()
         facts["persisted_kinds"] = _agents_file_kinds(s)
         until(
