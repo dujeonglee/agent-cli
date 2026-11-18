@@ -42,6 +42,12 @@ def until(pred, limit=10.0) -> bool:
     return pred()
 
 
+def gone(tm) -> bool:
+    """워커가 완전히 내려갔는가 — ``state == "dead"`` 는 내려가는 정리(회신 보내기·줄 닫기)보다 **먼저** 찍힌다.
+    그 정리의 결과를 단언하려면 워커 스레드가 끝난 것까지 기다린다(상태만 보면 느린 러너에서 회신이 아직 없다)."""
+    return tm.state == "dead" and not tm.worker.is_alive()
+
+
 class WorkerDies(BaseException):
     """런 안의 `except Exception` 을 빠져나가 워커를 죽인다 — 워커가 예외로 죽는 길."""
 
@@ -312,8 +318,8 @@ class TestRemove:
         killer = threading.Thread(target=reg.kill, args=(tm.key,))
         killer.start()
         killer.join()
-        assert until(lambda: tm.state == "dead")
-        assert until(lambda: sub_run.state == "dead")  # 하위 run — 함께 멈춤
+        assert until(lambda: gone(tm))
+        assert until(lambda: gone(sub_run))  # 하위 run — 함께 멈춤
         assert (
             sub_res.state == "idle" and not sub_res.stop_event.is_set()
         )  # 하위 상주는 남음
@@ -343,7 +349,7 @@ class TestRemove:
         )
         assert until(lambda: tm.handled == 1 and tm.state == "idle")
         assert reg.kill(tm.key) == ""
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         (r60,) = peer_replies(p6)
         assert (
             r60["re"] == "r-60"
@@ -358,7 +364,7 @@ class TestRemove:
         caller = make_caller(owner="main", agent_registry=reg)
         out = tool_agent({"mode": "kill", "key": tm.key}, registry=reg, caller=caller)
         assert out.success
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         (m70,) = main_mail(reg, "r-70")
         assert m70["mark"] == "stopped by main"
         assert m70["output"].startswith(f"main stopped {tm.key} while it was working")
@@ -368,7 +374,7 @@ class TestRemove:
         tm = spawn(reg)
         busy_with(reg, stage, tm, "HOLD17", "r-17")
         threading.Thread(target=reg.kill, args=(tm.key,)).start()
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         # 끝난 워커는 아무것도 들고 있지 않다(끝내라는 표식은 꺼내지 않은 채 나갔다 — 그 표식은 구현의 것)
         assert reg.taken_by(f"agent:{tm.key}") == ()
         reg.drain_replies()
@@ -378,7 +384,7 @@ class TestRemove:
         tm = spawn(reg)
         busy_with(reg, stage, tm, "HOLD8", "r-80")
         reg.shutdown_all()  # 세션 종료 — 사람의 정지가 아니다
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         assert main_mail(reg, "r-80") == [] and tm.stop_cause == ""
         reg.kill(tm.key)  # 이미 죽었다 — 원인을 적지 않는다
         assert tm.stop_cause == "" and main_mail(reg, "r-80") == []
@@ -407,8 +413,8 @@ class TestRunAgent:
             tm.key, "also this", author=f"agent:{p6.key}", item_id="r-22"
         )
         assert reg.stop_run(tm.key) == ""
-        assert until(lambda: tm.state == "dead") and tm.revivable is False
-        assert until(lambda: sub.state == "dead")
+        assert until(lambda: gone(tm)) and tm.revivable is False
+        assert until(lambda: gone(sub))
         (m21,) = main_mail(reg, "r-21")
         assert m21["mark"] == "stopped by user"
         (r22,) = peer_replies(p6)
@@ -420,7 +426,7 @@ class TestRunAgent:
         tm = spawn(reg, run=True)
         busy_with(reg, stage, tm, "HOLD11", "r-23")
         threading.Thread(target=reg.kill, args=(tm.key,)).start()
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         (m23,) = main_mail(reg, "r-23")
         assert m23["mark"] == "stopped by user"
 
@@ -439,7 +445,7 @@ class TestRunAgent:
         room.set()  # 방 ■ — main 만
         assert not tm.run_stop.is_set() and not tm.stop_event.is_set()
         assert reg.stop_run(tm.key) == ""
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
 
 
 class TestGoneAgentQueue:
@@ -460,7 +466,7 @@ class TestGoneAgentQueue:
         return p6
 
     def _answered(self, reg, tm, p6, *, mark, body):
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         me = f"agent:{p6.key}"
         (r41,) = peer_replies(p6)
         assert r41["re"] == "r-41" and r41["mark"] == mark
@@ -507,7 +513,7 @@ class TestGoneAgentQueue:
         tm = spawn(reg, run=True)
         p6 = self._queue_behind(reg, stage, tm, "GATE2")
         stage.absorb["GATE2"].set()
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         assert reg.kill(tm.key, by="main") == ""
         assert len(peer_replies(p6)) == 1 and len(main_mail(reg, "r-42")) == 1
 
@@ -516,7 +522,7 @@ class TestGoneAgentQueue:
         p6 = self._queue_behind(reg, stage, tm, "GATE3")
         p6.state = "dead"
         stage.absorb["GATE3"].set()
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         assert peer_replies(p6) == []
         assert reg._post.row("r-41") is None
 
@@ -528,7 +534,7 @@ class TestGoneAgentQueue:
         assert until(lambda: tm.state == "idle" and tm.stop_cause == "")
         p6 = self._queue_behind(reg, stage, tm, "DIE2")
         stage.absorb["DIE2"].set()
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         (r41,) = peer_replies(p6)
         assert r41["mark"] == "died" and r41["opens_run"] is True
 
@@ -673,7 +679,7 @@ class TestStopEverythingAgentRequesters:
     ):
         res, sub = self._resident_with_sub_run(reg, stage)
         assert reg.stop_all_runs(wakes_requesters=False) == [sub.key]
-        assert until(lambda: sub.state == "dead")
+        assert until(lambda: gone(sub))
         assert until(lambda: len(held_items(res)) == 1)
         (held,) = held_items(res)
         assert held["opens_run"] is False and held["re"] == "r-120"
