@@ -421,7 +421,12 @@ class TestRunAgent:
         (m21,) = main_mail(reg, "r-21")
         assert m21["mark"] == "stopped by user"
         (r22,) = peer_replies(p6)
-        assert r22["mark"] == "removed by user"  # 시작 안 한 대기 요청 — 알림
+        # 시작 안 한 대기 요청 — 알림. ■ 는 정지다: 동사·표지가 원인을 따른다
+        assert r22["mark"] == "stopped by user"
+        assert r22["text"].startswith(
+            f'The user stopped {tm.key} before it started your request [r-22] ("also this"). '
+            "Nothing was done for it.\n"
+        )
         assert cleared == []  # ■ 는 창을 비우지 않는다 — 회색 칩, 읽기 가능
         assert reg.stop_run(tm.key) == f'agent "{tm.key}" has already ended'
 

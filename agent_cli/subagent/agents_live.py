@@ -2452,7 +2452,8 @@ class AgentRegistry:
         self, tm: AgentInstance, mark: str, reply_of: Callable[[str, str, str], str]
     ) -> None:
         """시작 안 한 대기 요청(받은편지함 미러의 요청 항목)마다 회신(본문 ``reply_of(key, rid, text)``, 머리
-        표지 ``mark``)을 보내고 미러를 비운다 — ✕ 의 removed 와 스스로 내려간 에이전트의 ended·died 가 같은 길."""
+        표지 ``mark``)을 보내고 미러를 비운다 — 사람·모델의 정지(✕ removed · run 의 ■ stopped)와 스스로 내려간 에이전트의
+        ended·died 가 같은 길."""
         with self._cv:
             queued = self._queued(tm)
             self._post.remove_queued(
@@ -2487,7 +2488,7 @@ class AgentRegistry:
         settles: bool = False,
     ) -> None:
         """정지 회신 한 통 — 요청자가 main 이면 메일함, 에이전트면 그 받은편지함(회신 — 빚 아님). ``settles`` 면 그
-        배달이 빚 ``rid`` 를 갚는다(정지 회신 — 한 락 구간). removed 회신은 줄이 이미 닫혀 갚지 않는다."""
+        배달이 빚 ``rid`` 를 갚는다(정지 회신 — 한 락 구간). 시작 전 요청의 회신은 줄이 이미 닫혀 갚지 않는다."""
         if to == "main":
             self._push_reply(
                 {
@@ -2529,9 +2530,9 @@ class AgentRegistry:
         self.answer_debts_as_stopped(tm, activity=[], notes="")
         kept = 0
         if rule.answers_queued:
-            by = tm.stop_by or "user"
-            mark = agent_stop.REMOVED_MARK.format(by=by)
-            self._answer_queued(tm, mark, partial(agent_stop.removed_reply, by=by))
+            by, cause = tm.stop_by or "user", tm.stop_cause
+            reply_of = partial(agent_stop.unstarted_reply, by=by, cause=cause)
+            self._answer_queued(tm, agent_stop.stop_mark(cause, by), reply_of)
         else:
             kept = len(self._queued(tm))
         if rule.stops_sub_runs:
@@ -2550,16 +2551,11 @@ class AgentRegistry:
         비운다."""
         from agent_cli.render import get_renderer
 
-        by = tm.stop_by or "user"
-        mark = (
-            agent_stop.REMOVED_MARK
-            if tm.stop_cause == agent_stop.REMOVED
-            else agent_stop.STOPPED_MARK
-        )
+        how = agent_stop.stop_mark(tm.stop_cause, tm.stop_by or "user")
         notified, tm.stop_notified = tm.stop_notified, []
         try:
             get_renderer().agent_stopped(
-                key=tm.key, how=mark.format(by=by), notified=notified, kept=kept
+                key=tm.key, how=how, notified=notified, kept=kept
             )
         except Exception:
             pass  # 화면은 best-effort — 정리를 막지 않는다
