@@ -5,7 +5,7 @@
 (`HookedCondition`)으로 강제한다: 봉투가 상자에 든 구간을 나온 **직후**, 부른 스레드가 다음 줄로 가기 **전**에 받는 쪽의
 동작을 끼운다. 시간을 재지 않는다.
 
-창 이벤트(`agent_message`)는 막히지 않는 렌더러(웹)면 같은 구간 안에서, 터미널이면 구간 **뒤**에서 나간다(N12 —
+창 이벤트(`agent_message`)는 막히지 않는 렌더러(웹)면 같은 구간 안에서, 터미널이면 구간 **뒤**에서 나간다(v10.146.5 —
 막힌 stdout 이 락을 잡지 않게). 그래서 `test_live_order` 는 웹에선 파일과 같은 순서이고, 터미널(기록용 렌더러)에선
 뒤집힐 수 있다는 지금의 사실을 strict xfail 로 적는다.
 """
@@ -260,7 +260,7 @@ def test_file_order(world, scene):
             "cli",
             marks=pytest.mark.xfail(
                 strict=True,
-                reason="터미널 몫 — 막힐 수 있는 표면은 배달 구간 뒤에 내 경주가 남는다(N12, 손대지 않음)",
+                reason="터미널 몫 — 막힐 수 있는 표면은 배달 구간 뒤에 내 경주가 남는다(v10.146.5, 손대지 않음)",
             ),
         ),
     ],
@@ -298,7 +298,7 @@ def test_a_refused_delivery_leaves_no_line(world):
     assert [r["text"] for r in world.lines(key) if r["direction"] == "in"] == answers
 
 
-# ── 가드: 구간 안에서 부르는 표면은 막히지 않는다 / 막힐 수 있는 표면은 구간 밖이다 (N12) ──
+# ── 가드: 구간 안에서 부르는 표면은 막히지 않는다 / 막힐 수 있는 표면은 구간 밖이다 (v10.146.5) ──
 
 
 def test_only_the_web_surface_claims_it_never_blocks():

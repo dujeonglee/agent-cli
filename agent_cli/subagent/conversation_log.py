@@ -1,6 +1,6 @@
 """🤝 대화 창의 줄 — ``agents/<key>/conversation.jsonl``(창의 진짜 소스) 쓰기·읽기와 창에 내기.
 
-규칙(v10.146.4·N12): **기록이 원본이고 화면은 그 순서를 따른다 — 막히지 않는 표면만 배달 구간 안에서 낸다.** 언제 부르는지
+규칙(v10.146.5): **기록이 원본이고 화면은 그 순서를 따른다 — 막히지 않는 표면만 배달 구간 안에서 낸다.** 언제 부르는지
 (레지스트리의 ``_cv`` 구간 안·밖)는 `AgentRegistry._lines_in_section`·`_lines_after_section` 이 정한다. 여기는 그 재료다.
 줄은 ``(owner, payload)`` — ``owner`` 는 ``home_dir`` 를 가진 에이전트, ``payload`` 는 `Renderer.agent_message` 의 인자.
 """

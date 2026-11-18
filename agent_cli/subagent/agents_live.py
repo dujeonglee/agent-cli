@@ -416,7 +416,7 @@ class AgentRegistry:
         self._state_owned = False
         #: 저장 하나가 뜨기부터 쓰기까지를 쥔다 — 겹친 저장이 옛 사본을 나중에 쓰지 않게.
         #: ``_cv`` 를 쥔 채로는 저장을 부르지 않는다(순서: ``_save_lock`` → ``_cv``). ``_cv`` 안에 드는 것은 대화 파일
-        #: append 와 막히지 않는 렌더러의 창 줄뿐이다(`_lines_in_section`, v10.146.4·N12).
+        #: append 와 막히지 않는 렌더러의 창 줄뿐이다(`_lines_in_section`, v10.146.5).
         self._save_lock = threading.Lock()
         # 동시 생존 상한 (세션 한정, web UI 조절). 0 = 무제한. None = 기본값 —
         # env·CLI 는 부트가 `knobs.apply_all` 로 적용한다 (v10.43.0).
@@ -2895,7 +2895,7 @@ class AgentRegistry:
     def _replay_conversation(self, tm: AgentInstance) -> None:
         """``conversation.jsonl`` 로 🤝 창을 다시 채운다 (5.13) — kill 이 표면을 정리하고 resume 이 여기서 채운다. 먼저
         비운다(멱등). 라이브와 같은 표면이라 웹은 재접속 버퍼에 다시 쌓이고 저장된 ``ts`` 가 원래 시각을 지킨다. 읽기와
-        내기도 배달과 같은 구간 규칙(N12) — 부활 도중 든 배달이 재생과 섞이거나 두 번 보이지 않는다."""
+        내기도 배달과 같은 구간 규칙(v10.146.5) — 부활 도중 든 배달이 재생과 섞이거나 두 번 보이지 않는다."""
         from agent_cli.render import get_renderer
 
         def refill(recs):
