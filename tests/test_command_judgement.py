@@ -40,7 +40,10 @@ TABLE: dict[str, tuple] = {
     "/foo-bar x": (True, True),
     "/1x": (True, True),
     "/tmp/a.py": (False, False),
-    "/Users": (False, False),
+    "/usr": (
+        False,
+        False,
+    ),  # 있는 경로의 첫 토큰 — macOS 만의 `/Users` 는 Linux 에서 명령이 된다
     "/etc look": (False, False),
     "/ leading": (False, False),
     "//x": (False, False),
