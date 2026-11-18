@@ -1346,6 +1346,9 @@ def s13_wait_refusals_and_wakes(root: Path) -> dict:
         until(lambda: waits(s) == 1, "first wait")
         s.say("MAIN keep waiting", nickname="dj")
         until(lambda: waits(s) == 3, "second wait")
+        # run 에이전트의 첫 provider 호출이 시작된 뒤에 멈춘다 — 사람 말이 제자리 대기를 곧바로 깨우면(창구 하나)
+        # main 이 둘째 대기에 먼저 들어, 멈춤이 그 호출보다 앞설 수 있다(컨테이너 cpus 0.5 50회 중 3회)
+        until(lambda: len(p.calls.get("TASK-N", [])) >= 1, "agent's first call")
         key = s.agent_keys()[0]
         facts["stop"] = s.reg.stop_run(key)
         box["agent_go"].set()
