@@ -682,14 +682,19 @@ def _held_peer_message(box, sender: str, to: str, text: str) -> str:
     return call("message", to=to, text=text)
 
 
-def _held_request_to(box, to: str, text: str) -> str:
-    """보내는 쪽이 ``to`` 에게 회신 기대 `message` — 보낸 쪽의 다음 꼬리는 받는 쪽이 일을 집은 뒤(바쁨)에 짓게
-    잡는다(요청의 창 줄 `agent_message` 에서). 안 잡으면 부하 아래 그 꼬리가 "idle · 1 queued" 로 찍힌다(s22 가,
-    컨테이너 cpus 0.5·부하 1회, 2026-11-17)."""
+def _held_request_to(box, to: str, text: str, *, expects_reply: bool = True) -> str:
+    """보내는 쪽이 ``to`` 에게 `message`(회신 기대, ``expects_reply`` 가 거짓이면 통지) — 보낸 쪽의 다음 꼬리는 받는
+    쪽이 일을 집은 뒤(바쁨)에 짓게 잡는다(요청의 창 줄 `agent_message` 에서). 안 잡으면 부하 아래 그 꼬리가
+    "idle · 1 queued" 로 찍힌다(s22 가, 컨테이너 cpus 0.5·부하 1회, 2026-11-17; s17 의 통지도, 750회 중 1회)."""
     s = box["s"]
     b = _agent_key(s, to)
     s.recorder.hold("agent_message", b, lambda: s.agent_state(b) == "busy")
-    return call("message", to=to, text=text)
+    return call(
+        "message",
+        to=to,
+        text=text,
+        **({} if expects_reply else {"expects_reply": False}),
+    )
 
 
 def _wake_runs_after_idle(s: Session, name: str) -> None:
@@ -1545,11 +1550,8 @@ def s17_mail_to_an_idle_main_on_the_run_path(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="spawn", name="helper"),
-                call(
-                    "message",
-                    to="helper",
-                    text="TASK-R do it and tell me",
-                    expects_reply=False,
+                lambda m: _held_request_to(
+                    box, "helper", "TASK-R do it and tell me", expects_reply=False
                 ),
                 complete_all("handed off"),
                 _after_agents_settle(box, complete_all("heard back")),
