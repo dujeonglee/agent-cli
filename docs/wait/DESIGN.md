@@ -286,6 +286,8 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
 | 내 요청을 처리 중, 진행함 | `agent:k (explorer) · working on your request · 12 steps since your wait, last one 40s ago` |
 | 내 요청을 처리 중, 멈춘 듯 | `agent:k (explorer) · working on your request · no step since your wait, last one 9m ago` |
 | 내 요청이 대기열 | `agent:j (writer) · has your request queued behind 2 others · busy on another request, last step 1m ago` |
+| 회신을 빚졌고 다른 요청을 하는 중 | `agent:p (explorer) · owes you a reply · busy on another request, last step 5s ago` |
+| 회신을 빚졌고 일하지 않음(받은편지함이 비지 않아 잠듦으로 세지 않는다) | `agent:p (explorer) · owes you a reply · idle` (vNEXT) |
 | 회신을 빚진 채 스스로 잠듦 | `agent:m (coder) · owes you a reply · itself waiting on job #3 (`pytest -x tests/`)` |
 | 사람 질문에 막힘 | `agent:n (reviewer) · owes you a reply · itself waiting on job #1 (`…`) · blocked on question q-3 to the user, unanswered for 9m` |
 | main 이 회신을 빚짐(기다리는 쪽이 에이전트) | `main · owes you a reply` — 에이전트가 아니라 걸음 수·일감·kill 안내가 없다 |

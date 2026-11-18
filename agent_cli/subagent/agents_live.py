@@ -683,11 +683,10 @@ class AgentRegistry:
                     else "picking it up"
                 )
                 lines.append(f"{_label(key)} · {where} · {busy}")
-            else:
-                lines.append(
-                    f"{_label(key)} · owes you a reply · busy on another request"
-                    f"{_last_step(tm)}"
-                )
+            else:  # 빚졌지만 내 요청을 들지도 줄 세우지도 않았다 — 일하는 중이면 다른 요청을 하는 중이다
+                busy = self.state_is_active(tm.state)
+                tail = f"busy on another request{_last_step(tm)}" if busy else "idle"
+                lines.append(f"{_label(key)} · owes you a reply · {tail}")
         for debtor, on in parked_view(
             addr, frozenset({addr}), agents=self, facts=facts
         ):

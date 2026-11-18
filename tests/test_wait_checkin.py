@@ -409,6 +409,21 @@ class TestAgentLines:
             in text
         )
 
+    def test_idle_debtor_line_says_idle(self, reg):
+        """빚진 채 idle 이고 받은편지함엔 런을 열지 않는 항목뿐 — "busy on another request" 가 아니다."""
+        reg.note_owes("agent:p", "main", "t", id="r-903")
+        _fake_agent(reg, "p", state="idle")
+        _fake_agent(reg, "q", state="idle")
+        reg._deliver_peer_reply(
+            "p", "q", "stopped", 0, re="r-1", mark="stopped by user", opens_run=False
+        )
+        assert [v.wakes for v in reg.queued_for("agent:p")] == [False]
+        assert reg.checkin_agent_lines("main", {}) == (
+            ["agent:p (explorer) · owes you a reply · idle"],
+            True,
+            False,
+        )
+
     def test_pending_for_text_is_unchanged(self, reg):
         """에이전트 몫의 줄(`wake.relation_items`) — 종전 문장 그대로."""
         _fake_agent(reg, "k", state="busy")
