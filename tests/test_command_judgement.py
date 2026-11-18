@@ -15,7 +15,7 @@ import agent_cli.main as M
 from agent_cli.main import _command_dispatch, _ConsoleSurface
 from agent_cli.web.surface import WebSurface
 
-#: 글 → (웹, CLI). ``"raises"`` 는 지금 `route` 가 답 대신 예외를 내는 글이다(빈 글 — `/stop` 판정이 첫 토큰을 꺼낸다).
+#: 글 → (웹, CLI). 빈 글(이미지만 보낸 메시지)은 명령이 아니다 — v10.147.1 전에는 `/stop` 판정이 없는 첫 토큰을 꺼내 예외를 냈다.
 TABLE: dict[str, tuple] = {
     "/help": (True, True),
     "/help me": (True, True),
@@ -47,8 +47,8 @@ TABLE: dict[str, tuple] = {
     "hello": (False, False),
     "hello /x": (False, False),
     " /x": (False, False),
-    "": ("raises", "raises"),
-    "   ": ("raises", "raises"),
+    "": (False, False),
+    "   ": (False, False),
 }
 
 
@@ -92,10 +92,7 @@ def _answer(surface, text):
         patch.object(M, "_dispatch_stop"),
         patch("agent_cli.web.slash._handle_sh", return_value=True),
     ):
-        try:
-            return surface.route(text)
-        except IndexError:
-            return "raises"
+        return surface.route(text)
 
 
 @pytest.mark.parametrize("text", sorted(TABLE))
@@ -108,11 +105,11 @@ def test_cli_route_answers_as_the_table(text):
     assert _answer(_cli(), text) == TABLE[text][1]
 
 
-@pytest.mark.parametrize("text", sorted(t for t in TABLE if "raises" not in TABLE[t]))
+@pytest.mark.parametrize("text", sorted(TABLE))
 def test_web_is_command_says_what_route_does(text):
     assert _web().is_command(text) is TABLE[text][0]
 
 
-@pytest.mark.parametrize("text", sorted(t for t in TABLE if "raises" not in TABLE[t]))
+@pytest.mark.parametrize("text", sorted(TABLE))
 def test_cli_is_command_says_what_route_does(text):
     assert _cli().is_command(text) is TABLE[text][1]
