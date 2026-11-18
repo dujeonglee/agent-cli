@@ -1715,7 +1715,12 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
                 _bb_dead_then(
                     box, crash, _after_main_calls(box, 12, lambda m: call("wait"))
                 ),
-                lambda m: call("reply", id=owed_id(m), text="aa: bb did not answer"),
+                # main 의 첫 런(died 통지로 깬 런)이 끝난 뒤 — 먼저 갚으면 그 런의 마지막 띠(`open_items`)에서 기다리는
+                # 회신 r-2 가 빠진다(컨테이너 cpus 0.5, 40회 중 1회)
+                lambda m: (
+                    until(lambda: runs_ended(box["s"]) >= 1, "main's first run ends"),
+                    call("reply", id=owed_id(m), text="aa: bb did not answer"),
+                )[1],
                 call("complete", result="ok"),
             ],
         }
