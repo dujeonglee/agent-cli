@@ -25,6 +25,7 @@ from agent_cli.subagent.agents_live import AgentInstance, AgentRegistry
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
+from tests.mail_support import agent_wake_lines
 
 CAPS = ModelCapabilities(
     context_window=32768, max_output_tokens=4096, supports_thinking=False
@@ -41,12 +42,17 @@ def until(pred, limit=10.0) -> bool:
     return pred()
 
 
+class WorkerDies(BaseException):
+    """런 안의 `except Exception` 을 빠져나가 워커를 죽인다 — 워커가 예외로 죽는 길."""
+
+
 class Stage:
     """가짜 엔진. 런의 시작 글에 든 표지로 행동을 고른다.
 
     - ``HOLD``: 시작을 알리고(``started[tag]``), ``absorb[tag]`` 가 서면 받은편지함을 이 런으로 흡수하고
       (``absorbed[tag]``), 정지가 설 때까지 막는다. 멈추면 interrupt 결과, 아니면 성공.
     - ``PARK``: 바로 `wait` 로 끝난다(빚은 열린 채 — 스스로 잠든 상주).
+    - ``GATE``·``DIE``: 시작을 알리고 ``absorb[tag]`` 를 기다렸다가 성공으로 끝나거나(GATE) 워커를 죽인다(DIE).
     - 그 밖: 바로 성공(``ran`` 에 표지를 적는다).
     런 기록(호출 둘·생각 하나)을 ctx 에 남겨 회신의 "Last activity"·"Partial notes" 재료로 쓴다."""
 
@@ -62,8 +68,15 @@ class Stage:
         return d.setdefault(tag, threading.Event())
 
     def __call__(self, kind, start, ctx):
-        m = re.search(r"\b(HOLD\d+|PARK\d+|NEXT)\b", start.query)
+        m = re.search(r"\b(HOLD\d+|PARK\d+|GATE\d+|DIE\d+|NEXT)\b", start.query)
         tag = m.group(1) if m else ""
+        if tag.startswith(("GATE", "DIE")):
+            # 시작을 알리고 ``absorb[tag]`` 가 서면 끝난다 — GATE 는 성공, DIE 는 워커를 죽인다
+            self._ev(self.started, tag).set()
+            self._ev(self.absorb, tag).wait(10)
+            if tag.startswith("DIE"):
+                raise WorkerDies(tag)
+            return ToolResult(True, output=f"{tag} done")
         if tag.startswith("PARK"):
             return ToolResult(True, output="⏸ waiting", waiting=True)
         if not tag.startswith("HOLD"):
@@ -427,6 +440,97 @@ class TestRunAgent:
         assert not tm.run_stop.is_set() and not tm.stop_event.is_set()
         assert reg.stop_run(tm.key) == ""
         assert until(lambda: tm.state == "dead")
+
+
+class TestGoneAgentQueue:
+    """스스로 내려간 에이전트 — 정상 종료한 run·죽은 워커. 더는 상자를 읽지 않으니 줄 선 요청을 닫고 요청자마다
+    사실 한 통(✕ 의 removed 와 같은 길, 표지 ``ended``·``died``). 요청자를 깨운다."""
+
+    def _queue_behind(self, reg, stage, tm, tag):
+        p6 = peer(reg)
+        busy_with(reg, stage, tm, tag, "r-40")
+        assert not reg.request(
+            tm.key, "check names", author=f"agent:{p6.key}", item_id="r-41"
+        )
+        assert not reg.request(tm.key, "NEXT parser", author="main", item_id="r-42")
+        me = f"agent:{p6.key}"
+        assert agent_wake_lines(reg, me) == [f"agent:{tm.key} has your request queued"]
+        (line,), _ = reg.checkin_agent_lines(me, {})
+        assert "has your request queued, next in line" in line
+        return p6
+
+    def _answered(self, reg, tm, p6, *, mark, body):
+        assert until(lambda: tm.state == "dead")
+        me = f"agent:{p6.key}"
+        (r41,) = peer_replies(p6)
+        assert r41["re"] == "r-41" and r41["mark"] == mark
+        assert r41["opens_run"] is True  # 요청자를 깨운다
+        assert r41["text"] == body.format(agent=tm.key, rid="r-41", quote="check names")
+        (m42,) = main_mail(reg, "r-42")
+        assert m42["wakes_main"] is True
+        text = build_reply_record(m42)["content"]
+        assert f"re [r-42] · {mark} ──" in text
+        assert body.format(agent=tm.key, rid="r-42", quote="NEXT parser") in text
+        for rid in ("r-41", "r-42"):
+            assert reg._post.row(rid) is None  # 줄이 닫혀 장부에서 빠졌다
+        assert reg.queued_for(f"agent:{tm.key}") == ()
+        assert agent_wake_lines(reg, me) == []
+        # main 의 줄 선 요청(r-42)의 근거는 사라진다 — 집어 든 r-40 은 이 규칙 밖(죽음이면 빚으로 남는다)
+        assert not [ln for ln in agent_wake_lines(reg, "main") if "queued" in ln]
+        assert reg.checkin_agent_lines(me, {}) == ([], False)
+        assert reg.awaited_replies(me) == [] and reg.awaited_replies("main") == []
+
+    ENDED = (
+        '{agent} finished its task and is gone before it started your request [{rid}] ("{quote}"). '
+        "Nothing was done for it.\nDecide whether to continue another way or report back to the user."
+    )
+    DIED = (
+        '{agent} died before it started your request [{rid}] ("{quote}"). '
+        "Nothing was done for it.\nDecide whether to continue another way or report back to the user."
+    )
+
+    def test_run_agent_that_finishes_answers_its_queue(self, reg, stage):
+        tm = spawn(reg, run=True)
+        p6 = self._queue_behind(reg, stage, tm, "GATE1")
+        stage.absorb["GATE1"].set()
+        self._answered(reg, tm, p6, mark="ended", body=self.ENDED)
+        assert "NEXT" not in stage.ran
+
+    def test_worker_that_dies_answers_its_queue(self, reg, stage):
+        tm = spawn(reg)
+        p6 = self._queue_behind(reg, stage, tm, "DIE1")
+        stage.absorb["DIE1"].set()
+        self._answered(reg, tm, p6, mark="died", body=self.DIED)
+        assert tm.error.startswith("WorkerDies")
+
+    def test_a_late_kill_sends_no_second_notice(self, reg, stage):
+        tm = spawn(reg, run=True)
+        p6 = self._queue_behind(reg, stage, tm, "GATE2")
+        stage.absorb["GATE2"].set()
+        assert until(lambda: tm.state == "dead")
+        assert reg.kill(tm.key, by="main") == ""
+        assert len(peer_replies(p6)) == 1 and len(main_mail(reg, "r-42")) == 1
+
+    def test_a_dead_requester_gets_nothing_and_its_request_closes(self, reg, stage):
+        tm = spawn(reg, run=True)
+        p6 = self._queue_behind(reg, stage, tm, "GATE3")
+        p6.state = "dead"
+        stage.absorb["GATE3"].set()
+        assert until(lambda: tm.state == "dead")
+        assert peer_replies(p6) == []
+        assert reg._post.row("r-41") is None
+
+    def test_a_crash_after_stop_everything_still_wakes(self, reg, stage):
+        """ "Stop everything" ■ 는 그 정지 회신만 조용하다 — 다음 런은 원인 없이 시작하고, 그 뒤 죽음의 통지는 깨운다."""
+        tm = spawn(reg)
+        busy_with(reg, stage, tm, "HOLD30", "r-130")
+        assert reg.stop_all_runs(wakes_requesters=False) == [tm.key]
+        assert until(lambda: tm.state == "idle" and tm.stop_cause == "")
+        p6 = self._queue_behind(reg, stage, tm, "DIE2")
+        stage.absorb["DIE2"].set()
+        assert until(lambda: tm.state == "dead")
+        (r41,) = peer_replies(p6)
+        assert r41["mark"] == "died" and r41["opens_run"] is True
 
 
 class TestStopAll:

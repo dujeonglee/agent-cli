@@ -12,6 +12,8 @@
 | 자기가 맡긴 하위 일 | 그대로 | 하위 run 은 함께 멈춤 · 하위 상주는 남음 |
 
 세션 종료(`shutdown_all`)는 사람의 정지가 아니다 — 원인이 비어 있고, 빚은 지금처럼 버려 재시작이 되넣는다.
+스스로 내려간 에이전트(과제를 끝낸 run·죽은 워커)도 사람의 정지가 아니지만 더는 상자를 읽지 않으니, 대기 요청에는
+✕ 와 같은 길로 회신한다(`ENDED_REPLY`·`DIED_REPLY`, 표지 ``ended``·``died`` — 표 밖).
 
 회신은 회신이다(P2 규칙): 요청자의 기다리는 회신 항목을 닫고 새 장부 항목을 만들지 않는다. 글은 여기서
 짓는다 — 모델이 읽는 문장이라 모듈 상수다(`prompts.inventory` 표본). 마지막 줄은 다음 걸음을 요청자에게
@@ -34,6 +36,9 @@ REMOVED = "removed"
 #: 쪽 — 사람이면 ``user``, 모델의 `agent` `kill` 이면 ``main``·에이전트 키.
 STOPPED_MARK = "stopped by {by}"
 REMOVED_MARK = "removed by {by}"
+#: 사람이 한 일이 아닌 내려감의 표지 — ``by`` 가 없다. 정상 종료한 run 에이전트와 죽은 워커.
+ENDED_MARK = "ended"
+DIED_MARK = "died"
 
 #: ``who`` 는 문장 주어 — 사람이면 "The user", 모델이면 그 주소(``main``·키).
 STOPPED_REPLY = (
@@ -41,6 +46,15 @@ STOPPED_REPLY = (
 )
 REMOVED_REPLY = (
     "{who} removed {agent} before it started your request [{rid}] "
+    '("{quote}"). Nothing was done for it.'
+)
+#: 내려간 에이전트(정상 종료한 run·죽은 워커)의 받은편지함에 줄 서 있던 요청의 회신 — 사용자 승인 문장.
+ENDED_REPLY = (
+    "{agent} finished its task and is gone before it started your request [{rid}] "
+    '("{quote}"). Nothing was done for it.'
+)
+DIED_REPLY = (
+    "{agent} died before it started your request [{rid}] "
     '("{quote}"). Nothing was done for it.'
 )
 LAST_ACTIVITY = "Last activity: {calls}"
@@ -188,6 +202,18 @@ def removed_reply(agent: str, rid: str, request: str, *, by: str) -> str:
                 agent=agent,
                 rid=rid,
                 quote=one_line(request, QUOTE_CHARS),
+            ),
+            NEXT_STEP,
+        ]
+    )
+
+
+def gone_reply(agent: str, rid: str, request: str, *, died: bool) -> str:
+    """스스로 내려간(``died`` 면 죽은) 에이전트에게 줄 서 있던 요청에 대한 회신의 본문."""
+    return "\n".join(
+        [
+            (DIED_REPLY if died else ENDED_REPLY).format(
+                agent=agent, rid=rid, quote=one_line(request, QUOTE_CHARS)
             ),
             NEXT_STEP,
         ]

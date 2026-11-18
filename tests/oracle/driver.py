@@ -1964,7 +1964,9 @@ def s24_commands_while_waiting(root: Path) -> dict:
 def s25_run_agent_leaves_queue(root: Path) -> dict:
     """1단계 ⑦ `[단계 4c 에서 바뀜 — 변화 9]`: run 에이전트가 마지막 응답(`complete`)을 만드는 동안 main 이 그에게
     회신 기대 요청을 보낸다 — 줄 선 채로 run 이 내려온다. 보낸 쪽(main)의 기다리는 회신과 `wait` 판정(받아들여
-    막히면 ■ 로 끝낸다 — 막힘은 대기 표시로 판정)."""
+    막히면 ■ 로 끝낸다 — 막힘은 대기 표시로 판정). v10.146.1(N5) 부터 내려오는 run 이 그 요청에 `· ended` 회신을
+    보내고 줄을 닫는다 — main 은 그 회신으로 깨어 읽고 끝난다(종전엔 `wait` 가 "has your request queued" 를 근거로
+    받아들였다)."""
     box: dict = {}
     facts: dict = {}
 

@@ -289,7 +289,8 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             (
                 "The reply the requester gets when the user stops (■) an agent working on its "
                 "request, then the one for a request it had not started when the user removed "
-                "it (✕) — each closes the requester's wait (v10.142.0)"
+                "it (✕), then the same for a run agent that finished its task and for a worker that "
+                "died (v10.146.1) — each closes the requester's wait (v10.142.0)"
             ),
             "\n\n".join(
                 [
@@ -320,6 +321,21 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
                         ),
                         re="r-32",
                         mark=agent_stop.REMOVED_MARK.format(by="user"),
+                    ),
+                    *(
+                        mail.envelope(
+                            "reply",
+                            "n-9",
+                            "agt-5",
+                            agent_stop.gone_reply(
+                                "agt-5", "r-32", "review the parser next", died=died
+                            ),
+                            re="r-32",
+                            mark=agent_stop.DIED_MARK
+                            if died
+                            else agent_stop.ENDED_MARK,
+                        )
+                        for died in (False, True)
                     ),
                 ]
             ),

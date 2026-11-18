@@ -531,11 +531,11 @@ class TestBuiltinHook:
 
         monkeypatch.chdir(ws)
         monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
-        monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "0.2")
+        monkeypatch.setenv("AGENT_CLI_SNAPSHOT_MIN_INTERVAL_S", "3600")
         store = build_snapshot_store()
-        store._last_checkpoint = (
-            time.monotonic() - 1
-        )  # 시작 커밋 뒤 간격이 지났다고 친다
+        # 간격이 지난 것은 시계를 기다리지 않고 마지막 체크포인트 시각을 물려서 만든다 — 짧은 간격과
+        # `sleep` 에 기대면 느린 러너에서 첫 커밋이 간격보다 오래 걸려 둘째 op 도 커밋된다(CI 실패).
+        store._last_checkpoint = time.monotonic() - 3601  # 시작 커밋 뒤 간격이 지났다
         n0 = store.stats.commits
         hook = self._hook()
         (ws / "src" / "a.py").write_text("v2\n")
@@ -545,7 +545,7 @@ class TestBuiltinHook:
             MagicMock(tool_name="edit_file", turn=4, tool_input={})
         )  # 간격 안 — 건너뜀
         assert store.stats.commits == n0 + 1
-        time.sleep(0.25)
+        store._last_checkpoint = time.monotonic() - 3601  # 간격이 지났다
         hook.pre_tool_use(
             MagicMock(tool_name="write_file", turn=4, tool_input={})
         )  # 간격 지남

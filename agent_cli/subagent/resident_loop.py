@@ -383,8 +383,10 @@ class ResidentLoop(LoopKind):
             if stopped:
                 # ■ — 에이전트는 남는다: 한 줄 알린다(대기 요청은 다음 차례)
                 reg.report_stop(tm, kept=len(reg._queued(tm)))
-            # 다음 런은 원인 없이 시작한다 — 멈추지 않고 끝난 런에 늦게 온 ■ 도 여기서 사라진다
+            # 다음 런은 원인 없이 시작한다 — 멈추지 않고 끝난 런에 늦게 온 ■ 도 여기서 사라진다. 정지 상태 세 값을
+            # 한자리에서 지운다("Stop everything" 의 조용함은 그 정지 회신만의 것이다)
             tm.stop_cause = tm.stop_by = ""
+            tm.stop_replies_wake = True
         return result, secs
 
     def _answer_stopped_run(self) -> None:
