@@ -435,18 +435,26 @@ class TestCommandsTypedDuringTheWait:
         q = MainInput()
         routed: list = []
 
-        def route(text):
-            routed.append(text)
-            return text in handled
+        class _Surface:  # 판정은 표면의 것 — 여기서는 "라우팅이 받는 글" 그대로
+            def is_command(self, text):
+                return text in handled
 
-        # 판정은 표면의 것 — 여기서는 "라우팅이 받는 글" 그대로
-        return q, routed, wait_for_human_words(q, lambda t: t in handled, route)
+            def echo(self, item):
+                routed.append(("echo", item["text"]))
+
+            def route(self, text, start=None):
+                routed.append(text)
+                return text in handled
+
+        return q, routed, wait_for_human_words(q, _Surface())
 
     def test_a_command_is_routed_in_place_and_does_not_wake(self):
         q, routed, wait = self._setup()
         q.enqueue("c", "/stop agt-5")
         assert wait(0) is False
-        assert routed == ["/stop agt-5"] and q.pending_count() == 0
+        # 말풍선이 실행 앞에 — 펌프가 연 차례·턴 경계와 같다
+        assert routed == [("echo", "/stop agt-5"), "/stop agt-5"]
+        assert q.pending_count() == 0
 
     def test_plain_words_wake_and_stay_queued(self):
         q, routed, wait = self._setup()

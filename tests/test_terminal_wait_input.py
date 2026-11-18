@@ -23,12 +23,16 @@ def _setup(monkeypatch, *, tty: bool, typed: str = ""):
     q = MainInput()
     routed: list[str] = []
 
-    def is_command(text):
-        return text.startswith(("/", "@")) and not text.startswith("/tmp")
+    class _Surface:
+        def is_command(self, text):
+            return text.startswith(("/", "@")) and not text.startswith("/tmp")
 
-    def route(text):
-        routed.append(text)
-        return True
+        def echo(self, item):  # run 의 표면은 말풍선이 없다
+            pass
+
+        def route(self, text, start=None):
+            routed.append(text)
+            return True
 
     stdin = _Tty(typed) if tty else io.StringIO(typed)
     monkeypatch.setattr(M.sys, "stdin", stdin)
@@ -37,7 +41,7 @@ def _setup(monkeypatch, *, tty: bool, typed: str = ""):
     monkeypatch.setattr(
         select, "select", lambda r, w, x, t: (r if typed else [], [], [])
     )
-    return q, routed, M._terminal_steer_input(q, is_command, route)
+    return q, routed, M._terminal_steer_input(q, _Surface())
 
 
 @pytest.mark.parametrize("tty", [False, True])

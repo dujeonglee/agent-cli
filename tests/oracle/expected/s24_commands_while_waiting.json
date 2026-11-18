@@ -643,8 +643,18 @@
     true
    ],
    [
+    "echo",
+    "@helper note",
+    false
+   ],
+   [
     "routed",
     "@helper note"
+   ],
+   [
+    "echo",
+    "/noop",
+    false
    ],
    [
     "routed",
