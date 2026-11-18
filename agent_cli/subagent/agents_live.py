@@ -611,9 +611,10 @@ class AgentRegistry:
 
     def checkin_agent_lines(
         self, addr: str, step_marks: dict[str, int]
-    ) -> tuple[list[str], bool]:
+    ) -> tuple[list[str], bool, bool]:
         """`wait` 중간 깨우기 알림의 에이전트 줄 (v10.79.0, docs/wait/DESIGN.md §6.3)
-        — ``(줄 목록, 사람 질문에 막힌 줄이 있는가)``.
+        — ``(줄 목록, 에이전트 줄이 있는가, 사람 질문에 막힌 줄이 있는가)``. 빚진 쪽이 main 이면 그 줄은
+        ``main · owes you a reply`` 뿐이다 — 에이전트가 아니라 걸음 수·일감이 없다.
 
         작업·monitor 와 달리 에이전트는 로그 파일이 없다. 레지스트리가 **이미 아는
         것**만으로 그린다 — 상태·지금 처리 중인 요청자·받은편지함 미러·회신 빚과
@@ -649,9 +650,13 @@ class AgentRegistry:
             return f", last step {format_duration(now - at)} ago" if at else ""
 
         lines: list[str] = []
+        main_lines: list[str] = []  # 빚진 main — 에이전트만 일하거나 줄 세운다
         question = False
         facts = self.wake_facts()  # 관계와 잠든 채무자를 같은 사본에서
         for kind, me in agent_relations(facts, addr):
+            if not me.startswith("agent:"):
+                main_lines.append(f"{me} · owes you a reply")
+                continue
             key = me.split(":", 1)[1]
             tm = self._agents.get(key)
             if tm is None:
@@ -701,7 +706,7 @@ class AgentRegistry:
                 )
                 question = True
             lines.append(line)
-        return lines, question
+        return [*main_lines, *lines], bool(lines), question
 
     def awaited_replies(self, addr: str) -> list[dict]:
         """``addr`` 가 보낸 요청 중 회신이 아직 오지 않은 것 — 장부의 "기다리는 회신"
@@ -2440,14 +2445,21 @@ class AgentRegistry:
         """멈춘 에이전트의 갚지 않은 빚(지금 일·그 밖의 빚 — 사람 주소 제외) 모두에 stopped 회신을 보내고
         빚을 갚음으로 적는다(요청자의 기다리는 회신이 닫힌다). 보낸 상대는 ``tm.stop_notified`` 에 쌓인다.
         ``activity``·``notes`` 는 그 런의 마지막 호출·생각(`agent_stop.run_activity`·`partial_notes`)."""
-        me = f"agent:{tm.key}"
         by = tm.stop_by or "user"
-        mark = agent_stop.STOPPED_MARK.format(by=by)
-        for d in self.reply_debts(me):
-            text = agent_stop.stopped_reply(
-                tm.key, d.id, d.text, activity, notes, by=by
-            )
-            self._send_stop_reply(  # 정지 회신의 배달이 곧 갚음
+        self._answer_debts(
+            tm,
+            agent_stop.STOPPED_MARK.format(by=by),
+            partial(agent_stop.stopped_reply, activity=activity, notes=notes, by=by),
+        )
+
+    def _answer_debts(
+        self, tm: AgentInstance, mark: str, reply_of: Callable[[str, str, str], str]
+    ) -> None:
+        """갚지 않은 빚(사람 주소 제외)마다 회신(본문 ``reply_of(key, rid, text)``, 머리 표지 ``mark``)을 보내고 그
+        배달로 빚을 갚는다 — 정지(■·✕)의 stopped 와 죽은 워커의 died 가 같은 길."""
+        for d in self.reply_debts(f"agent:{tm.key}"):
+            text = reply_of(tm.key, d.id, d.text)
+            self._send_stop_reply(  # 회신의 배달이 곧 갚음
                 tm, d.to, d.id, text, mark, hop=d.hop, answers=d.answers, settles=True
             )
 
@@ -2990,6 +3002,12 @@ class AgentRegistry:
                 # (`agent_stop` 의 표). 런 도중이었으면 그 런의 정리가 지금 일의 빚을 이미 갚았다.
                 self._answer_after_stop(tm)
             elif not tm.stop_event.is_set():
+                if crash:
+                    # 죽었다 — 집어 든 요청마다 알리고, 못 간 빚(요청자도 죽었다)은 멈춘 런처럼 버린다
+                    self._answer_debts(
+                        tm, agent_stop.DIED_MARK, agent_stop.died_working_reply
+                    )
+                    self.run_ended(f"agent:{tm.key}", crash, stopped=True)
                 # 스스로 내려갔다(run 의 과제 끝·워커 죽음) — 더는 상자를 읽지 않으니 줄 선 요청에 알린다
                 mark = agent_stop.DIED_MARK if crash else agent_stop.ENDED_MARK
                 self._answer_queued(

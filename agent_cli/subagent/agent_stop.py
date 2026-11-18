@@ -57,6 +57,10 @@ DIED_REPLY = (
     "{agent} died before it started your request [{rid}] "
     '("{quote}"). Nothing was done for it.'
 )
+#: 죽은 워커가 집어 든(지금 일·흡수한) 요청의 회신 — 죽은 런의 활동·생각은 싣지 않는다(믿을 수 없다).
+DIED_WORKING_REPLY = (
+    '{agent} died while it was working on your request [{rid}] ("{quote}").'
+)
 LAST_ACTIVITY = "Last activity: {calls}"
 PARTIAL_NOTES = "Partial notes: {notes}"
 NEXT_STEP = "Decide whether to continue another way or report back to the user."
@@ -213,6 +217,18 @@ def gone_reply(agent: str, rid: str, request: str, *, died: bool) -> str:
     return "\n".join(
         [
             (DIED_REPLY if died else ENDED_REPLY).format(
+                agent=agent, rid=rid, quote=one_line(request, QUOTE_CHARS)
+            ),
+            NEXT_STEP,
+        ]
+    )
+
+
+def died_working_reply(agent: str, rid: str, request: str) -> str:
+    """죽은 워커가 집어 든 요청(갚지 않은 빚)에 대한 회신의 본문."""
+    return "\n".join(
+        [
+            DIED_WORKING_REPLY.format(
                 agent=agent, rid=rid, quote=one_line(request, QUOTE_CHARS)
             ),
             NEXT_STEP,
