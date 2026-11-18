@@ -354,9 +354,7 @@ class Session:
         )
         self.queue = InputQueue()
         if query is not None:
-            self.queue.enqueue(
-                None, query
-            )  # argv 질의 — 큐가 조립보다 먼저 선다(`run` 과 같다)
+            self.say(query)  # argv 질의 — 큐가 조립보다 먼저 선다(`run` 과 같다)
         self.stores = build_session_stores(self.spec, queue=self.queue)
         self.owners = build_session_owners(
             self.spec, self.stores, renderer=self.recorder
@@ -472,6 +470,14 @@ class Session:
         """사람의 입력 한 줄 — 입력 큐로 (CLI 의 argv 질의는 ``nickname=None``)."""
         return self.queue.enqueue(None, text, nickname=nickname)
 
+    def pending_count(self) -> int:
+        """main 앞에 줄 선 사람의 입력 수 — 웹 idle 리퍼가 보는 값."""
+        return self.queue.pending_count()
+
+    def main_idle(self) -> bool:
+        """펌프가 런을 열 것을 기다리는 중인가(한가함) — CLI 메일 대기 줄의 ``busy`` 가 이 값이다."""
+        return self.wired.pump.deps.waker.idle.is_set()
+
     def pump(self) -> None:
         """펌프를 돈다 — run 은 조용해지면, web 은 :meth:`close` 의 SHUTDOWN 에서 끝난다."""
         self.wired.pump.run()
@@ -488,8 +494,12 @@ class Session:
         rows = [r for r in self.reg.roster_snapshot() if r["key"] == key]
         return rows[0]["state"] if rows else ""
 
-    def close(self) -> None:
+    def stop_pump(self) -> None:
+        """펌프를 끝낸다(웹 서버 종료와 같은 길) — 줄 선 사람의 입력은 먼저 꺼낸다. 세션은 닫지 않는다."""
         self.queue.shutdown()
+
+    def close(self) -> None:
+        self.stop_pump()
         teardown_session(
             None,
             self.ctx,
@@ -1225,7 +1235,7 @@ def s11_stop_everything(root: Path) -> dict:
         )
         facts["web_instance_active"] = web_instance_is_active(
             quiet_renderer,
-            SimpleNamespace(pending_count=s.queue.pending_count),
+            SimpleNamespace(pending_count=s.pending_count),
             s.reg,
             monitors=s.stores.monitors,
             schedules=s.stores.schedules,
@@ -1353,7 +1363,8 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
     """§4 재시작: 세션 끝(런 도중)·미배달 메일·에이전트→main 미배달 요청 → 저장 → 새 조립이 복원 → 로스터·
     다음 런의 모델 글·기다리는 회신. ``query`` 면 `run --resume` 처럼 첫 질의가 펌프보다 먼저 큐에 있다(질의가 먼저
     연다), 아니면 웹 resume 처럼 질의 없이 — 복원된 메일이 한가한 펌프를 깨운다. ``agents.json`` 바이트는 담지
-    않는다.
+    않는다. ``query`` 쪽은 지금 메일 깨우기 항목이 질의 뒤에 줄 서서, 질의 런의 첫 턴 경계에서 사람 말풍선
+    (`push_user_message`)으로 한 번 그려진다 — 깨우기 항목이 없어지면 그 한 줄이 사라진다(s28 도 같다).
 
     `[v10.145.0 에서 재기록 — 2단계 예외 D1: 재시작 뒤 main 메일함의 요청을 보낸 쪽이 기다리는 것으로 선다. 번호는
     정규화의 첫 등장 순서 때문에 r-1↔r-2 가 뒤바뀐다]`"""
@@ -1386,7 +1397,7 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
     s.say("MAIN go", nickname="dj")
     t = s.pump_in_thread()
     until(lambda: runs_ended(s) >= 1)
-    s.queue.shutdown()
+    s.stop_pump()
     t.join(10)
     worker, asker = s.agent_keys()
     box["worker"] = worker
@@ -1542,10 +1553,7 @@ def s17_mail_to_an_idle_main_on_the_run_path(root: Path) -> dict:
         # 런 끝의 기록(`surface.run_ended`)은 펌프가 한가함을 세우기(`waker.mark_idle`) **전**이다 — 그 사이에
         # 통지가 오면 busy=True 로 찍힌다(컨테이너 cpus 0.5·부하 아래 1회, 2026-11-17). 한가함까지 잡는다.
         until(
-            lambda: (
-                runs_ended(box["s"]) >= 1
-                and box["s"].wired.pump.deps.waker.idle.is_set()
-            ),
+            lambda: runs_ended(box["s"]) >= 1 and box["s"].main_idle(),
             "main run ended and idle",
         )
         return call("message", to="main", text="all done", expects_reply=False)
@@ -2131,7 +2139,7 @@ def s27_restart_after_wait(root: Path) -> dict:
     s.say("MAIN go", nickname="dj")
     t = s.pump_in_thread()
     until(lambda: runs_ended(s) >= 1)
-    s.queue.shutdown()
+    s.stop_pump()
     t.join(10)
     aa, bb = _agent_key(s, "aa"), _agent_key(s, "bb")
     box["bb"] = bb
@@ -2191,6 +2199,127 @@ def s27_restart_after_wait(root: Path) -> dict:
     return {"first": first, "second": second, "facts": facts}
 
 
+# ── 사람의 입력과 메일이 함께 main 앞에 설 때 (입력 큐를 main 의 상자로 옮기기 전의 기준) ─────────────
+
+
+def s28_words_and_mail_after_the_last_boundary(root: Path, path: str) -> dict:
+    """main 이 마지막 응답(`complete`)을 만드는 동안 작업 통지 한 통과 사람의 입력 한 줄이 함께 온다 — 그 런은
+    끝나고, 다음 런은 **사람의 입력**이 연다. 그 런의 첫 턴 경계가 사람 말 뒤에 메일을 배달한다. 지금은 메일
+    깨우기 항목이 사람 입력 뒤에 줄 서서 그 경계에서 사람 말풍선(`push_user_message`)으로 한 번 그려진다."""
+    box: dict = {}
+
+    def mail_and_words_then_complete(msgs):
+        s = box["s"]
+        box["job"] = _job_mail(s, 1)
+        s.say("MAIN one more thing", nickname="dj")
+        return complete_all("first answer")(msgs)
+
+    p = Provider(
+        {
+            "MAIN": [mail_and_words_then_complete, complete_all("saw both")],
+        }
+    )
+    s = box["s"] = Session(root, p, path=path)
+    s.say("MAIN go", nickname="dj")
+    drive(s, path=path, until_done=lambda s: until(lambda: runs_ended(s) >= 2))
+    return s.collect({"job": box.get("job")})
+
+
+def _waiting_on_a_run_agent(box, tag: str, before_wait, *, then_waits: bool = True):
+    """main 이 run 에이전트(``tag`` 과제)를 띄우고 그 회신을 제자리에서 기다리는 대본 — ``before_wait(s)`` 는 첫
+    `wait` 를 내기 **직전**(main 의 스레드, 응답을 만드는 자리)에 부른다. 깬 뒤 main 은 다시 `wait` 하고, 회신에
+    깨어 끝낸다. 회신은 ``box["go"]`` 가 세워진 뒤에 나간다."""
+    go = box["go"] = threading.Event()
+
+    def first_wait(msgs):
+        before_wait(box["s"])
+        return call("wait")
+
+    main = [
+        call("agent", mode="run", task=f"{tag} slow work"),
+        _after_runs_began(box, 1, first_wait),
+        call("wait"),
+        _after_agents_settle(box, complete_all("main finished"), states=("dead",)),
+    ]
+    agent = [
+        lambda m: (go.wait(_PATIENCE_S), call("reply", id=owed_id(m), text="done"))[1],
+        # 회신을 읽은 main 의 꼬리(넷째 호출)가 run 의 "바쁨" 을 본 뒤에 내려온다
+        _after_main_calls(box, 4, lambda m: call("complete", result="ok")),
+    ]
+    return main, agent
+
+
+def _second_wait_then_reply(box, p, s) -> None:
+    """main 이 다시 제자리 대기에 든 뒤(셋째 호출이 `wait` 를 냈고 대기 표시가 섰다) 회신을 내보내고 끝을 기다린다."""
+    until(
+        lambda: len(p.calls.get("MAIN", [])) >= 3 and s.recorder.main_waiting.is_set(),
+        "waits again",
+    )
+    box["go"].set()
+    until(lambda: runs_ended(s) >= 1, "main finished")
+
+
+def s29_words_already_there_when_main_waits(root: Path) -> dict:
+    """사람의 입력이 이미 줄 서 있는데 main 이 `wait` 한다 — 사람 말은 "이미 도착한 통지" 로 세지 않으므로 `wait`
+    는 받아들여지고, 곧바로 "the user wrote to you" 로 깬다. 그 말은 다음 턴 경계에 주입된다 (web)."""
+    box: dict = {}
+    main, agent = _waiting_on_a_run_agent(
+        box, "TASK-S1", lambda s: s.say("MAIN also look at y", nickname="dj")
+    )
+    p = Provider({"MAIN": main, "TASK-S1": agent})
+    s = box["s"] = Session(root, p, path="web")
+    s.close_answered_awaits_before_main_reads()
+    s.reg.checkin_timer_factory = _HeldTimer  # 5분 체크인이 저절로 나가지 않게
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=lambda s: _second_wait_then_reply(box, p, s))
+    return s.collect()
+
+
+def s30_slash_words_that_are_not_a_command_while_waiting(root: Path) -> dict:
+    """제자리 대기 중 맨 앞의 사람 입력이 ``/`` 로 시작하지만 명령이 아니다(라우팅이 받지 않는다) — 그 말은 맨
+    앞으로 되돌아가고 기다림이 깬다. 뒤에 선 말과 함께, 선 순서 그대로 다음 턴 경계에 주입된다 (web)."""
+    box: dict = {}
+
+    def two_lines(s):
+        s.say("/tmp/notes.txt please read it", nickname="dj")
+        s.say("MAIN and then summarize", nickname="dj")
+
+    main, agent = _waiting_on_a_run_agent(box, "TASK-S2", two_lines)
+    p = Provider({"MAIN": main, "TASK-S2": agent})
+    s = box["s"] = Session(root, p, path="web")
+    s.close_answered_awaits_before_main_reads()
+    s.reg.checkin_timer_factory = _HeldTimer  # 5분 체크인이 저절로 나가지 않게
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=lambda s: _second_wait_then_reply(box, p, s))
+    return s.collect()
+
+
+def s31_schedule_fires_while_main_waits(root: Path) -> dict:
+    """main 이 제자리에서 기다리는 동안 예약이 발화한다 — 발화는 사람 요청과 같은 길이라 기다림이 "the user wrote to
+    you" 로 깨고, 그 프롬프트는 예약의 이름으로 다음 턴 경계에 주입된다 (web). 지금 동작 그대로 — 예약의 발화도
+    "사용자가 썼다" 고 말한다."""
+    box: dict = {}
+    facts: dict = {}
+    main, agent = _waiting_on_a_run_agent(box, "TASK-S3", lambda s: None)
+    p = Provider({"MAIN": main, "TASK-S3": agent})
+    s = box["s"] = Session(root, p, path="web")
+    s.close_answered_awaits_before_main_reads()
+    s.reg.checkin_timer_factory = _HeldTimer  # 5분 체크인이 저절로 나가지 않게
+    # 1년에 한 번 — 시나리오 동안 스스로 발화하지 않는다. 이름이 발화의 작성자(`Scheduler-nightly`)가 된다
+    sched = s.stores.schedules.add(
+        "0 0 1 1 *", "MAIN scheduled check", label="nightly", source="user"
+    )
+
+    def done(s):
+        assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        facts["fired"] = s.stores.schedules.run_now(sched.id)
+        _second_wait_then_reply(box, p, s)
+
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
 SCENARIOS = {
     "s01_run": lambda root: s01_request_to_run_agent_explicit_reply(root, "run"),
     "s01_web": lambda root: s01_request_to_run_agent_explicit_reply(root, "web"),
@@ -2226,6 +2355,16 @@ SCENARIOS = {
     "s25_run_agent_leaves_queue": s25_run_agent_leaves_queue,
     "s26_auditor_range": s26_auditor_range,
     "s27_restart_after_wait": s27_restart_after_wait,
+    # 사람의 입력과 메일이 함께 main 앞에 설 때
+    "s28_words_and_mail_late_run": lambda root: (
+        s28_words_and_mail_after_the_last_boundary(root, "run")
+    ),
+    "s28_words_and_mail_late_web": lambda root: (
+        s28_words_and_mail_after_the_last_boundary(root, "web")
+    ),
+    "s29_words_before_wait": s29_words_already_there_when_main_waits,
+    "s30_slash_words_while_waiting": s30_slash_words_that_are_not_a_command_while_waiting,
+    "s31_schedule_while_waiting": s31_schedule_fires_while_main_waits,
 }
 
 
