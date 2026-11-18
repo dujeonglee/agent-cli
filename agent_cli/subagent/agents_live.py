@@ -416,7 +416,8 @@ class AgentRegistry:
         #: 때 참. 그 전에는 있는 파일을 덮어쓰지 않는다(`_save_state`).
         self._state_owned = False
         #: 저장 하나가 뜨기부터 쓰기까지를 쥔다 — 겹친 저장이 옛 사본을 나중에 쓰지 않게.
-        #: ``_cv`` 를 쥔 채로는 저장을 부르지 않는다(순서: ``_save_lock`` → ``_cv``).
+        #: ``_cv`` 를 쥔 채로는 저장을 부르지 않는다(순서: ``_save_lock`` → ``_cv``). ``_cv`` 안에 드는 I/O 는
+        #: 배달의 대화 파일 append 하나다(`_write_lines`, v10.146.4) — 렌더러는 구간 밖(`_show_lines`).
         self._save_lock = threading.Lock()
         # 동시 생존 상한 (세션 한정, web UI 조절). 0 = 무제한. None = 기본값 —
         # env·CLI 는 부트가 `knobs.apply_all` 로 적용한다 (v10.43.0).
@@ -878,20 +879,21 @@ class AgentRegistry:
                 asked_in=asked_in,
             )
             self._post.ask(q.id, f"agent:{asker}", q.target, text, meta=q)
-        self._render_question(q)
+            # 질문 줄은 질문을 여는 구간에서 적는다 — 답의 in 이 앞서지 않게 (v10.146.4)
+            lines = self._question_line(q)
+            self._write_lines(lines)
+        self._show_lines(lines)
         self._save_state()
         # 트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
         # 질문이 다음 로스터 브로드캐스트까지 화면에 안 뜬다.
         self._notify_roster()
         return q.id, ""
 
-    def _render_question(self, q: Question) -> None:
-        """대화 창 표면 — 사람이 먼저 보는 자리 (표시 전용, best-effort)."""
+    def _question_line(self, q: Question) -> list[tuple[AgentInstance, dict]]:
+        """묻는 쪽 창의 질문 줄 — 사람이 먼저 보는 자리. 만들기만 한다. 묻는 쪽이 없으면 빈 목록."""
         tm = self._agents.get(q.asker)
         if tm is None:
-            return
-        from agent_cli.render import get_renderer
-
+            return []
         payload = {
             "key": tm.key,
             "direction": "question",
@@ -902,11 +904,7 @@ class AgentRegistry:
             "profile": tm.profile_name,
             "instance_name": tm.instance_name,
         }
-        try:
-            get_renderer().agent_message(**payload)
-        except Exception:
-            pass
-        self._log_conversation(tm, payload)
+        return [(tm, payload)]
 
     def questions_asked_in(self, asker: str, run_item: str) -> list[Question]:
         """``asker`` 가 ``run_item`` 런에서 건 열린 질문 (런 결과의 알림)."""
@@ -1029,11 +1027,10 @@ class AgentRegistry:
             )
             return ""
         requester = d.to.split(":", 1)[1]
-        err = self._deliver_peer_reply(requester, key, text, 0, re=d.id, settles=d.id)
-        if err:
-            return err
-        self._log_outbound(key, text, to=requester)
-        return ""
+        out = self._outbound_line(key, text, to=requester)
+        return self._deliver_peer_reply(
+            requester, key, text, 0, re=d.id, settles=d.id, lines=out
+        )
 
     def reply_facts(self, debtor: str, id: str) -> ReplyFacts:
         """`reply` 판정의 재료(`question_port.ReplyFacts`) — ``_cv`` 를 한 번 쥐고 뜬다. 런을 연 주소는 에이전트만
@@ -1574,11 +1571,12 @@ class AgentRegistry:
         mark: str = "",
         opens_run: bool = True,
         settles: str = "",
+        lines=(),
     ) -> str:
         """request 큐잉 — 에러 메시지 또는 빈 문자열.
 
         ``settles`` (v10.145.0): 이 배달이 닫는 줄 — 갚는 빚·답하는 질문의 id. 갚는 자리만 준다(`_post_deliver`).
-        항목에 실리지 않는다.
+        항목에 실리지 않는다. ``lines``: 이 배달의 다른 창 줄(보낸 쪽 out, `_outbound_line`) — in 과 함께 기록.
 
         ``ledger`` (v10.79.0): ``"none"`` 이면 장부 밖 메일 — agents.json 미러에
         남지 않는다(`agents_state.persists`). 첫 사용자는 `wait` 의 중간 깨우기(``checkin``):
@@ -1682,11 +1680,8 @@ class AgentRegistry:
             # 최종답이 원 요청자에게 귀속된다. peer/user 발신은 회신이
             # main mailbox 로 안 가므로 스냅샷 불필요.
             item["answers"] = list(self._current_run_authors)
-        self._enqueue(tm, item, settles=settles)
         # 답이든 일감이든 **항상** 창·로그·로스터에 남긴다 — 답만 건너뛰면
-        # 🤝 창과 conversation.jsonl(=resume 재생 소스)에서 사라진다.
-        from agent_cli.render import get_renderer
-
+        # 🤝 창과 conversation.jsonl(=resume 재생 소스)에서 사라진다. 기록은 넣기와 한 구간(`_enqueue`).
         payload = {
             "key": key,
             "direction": "in",
@@ -1704,18 +1699,22 @@ class AgentRegistry:
         }
         if images:
             payload["images"] = [dict(r) for r in images]  # 창의 썸네일 (v10.61.0)
-        get_renderer().agent_message(**payload)
-        self._log_conversation(tm, payload)
+        self._enqueue(tm, item, settles=settles, lines=[(tm, payload), *lines])
         self._notify_roster()
         return ""
 
-    def _enqueue(self, tm: AgentInstance, item: dict, *, settles: str = "") -> None:
+    def _enqueue(
+        self, tm: AgentInstance, item: dict, *, settles: str = "", lines=()
+    ) -> None:
         """받은편지함(우편의 그 주소 상자)에 넣고 ``agents.json`` 에 남긴다 (v9.24.5). 회신을 기다리는 요청이면
-        그 줄이 보낸 쪽의 "기다리는 회신" 이다(v10.141.0 — 넣는 것과 한 락 구간)."""
+        그 줄이 보낸 쪽의 "기다리는 회신" 이다(v10.141.0 — 넣는 것과 한 락 구간). ``lines`` 는 이 배달의 대화
+        줄(받는 쪽 in·보낸 쪽 out) — 파일은 넣기가 성공한 같은 구간에서, 창은 그 바로 뒤에 (v10.146.4, `_write_lines`)."""
         with self._cv:
             self._post_deliver(
                 envelope_of_item(item, f"agent:{tm.key}"), settles=settles
             )
+            self._write_lines(lines)
+        self._show_lines(lines)
         self._save_state()
 
     def _begin_items(self, tm: AgentInstance, items: list[dict]) -> None:
@@ -1796,9 +1795,6 @@ class AgentRegistry:
         if not items:
             return []
         out: list[dict] = []
-        from agent_cli.render import get_renderer
-
-        renderer = get_renderer()
         for item in items:
             author = item.get("author", "main")
             text = item["text"]
@@ -1817,8 +1813,7 @@ class AgentRegistry:
                 "ts": time.time(),
                 "absorbed_into": tm.current_item,
             }
-            renderer.agent_message(**absorbed)
-            self._log_conversation(tm, absorbed)
+            self._record(tm, absorbed)
             if is_human_addr(author):
                 # 빚은 아니지만 `reply` 거부 사유가 이걸 본다 (사람 배치와 동일)
                 uid = iid
@@ -1947,11 +1942,13 @@ class AgentRegistry:
             return f"{type(exc).__name__}: {exc}"
         return f'unroutable address "{addr}"'
 
-    def _push_reply(self, reply: dict, *, settles: str = "") -> None:
+    def _push_reply(self, reply: dict, *, settles: str = "", lines=()) -> None:
         with self._cv:  # 배달 순간의 한가함은 배달 구간에서 읽는다 — 락을 놓으면 펌프가 이 메일로 런을 열 수 있다
             self._stamp_mail(reply)
             self._post_deliver(envelope_of_main_mail(reply), settles=settles)
             idle_at_delivery = self.main_is_idle() if self.main_is_idle else None
+            self._write_lines(lines)
+        self._show_lines(lines)
         self._save_state()  # P3: 미배달분 디스크 미러 — resume 시 유실 없음
         cb = self.on_reply
         if cb is not None:
@@ -1996,8 +1993,9 @@ class AgentRegistry:
         mark: str = "",
         opens_run: bool = True,
         settles: str = "",
+        lines=(),
     ) -> str:
-        """요청의 회신을 요청자 inbox 로 terminal 재주입 (v5.11) — 에러 또는 "". ``settles`` 는 `request` 와 같다.
+        """요청의 회신을 요청자 inbox 로 terminal 재주입 (v5.11) — 에러 또는 "". ``settles``·``lines``: `request` 대로.
 
         ``from_key`` 는 에이전트 키 또는 ``"main"``(main 이 `reply` 로 갚을 때).
         ``expects_reply=False`` 로 넣어 요청자가 소비만 하고 되받아치지 않게
@@ -2020,6 +2018,7 @@ class AgentRegistry:
             **({"mark": mark} if mark else {}),  # 정지 회신만 표지를 단다
             **({} if opens_run else {"opens_run": False}),
             settles=settles,
+            **({"lines": lines} if lines else {}),  # 보낸 쪽 out 은 `_pay_debt` 만
         )
 
     def message_to_main(
@@ -2066,29 +2065,20 @@ class AgentRegistry:
         if re:
             rec["re"] = re  # `reply` — main 의 어느 요청에 대한 답인가
         # 회신을 기대하면 그 줄이 보낸 쪽의 기다리는 회신이다(넣는 것과 한 락 구간). ``settles`` 는 `request` 와 같다.
-        self._push_reply(rec, settles=settles)
-        # ★v7.11.1 (실사고): mailbox 만 채우면 main 챗 관찰로는 보이는데
-        # 발신 에이전트의 🤝 대화창·conversation.jsonl 에는 흔적이 없다
-        # (재접속/resume 소실). 발신자 창에 out 방향으로 남긴다.
-        self._log_outbound(from_key, text, to="main")
+        # ★v7.11.1 (실사고): 메일함만 채우면 발신 에이전트의 🤝 창·conversation.jsonl 에 흔적이 없다 — out 으로 남긴다.
+        self._push_reply(
+            rec, settles=settles, lines=self._outbound_line(from_key, text, to="main")
+        )
         return str(rec.get("item_id") or "")
 
-    def _log_outbound(
+    def _outbound_line(
         self, from_key: str, text: str, *, to: str, ts: float | None = None
-    ) -> None:
-        """발신 에이전트 창에 out 메시지 기록 — 라이브 표면(agent_message)
-        + 대화 로그(conversation.jsonl, resume 재생 소스) 동시. 각 창은 그
-        에이전트 관점의 완결 대화: 수신측 in 은 request() 가 담당.
-
-        ``ts`` 를 넘기면 그 시각으로 스탬프한다 — peer send 는 이 화살표를
-        ``request()`` **뒤에** 기록하므로, 여기서 ``time.time()`` 을 다시 찍으면
-        수신 워커가 이미 시작한 작업(scope_start)보다 늦어 팀 뷰에서 요청이
-        작업 아래로 밀린다. 호출자가 send 직전 시각을 잡아 넘긴다."""
+    ) -> list[tuple[AgentInstance, dict]]:
+        """발신 에이전트 창의 out 줄 — 만들기만 한다(적고 내는 것은 배달, `lines`). 없으면 빈 목록. ``ts`` 는 호출자가
+        send 직전에 잡은 시각 — 수신 워커의 작업(scope_start)보다 늦게 찍혀 팀 뷰에서 요청이 작업 아래로 밀리지 않게."""
         tm = self._agents.get(from_key)
         if tm is None:
-            return
-        from agent_cli.render import get_renderer
-
+            return []
         payload = {
             "key": from_key,
             "direction": "out",
@@ -2102,11 +2092,7 @@ class AgentRegistry:
             "profile": tm.profile_name,
             "instance_name": tm.instance_name,
         }
-        try:
-            get_renderer().agent_message(**payload)
-        except Exception:
-            pass  # 표시용 — 전송 경로를 막지 않는다
-        self._log_conversation(tm, payload)
+        return [(tm, payload)]
 
     def message_handler(self, sender: str):
         """``message`` 도구의 라우팅 훅 — 보내는 주소(``"main"`` | ``"agent:<key>"``) 하나에
@@ -2172,6 +2158,7 @@ class AgentRegistry:
             rec_id = item_ids.next_id(
                 item_ids.REPLY if expects_reply else item_ids.MAIL
             )
+            out = self._outbound_line(me_key, text, to=to, ts=send_ts)  # 발신자 창 out
             err = self.request(
                 to,
                 text,
@@ -2179,11 +2166,10 @@ class AgentRegistry:
                 expects_reply=bool(expects_reply),
                 item_id=rec_id,
                 kind="" if expects_reply else "notice",
+                lines=out,
             )
             if err:
                 return "", err
-            if me_key:
-                self._log_outbound(me_key, text, to=to, ts=send_ts)  # 발신자 창 out
             line = delivered_line(rec_id, expects_reply=bool(expects_reply))
             target = self._agents.get(to)
             backlog = self.backlog_of(to) if target is not None else 0
@@ -2521,8 +2507,8 @@ class AgentRegistry:
                     **({} if tm.stop_replies_wake else {"wakes_main": False}),
                 },
                 settles=rid if settles else "",
+                lines=self._outbound_line(tm.key, text, to="main"),
             )
-            self._log_outbound(tm.key, text, to="main")
         elif to.startswith("agent:"):
             # "Stop everything" 의 회신은 받는 상주의 런을 열지 않는다 — 다음에 일을 받는 런이 함께 읽는다
             self._deliver_peer_reply(
@@ -2891,18 +2877,32 @@ class AgentRegistry:
     def _conversation_path(self, tm: AgentInstance) -> Path:
         return tm.home_dir / "conversation.jsonl"
 
-    def _log_conversation(self, tm: AgentInstance, payload: dict) -> None:
-        """🤝 대화창 메시지 1건을 ``conversation.jsonl`` 에 append (5.13).
+    def _write_lines(self, lines) -> None:
+        """🤝 대화 줄을 ``conversation.jsonl``(창의 진짜 소스 — resume 이 :meth:`_replay_conversation` 으로 재발행)에
+        append, best-effort. 배달의 줄은 그 배달이 상자에 드는 ``_cv`` 구간 안에서 적는다(v10.146.4) — 받는 쪽은 ``_cv`` 없이
+        못 꺼내니 그 배달로 생기는 줄(런의 out·답의 in)이 앞서지 않는다. 창(`_show_lines`)은 구간 뒤라 경주가 남는다."""
+        for tm, payload in lines:
+            try:
+                tm.home_dir.mkdir(parents=True, exist_ok=True)
+                with self._conversation_path(tm).open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            except OSError:
+                pass
 
-        이 파일이 대화창의 **진짜 소스** — resume 시 :meth:`_replay_conversation`
-        이 그대로 재발행해 창을 정확 복원한다(ctx 는 에이전트 내부 작업까지
-        담아 대화창과 추상화 레벨이 달라 소스가 못 됨). best-effort."""
-        try:
-            tm.home_dir.mkdir(parents=True, exist_ok=True)
-            with self._conversation_path(tm).open("a", encoding="utf-8") as f:
-                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+    def _show_lines(self, lines) -> None:
+        """대화 줄을 🤝 창에 낸다(`agent_message`) — 표시용이라 실패를 삼킨다. ``_cv`` 밖에서 부른다."""
+        from agent_cli.render import get_renderer
+
+        for _tm, payload in lines:
+            try:
+                get_renderer().agent_message(**payload)
+            except Exception:
+                pass  # 표시용 — 전송 경로를 막지 않는다
+
+    def _record(self, tm: AgentInstance, payload: dict) -> None:
+        """배달이 아닌 대화 줄 하나(흡수·런의 out) — 파일에 적고 창에 낸다."""
+        self._write_lines([(tm, payload)])
+        self._show_lines([(tm, payload)])
 
     def _replay_conversation(self, tm: AgentInstance) -> None:
         """``conversation.jsonl`` 을 순회해 🤝 대화창을 재발행 (5.13).

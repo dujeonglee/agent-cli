@@ -664,19 +664,14 @@ class TestRegistryLifecycle:
         assert ins[0]["ts"] <= taken_at[0]  # stamped at-or-before the enqueue
         reg.shutdown_all()
 
-    def test_log_outbound_honors_passed_ts(self, tmp_path, renderer):
-        """Peer sends log the request arrow AFTER ``request()`` returns, so the
-        caller passes the pre-send time — ``_log_outbound`` must use it verbatim
-        (not re-stamp now) so the arrow precedes the triggered work."""
+    def test_outbound_line_honors_passed_ts(self, tmp_path, renderer):
+        """Peer sends stamp the request arrow with the pre-send time — the line
+        (``_outbound_line``) must use it verbatim (not re-stamp now) so the arrow
+        precedes the triggered work."""
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
-        reg._log_outbound(key, "hi", to="w2", ts=1234.5)
-        outs = [
-            kw
-            for n, kw in renderer.calls
-            if n == "agent_message" and kw.get("direction") == "out"
-        ]
-        assert outs and outs[0]["ts"] == 1234.5
+        ((tm, line),) = reg._outbound_line(key, "hi", to="w2", ts=1234.5)
+        assert tm.key == key and line["direction"] == "out" and line["ts"] == 1234.5
         reg.shutdown_all()
 
     def test_busy_state_while_processing(self, tmp_path, renderer):
