@@ -93,6 +93,10 @@ def test_a_delivery_during_the_revive_replay_shows_once(web):
     assert reg.request(key, "first job", author="main", expects_reply=False) == ""
     assert wait_until(lambda: reg.get(key).state == "idle" and reg.get(key).handled)
     assert reg.kill(key) == ""
+    old = reg.get(
+        key
+    )  # 워커가 끝까지 내려간 뒤에 되살린다(상태만 보지 않는다 — 느린 러너)
+    assert wait_until(lambda: old.state == "dead" and not old.worker.is_alive())
     assert _shown(renderer, key, "first job") == 0  # kill = 창 정리
 
     clear = renderer.clear_agent_conversation
