@@ -122,6 +122,10 @@ class WebRenderer(Renderer):
     open connection's ``queue``; transient events skip the buffer.
     """
 
+    #: `agent_msg` 발행은 모양 짓기(스레드 로컬·json 한 번) + 허브의 잎 락·무한 큐뿐이다(가드:
+    #: tests/test_conversation_order.py) — 배달 구간 안에서 불려 화면이 기록 순서를 따른다(v10.146.5).
+    agent_message_never_blocks = True
+
     def __init__(
         self,
         *,

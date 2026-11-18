@@ -1748,7 +1748,8 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
         scripts = {
             "MAIN": [
                 call("agent", mode="spawn", name="bb"),
-                lambda m: (arm("bb"), call("message", to="bb", text="TASK-F1 compute"))[
+                # 다음 꼬리는 bb 가 일을 집은 뒤(바쁨)에 짓는다 — 안 잡으면 느린 러너에서 "idle · 1 queued" (CI 1회)
+                lambda m: (arm("bb"), _held_request_to(box, "bb", "TASK-F1 compute"))[
                     1
                 ],
                 _after_runs_began(box, 1, call("wait")),
