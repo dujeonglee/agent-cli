@@ -135,15 +135,14 @@ class TestWhoWakesTheRequester:
 
     def test_picking_a_request_is_owing_it(self, reg):
         """③ 받은편지함을 떠나는 순간이 곧 빚이다 — `[v10.145.0 에서 바뀜 — 옛 구현은 집은 뒤 빚을 적기까지 틈이
-        있어 그 순간 근거가 "working on your request" 하나였다]`. 정착된 근거는 그때도 지금도 둘이다."""
+        있어 그 순간 근거가 "working on your request" 하나였다]`. 빚이기도 하지만 한 에이전트는 한 줄 — working(vNEXT)."""
         tm = _idle_agent(reg, "agt-w")
         reg.request("agt-w", "find callers", author="main")
         item = _pick_up(reg, tm)
         assert [d.id for d in reg.reply_debts("agent:agt-w")] == [item["id"]]
         assert list(reg.queued_for("agent:agt-w")) == []
         assert wake_sources("main", agents=reg) == [
-            "agent:agt-w owes you a reply",
-            "agent:agt-w working on your request",
+            "agent:agt-w working on your request"
         ]
 
     def test_notice_run_does_not_wake_the_sender(self, reg):
@@ -187,8 +186,7 @@ class TestWhoWakesTheRequester:
         tm.current_author = "main"  # 화자 표시가 main 이어도
         assert wake_sources("main", agents=reg) == []
         assert wake_sources("agent:agt-req", agents=reg) == [
-            "agent:agt-w owes you a reply",
-            "agent:agt-w working on your request",
+            "agent:agt-w working on your request"
         ]
 
 

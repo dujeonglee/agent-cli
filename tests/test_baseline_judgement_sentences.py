@@ -347,8 +347,8 @@ class TestMainWaitsFirstInACycle:
             )
         ]
         accepted = (
-            f"Observation: waiting — will wake on: agent:{key} owes you a reply; agent:{key} "
-            "working on your request, or in 5m if nothing has reported."
+            f"Observation: waiting — will wake on: agent:{key} working on your request, "
+            "or in 5m if nothing has reported."
         )
         assert main_lines == [
             accepted,  # 첫 `wait` — 상주의 물음에 깬다

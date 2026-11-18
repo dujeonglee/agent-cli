@@ -436,7 +436,7 @@
      "role": "assistant"
     },
     {
-     "content": "Observation: waiting — will wake on: agent:agt-B owes you a reply; agent:agt-B working on your request, or in 5m if nothing has reported.",
+     "content": "Observation: waiting — will wake on: agent:agt-B working on your request, or in 5m if nothing has reported.",
      "role": "user",
      "success": true,
      "tool": "wait"
@@ -603,7 +603,7 @@
      "role": "assistant"
     },
     {
-     "content": "Observation: waiting — will wake on: agent:agt-B owes you a reply; agent:agt-B working on your request, or in 5m if nothing has reported.",
+     "content": "Observation: waiting — will wake on: agent:agt-B working on your request, or in 5m if nothing has reported.",
      "role": "user",
      "success": true,
      "tool": "wait"

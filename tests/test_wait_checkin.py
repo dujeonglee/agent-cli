@@ -416,9 +416,8 @@ class TestAgentLines:
         # 손으로 고른 id 는 할당기가 이 테스트에서 내지 않는 값 — 같은 id 의 봉투가 뒤에 오지 않게
         reg.note_owes("agent:p", "main", "t", id="r-903")
         _fake_agent(reg, "p", state="busy", current_author="agent:q")
-        # 일하는 중인 k 는 집어 든 main 의 요청을 빚진다 — 실제 흐름에선 "working" 이 "owes" 와 함께 선다
+        # 일하는 중인 k 는 집어 든 main 의 요청을 빚지기도 하지만 한 에이전트는 한 줄 — "working" 하나
         assert agent_wake_lines(reg, "main") == [
-            "agent:k owes you a reply",
             "agent:p owes you a reply",
             "agent:k working on your request",
             "agent:j has your request queued",
