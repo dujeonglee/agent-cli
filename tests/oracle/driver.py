@@ -1664,13 +1664,17 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
     """1단계 ② 사망 통지 — 워커가 런 시작에서 원인 미상으로 죽는다(`Recorder.crash_on_start`).
 
     - ``who="requested"`` (가) `[단계 4c 에서 바뀜 — 변화 5]`: 상주 aa 가 bb 에게 요청하고 `wait` → bb 사망. main
-      은 died 통지를 받고, aa 는 아무것도 받지 않는다.
+      은 died 통지를 받고, aa 는 bb 가 집어 든 그 요청의 died 회신(`· died` — "… died while it was working on your
+      request …")을 받아 그 런에서 읽는다 `[N9 에서 바뀜 — 종전엔 aa 가 아무것도 받지 않았다]`.
     - ``who="requester"`` (나) `[단계 4c 에서 바뀜 — 변화 10]`: aa 가 bb 에게 요청한 뒤 aa 사망. bb 는 죽은 쪽에
-      빚진 회신을 Open Items 에 든 채 일한다.
+      빚진 회신을 Open Items 에 든 채 일한다. 죽은 aa 가 main 에게 빚진 과제 요청에는 main 의 died 통지와 함께 died
+      회신이 간다 `[N9 에서 바뀜]`.
       `[v10.145.2 에서 바뀜]` bb 의 `reply` 는 "not delivered — … was already gone" 을 실패로 듣고, 배달되지 않은 회신은
       발신 줄(conversation)에도 남지 않는다(종전엔 "delivered to whoever was waiting on it").
     - ``who="main_waits"`` (다) `[단계 4c 에서 바뀔 수 있음 — died 가 회신 모양이 되면]`: main 이 bb 에게 요청하고
-      제자리 대기 중 bb 사망 — main 이 같은 런에서 깨어 died 통지를 읽고, 기다리던 회신이 닫히는가."""
+      제자리 대기 중 bb 사망 — main 이 같은 런에서 깨어 died 통지를 읽고, 기다리던 회신이 닫히는가. `[N9 에서 바뀜]`
+      bb 가 집어 든 그 요청에 died 회신이 와 main 의 기다리던 회신을 회신으로 닫는다. 죽음은 통지와 회신 두 통을
+      잇달아 보낸다 — 둘 다 닿은 뒤에 main 이 기다리기 시작하게 강제한다(하나만 보고 깨면 회신이 런을 하나 더 연다)."""
     box: dict = {}
     facts: dict = {}
     crash = threading.Event()
@@ -1755,11 +1759,16 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
     s = box["s"] = Session(root, p, path="web")
     s.say("MAIN go", nickname="dj")
     if who == "main_waits":
-        # 사망은 main 이 제자리 대기에 든 뒤 — 먼저 죽으면 `wait` 가 "이미 도착" 으로 돌아간다
-        threading.Thread(
-            target=lambda: (s.recorder.main_waiting.wait(_PATIENCE_S), crash.set()),
-            daemon=True,
-        ).start()
+
+        def die_as_main_waits(args, kwargs):
+            # 사망은 main 이 제자리 대기를 시작할 때(그 `wait` 가 받아들여진 뒤 — 먼저 죽으면 "이미 도착" 으로 돌아간다).
+            # 죽음의 두 통(died 통지·died 회신)이 다 닿을 때까지 main 을 잡는다 — main 이 둘 중 하나만 보고 깨는지가
+            # 제품의 비결정이라, 둘 다 와 있는 쪽을 강제한다
+            if args and args[0] is True:
+                crash.set()
+                until(lambda: not s.reg.awaited_replies("main"), "the died reply lands")
+
+        s.recorder.rules["wait_in_place"] = die_as_main_waits
 
     def done(s):
         if who == "requester":
@@ -1775,6 +1784,8 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
             # bb 의 첫 호출이 시작된 뒤(한가한 aa 를 본 꼬리) — 먼저 죽이면 bb 가 aa 의 한가함을 못 본다
             until(lambda: len(p.calls.get("TASK-E2", [])) >= 1, "bb's first call")
             s.recorder.crash_on_start[aa] = crash
+            # 통지를 적은(`request` 의 대화 기록) 뒤에 죽는다 — 죽음의 died 회신 기록이 그 앞에 끼지 않게
+            s.recorder.hold("begin_agent_work", aa, lambda: "notice" in facts)
             crash.set()
             facts["notice"] = s.reg.request(
                 aa, "TASK-E1 fyi", author="main", expects_reply=False
@@ -1787,7 +1798,9 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
             until(lambda: s.agent_state(_agent_key(s, "bb")) == "idle", "bb done")
             until(lambda: runs_ended(s) >= 1, "main read the death")
         else:
-            until(lambda: runs_ended(s) >= 1, "main runs")
+            # requested 는 main 의 런 둘 — died 통지로 깬 런, aa 의 회신이 연 런 [N9 에서 바뀜 — 종전엔 하나]
+            runs = 2 if who == "requested" else 1
+            until(lambda: runs_ended(s) >= runs, "main runs")
         until(
             lambda: all(s.agent_state(k) in ("idle", "dead") for k in s.agent_keys()),
             "settle",

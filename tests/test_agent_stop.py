@@ -58,7 +58,8 @@ class Stage:
     - ``HOLD``: 시작을 알리고(``started[tag]``), ``absorb[tag]`` 가 서면 받은편지함을 이 런으로 흡수하고
       (``absorbed[tag]``), 정지가 설 때까지 막는다. 멈추면 interrupt 결과, 아니면 성공.
     - ``PARK``: 바로 `wait` 로 끝난다(빚은 열린 채 — 스스로 잠든 상주).
-    - ``GATE``·``DIE``: 시작을 알리고 ``absorb[tag]`` 를 기다렸다가 성공으로 끝나거나(GATE) 워커를 죽인다(DIE).
+    - ``GATE``·``DIE``·``GULP``: 시작을 알리고 ``absorb[tag]`` 를 기다렸다가 성공으로 끝나거나(GATE) 워커를
+      죽인다(DIE — 받은편지함은 그대로, GULP — 받은편지함을 이 런으로 흡수한 뒤).
     - 그 밖: 바로 성공(``ran`` 에 표지를 적는다).
     런 기록(호출 둘·생각 하나)을 ctx 에 남겨 회신의 "Last activity"·"Partial notes" 재료로 쓴다."""
 
@@ -74,13 +75,15 @@ class Stage:
         return d.setdefault(tag, threading.Event())
 
     def __call__(self, kind, start, ctx):
-        m = re.search(r"\b(HOLD\d+|PARK\d+|GATE\d+|DIE\d+|NEXT)\b", start.query)
+        m = re.search(r"\b(HOLD\d+|PARK\d+|GATE\d+|DIE\d+|GULP\d+|NEXT)\b", start.query)
         tag = m.group(1) if m else ""
-        if tag.startswith(("GATE", "DIE")):
-            # 시작을 알리고 ``absorb[tag]`` 가 서면 끝난다 — GATE 는 성공, DIE 는 워커를 죽인다
+        if tag.startswith(("GATE", "DIE", "GULP")):
+            # 시작을 알리고 ``absorb[tag]`` 가 서면 끝난다 — GATE 는 성공, DIE·GULP 는 워커를 죽인다
             self._ev(self.started, tag).set()
             self._ev(self.absorb, tag).wait(10)
-            if tag.startswith("DIE"):
+            if tag.startswith("GULP"):
+                kind.intake()
+            if tag.startswith(("DIE", "GULP")):
                 raise WorkerDies(tag)
             return ToolResult(True, output=f"{tag} done")
         if tag.startswith("PARK"):
@@ -537,6 +540,83 @@ class TestGoneAgentQueue:
         assert until(lambda: gone(tm))
         (r41,) = peer_replies(p6)
         assert r41["mark"] == "died" and r41["opens_run"] is True
+
+
+class TestDiedWorkerDebts:
+    """죽은 워커가 집어 든 요청(지금 일·흡수한 것) — 빚진 상대 모두에게 사실 한 통(표지 ``died``)을 보내고 빚을
+    닫는다(정지의 stopped 와 같은 길). 요청자를 깨운다. main 의 ``died`` 메일은 그대로다."""
+
+    DIED = (
+        '{agent} died while it was working on your request [{rid}] ("{quote}").\n'
+        "Decide whether to continue another way or report back to the user."
+    )
+
+    def _gone(self, reg, tm, me):
+        assert until(lambda: tm.state == "dead")
+        assert agent_wake_lines(reg, me) == []
+        assert reg.checkin_agent_lines(me, {}) == ([], False)
+        assert reg.awaited_replies(me) == []
+        assert reg.reply_debts(f"agent:{tm.key}") == []
+
+    def test_the_current_and_the_absorbed_request_get_the_same_notice(self, reg, stage):
+        p6 = peer(reg)
+        tm = spawn(reg)
+        busy_with(reg, stage, tm, "GULP1", "r-50", author=f"agent:{p6.key}")
+        assert not reg.request(
+            tm.key, "check names", author=f"agent:{p6.key}", item_id="r-51"
+        )
+        stage.absorb["GULP1"].set()
+        self._gone(reg, tm, f"agent:{p6.key}")
+        got = {r["re"]: r for r in peer_replies(p6)}
+        assert sorted(got) == ["r-50", "r-51"]
+        for rid, quote in (
+            ("r-50", "GULP1 review the lexer changes"),
+            ("r-51", "check names"),
+        ):
+            assert got[rid]["mark"] == "died" and got[rid]["opens_run"] is True
+            assert got[rid]["text"] == self.DIED.format(
+                agent=tm.key, rid=rid, quote=quote
+            )
+        for rid in ("r-50", "r-51"):
+            assert reg._post.row(rid) is None  # 줄이 닫혀 장부에서 빠졌다
+
+    def test_main_as_requester_gets_the_notice_beside_the_died_mail(self, reg, stage):
+        tm = spawn(reg)
+        busy_with(reg, stage, tm, "DIE5", "r-52")
+        stage.absorb["DIE5"].set()
+        self._gone(reg, tm, "main")
+        (m52,) = main_mail(reg, "r-52")
+        assert m52["wakes_main"] is True
+        text = build_reply_record(m52)["content"]
+        assert "re [r-52] · died ──" in text
+        assert (
+            self.DIED.format(
+                agent=tm.key, rid="r-52", quote="DIE5 review the lexer changes"
+            )
+            in text
+        )
+        died = [m for m in reg.drain_replies() if m.get("kind") == "died"]
+        assert [m["output"] for m in died] == ["WorkerDies: DIE5"]
+
+    def test_a_dead_requester_gets_nothing_and_the_debt_closes(self, reg, stage):
+        p6 = peer(reg)
+        tm = spawn(reg)
+        busy_with(reg, stage, tm, "DIE6", "r-53", author=f"agent:{p6.key}")
+        p6.state = "dead"
+        stage.absorb["DIE6"].set()
+        assert until(lambda: tm.state == "dead")
+        assert peer_replies(p6) == []
+        assert reg._post.row("r-53") is None
+        assert reg.reply_debts(f"agent:{tm.key}") == []
+
+    def test_a_late_kill_sends_no_second_notice(self, reg, stage):
+        p6 = peer(reg)
+        tm = spawn(reg)
+        busy_with(reg, stage, tm, "DIE7", "r-54", author=f"agent:{p6.key}")
+        stage.absorb["DIE7"].set()
+        assert until(lambda: tm.state == "dead")
+        reg.kill(tm.key, by="main")
+        assert len(peer_replies(p6)) == 1
 
 
 class TestStopAll:
