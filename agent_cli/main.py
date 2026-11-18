@@ -910,7 +910,8 @@ def try_dispatch_agent_or_skill(
         output.agent_result(result, ok=_ok)
         return True
 
-    if message.split(maxsplit=1)[0] == "/stop":
+    # 빈 글(이미지만 붙인 메시지)·공백만 있는 글은 첫 낱말이 없다 — 명령이 아니다
+    if message.split(maxsplit=1)[:1] == ["/stop"]:
         _dispatch_stop(message, output, agent_registry)
         return True
 
