@@ -16,8 +16,11 @@ Usage:
   python3 scripts/live_test_code_index.py                 # all cases
   python3 scripts/live_test_code_index.py P3-callers P5   # subset by id prefix
 
-Provider config is read from the constants at the top — adjust them if
-your omlx auth / model name differs.
+Provider config comes from the environment (same names as
+``scripts/bakeoff``). The API key is a secret and is never committed:
+  export OMLX_API_KEY=...       # required; the script exits 2 without it
+  export OMLX_BASE_URL=...      # optional, default http://127.0.0.1:8000/v1
+  export OMLX_MODEL=...         # optional, default Qwen3.6-35B-A3B-MLX-8bit
 
 Expected runtime: ~1–2 min per case on a local mlx server (35B A3B).
 """
@@ -25,17 +28,18 @@ Expected runtime: ~1–2 min per case on a local mlx server (35B A3B).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-# ----- provider config (edit if your omlx setup differs) --------------------
+# ----- provider config (env overrides; see the module docstring) ------------
 
 PROVIDER = "openai"  # omlx exposes an OpenAI-compatible /v1/chat/completions
-BASE_URL = "http://127.0.0.1:8000/v1"
-API_KEY = "dbwlsgPfls0912!"  # noqa: S105 — local omlx auth, intentional
-MODEL = "Qwen3.6-35B-A3B-MLX-8bit"
+BASE_URL = os.environ.get("OMLX_BASE_URL", "http://127.0.0.1:8000/v1")
+API_KEY = os.environ.get("OMLX_API_KEY", "")
+MODEL = os.environ.get("OMLX_MODEL", "Qwen3.6-35B-A3B-MLX-8bit")
 
 # Per-case turn cap. Tasks should land in ~4 turns each; the cap is a
 # fuse against pathological loops, not a budget the model is expected
@@ -240,6 +244,12 @@ def _print_report(result: dict) -> None:
 
 
 def main() -> int:
+    if not API_KEY:
+        print(
+            "OMLX_API_KEY is not set; export it to your omlx API key and rerun.",
+            file=sys.stderr,
+        )
+        return 2
     filter_ids = sys.argv[1:]
     _setup_scratch()
     cases = _cases()
