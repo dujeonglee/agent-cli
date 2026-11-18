@@ -417,7 +417,7 @@ class AgentRegistry:
         self._state_owned = False
         #: 저장 하나가 뜨기부터 쓰기까지를 쥔다 — 겹친 저장이 옛 사본을 나중에 쓰지 않게.
         #: ``_cv`` 를 쥔 채로는 저장을 부르지 않는다(순서: ``_save_lock`` → ``_cv``). ``_cv`` 안에 드는 I/O 는
-        #: 배달의 대화 파일 append 하나다(`_write_lines`, N11) — 렌더러는 구간 밖(`_show_lines`).
+        #: 배달의 대화 파일 append 하나다(`_write_lines`, v10.146.4) — 렌더러는 구간 밖(`_show_lines`).
         self._save_lock = threading.Lock()
         # 동시 생존 상한 (세션 한정, web UI 조절). 0 = 무제한. None = 기본값 —
         # env·CLI 는 부트가 `knobs.apply_all` 로 적용한다 (v10.43.0).
@@ -879,7 +879,7 @@ class AgentRegistry:
                 asked_in=asked_in,
             )
             self._post.ask(q.id, f"agent:{asker}", q.target, text, meta=q)
-            # 질문 줄은 질문을 여는 구간에서 적는다 — 답의 in 이 앞서지 않게 (N11)
+            # 질문 줄은 질문을 여는 구간에서 적는다 — 답의 in 이 앞서지 않게 (v10.146.4)
             lines = self._question_line(q)
             self._write_lines(lines)
         self._show_lines(lines)
@@ -1708,7 +1708,7 @@ class AgentRegistry:
     ) -> None:
         """받은편지함(우편의 그 주소 상자)에 넣고 ``agents.json`` 에 남긴다 (v9.24.5). 회신을 기다리는 요청이면
         그 줄이 보낸 쪽의 "기다리는 회신" 이다(v10.141.0 — 넣는 것과 한 락 구간). ``lines`` 는 이 배달의 대화
-        줄(받는 쪽 in·보낸 쪽 out) — 파일은 넣기가 성공한 같은 구간에서, 창은 그 바로 뒤에 (N11, `_write_lines`)."""
+        줄(받는 쪽 in·보낸 쪽 out) — 파일은 넣기가 성공한 같은 구간에서, 창은 그 바로 뒤에 (v10.146.4, `_write_lines`)."""
         with self._cv:
             self._post_deliver(
                 envelope_of_item(item, f"agent:{tm.key}"), settles=settles
@@ -2879,7 +2879,7 @@ class AgentRegistry:
 
     def _write_lines(self, lines) -> None:
         """🤝 대화 줄을 ``conversation.jsonl``(창의 진짜 소스 — resume 이 :meth:`_replay_conversation` 으로 재발행)에
-        append, best-effort. 배달의 줄은 그 배달이 상자에 드는 ``_cv`` 구간 안에서 적는다(N11) — 받는 쪽은 ``_cv`` 없이
+        append, best-effort. 배달의 줄은 그 배달이 상자에 드는 ``_cv`` 구간 안에서 적는다(v10.146.4) — 받는 쪽은 ``_cv`` 없이
         못 꺼내니 그 배달로 생기는 줄(런의 out·답의 in)이 앞서지 않는다. 창(`_show_lines`)은 구간 뒤라 경주가 남는다."""
         for tm, payload in lines:
             try:

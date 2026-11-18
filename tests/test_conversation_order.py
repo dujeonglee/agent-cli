@@ -1,4 +1,4 @@
-"""배달의 대화 줄은 ``conversation.jsonl`` 에 그 배달이 상자에 드는 락 구간 안에서 적힌다 (N11).
+"""배달의 대화 줄은 ``conversation.jsonl`` 에 그 배달이 상자에 드는 락 구간 안에서 적힌다 (v10.146.4).
 
 종전엔 상자에 넣은 **뒤에** 적었다 — 넣자마자 받는 쪽이 꺼내 런을 돌고 답을 적으면, 답이 그 요청보다 위에 적혔다
 (resume 재생이 뒤집힌다; 오라클 s06_human·s14 가 부하에서 가끔 잡았다). 순서는 조건변수의 ``__exit__`` 훅
@@ -238,7 +238,7 @@ def test_file_order(world, scene):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="N11 라이브 몫 — 창 이벤트는 배달 구간 뒤에 나가 경주가 남는다(고치지 않았다, (나′))",
+    reason="라이브 창 순서는 아직 경주 — 창 이벤트는 배달 구간 뒤에 나가 경주가 남는다(고치지 않았다, (나′))",
 )
 @pytest.mark.parametrize("scene", list(SCENES))
 def test_live_order(world, scene):
