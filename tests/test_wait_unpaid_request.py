@@ -135,7 +135,7 @@ class TestWhoWakesTheRequester:
 
     def test_picking_a_request_is_owing_it(self, reg):
         """③ 받은편지함을 떠나는 순간이 곧 빚이다 — `[v10.145.0 에서 바뀜 — 옛 구현은 집은 뒤 빚을 적기까지 틈이
-        있어 그 순간 근거가 "working on your request" 하나였다]`. 빚이기도 하지만 한 에이전트는 한 줄 — working(vNEXT)."""
+        있어 그 순간 근거가 "working on your request" 하나였다]`. 빚이기도 하지만 한 에이전트는 한 줄 — working(v10.146.6)."""
         tm = _idle_agent(reg, "agt-w")
         reg.request("agt-w", "find callers", author="main")
         item = _pick_up(reg, tm)

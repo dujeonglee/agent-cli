@@ -289,7 +289,7 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             (
                 "The reply the requester gets when the user stops (■) an agent working on its "
                 "request, then the one for a request it had not started when the user removed "
-                "it (✕) and when the user stopped (■) a run agent before it started the request (vNEXT), "
+                "it (✕) and when the user stopped (■) a run agent before it started the request (v10.146.6), "
                 "then the same for a run agent that finished its task and for a worker that "
                 "died (v10.146.1), then the one for a request a worker had picked up when it died — each "
                 "closes the requester's wait (v10.142.0)"
