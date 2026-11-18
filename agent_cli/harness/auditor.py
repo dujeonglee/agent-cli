@@ -3,7 +3,7 @@
 하니스가 하는 일은 둘뿐이다: 런의 history 구간(``seq a..b``)을 재고, 그 구간을
 적은 요청으로 하니스 작업 ``auditor`` 를 돌린다(`HarnessJobs.run`). 판정은
 모델의 일이고(프로파일 `agents/harness/auditor.md`), 결과 전달은 작업 실행기의
-일이다(`complete` 결과 → main 메일함 → `MailWaker` 가 main 을 깨움). 감사
+일이다(`complete` 결과 → main 상자 → 한가한 펌프가 그것으로 런을 연다). 감사
 회신으로 깨어난 런(``req.wake``)은 감사하지 않는다 — 고리 상한은 코드다.
 """
 

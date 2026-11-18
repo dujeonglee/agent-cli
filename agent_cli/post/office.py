@@ -29,6 +29,22 @@ from agent_cli.post.request_book import (
 Outcome = Literal["done", "stopped", "wait", "session_end"]
 
 
+class _Mark:
+    """`wait_to_open` 의 표지 — 이름만 든다(identity 로 비교한다)."""
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __repr__(self) -> str:
+        return self._name
+
+
+#: `wait_to_open` — 사람의 말은 없고 깨우는 메일이 있다(메일은 꺼내지 않는다: 그 런의 첫 턴 경계가 배달한다)
+OPEN_MAIL = _Mark("OPEN_MAIL")
+#: `wait_to_open` — 상자가 닫혔고 줄 선 사람의 말이 없다
+CLOSED = _Mark("CLOSED")
+
+
 class ConsistencyError(AssertionError):
     """불변식 위반 — 어긴 것의 목록을 든다."""
 
@@ -42,6 +58,9 @@ class PostOffice:
         self.cv = cv if cv is not None else threading.Condition()
         self._boxes: dict[str, Postbox] = {}
         self._book = RequestBook()
+        #: 런을 열 것을 기다리는 주소(`wait_to_open` 안) — 타임아웃에도 내리지 않고, 꺼낼 때 내린다
+        self._idle: set[str] = set()
+        self._closed: set[str] = set()
 
     # ── 배달 ─────────────────────────────────────────
 
@@ -246,6 +265,90 @@ class PostOffice:
                 self.cv.notify_all()
             return env
 
+    # ── 사람의 말 (줄 없는 봉투 — `envelope.words`) ─────────────
+
+    def take_words(self, addr: str) -> Envelope | None:
+        """``addr`` 앞에 줄 선 첫 사람의 말을 꺼낸다(런이 들지 않는다 — 줄이 없다). 없으면 None."""
+        with self.cv:
+            return self._take_first_words(self._box(addr))
+
+    def absorb_mail(self, addr: str) -> tuple[Envelope, ...]:
+        """턴 경계 — 사람의 말을 뺀 줄 선 것 전부를 지금 런으로(도착 순서). 그 줄은 picked."""
+        with self.cv:
+            envs = self._box(addr).take_all_but_words()
+            self._picked(envs)
+            return envs
+
+    def withdraw(self, addr: str, env_id: str) -> Envelope | None:
+        """줄 선 **줄 없는** 봉투 하나를 id 로 뺀다(취소·명령으로 꺼냄). 없으면 None, 줄이 있는 봉투면 아무것도
+        바꾸지 않고 `RowError` — 줄을 닫을 길이 없어지기 때문이다."""
+        with self.cv:
+            box = self._box(addr)
+            env = next((e for e in box.queued() if e.id == env_id), None)
+            if env is None:
+                return None
+            self._ensure_rowless(env)
+            box.remove(env_id)
+            self.cv.notify_all()
+            return env
+
+    def put_first(self, env: Envelope) -> None:
+        """줄 없는 봉투를 ``env.dst`` 의 상자 맨 앞에 넣는다(명령인 줄 알고 꺼냈는데 명령이 아니었다)."""
+        with self.cv:
+            self._ensure_rowless(env)
+            self._ensure_new([env])
+            self._box(env.dst).put_first(env)
+            self.cv.notify_all()
+
+    def wait_words(self, addr: str, timeout: float | None) -> bool:
+        """``addr`` 앞에 사람의 말이 줄 설 때까지 기다린다(꺼내지 않는다) — 있거나 ``timeout`` 안에 오면 True, 닫혔으면
+        False."""
+        with self.cv:
+            box = self._box(addr)
+            return (
+                self.cv.wait_for(
+                    lambda: addr in self._closed or bool(box.words()), timeout
+                )
+                and addr not in self._closed
+            )
+
+    def wait_to_open(self, addr: str, *, timeout: float | None):
+        """``addr`` 의 다음 런을 열 것 — 줄 선 사람의 말이 있으면 첫 하나를 꺼내 돌려준다, 없고 닫혔으면 `CLOSED`, 깨우는
+        메일이 있으면 `OPEN_MAIL`(꺼내지 않는다), ``timeout`` 이 지나면 None. 기다리는 동안 ``addr`` 는 한가함(`idle`)
+        이고, 사람의 말이나 `OPEN_MAIL` 을 돌려줄 때 내린다 — 판정과 내림이 한 락 구간이다."""
+        with self.cv:
+            box = self._box(addr)
+            self._idle.add(addr)
+
+            def ready() -> bool:
+                return (
+                    bool(box.words())
+                    or addr in self._closed
+                    or any(e.wakes for e in box.mail())
+                )
+
+            self.cv.wait_for(ready, timeout)
+            if box.words():
+                self._idle.discard(addr)
+                return self._take_first_words(box)
+            if addr in self._closed:
+                return CLOSED
+            if any(e.wakes for e in box.mail()):
+                self._idle.discard(addr)
+                return OPEN_MAIL
+            return None
+
+    def close(self, addr: str) -> None:
+        """``addr`` 의 상자를 닫는다 — 기다리는 이를 깨울 뿐, 줄 선 것은 그대로다(남은 사람의 말은 먼저 꺼내진다). 멱등."""
+        with self.cv:
+            self._closed.add(addr)
+            self.cv.notify_all()
+
+    def idle(self, addr: str) -> bool:
+        """``addr`` 가 지금 런을 열 것을 기다리는 중인가(`wait_to_open` 안)."""
+        with self.cv:
+            return addr in self._idle
+
     # ── 질문 ─────────────────────────────────────────
 
     def ask(
@@ -290,6 +393,14 @@ class PostOffice:
     def taken(self, addr: str) -> tuple[Envelope, ...]:
         with self.cv:
             return self._box_or_empty(addr).taken()
+
+    def words(self, addr: str) -> tuple[Envelope, ...]:
+        with self.cv:
+            return self._box_or_empty(addr).words()
+
+    def mail(self, addr: str) -> tuple[Envelope, ...]:
+        with self.cv:
+            return self._box_or_empty(addr).mail()
 
     def arrived(self, addr: str) -> int:
         with self.cv:
@@ -409,6 +520,22 @@ class PostOffice:
 
     def _box_or_empty(self, addr: str) -> Postbox:
         return self._boxes.get(addr) or Postbox()
+
+    def _take_first_words(self, box: Postbox) -> Envelope | None:
+        """줄 선 첫 사람의 말을 뺀다 — 줄 있는 봉투면 빼기 **전에** `RowError`."""
+        first = next(iter(box.words()), None)
+        if first is None:
+            return None
+        self._ensure_rowless(first)
+        env = box.take_first_words()
+        self.cv.notify_all()
+        return env
+
+    @staticmethod
+    def _ensure_rowless(env: Envelope) -> None:
+        """줄 없는 봉투만 — 줄이 있는 봉투를 꺼내면 그 줄을 닫을 길이 없어진다."""
+        if env.closes_by is not None:
+            raise RowError(f"{env.id}: has a row — not a rowless envelope")
 
     @staticmethod
     def _ensure_used(replies: Mapping[str, Envelope], closing: set[str]) -> None:

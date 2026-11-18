@@ -35,7 +35,7 @@ def stack(tmp_path, clock):
     server = WebServer(renderer, token="t")
     reg = ScheduleRegistry(tmp_path, clock=clock)
     reg.start = lambda: None
-    reg.enqueue = lambda prompt, nickname: server.queue.enqueue(
+    reg.enqueue = lambda prompt, nickname: server.main_input.enqueue(
         None, prompt, nickname=nickname
     )
     set_schedule_registry(reg)
@@ -95,7 +95,7 @@ class TestScheduleApi:
         server, _, client = stack
         sid = _add(client, nickname="주간봇").json()["schedules"][0]["id"]
         view = client.post(f"/api/schedules/{sid}/run-now{T}").json()
-        (item,) = server._queue.snapshot()
+        (item,) = server.main_input.snapshot()
         assert item["text"] == "주간 보고를 작성해줘" and item["nickname"] == "주간봇"
         assert view["log"][-1]["event"] == "fired"
 
@@ -110,7 +110,7 @@ class TestScheduleApi:
         view = client.post(f"/api/schedules/{sid}/dismiss{T}").json()
         assert view["schedules"][0]["missed_at"] is None
         assert [r["event"] for r in view["log"]] == ["missed", "skipped"]
-        assert server._queue.snapshot() == []  # 건너뛰기는 실행하지 않는다
+        assert server.main_input.snapshot() == []  # 건너뛰기는 실행하지 않는다
 
     def test_no_registry_is_503(self):
         set_schedule_registry(None)

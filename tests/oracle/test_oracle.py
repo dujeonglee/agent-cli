@@ -1,5 +1,5 @@
 """메일함·요청 장부 오라클 — 지금 구현의 산출 == 고정 버전에서 만든 기대값(s01~s17 은 f44cf539, s21~s27 은
-v10.144.0 — 1단계 기준 보강).
+v10.144.0 — 1단계 기준 보강, s28~s31 은 v10.146.6 — 사람의 입력과 메일이 함께 main 앞에 설 때).
 
 기대값(``expected/*.json``)은 다시 만들지 않는다: 구조를 바꾸는 커밋에서 이 파일들이 바뀌면 오라클이 구현과 함께
 움직인 것이다. ``SHA256SUMS`` 가 그 파일들을 고정하고, 드라이버의 import 목록이 "공개 표면만" 을 고정한다.
@@ -21,8 +21,9 @@ from tests.oracle import driver
 HERE = Path(__file__).parent
 EXPECTED = HERE / "expected"
 
-#: 드라이버가 import 해도 되는 것 — f44cf539 에 있는 공개 표면과 표준 라이브러리. 새 우편 구조(`agent_cli.post`)와
-#: 읽기 전용 조회가 들어오면 안 된다: 리뷰어가 f44cf539 고정 worktree 에서 같은 드라이버로 같은 해시를 만든다.
+#: 드라이버가 import 해도 되는 것 — 공개 표면과 표준 라이브러리. 우편 구조(`agent_cli.post`)와 읽기 전용 조회가
+#: 들어오면 안 된다. 사람의 입력 자리만 `MainInput`(v10.146.6 까지는 `InputQueue`)이다 — 그 앞의 고정 worktree 에서
+#: 기대값을 다시 만들려면 그 트리의 드라이버를 쓴다.
 ALLOWED_IMPORTS = {
     "__future__": {"annotations"},
     "argparse": None,
@@ -38,7 +39,7 @@ ALLOWED_IMPORTS = {
     "types": {"SimpleNamespace"},
     "rich.console": {"Console"},
     "agent_cli.context.manager": {"ContextManager"},
-    "agent_cli.input_queue": {"InputQueue"},
+    "agent_cli.main_input": {"MainInput"},
     "agent_cli.main": {"web_instance_is_active"},
     "agent_cli.providers.base": {"LLMResponse"},
     "agent_cli.providers.capabilities": {"ModelCapabilities"},

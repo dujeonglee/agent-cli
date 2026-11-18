@@ -16,7 +16,7 @@ import time
 import pytest
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.input_queue import InputQueue
+from agent_cli.main_input import MainInput
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.pump import RunRequest
@@ -116,8 +116,10 @@ def session(tmp_path):
         binding = make_binding(provider=provider, capabilities=CAPS, model="m")
         sdir = tmp_path / "s"
         ctx = ContextManager(sdir, max_context_tokens=60000, binding=binding)
+        queue = MainInput()
         reg = AgentRegistry(
             sdir,
+            post=queue.post,
             runtime={
                 "binding": binding,
                 "max_turns": 20,
@@ -126,14 +128,13 @@ def session(tmp_path):
             },
         )
         set_agent_registry(reg)
-        queue = InputQueue()
         main = MainLoop(
             binding=binding,
             ctx=ctx,
             session=None,
             agent_registry=reg,
             mcp_manager=None,
-            dequeue_user_message=queue.dequeue_nowait,
+            dequeue_user_message=queue.take_next,
             enqueue_user_message=lambda text, nickname: queue.enqueue(None, text),
             route_message=lambda text: False,
             max_turns=30,
@@ -1012,18 +1013,22 @@ class TestNoHiddenSideEffects:
         reg.shutdown_all()
 
     def test_input_queue_wait_for_arrival_does_not_dequeue(self):
-        q = InputQueue()
+        q = MainInput()
         assert q.wait_for_arrival(0.01) is False
         q.enqueue(None, "hello")
         assert q.wait_for_arrival(0.01) is True
         assert q.pending_count() == 1  # 꺼내지 않았다
-        q.shutdown()
+        q.close()
         assert q.wait_for_arrival(0.01) is False
 
-    def test_input_queue_wait_for_arrival_ignores_the_synthetic_wake(self):
-        q = InputQueue()
-        q.enqueue(None, "wake", system=True)  # 합성 깨우기는 세지 않는다
+    def test_input_queue_wait_for_arrival_ignores_mail(self):
+        from agent_cli.post import envelope as post_envelope
+
+        q = MainInput()
+        q.post.deliver(
+            post_envelope.notice("n-1", "job", "main", "done")
+        )  # 메일은 세지 않는다
         assert q.wait_for_arrival(0.01) is False
         q.enqueue(None, "hello")
         assert q.wait_for_arrival(0.01) is True
-        assert q.pending_count() == 2  # 꺼내지 않았다
+        assert q.pending_count() == 1  # 꺼내지 않았다

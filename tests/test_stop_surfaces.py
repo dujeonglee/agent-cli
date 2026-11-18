@@ -318,14 +318,11 @@ class TestStopEverythingDoesNotWakeMain:
     """사용자 결정(2026-11-15): "Stop everything" 의 정지 회신은 main 을 깨우지 않고 쌓였다가 사람의 다음 입력
     런에 함께 배달된다. "Stop all agents"·채널 ■/✕ 의 회신은 지금처럼 깨운다."""
 
-    def _registry_with_waker(self, s):
-        from agent_cli.runtime import wire_agent_mail
+    def _main_input(self, s):
+        """세션의 main 상자 — 펌프가 런을 열 것을 묻는 자리(`MainInput.wait_to_open`)."""
+        from agent_cli.main_input import MainInput
 
-        wakes: list = []
-        waker, _r, _a = wire_agent_mail(
-            s["reg"], enqueue_wake=lambda conn, text: wakes.append(text)
-        )
-        return waker, wakes
+        return MainInput(post=s["reg"]._post)
 
     def test_everything_leaves_main_asleep_and_the_next_input_run_reads_the_replies(
         self,
@@ -351,7 +348,7 @@ class TestStopEverythingDoesNotWakeMain:
         )
         s = session(p)
         box["s"] = s
-        waker, wakes = self._registry_with_waker(s)
+        main_input = self._main_input(s)
         threading.Thread(
             target=lambda: (
                 wait_until(lambda: main_waits_in_place(s["reg"])),
@@ -367,10 +364,8 @@ class TestStopEverythingDoesNotWakeMain:
         (view,) = s["reg"].queued_for("main")
         mail = {"wakes_main": view.wakes, "mark": view.mark}  # 메일의 표지 키로
         assert mail["wakes_main"] is False and mail["mark"] == "stopped by user"
-        # main 런 0회 — 깨우기가 하나도 서지 않는다
-        waker.mark_idle()
-        waker.on_run_end()
-        assert wakes == []
+        # main 런 0회 — 한가한 펌프가 열 것이 없다
+        assert main_input.wait_to_open(0) is None
         assert not s["reg"].has_mail_that_wakes_main()
         assert not s["reg"].has_active_work()  # `run` 은 조용해지면 끝난다
         # 끝나도 회신은 agents.json 미러에 남는다
@@ -397,13 +392,14 @@ class TestStopEverythingDoesNotWakeMain:
             }
         )
         s = session(p)
-        waker, wakes = self._registry_with_waker(s)
+        main_input = self._main_input(s)
         assert s["run"]().success is not None
         (tm,) = s["reg"]._agents.values()
-        waker.mark_idle()  # main 은 한가하다
         assert wait_until(lambda: tm.state == "busy")
         assert s["reg"].stop_all_runs() == [tm.key]
-        assert wait_until(lambda: wakes == [waker.WAKE_TEXT])
+        from agent_cli.main_input import OPEN_MAIL
+
+        assert wait_until(lambda: main_input.wait_to_open(0) is OPEN_MAIL)
         assert s["reg"].has_mail_that_wakes_main()
 
 
@@ -433,10 +429,10 @@ class TestCommandsTypedDuringTheWait:
     """제자리 대기 중 친 명령은 그 자리에서 라우팅되고 main 을 깨우지 않는다(web 기본 — `wait_for_human_words`)."""
 
     def _setup(self, handled=("/stop agt-5",)):
-        from agent_cli.input_queue import InputQueue
+        from agent_cli.main_input import MainInput
         from agent_cli.runtime import wait_for_human_words
 
-        q = InputQueue()
+        q = MainInput()
         routed: list = []
 
         def route(text):
@@ -466,7 +462,9 @@ class TestCommandsTypedDuringTheWait:
             "second",
         ]
 
-    def test_wake_items_are_not_human_words(self):
+    def test_mail_is_not_human_words(self):
+        from agent_cli.post import envelope as post_envelope
+
         q, routed, wait = self._setup()
-        q.enqueue(None, "wake", system=True)
-        assert wait(0) is False and routed == [] and q.pending_count() == 1
+        q.post.deliver(post_envelope.notice("n-1", "job", "main", "done"))
+        assert wait(0) is False and routed == [] and q.pending_count() == 0

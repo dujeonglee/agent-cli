@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agent_cli.post.office import PostOffice
 from agent_cli.providers.credentials import Credentials
 from agent_cli.runtime import (
     AgentRuntime,
@@ -320,11 +321,14 @@ class TestRegistryAssembly:
             max_depth=2,
             session=None,
         )
+        post = object()
         with patch("agent_cli.subagent.agents_live.AgentRegistry") as reg_cls:
-            reg = build_agent_registry("/sess", rt)
+            reg = build_agent_registry("/sess", rt, post=post)
         # max_agents=None = 미지정 → registry 가 env/기본값을 고른다
-        # (v8.61.0 --max-agents). 여기서 값을 정하면 env 가 무시된다.
-        reg_cls.assert_called_once_with("/sess", runtime=rt.as_dict(), max_agents=None)
+        # (v8.61.0 --max-agents). 여기서 값을 정하면 env 가 무시된다. 창구는 받은 그것(세션의 것)이다.
+        reg_cls.assert_called_once_with(
+            "/sess", runtime=rt.as_dict(), max_agents=None, post=post
+        )
         assert get_agent_registry() is reg
 
     def test_build_agent_registry_passes_explicit_cap(self):
@@ -345,50 +349,34 @@ class TestRegistryAssembly:
             session=None,
         )
         with patch("agent_cli.subagent.agents_live.AgentRegistry") as reg_cls:
-            build_agent_registry("/sess", rt, max_agents=3)
+            build_agent_registry("/sess", rt, max_agents=3, post=object())
         assert reg_cls.call_args.kwargs["max_agents"] == 3
 
     def test_wire_agent_mail_assembly(self):
-        """waker 조립 + on_reply(알림→waker.on_mail 순) + restore/auto_spawn
-        호출·카운트 반환 — 종전 run/web 인라인 배선과 동일 시퀀스."""
+        """on_reply(알림) + restore/auto_spawn 호출·카운트 반환 — 종전 run/web 인라인 배선과 동일 시퀀스."""
         registry = MagicMock()
         registry.restore.return_value = 2
         registry.auto_spawn.return_value = 1
         notices: list[dict] = []
-        enq = MagicMock()
 
         ctx = MagicMock()
-        waker, revived, auto = wire_agent_mail(
+        revived, auto = wire_agent_mail(
             registry,
-            enqueue_wake=enq,
             on_mail_notice=lambda r, busy: notices.append((r, busy)),
             parent_ctx=ctx,
         )
         assert (revived, auto) == (2, 1)
         registry.restore.assert_called_once_with(parent_ctx=ctx)
         registry.auto_spawn.assert_called_once_with(parent_ctx=ctx)
-        # 배달 구간에서 읽을 조회는 waker 의 한가함 그 자체다(읽기만)
-        assert registry.main_is_idle == waker.idle.is_set
-        # on_reply 훅: 알림 먼저(바쁨 = 배달 순간 유휴 아님 — 레지스트리가 배달 구간에서 읽어 넘긴 값), waker.on_mail
-        # 다음. 지금의 idle 은 알림 판정에 쓰지 않는다(v10.145.x — 그 사이 펌프가 이 메일로 런을 열 수 있다)
-        with patch.object(waker, "on_mail") as om:
-            waker.idle.set()  # 지금은 한가하지만 배달 순간엔 바빴다
-            registry.on_reply({"kind": "reply"}, idle_at_delivery=False)
-            waker.idle.clear()  # 지금은 바쁘지만 배달 순간엔 한가했다
-            registry.on_reply({"kind": "reply"}, idle_at_delivery=True)
-            registry.on_reply(
-                {"kind": "reply"}, idle_at_delivery=None
-            )  # 모름 — 찍지 않는다
-            assert notices == [({"kind": "reply"}, True), ({"kind": "reply"}, False)]
-            assert om.call_count == 3
+        # on_reply 훅: 바쁨 = 배달 순간 한가하지 않았다(레지스트리가 배달 구간에서 읽어 넘긴 값)
+        registry.on_reply({"kind": "reply"}, idle_at_delivery=False)
+        registry.on_reply({"kind": "reply"}, idle_at_delivery=True)
+        assert notices == [({"kind": "reply"}, True), ({"kind": "reply"}, False)]
         # web 은 알림을 걸지 않는다 — 대기열이 그 자리 (v10.51.0)
-        reg2 = MagicMock()
-        w2, *_ = wire_agent_mail(reg2, enqueue_wake=enq, parent_ctx=ctx)
-        with patch.object(w2, "on_mail") as om2:
-            reg2.on_reply(
-                {"kind": "reply"}, idle_at_delivery=True
-            )  # 알림 없이 깨우기만
-            om2.assert_called_once()
+        reg2 = MagicMock(spec=["restore", "auto_spawn"])
+        reg2.restore.return_value = reg2.auto_spawn.return_value = 0
+        assert wire_agent_mail(reg2, parent_ctx=ctx) == (0, 0)
+        assert not hasattr(reg2, "on_reply")
 
     def test_monitor_delivery_is_wired_at_registry_build(self):
         """★재발 방지 (사용자 제보: 등록은 됐는데 2분 무반응).
@@ -434,7 +422,7 @@ class TestRegistryAssembly:
             max_depth=2,
             session=None,
         )
-        reg = build_agent_registry(None, rt, monitors=monitors)
+        reg = build_agent_registry(None, rt, post=PostOffice(), monitors=monitors)
         assert monitors.deliver == reg.deliver
         assert reg.monitors is monitors
 
@@ -613,37 +601,29 @@ class TestExitPathConvergence:
         for hook in ("server.mail_source =", "on_pending_change ="):
             assert revive < body.index(hook), hook
 
-    def test_both_hosts_wire_the_same_queue_the_same_way(self):
-        """v10.130.8: web 서버가 큐를 내놓고(`server.queue`) 두 호스트가 같은
-        `InputQueue` 를 같은 배선으로 쓴다 — 종전 web 은 서버의 대리 메서드
-        (`enqueue_named`·`enqueue_system`·`dequeue_nowait`, 펌프 큐 = 서버)였다.
-        v10.131.0: 그 배선은 조립 함수 안에 **한 번** 쓰이고, 호스트는 큐를 넘긴다."""
+    def test_both_hosts_wire_the_same_main_input_the_same_way(self):
+        """v10.130.8: web 서버가 main 앞 사람의 말을 내놓고(`server.main_input`) 두 호스트가 같은 배선으로 쓴다.
+        v10.131.0: 그 배선은 조립 함수 안에 **한 번** 쓰이고, 호스트는 저장소를 만들 때 넘긴다. 레지스트리는 그
+        창구를 받는다 — 메일과 사람의 말이 한 상자에 선다."""
         import re
 
         wiring = (
-            "schedules.enqueue = lambda prompt, nickname: queue.enqueue(",
-            "dequeue_user_message=queue.dequeue_nowait",
-            "enqueue_user_message=lambda text, nickname: queue.enqueue(",
-            "PumpDeps(queue=queue,",
+            "schedules.enqueue = lambda prompt, nickname: main_input.enqueue(",
+            "dequeue_user_message=main_input.take_next",
+            "enqueue_user_message=lambda text, nickname: main_input.enqueue(",
+            "PumpDeps(main_input=main_input,",
+            "post=stores.main_input.post,",
         )
         runtime = re.sub(r"\(\s+", "(", re.sub(r"\s+", " ", _RUNTIME_SRC))
         for line in wiring:
             assert runtime.count(line) == 1, line
         for name in ("run", "web"):
             body = re.sub(r"\(\s+", "(", re.sub(r"\s+", " ", self._body(name)))
-            assert "build_session_stores(spec, queue=input_queue" in body, name
-            assert "queue=input_queue, surface=surface" in body, name
+            assert "build_session_stores(spec, main_input=main_input" in body, name
+            assert "queue=" not in body, name
             assert "server.enqueue_" not in body and "server.dequeue_" not in body
-            assert "queue=server," not in body
-        assert "input_queue = server.queue" in self._body("web")
-
-    def test_the_mail_wake_is_wired_once_into_the_same_queue(self):
-        """깨우기 자리도 조립 함수 안에 한 번 — 같은 큐에 합성 입력으로 (v10.131.0)."""
-        import re
-
-        runtime = re.sub(r"\(\s+", "(", re.sub(r"\s+", " ", _RUNTIME_SRC))
-        wake = "enqueue_wake=lambda cid, t: queue.enqueue(cid, t, system=True)"
-        assert runtime.count(wake) == 1
+        assert "main_input = server.main_input" in self._body("web")
+        assert "main_input = MainInput()" in self._body("run")
 
     def test_run_and_web_share_assembly_helpers(self):
         """v10.131.0: 두 호스트가 같은 조립 함수 넷을 부르고, 조립 부품을 직접
@@ -802,7 +782,7 @@ class TestRunCommandTeardownIntegration:
             st.enter_context(
                 patch(
                     "agent_cli.runtime.wire_agent_mail",
-                    return_value=(MagicMock(), 0, 0),
+                    return_value=(0, 0),
                 )
             )
             st.enter_context(

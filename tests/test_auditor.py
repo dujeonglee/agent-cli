@@ -338,29 +338,31 @@ class TestMailRecord:
 
 class TestPumpWiring:
     def test_pump_tells_the_auditor_after_every_main_run(self):
-        from agent_cli.input_queue import InputQueue
+        from agent_cli.main_input import MainInput
         from tests.pump_support import make_pump, run_pump_in_thread
 
         calls: list[tuple[bool, bool]] = []
         spy = SimpleNamespace(
             run_ended=lambda req, *, ok: calls.append((req.author_is_user, ok))
         )
-        q = InputQueue()
+        q = MainInput()
         q.enqueue(None, "hi")
         done = run_pump_in_thread(
-            make_pump(queue=q, run_main=lambda r: ToolResult(True, "x"), auditor=spy)
+            make_pump(
+                main_input=q, run_main=lambda r: ToolResult(True, "x"), auditor=spy
+            )
         )
         assert done.wait(2.0)
         assert calls == [(True, True)]
 
     def test_pump_without_an_auditor_is_unchanged(self):
-        from agent_cli.input_queue import InputQueue
+        from agent_cli.main_input import MainInput
         from tests.pump_support import make_pump, run_pump_in_thread
 
-        q = InputQueue()
+        q = MainInput()
         q.enqueue(None, "hi")
         done = run_pump_in_thread(
-            make_pump(queue=q, run_main=lambda r: ToolResult(False, error="e"))
+            make_pump(main_input=q, run_main=lambda r: ToolResult(False, error="e"))
         )
         assert done.wait(2.0)
 
@@ -379,14 +381,14 @@ class TestLiveness:
         assert not session_has_live_work(pending_count=0, harness=None)
 
     def test_quiet_policy_waits_and_announces_once(self):
-        from agent_cli.input_queue import InputQueue
+        from agent_cli.main_input import MainInput
         from agent_cli.pump import QuietPolicy
 
         reg = SimpleNamespace(has_active_work=lambda: False)
         harness = SimpleNamespace(in_flight=1)
         waits: list[str] = []
         pol = QuietPolicy(
-            queue=InputQueue(),
+            main_input=MainInput(),
             agent_registry=reg,
             harness=harness,
             on_wait=waits.append,
@@ -448,16 +450,15 @@ class TestAssembly:
 
     def test_wire_agent_mail_does_not_build_it(self):
         """감사자는 wire 앞에서 만들고 노브를 적용한다 — 상한 노브가 restore/
-        auto-spawn 의 게이트라서. wire 는 (waker, revived, auto) 셋만 돌려준다."""
+        auto-spawn 의 게이트라서. wire 는 (revived, auto) 둘만 돌려준다."""
         from agent_cli.runtime import wire_agent_mail
 
         out = wire_agent_mail(
             self._registry(),
-            enqueue_wake=MagicMock(),
             on_mail_notice=lambda r: None,
             parent_ctx=MagicMock(),
         )
-        assert len(out) == 3
+        assert len(out) == 2
 
     def test_delivery_goes_through_the_registry_mailbox(self, tmp_path):
         """`build_auditor` 의 배달은 모니터 보고와 같은 `registry.deliver("main")`."""

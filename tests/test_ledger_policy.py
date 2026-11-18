@@ -19,13 +19,13 @@ import pytest
 
 from agent_cli import item_ids
 from agent_cli.context.manager import ContextManager
-from agent_cli.input_queue import InputQueue
 from agent_cli.loop.ledger import (
     NAG_BUDGET,
     RESULT_SHAPE_LINE,
     Ledger,
     wrong_closer_hint,
 )
+from agent_cli.main_input import MainInput
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.loop_ports import make_ports
@@ -172,7 +172,7 @@ class TestOneBudget:
 
 class TestIdsAreOneFormat:
     def test_sources_make_the_final_form(self, tmp_path):
-        assert InputQueue().enqueue("c", "hi")["id"] == "u-1"
+        assert MainInput().enqueue("c", "hi")["id"] == "u-1"
         reg = AgentRegistry(tmp_path)
         # 번호 공간 하나를 모든 접두가 함께 쓴다 (v10.77.0)
         assert reg.note_owes("main", "agent:agt-a", "t").id == "r-2"

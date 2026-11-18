@@ -18,10 +18,10 @@ from types import SimpleNamespace
 import pytest
 
 from agent_cli.harness.auditor import SessionAuditor
-from agent_cli.input_queue import InputQueue
 from agent_cli.jobs import JobRegistry
 from agent_cli.loop.ledger import NAG_BUDGET
 from agent_cli.main import web_instance_is_active
+from agent_cli.main_input import MainInput
 from agent_cli.monitor import MonitorRegistry
 from agent_cli.pump import QuietPolicy
 from agent_cli.schedule.registry import ScheduleRegistry
@@ -138,7 +138,7 @@ class TestRunEnds:
 #: 대역 → 실물 클래스와 그 이름들
 _SURFACES = {
     "registry": (AgentRegistry, ("has_active_work", "any_activity")),
-    "queue": (InputQueue, ("pending_count",)),
+    "queue": (MainInput, ("pending_count",)),
     "jobs": (JobRegistry, ("has_active_work",)),
     "monitors": (MonitorRegistry, ("has_active_work",)),
     "schedules": (ScheduleRegistry, ("has_active_work",)),
@@ -172,7 +172,7 @@ _RUN_TERMS = ("agents", "queue", "jobs", "monitors", "harness", "schedules")
 def _policy(on: set[str], announced: list):
     st = _stubs(on)
     return QuietPolicy(
-        queue=st["queue"],
+        main_input=st["queue"],
         agent_registry=st["registry"],
         monitors=st["monitors"],
         schedules=st["schedules"],

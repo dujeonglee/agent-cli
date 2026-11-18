@@ -103,6 +103,22 @@ def human(
     )
 
 
+def words(
+    id: str,
+    src: str,
+    dst: str,
+    text: str,
+    *,
+    ts: float = 0.0,
+    payload: Mapping[str, Any] | None = None,
+) -> Envelope:
+    """사람의 말 — 줄 없이 상자에 선다(main 앞: 꺼내기 전에는 취소·명령으로 빠질 수 있고, 줄은 받는 쪽이 집을 때
+    연다). 저장하지 않는다 — 재시작하면 대기 중이던 말은 사라진다."""
+    return Envelope(
+        id, "request", src, dst, text, persists=False, ts=ts, payload=payload or _EMPTY
+    )
+
+
 def notice(
     id: str,
     src: str,
@@ -178,5 +194,5 @@ def system(
 
 
 def is_human_words(env: Envelope) -> bool:
-    """사람의 말인가 — 머리의 종류·닫는 법으로만(주소를 읽지 않는다)."""
-    return env.kind == "request" and env.closes_by == "complete"
+    """사람의 말인가 — 머리의 종류·닫는 법으로만(주소를 읽지 않는다): `reply` 로 닫지 않는 요청(`human`·`words`)."""
+    return env.kind == "request" and env.closes_by != "reply"

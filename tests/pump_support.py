@@ -51,24 +51,6 @@ class FakeSurface:
         return self.swallow_errors
 
 
-class FakeWaker:
-    """깨우기 없음 — 모든 아이템이 사람 메시지."""
-
-    WAKE_TEXT = "WAKE"
-
-    def __init__(self):
-        self.idle = threading.Event()
-
-    def mark_idle(self):
-        self.idle.set()
-
-    def handle_dequeued(self, text):
-        return None
-
-    def on_run_end(self):
-        pass
-
-
 class FakeRegistry:
     def __init__(self):
         self.authors: list[list[str]] = []
@@ -87,9 +69,8 @@ class FakeRegistry:
 
 def make_pump(
     *,
-    queue,
+    main_input,
     run_main,
-    waker=None,
     registry=None,
     surface=None,
     monitors=None,
@@ -106,8 +87,7 @@ def make_pump(
     registry = registry if registry is not None else FakeRegistry()
     return SessionPump(
         PumpDeps(
-            queue=queue,
-            waker=waker if waker is not None else FakeWaker(),
+            main_input=main_input,
             agent_registry=registry,
             run_main=run_main,
             surface=surface if surface is not None else FakeSurface(),
@@ -115,7 +95,7 @@ def make_pump(
             policy=policy
             if policy is not None
             else QuietPolicy(
-                queue=queue,
+                main_input=main_input,
                 agent_registry=registry,
                 monitors=monitors,
                 schedules=schedules,

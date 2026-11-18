@@ -26,8 +26,8 @@ from rich.console import Console
 
 from agent_cli import render
 from agent_cli.context.manager import ContextManager
-from agent_cli.input_queue import InputQueue
 from agent_cli.instance_file import read_status_file
+from agent_cli.main_input import MainInput
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.recovery.detectors import (
@@ -389,9 +389,9 @@ def _failures(ctx) -> list[dict]:
     return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
 
 
-def _main_ports(q: InputQueue):
+def _main_ports(q: MainInput):
     return make_ports(
-        dequeue_user_message=q.dequeue_nowait,
+        dequeue_user_message=q.take_next,
         enqueue_user_message=lambda text, nickname: q.enqueue(
             None, text, nickname=nickname
         ),
@@ -448,7 +448,7 @@ class TestWebMain:
             _shell(6, "echo fresh"),  # 새 결과 — 띠가 내려간다
             _complete(),
         ]
-        q = InputQueue()
+        q = MainInput()
         result = run_loop(
             ports=_main_ports(q),
             query="count",
@@ -496,7 +496,7 @@ class TestWebMain:
 
         provider = MagicMock()
         provider.call.side_effect = respond
-        q = InputQueue()
+        q = MainInput()
         seen: dict = {}
         viewer = _answer_when_asked(r, "c", "read the WAL file instead", seen)
         result = run_loop(
@@ -547,7 +547,7 @@ class TestWebMain:
         seen: dict = {}
         viewer = _answer_when_asked(r, "s", "", seen)
         result = run_loop(
-            ports=_main_ports(InputQueue()),
+            ports=_main_ports(MainInput()),
             query="count",
             provider=provider,
             capabilities=caps,
@@ -586,7 +586,7 @@ class TestWebMain:
             provider = MagicMock()
             provider.call.side_effect = [_shell(i) for i in range(1, 8)] + [_complete()]
             run_loop(
-                ports=_main_ports(InputQueue()),
+                ports=_main_ports(MainInput()),
                 query="count",
                 provider=provider,
                 capabilities=caps,
@@ -622,7 +622,7 @@ class TestNotAsked:
         prev = render.get_renderer()
         render.set_renderer(r)
         try:
-            result, ctx = self._run(caps, tmp_path, ports=_main_ports(InputQueue()))
+            result, ctx = self._run(caps, tmp_path, ports=_main_ports(MainInput()))
         finally:
             render.set_renderer(prev)
         assert result.success
@@ -666,7 +666,7 @@ class TestAutoApproveDoesNotSkipThePause:
         seen: dict = {}
         viewer = _answer_when_asked(r, "s", "", seen)
         result = run_loop(
-            ports=_main_ports(InputQueue()),
+            ports=_main_ports(MainInput()),
             query="count",
             provider=provider,
             capabilities=caps,

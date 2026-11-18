@@ -23,8 +23,8 @@ from typing import ClassVar
 
 import pytest
 
-from agent_cli.input_queue import InputQueue
 from agent_cli.instance_file import read_status_file
+from agent_cli.main_input import CLOSED
 from agent_cli.providers.credentials import Credentials
 from agent_cli.render.base import ConfirmOption
 from agent_cli.render.web import WebRenderer
@@ -1946,7 +1946,7 @@ class TestWorkerStateReconnect:
 
 class TestWorkerLoopIntegration:
     """End-to-end: main.py's chat worker thread must emit
-    ``worker_idle`` immediately before every ``dequeue_blocking``
+    ``worker_idle`` immediately before every ``wait_to_open``
     call and ``worker_busy`` immediately after popping. The SHUTDOWN
     sentinel must NOT trigger a busy flip — that would race the
     connection teardown.
@@ -1962,8 +1962,8 @@ class TestWorkerLoopIntegration:
         we're testing is the renderer+server contract; the loop
         body itself is uninteresting for this test."""
         renderer.worker_idle()
-        item = server.queue.dequeue_blocking()
-        if item is InputQueue.SHUTDOWN:
+        item = server.main_input.wait_to_open(None)
+        if item is CLOSED:
             return False
         assert item["text"] == message
         renderer.worker_busy()
@@ -2008,8 +2008,8 @@ class TestWorkerLoopIntegration:
         # nonsensical and the connections are tearing down anyway.
         r.worker_idle()
         s.shutdown()
-        item = s.queue.dequeue_blocking()
-        assert item is InputQueue.SHUTDOWN
+        item = s.main_input.wait_to_open(None)
+        assert item is CLOSED
         # Latest state should still be idle.
         assert r.hub.sticky_payload("worker_state") == {"busy": False}
 

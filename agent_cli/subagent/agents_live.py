@@ -33,7 +33,7 @@ P1 경계: teammate 안 teammate 금지(레지스트리 미전파로 도구가 �
 ---------
 레지스트리는 명단·배달·저장·스레드의 틀이다. 규칙과 모양은 레지스트리를 import 하지 않는 잎에 있고
 레지스트리가 부른다: 메일의 글(`agent_mail` — 봉투·관찰 레코드), 회신 갚기의 규칙(`question_port`),
-`agents.json` 직렬화(`agents_state`), main 깨우기(`mail_waker`), 사람의 정지(`agent_stop`), `agent` 도구의
+`agents.json` 직렬화(`agents_state`), 사람의 정지(`agent_stop`), `agent` 도구의
 모드 처리(`agent_modes`, run 은 `run_agent`).
 """
 
@@ -403,8 +403,8 @@ class AgentRegistry:
         post: PostOffice | None = None,
     ):
         """``post`` — 우편·장부(`agent_cli.post`): 받은편지함·메일함·빚·보낸 쪽 기록이 여기 있다(v10.145.0).
-        없으면 레지스트리가 만든다. 4a 에서 입력 큐와 같은 조건변수를 쓰게 된다. 레지스트리의 조건변수 ``_cv`` 는
-        언제나 ``post.cv`` 다."""
+        세션에서는 main 앞 사람의 말(`MainInput`)과 같은 창구다 — main 상자에 둘이 함께 선다. 레지스트리의 조건변수
+        ``_cv`` 는 언제나 ``post.cv`` 다."""
         # 회신을 처리할 provider/모델 등 실행 배선 — spawn 시점이 아니라
         # 레지스트리 생성 시점(부트스트랩)에 고정할 수도 있으나, provider
         # 는 tool_bridge 인터셉트에서만 완전하므로 spawn 마다 갱신 수용.
@@ -429,9 +429,8 @@ class AgentRegistry:
         self._cv = self._post.cv
         # private 주소(run:·harness:)의 메일함(v10.84.0)도 우편의 상자다 — 그 루프가 턴 경계와 `wait` 에서 읽는다.
         # UI·영속 밖(프로세스 수명 — 저장 파일은 에이전트와 main 의 상자만 쓴다).
-        # 회신 도착 알림(CLI 대기 줄)과 main 이 한가한가(읽기만, 락 없음) — 부트스트랩(`wire_agent_mail`) 주입.
+        # 회신 도착 알림(CLI 대기 줄) — 부트스트랩(`wire_agent_mail`) 주입. main 이 한가한가는 창구가 안다(`idle`).
         self.on_reply: Callable[..., None] | None = None
-        self.main_is_idle: Callable[[], bool] | None = None
         #: 미배달 메일이 늘거나 비워졌다 (v10.51.0) — web 이 입력창 위 대기열을
         #: 다시 그린다(`WebServer.broadcast_queue`). 락 밖에서 부른다.
         self.on_pending_change: Callable[[], None] | None = None
@@ -786,7 +785,7 @@ class AgentRegistry:
         도착 순서. 읽기만 한다 — 락 안에서 사본을 뜬다."""
         if addr == "main" or is_private_owner(addr):
             return tuple(
-                view_of_main_mail(dict(e.payload)) for e in self._post.queued(addr)
+                view_of_main_mail(dict(e.payload)) for e in self._post.mail(addr)
             )
         tm = self._agents.get(addr.removeprefix("agent:"))
         return () if tm is None else tuple(map(view_of_inbox_item, self._queued(tm)))
@@ -805,23 +804,24 @@ class AgentRegistry:
 
     def arrived_for(self, addr: str) -> int:
         """``addr`` 앞에 **이미 도착해 다음 턴 경계에 배달될** 메일 수 (v10.66.2,
-        `wait` 의 둘째 판정 재료). main 은 메일함(작업·모니터
-        통지, 에이전트 회신·질문 전부 main 행), 상주 에이전트는 자기 받은편지함.
-        이게 0 이 아니면 `wait` 는 받지 않는다: 런을 끝내 봐야 펌프가 바로 다시
+        `wait` 의 둘째 판정 재료). main 은 상자의 메일(사람의 말은 빼고 — 그것은 제자리 대기를 "input" 으로 깨운다),
+        상주 에이전트는 자기 받은편지함. 이게 0 이 아니면 `wait` 는 받지 않는다: 런을 끝내 봐야 펌프가 바로 다시
         깨우므로, 거부하고 다음 관찰에 배달되게 두는 쪽이 싸고 맥락도 남는다."""
         if addr.startswith("agent:") and addr.split(":", 1)[1] not in self._agents:
             return 0
-        if addr == "main" or addr.startswith("agent:") or is_private_owner(addr):
+        if addr == "main":
+            return len(self._post.mail(addr))
+        if addr.startswith("agent:") or is_private_owner(addr):
             return self._post.arrived(addr)
         return 0
 
     def has_pending_replies(self) -> bool:
-        return bool(self._post.queued("main"))
+        return bool(self._post.mail("main"))
 
     def has_mail_that_wakes_main(self) -> bool:
         """main 메일함에 main 을 깨울 메일이 있는가 — ``wakes_main`` 이 거짓인 메일("Stop everything" 의 정지
-        회신, v10.142.0)은 빼고. 깨우기(`MailWaker`)와 `run` 의 정지 판정이 본다. 읽기만 한다."""
-        return self._post.has_waking("main")
+        회신, v10.142.0)은 빼고, 사람의 말도 뺀다. `run` 의 정지 판정이 본다. 읽기만 한다."""
+        return any(e.wakes for e in self._post.mail("main"))
 
     def has_active_work(self) -> bool:
         """P5: CLI run 큐 펌프의 정지 판정 — 미배달 회신·처리 중(busy)·
@@ -1208,7 +1208,7 @@ class AgentRegistry:
 
         알림은 사실 진술("still running: …")이라 진짜 보고와 같은 순간에 와도
         거짓이 아니다 — 그래서 "런 진행 중" 상태도, 락 안의 확인+추가도 없다.
-        main 이면 메일함(`_push_reply`, `MailWaker` 가 깨운다), 상주면 받은편지함
+        main 이면 메일함(`_push_reply` — 한가한 펌프가 런을 연다), 상주면 받은편지함
         (`request`, 봉투 ``checkin``). 둘 다 ``ledger: "none"`` — 장부 항목이 되지
         않고 영속되지 않는다(`agents_state.persists`)."""
         with self._cv:
@@ -1904,7 +1904,7 @@ class AgentRegistry:
         **두 백엔드는 나르는 것이 다르다** — 그래서 인자가 둘이다:
 
         - main 에는 worker/inbox 가 없다. 메일박스가 유일한 흡수 지점이고
-          ``MailWaker`` 가 idle main 도 깨운다. 메일박스 아이템은 **구조**를
+          한가한 main 은 펌프가 그 상자를 기다린다. 메일박스 아이템은 **구조**를
           싣는다(``kind``/``id``/``key``/``profile`` — UI 렌더와 ``answer(id)``
           가 그걸 읽는다). 그래서 ``mail``.
         - 에이전트 inbox 는 **평문**을 싣는다. 항목 1개 = 런 1개이므로 상대가
@@ -1944,7 +1944,7 @@ class AgentRegistry:
         with self._cv:  # 배달 순간의 한가함은 배달 구간에서 읽는다 — 락을 놓으면 펌프가 이 메일로 런을 열 수 있다
             self._stamp_mail(reply)
             self._post_deliver(envelope_of_main_mail(reply), settles=settles)
-            idle_at_delivery = self.main_is_idle() if self.main_is_idle else None
+            idle_at_delivery = self._post.idle("main")
             self._lines_in_section(lines)
         self._lines_after_section(lines)
         self._save_state()  # P3: 미배달분 디스크 미러 — resume 시 유실 없음
@@ -1978,7 +1978,7 @@ class AgentRegistry:
 
     def pending_mail(self) -> list[dict]:
         """main 앞 미배달 메일의 대기열 줄 (:func:`mail_queue_item`)."""
-        return [mail_queue_item(dict(e.payload)) for e in self._post.queued("main")]
+        return [mail_queue_item(dict(e.payload)) for e in self._post.mail("main")]
 
     def _deliver_peer_reply(
         self,
@@ -2177,8 +2177,8 @@ class AgentRegistry:
         return handler
 
     def drain_replies(self) -> list[dict]:
-        """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지."""
-        envs = self._post.absorb("main")
+        """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지 — main 앞 사람의 말은 남긴다(`MainInput`)."""
+        envs = self._post.absorb_mail("main")
         out = [dict(e.payload) for e in envs]
         if out:
             self._save_state()  # 배달 완료 → 디스크 미러도 소비
@@ -2309,7 +2309,7 @@ class AgentRegistry:
             if s["state"] == "dead" and not s["ends_after_task"]:
                 line += STATUS_DEAD_SUFFIX
             lines.append(line)
-        undelivered = len(self._post.queued("main"))
+        undelivered = len(self._post.mail("main"))
         if undelivered:
             lines.append(f"(undelivered replies: {undelivered})")
         # 폴링 차단 넛지: 묻는 쪽(``viewer``)이 회신을 기다릴 때만 — 그 회신은 메일로 와서 깨우므로
@@ -2949,7 +2949,7 @@ class AgentRegistry:
             tm.state = "dead"
             if crash and not tm.stop_event.is_set():
                 # Q4: kill/세션종료(의도된 종료)가 아닌 사망 → main 에 관찰
-                # 통지. MailWaker 가 on_reply 로 idle run 도 깨운다.
+                # 통지. 한가한 main 은 펌프가 그 메일로 런을 연다.
                 tm.revivable = False  # 원인 미상 사망을 resume 이 되살리지 않게
                 self._push_reply(
                     {

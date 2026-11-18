@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from agent_cli.input_queue import InputQueue
+from agent_cli.main_input import MainInput
 from agent_cli.schedule.registry import ScheduleRegistry
 
 
@@ -56,7 +56,7 @@ class TestRunPump:
 
         return run_pump_in_thread(
             make_pump(
-                queue=q,
+                main_input=q,
                 run_main=lambda req: calls.append(req.text),
                 schedules=reg,
                 on_wait=lambda kind: waits.append(kind),
@@ -65,7 +65,7 @@ class TestRunPump:
         )
 
     def test_pump_ends_when_there_is_no_schedule(self, reg):
-        q, calls, waits = InputQueue(), [], []
+        q, calls, waits = MainInput(), [], []
         q.enqueue(None, "task")
         assert self._pump(q, reg, calls, waits).wait(2)
         assert calls == ["task"] and waits == []
@@ -73,7 +73,7 @@ class TestRunPump:
     def test_pump_waits_on_an_enabled_schedule_and_runs_its_fire(self, reg, clock):
         """일회성 실행이 예약을 걸고 끝나 버리면 "매시간 확인하겠다" 는 약속이
         조용히 사라진다 — 끝나지 않고 기다리며, 발화는 다음 요청으로 돈다."""
-        q, calls, waits = InputQueue(), [], []
+        q, calls, waits = MainInput(), [], []
         reg.enqueue = lambda prompt, nickname: q.enqueue(
             None, prompt, nickname=nickname
         )
@@ -97,7 +97,7 @@ class TestRunPump:
         assert done.wait(2), "예약이 없어졌는데 펌프가 끝나지 않는다"
 
     def test_disabled_schedule_does_not_hold_the_pump(self, reg):
-        q, calls, waits = InputQueue(), [], []
+        q, calls, waits = MainInput(), [], []
         s = reg.add("0 9 * * *", "x")
         reg.set_enabled(s.id, False)
         q.enqueue(None, "task")
@@ -161,14 +161,14 @@ class TestWebServerInjection:
         from agent_cli.web.server import WebServer
 
         server = WebServer.__new__(WebServer)
-        server._queue = InputQueue()
+        server.main_input = MainInput()
         # web 호스트의 예약 배선과 같은 모양 (v10.130.8, run 과 글자까지 같다)
-        enqueue = lambda prompt, nickname: server.queue.enqueue(
+        enqueue = lambda prompt, nickname: server.main_input.enqueue(
             None, prompt, nickname=nickname
         )
         item = enqueue("weekly report", "⏰ Scheduler")
         assert item["text"] == "weekly report"
         assert item["nickname"] == "⏰ Scheduler"
-        assert [i["id"] for i in server._queue.snapshot()] == [
+        assert [i["id"] for i in server.main_input.snapshot()] == [
             item["id"]
         ]  # 화면의 대기열에도 보인다

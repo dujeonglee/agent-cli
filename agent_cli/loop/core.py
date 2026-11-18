@@ -137,8 +137,8 @@ class AgentLoop:
         self.query_author_is_user = start.author_is_user
         #: 시작 메시지에 딸린 이미지 참조 (v10.59.0, `run --image`).
         self.query_images = list(start.images)
-        # 런을 연 요청의 id — 펌프가 `dequeue_blocking()` 한 아이템의 것(run·web
-        # 공통, v10.33.1). 깨우기 런과 하위 루프는 빈 문자열.
+        # 런을 연 요청의 id — 펌프가 main 상자에서 꺼낸 사람의 말의 것(run·web
+        # 공통, v10.33.1). 메일 런과 하위 루프는 빈 문자열.
         self.query_request_id = start.request_id
         # v9.22.0 — 상주 에이전트 창에 사람이 직접 입력한 요청(단건·배치).
         # main 의 스타터 id/드레인과 같은 회계(장부 `state.ledger`)에 올린다 —
@@ -815,7 +815,7 @@ class AgentLoop:
 
     def _intake(self) -> None:
         """턴 경계 흡수 (v10.88.0): **어디서 받을지**는 종류가 정하고(`kind.intake` — main 은
-        입력 큐와 레지스트리 메일, 상주는 받은편지함, private 은 자기 메일함, 스킬은 없음),
+        main 상자의 사람 말과 메일, 상주는 받은편지함, private 은 자기 메일함, 스킬은 없음),
         **어떻게 넣을지**는 여기다 — 큐 항목은 명령 라우팅 또는 조종 메시지(`_inject_message`),
         레지스트리 회신은 빚·장부·레코드(`_inject_mail`), 받은편지함 항목은 사람 요청 또는
         관찰(`_inject_item`). 종전엔 포트 유무로 세 메서드가 각자 판정했다."""
@@ -831,7 +831,7 @@ class AgentLoop:
             self._mirror_run_authors()
 
     def _inject_message(self, item: dict) -> None:
-        """입력 큐 항목 하나 — 런 시작 메시지와 **같은 길**로 (v8.16.1: 경계마다 큐를 전부
+        """main 앞 사람의 말 하나 — 런 시작 메시지와 **같은 길**로 (v8.16.1: 경계마다 줄 선 것을 전부
         비워 함께 넣는다). 명령(``/sh``·``/compact``·``@agent``·``/skill``)은 ``route_message``
         로 실행되고(글자로 새지 않는다; 효과는 공유 ctx 에 남아 ``messages`` 를 새로 읽는다),
         보통 채팅은 `_add_user_message` 로 조종 주입. 조종 안내문은 없다(v9.18.0 — 꼬리의
@@ -856,10 +856,8 @@ class AgentLoop:
                 self.messages = self.ctx.get_messages()
             return
         # 회계 등록은 라우팅 판정 **뒤** — 라우팅 명령은 이미 처리된 것이라 미답으로
-        # 남으면 안 된다. 합성 wake 아이템도 제외(사람 발화가 아니다).
+        # 남으면 안 된다.
         rid = item.get("id") or ""
-        if item.get("system"):
-            rid = ""
         if rid:
             self._state.ledger.add_request(rid, author or "", text, turn=self.turn)
         self._add_user_message(text, author, request_id=rid, images=images)

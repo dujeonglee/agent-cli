@@ -1,6 +1,6 @@
 """세션 펌프 — run(텍스트 UI) 과 web 이 **같은 루프**를 돈다 (docs/pump/DESIGN.md).
 
-큐에서 하나 꺼내 → 깨우기 판정 → 라우팅 → 런 → 런 종료 처리 → 정지 판정.
+main 상자에서 런을 열 것을 꺼내(사람의 말 먼저, 없으면 깨우는 메일) → 라우팅 → 런 → 런 종료 처리 → 정지 판정.
 호스트가 꽂는 것은 둘뿐이다:
 
 - :class:`LifetimePolicy` — "왜 살아 있는가". run 은 큐·에이전트·모니터·예약이
@@ -22,9 +22,16 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from agent_cli.input_queue import InputQueue
+from agent_cli.main_input import CLOSED, OPEN_MAIL, MainInput
 
-#: 합성 깨우기 런의 작성자 — 사람이 아니다. history 레코드에 ``author`` +
+#: 메일이 연 런의 시작 글 — 모델에게 가지 않는다(`RunRequest.loop_query` 가 빈 글이다). 펌프 표면이 받는 런 요청의
+#: ``text`` 로만 남는다.
+WAKE_TEXT = (
+    "New agent mail has arrived. It is delivered as observation(s) at "
+    "the start of this turn — review it and continue accordingly."
+)
+
+#: 메일이 연 런의 작성자 — 사람이 아니다. history 레코드에 ``author`` +
 #: ``author_is_user=False`` 로 남아 web 재생이 깨우기 카드로 그린다(없으면
 #: 사용자 말풍선이 된다 — ``_add_user_message`` 는 author 가 있어야 플래그를 쓴다).
 WAKE_AUTHOR = "🤝 agent"
@@ -35,9 +42,9 @@ class RunRequest:
     """런 하나의 입력 — `MainLoop.start` 가 엔진의 `Start`(질의·귀속·이미지·중단 핸들)로 옮긴다."""
 
     text: str
-    author: str | None  # None = run 의 argv 질의; 깨우기는 WAKE_AUTHOR; 예약은 그 이름
-    author_is_user: bool  # 합성 깨우기(wake)는 사람 발화가 아니다
-    request_id: str  # 큐가 발급한 id ("" = 없음) — 런이 "무엇에 답하는지"
+    author: str | None  # None = run 의 argv 질의; 메일 런은 WAKE_AUTHOR; 예약은 그 이름
+    author_is_user: bool  # 메일이 연 런(wake)은 사람 발화가 아니다
+    request_id: str  # 사람의 말의 id ("" = 없음 — 메일 런) — 런이 "무엇에 답하는지"
     stop_event: threading.Event  # 이 런만의 중단 핸들 (web Stop 버튼)
     wake: bool
     #: 시작 메시지에 딸린 이미지 참조 (v10.59.0, `run --image`) — 빈 목록이 기본.
@@ -47,11 +54,8 @@ class RunRequest:
     def loop_query(self) -> str:
         """루프에 넘길 시작 메시지 — 깨우기 런은 **없다** (v10.55.0, 장부 P2).
 
-        ``text`` 의 깨우기 문장(``MailWaker.WAKE_TEXT``)은 큐를 깨우는 신호다.
-        종전엔 그대로 런의 첫 사용자 메시지가 됐다 — 메일 관찰 앞에 user
-        메시지가 하나 더 있었다. 이제 메일은 장부의 열린 항목(``[nK]``)이고
-        그 사실이 "이 런이 처리할 것" 을 말하므로 문장이 필요 없다
-        (docs/ledger/DESIGN.md P2). 깨우기 런의 첫 입력은 첫 턴 경계가
+        메일 런의 ``text``(:data:`WAKE_TEXT`)는 모델에게 가지 않는다 — 메일은 장부의 열린 항목(``[nK]``)이고
+        그 사실이 "이 런이 처리할 것" 을 말한다(docs/ledger/DESIGN.md P2). 메일 런의 첫 입력은 첫 턴 경계가
         배달한 메일 관찰이다."""
         return "" if self.wake else self.text
 
@@ -82,7 +86,7 @@ class ForeverPolicy:
 
 
 class QuietPolicy:
-    """run: 큐·에이전트·모니터·예약이 전부 조용하면 끝난다.
+    """run: main 앞 사람의 말·에이전트·모니터·예약이 전부 조용하면 끝난다.
 
     에이전트 항은 ``has_active_work()``(미배달 회신 **포함**) — run 은 회신을
     배달하고 끝나야 한다(web 의 idle self-reap 은 ``any_activity`` 로 다르다,
@@ -95,7 +99,7 @@ class QuietPolicy:
     def __init__(
         self,
         *,
-        queue: InputQueue,
+        main_input: MainInput,
         agent_registry,
         monitors=None,
         schedules=None,
@@ -104,7 +108,7 @@ class QuietPolicy:
         on_wait: Callable[[str], None] | None = None,
         poll_secs: float = 0.5,
     ):
-        self.queue = queue
+        self.main_input = main_input
         self.agent_registry = agent_registry
         self.monitors = monitors
         self.schedules = schedules
@@ -117,7 +121,8 @@ class QuietPolicy:
     def should_stop(self) -> bool:
         from agent_cli.runtime import session_has_live_work
 
-        if self.agent_registry.has_active_work() or self.queue.pending_count():
+        # 깨우는 메일은 `has_active_work` 가 센다(main 상자의 메일)
+        if self.agent_registry.has_active_work() or self.main_input.pending_count():
             self._announced = None
             return False
         if not session_has_live_work(
@@ -152,13 +157,13 @@ class PumpSurface(Protocol):
     graceful_interrupt: bool
 
     def idle(self) -> None:
-        """큐 대기 직전 — web 은 전송 버튼을 연다."""
+        """런을 열 것을 기다리기 직전 — web 은 전송 버튼을 연다."""
 
     def busy(self) -> None:
         """아이템을 받아 런을 열기 직전."""
 
     def echo(self, item: dict, *, wake: bool) -> None:
-        """꺼낸 아이템을 화면에 — web 은 말풍선. 깨우기는 둘 다 그리지 않는다(관찰 줄이 말한다)."""
+        """꺼낸 아이템을 화면에 — web 은 말풍선. 메일 런은 둘 다 그리지 않는다(관찰 줄이 말한다)."""
 
     def bind_stop(self, event: threading.Event | None) -> None:
         """이 런의 중단 핸들을 표면에 건다(None = 해제)."""
@@ -173,7 +178,7 @@ class PumpSurface(Protocol):
 
     def run_ended(self, result: Any, req: RunRequest) -> None:
         """런이 끝났다(ToolResult) — run 은 ``--result-file``. ``req`` 로 그 런이
-        무엇이었는지(argv 질의 / 깨우기 / 예약) 안다."""
+        무엇이었는지(argv 질의 / 메일 런 / 예약) 안다."""
 
     def run_failed(self, exc: Exception) -> bool:
         """런이 예외로 죽었다. True = 삼키고 계속(web), False = 전파(run)."""
@@ -183,8 +188,7 @@ class PumpSurface(Protocol):
 class PumpDeps:
     """세션 수명 객체 — 한 번 조립해 펌프에 준다."""
 
-    queue: InputQueue
-    waker: Any  # MailWaker: mark_idle / idle / handle_dequeued / on_run_end / WAKE_TEXT
+    main_input: MainInput
     agent_registry: Any
     run_main: Callable[[RunRequest], Any]  # run_loop 바인딩 → ToolResult
     surface: PumpSurface
@@ -199,18 +203,7 @@ class SessionPump:
         self.deps = deps
 
     def route(self, text: str) -> bool:
-        """런 **도중** 주입된 아이템의 라우팅(``LoopPorts.route_message``).
-
-        합성 깨우기(``WAKE_TEXT``)는 여기서 소비한다 — 메일은 같은 턴 경계의
-        메일박스가 배달하므로 텍스트를 컨텍스트에 넣을 이유가 없고, 무엇보다
-        ``handle_dequeued`` 를 거치지 않으면 waker 의 무장이 영영 풀리지 않아
-        이후 깨우기가 전부 드롭된다(``--resume`` 로 미배달 회신이 있으면 첫
-        질의 앞에 무장돼 큐가 ``[질의, WAKE]`` 가 되는 것이 실제 순서).
-        """
-        waker = self.deps.waker
-        if text == waker.WAKE_TEXT:
-            waker.handle_dequeued(text)
-            return True
+        """런 **도중** 주입된 아이템의 라우팅(``LoopPorts.route_message``) — 표면의 명령 라우팅 그대로."""
         return self.deps.surface.route(text)
 
     def run(self) -> None:
@@ -221,26 +214,21 @@ class SessionPump:
             if d.policy.poll_secs is not None and d.policy.should_stop():
                 return
             d.surface.idle()
-            # mark_idle (not bare idle.set): a reply that landed in the
-            # on_run_end()→idle window re-arms here, else web parks forever.
-            d.waker.mark_idle()
-            item = d.queue.dequeue_blocking(timeout=d.policy.poll_secs)
-            if item is InputQueue.SHUTDOWN:
+            # 사람의 말과 메일이 같은 상자·같은 조건변수 — 판정과 대기가 한 락이라 그 사이 온 것을 놓치지 않는다
+            got = d.main_input.wait_to_open(timeout=d.policy.poll_secs)
+            if got is CLOSED:
                 return
-            if item is None:
+            if got is None:
                 continue  # timeout — 정지 조건을 다시 판정(한가함은 그대로 — 끄면 그 사이 온 메일이 "바쁨" 으로 보인다)
+            wake = got is OPEN_MAIL
+            item = {"text": WAKE_TEXT} if wake else got
             text = item.get("text") or ""
-            verdict = d.waker.handle_dequeued(text)
-            if verdict == "skip":
-                continue  # 이미 다른 런이 배달한 깨우기 — 빈 런을 열지 않는다(한가함도 그대로)
-            d.waker.idle.clear()  # 한가함은 런이 실제로 열릴 때만 꺼진다
-            wake = verdict == "run"
             d.surface.busy()
             d.surface.echo(item, wake=wake)
             author = WAKE_AUTHOR if wake else (item.get("nickname") or None)
             # 귀속 승계의 런-시작 스냅샷: run_loop 를 안 타는 라우팅 명령이
             # 만든 요청도 이 런의 요청자를 물려받는다 — run_loop 는 주입마다
-            # 재갱신한다. 깨우기 런엔 귀속할 사용자가 없다.
+            # 재갱신한다. 메일 런엔 귀속할 사용자가 없다.
             d.agent_registry.set_current_run_authors(
                 [author] if author and not wake else []
             )
@@ -279,4 +267,3 @@ class SessionPump:
                         raise
             finally:
                 d.surface.bind_stop(None)
-                d.waker.on_run_end()  # 런 종료 직후 도착분 레이스 봉합
