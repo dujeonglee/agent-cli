@@ -2894,12 +2894,20 @@ class AgentRegistry:
 
     def _replay_conversation(self, tm: AgentInstance) -> None:
         """``conversation.jsonl`` 로 🤝 창을 다시 채운다 (5.13) — kill 이 표면을 정리하고 resume 이 여기서 채운다. 먼저
-        비운다(멱등 — 비정상 사망으로 남은 옛 줄이 겹치지 않게). 라이브와 같은 표면이라 웹은 재접속 버퍼에 다시 쌓이고
-        저장된 ``ts`` 가 원래 시각을 지킨다."""
+        비운다(멱등). 라이브와 같은 표면이라 웹은 재접속 버퍼에 다시 쌓이고 저장된 ``ts`` 가 원래 시각을 지킨다. 읽기와
+        내기도 배달과 같은 구간 규칙(N12) — 부활 도중 든 배달이 재생과 섞이거나 두 번 보이지 않는다."""
         from agent_cli.render import get_renderer
 
-        get_renderer().clear_agent_conversation(tm.key)
-        conversation_log.show(conversation_log.read(tm.home_dir))
+        def refill(recs):
+            get_renderer().clear_agent_conversation(tm.key)
+            conversation_log.show(recs)
+
+        with self._cv:
+            recs = conversation_log.read(tm.home_dir)
+            if conversation_log.never_blocks():
+                refill(recs)
+        if not conversation_log.never_blocks():
+            refill(recs)
 
     def _worker(self, tm: AgentInstance, parent_ctx) -> None:
         """teammate 의 전 생애: 스코프 열기 → ctx 생성 → inbox 루프 → 정리.
