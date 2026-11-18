@@ -15,7 +15,7 @@ agent_result(result, ok=)`` 가 쓴다(run 전용 분기 삭제). run 의 ``/ski
 v10.130.8 부터는 서버가 큐를 내놓고(``WebServer.queue``) 펌프의 큐는 그 ``InputQueue`` 다 —
 서버의 대리 메서드(``dequeue_blocking``·``enqueue_named``·``enqueue_system``)는 없다.
 
-**vNEXT — 입력 큐와 메일 깨우기가 없어졌다.** 사람의 말(웹 채팅·argv 질의·제자리 대기 중 터미널 줄·예약 발화·
+**v10.147.0 — 입력 큐와 메일 깨우기가 없어졌다.** 사람의 말(웹 채팅·argv 질의·제자리 대기 중 터미널 줄·예약 발화·
 StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_cli/post`)의 ``"main"`` 상자에 봉투로
 선다 — 메일과 같은 상자, 같은 조건변수. 펌프는 `MainInput.wait_to_open` 하나로 "사람의 말 먼저 하나, 없으면 깨우는
 메일(메일 런), 닫힘" 을 기다린다. 판정과 대기가 한 락 구간이라, 메일이 한가한 펌프를 깨우려고 큐에 넣던 합성 깨우기
@@ -97,7 +97,7 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 ```python
 @dataclass(frozen=True, kw_only=True)
 class PumpDeps:          # 세션 수명 객체 — 한 번 조립
-    main_input: MainInput          # vNEXT — 종전 queue: InputQueue + waker: MailWaker
+    main_input: MainInput          # v10.147.0 — 종전 queue: InputQueue + waker: MailWaker
     agent_registry: AgentRegistry
     run_main: Callable[[RunRequest], ToolResult]   # run_loop 바인딩 (아래 3.4)
     surface: PumpSurface

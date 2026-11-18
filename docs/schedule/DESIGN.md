@@ -33,7 +33,7 @@
   판단하고, `has_active_work()` 가 유휴 종료 술어(`web_instance_is_active`)와
   `run` 의 펌프(`_run_message_pump`) 두 곳에 들어가 프로세스를 살려 둔다. 예약도
   같은 두 곳에 한 줄씩 들어간다.
-- **main 앞 사람의 말** (`agent_cli/main_input.py`, vNEXT — 종전 `input_queue.py`): web 의 `/api/input` 과
+- **main 앞 사람의 말** (`agent_cli/main_input.py`, v10.147.0 — 종전 `input_queue.py`): web 의 `/api/input` 과
   `run` 의 펌프가 같은 `MainInput` 을 쓴다. 발화는 여기에 `nickname` 을 단 채팅 항목을 넣는 것이
   전부다 — 일하는 중이면 턴 경계에 주입되고, 쉬고 있으면 펌프가 그것으로 런을 연다.
 - **cron 파서** (`agent-board/agent_board/cron.py`, 205줄, 의존성 0): `parse` ·
