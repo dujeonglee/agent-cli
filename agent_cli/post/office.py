@@ -39,7 +39,8 @@ class _Mark:
         return self._name
 
 
-#: `wait_to_open` — 사람의 말은 없고 깨우는 메일이 있다(메일은 꺼내지 않는다: 그 런의 첫 턴 경계가 배달한다)
+#: `wait_to_open` — 사람의 말은 없고 깨우는 메일이 있다. 메일은 꺼내지 않는다: 그 런의 첫 턴 경계가 상자를 흡수한다(사람의
+#: 말 먼저, 메일 뒤). 열기와 첫 경계 사이에 저장이 있어도 메일은 디스크에 남아, 재시작이 잃지 않는다.
 OPEN_MAIL = _Mark("OPEN_MAIL")
 #: `wait_to_open` — 상자가 닫혔고 줄 선 사람의 말이 없다
 CLOSED = _Mark("CLOSED")
