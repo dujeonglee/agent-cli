@@ -386,7 +386,9 @@ class ToolBridge:
         ``RunContext`` is frozen — so re-building it (plus the ``frozenset``)
         on every tool call and again on every oversized render was pure
         waste. If a per-call-VARYING field ever joins RunContext, drop this
-        cache."""
+        cache — a callable that reads the current value when called
+        (``observed_at``·``turn_now``·``stopped``) is a loop constant and
+        may stay cached."""
         cached = getattr(self, "_run_ctx_cache", None)
         if cached is None:
             available = frozenset(self.cfg.tools_list)
@@ -399,9 +401,16 @@ class ToolBridge:
                 turn_now=lambda: self.state.turn,
                 tool_guide=self._tool_guide,
                 tool_names=tuple(effective_tool_names(sorted(available))),
+                stopped=self._run_stopped,
             )
             self._run_ctx_cache = cached
         return cached
+
+    def _run_stopped(self) -> bool:
+        """이 런의 정지가 섰는가 — ``RunContext.stopped``. 런마다 바뀌는 ``state.stop_event`` 를
+        부를 때 읽는다. 읽기만 한다."""
+        stop = self.state.stop_event
+        return bool(stop is not None and stop.is_set())
 
     # ── 3. Regular tool dispatch ───────────────────────────────────
     def _invoke_regular(self, tool_name: str, tool_input) -> ToolResult:

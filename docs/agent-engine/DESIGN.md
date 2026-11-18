@@ -109,7 +109,8 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
 
 에이전트마다 정지가 둘이다: 런의 정지(`ResidentLoop.start` 가 런마다 세우는 `agent_stop.LinkedStop`)와 평생 정지
 (`AgentInstance.stop_event` — ✕·세션 종료). 런의 정지는 평생 정지에 묶여 있어 ✕ 도 런을 멈춘다. 어느 쪽이든 런은
-도구 실행 직전 검사(v10.140.0, `dispatch._stopped_before`)에서 멈춘다 — 멈춘 뒤 도구 0회. 부른 런의 정지에는 묶이지
+도구 실행 직전 검사(v10.140.0, `dispatch._stopped_before`)에서 멈춘다 — 멈춘 뒤 도구 0회. 이미 돌고 있는 전경 `shell`
+명령은 정지가 서는 대로 프로세스 그룹째 끝난다(N8, docs/jobs/DESIGN.md §5). 부른 런의 정지에는 묶이지
 않는다 — 방 ■·Ctrl+C 한 번은 main 만 멈추고, main 이 기다리던 회신은 다음 런에 메일로 온다.
 
 **규칙 한 장** — 그 에이전트가 들고 있던 것마다 무엇이 가는가 (`agent_stop.STOP_RULES`):

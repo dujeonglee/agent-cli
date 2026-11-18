@@ -129,4 +129,4 @@ class TestOwnerFromTheTool:
             ShellTool()._run(
                 {"command": "echo x"}, ctx=SimpleNamespace(owner="agent:k")
             )
-        assert t.call_args.kwargs == {"owner": "agent:k"}
+        assert t.call_args.kwargs == {"owner": "agent:k", "stopped": None}

@@ -8,6 +8,7 @@ import shlex
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from typing import ClassVar
 
 from agent_cli import jobs
@@ -233,6 +234,10 @@ def _guard(cmd: str) -> str | None:
 #: 백그라운드 작업으로 바꾸고 결과에 말한다(`ShellTool._run`).
 FOREGROUND_LIMIT = 120
 
+#: 전경 명령을 기다리며 런의 정지를 보는 간격(초) — 이만큼 `communicate` 로 기다리고(select,
+#: 바쁜 대기 아님) 사이마다 정지를 본다 (N8). 서 있으면 명령은 시간 초과 때처럼 끝난다.
+STOP_POLL_S = 0.2
+
 #: 모델이 제 손으로 떼어 내는 조각 — `nohup`·`setsid`·`disown` 단어(토큰 경계), 명령
 #: 끝(혹은 `)`·`;` 앞)의 `&`, 그리고 `& echo $!` 처럼 뒤에 짧은 꼬리를 단 `&`.
 #: 인용부 안은 보지 않는다(`_unquoted_mask`). `&&` 는 아니다.
@@ -338,8 +343,11 @@ def _adopt_leftovers(cmd: str, pgid: int, owner: str) -> str:
     )
 
 
-def tool_shell(args: dict, *, owner: str = "main") -> ToolResult:
-    """Run a shell command and return stdout/stderr."""
+def tool_shell(
+    args: dict, *, owner: str = "main", stopped: Callable[[], bool] | None = None
+) -> ToolResult:
+    """Run a shell command and return stdout/stderr. ``stopped`` — 이 런의 정지가 섰는가
+    (`RunContext.stopped`); 서면 명령의 프로세스 그룹을 끝내고 그 사실을 돌려준다 (N8)."""
 
     cmd = args.get("command", "")
     if not cmd or not cmd.strip():
@@ -369,11 +377,11 @@ def tool_shell(args: dict, *, owner: str = "main") -> ToolResult:
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
-        try:
-            raw_out, raw_err = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            raw_out, raw_err = _stop_group(proc)
-            return ToolResult(False, error=_timeout_message(timeout, raw_out, raw_err))
+        ended, raw_out, raw_err = _wait_or_stop(
+            proc, timeout, stopped or (lambda: False)
+        )
+        if ended:
+            return ToolResult(False, error=ended)
         out = raw_out.decode("utf-8", errors="replace").strip()
         err = raw_err.decode("utf-8", errors="replace").strip()
         parts = []
@@ -389,6 +397,30 @@ def tool_shell(args: dict, *, owner: str = "main") -> ToolResult:
         return ToolResult(True, output="\n".join(parts) if parts else "(no output)")
     except Exception as e:
         return ToolResult(False, error=f"shell failed: {e}")
+
+
+def _wait_or_stop(
+    proc: subprocess.Popen, timeout: int, stopped: Callable[[], bool]
+) -> tuple[str, bytes, bytes]:
+    """명령이 끝나기를 기다린다 → ``(끝낸 사유, stdout, stderr)``. 스스로 끝나면 사유는 빈 문자열.
+    시간 상한에 닿거나 런의 정지가 서면 프로세스 그룹을 끝내고(`_stop_group`) 결과 문장과 그때까지의
+    출력을 돌려준다. ``communicate`` 의 시간 초과는 출력을 버리지 않는다(다시 불러 잇는다)."""
+    started = time.monotonic()
+    deadline = started + timeout
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raw_out, raw_err = _stop_group(proc)
+            return _timeout_message(timeout, raw_out, raw_err), raw_out, raw_err
+        if stopped():
+            raw_out, raw_err = _stop_group(proc)
+            ran = int(time.monotonic() - started)
+            return _run_stopped_message(ran, raw_out, raw_err), raw_out, raw_err
+        try:
+            raw_out, raw_err = proc.communicate(timeout=min(STOP_POLL_S, left))
+            return "", raw_out, raw_err
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def _stop_group(proc: subprocess.Popen) -> tuple[bytes, bytes]:
@@ -409,10 +441,8 @@ def _stop_group(proc: subprocess.Popen) -> tuple[bytes, bytes]:
     return b"", b""
 
 
-def _timeout_message(timeout: int, raw_out: bytes, raw_err: bytes) -> str:
-    """시간 초과 결과 (v10.77.0) — 끝냈다는 사실, 그때까지의 출력 끝부분,
-    background 로 다시 보내라는 교정(교정은 트리거 직후 — 설명의 작업 종류
-    나열 대신)."""
+def _output_so_far(head: str, raw_out: bytes, raw_err: bytes) -> str:
+    """끝낸 명령의 결과 머리줄 + 그때까지의 출력 끝부분(없으면 없다고) — 시간 초과와 정지가 같은 틀."""
     from agent_cli.jobs import TAIL_LINE_CHARS, TAIL_LINES
 
     text = "\n".join(
@@ -424,14 +454,32 @@ def _timeout_message(timeout: int, raw_out: bytes, raw_err: bytes) -> str:
         if t
     )
     lines = [ln[:TAIL_LINE_CHARS] for ln in text.splitlines()][-TAIL_LINES:]
-    head = (
-        f"Command timed out after {timeout}s and was stopped, together with "
-        "everything it started."
-    )
     if lines:
-        head += f"\nOutput so far (last {len(lines)} lines):\n" + "\n".join(lines)
-    else:
-        head += " It printed nothing before that."
+        return head + f"\nOutput so far (last {len(lines)} lines):\n" + "\n".join(lines)
+    return head + " It printed nothing before that."
+
+
+def _run_stopped_message(ran: int, raw_out: bytes, raw_err: bytes) -> str:
+    """런의 정지로 끝낸 명령의 결과 (N8) — 주체 없음: 도구는 누가 멈췄는지 모른다(사람의 ■·Ctrl+C,
+    모델의 `agent` `kill`, 세션 종료). 교정 줄은 없다(시간 문제가 아니다)."""
+    return _output_so_far(
+        f"This run was stopped, so the command was ended after {ran}s, together "
+        "with everything it started.",
+        raw_out,
+        raw_err,
+    )
+
+
+def _timeout_message(timeout: int, raw_out: bytes, raw_err: bytes) -> str:
+    """시간 초과 결과 (v10.77.0) — 끝냈다는 사실, 그때까지의 출력 끝부분,
+    background 로 다시 보내라는 교정(교정은 트리거 직후 — 설명의 작업 종류
+    나열 대신)."""
+    head = _output_so_far(
+        f"Command timed out after {timeout}s and was stopped, together with "
+        "everything it started.",
+        raw_out,
+        raw_err,
+    )
     return (
         f"{head}\nA command that runs this long belongs in the background: send it "
         "again with `background` true and you will be told when it ends."
@@ -529,4 +577,8 @@ class ShellTool(Tool):
         if background:
             owner = getattr(ctx, "owner", None) or "main"
             return tool_shell_background(args, owner=owner, note=note)
-        return tool_shell(args, owner=getattr(ctx, "owner", None) or "main")
+        return tool_shell(
+            args,
+            owner=getattr(ctx, "owner", None) or "main",
+            stopped=getattr(ctx, "stopped", None),
+        )

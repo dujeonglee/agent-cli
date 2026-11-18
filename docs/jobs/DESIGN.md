@@ -54,6 +54,17 @@ timeout=)` 이 `/bin/sh` 만 죽였고, 그 아래 `apt-get` 이 dpkg 잠금을 
 시간 초과 8건 중 5건이 foreground `apt-get install` 이었다(설명의 작업 종류 나열 "an install" 이 있는데도). 나열은 지우고
 교정은 이 자리(트리거 직후)가 맡는다.
 
+**런의 정지도 같은 길로 끝낸다 (N8).** v10.146.0 실측: 웹 방에서 "Stop everything" 을 눌러도 전경 `sleep 100; echo finished`
+는 95초 뒤 끝까지 돌았고 그동안 에이전트는 busy, 정지 회신도 그때서야 갔다 — 기다림이 `communicate(timeout=)` 하나라 정지를
+보지 않았다. 이제 `tool_shell` 은 `STOP_POLL_S`(0.2 s)씩 `communicate` 로 기다리고(select — 바쁜 대기 아님) 사이마다
+`RunContext.stopped`(브리지가 부를 때의 `state.stop_event.is_set()` 을 읽는 콜러블 — main 은 런마다 새 Event, 에이전트는
+`LinkedStop` 이라 ✕·세션 종료의 평생 정지도 닿는다)를 본다. 서면 시간 초과와 같은 `_stop_group`(TERM → KILL) 뒤 결과:
+"This run was stopped, so the command was ended after 12s, together with everything it started." + 같은 출력 꼬리(없으면
+" It printed nothing before that."). 주체가 없다 — 도구는 누가 멈췄는지 모른다(사람의 ■·Ctrl+C, 모델의 `agent` `kill`,
+세션 종료). background 교정 줄도 없다(시간 문제가 아니다). 결과는 관찰로 기록·표시되고 런은 다음 경계에서 `[interrupt]` 로
+끝난다 — 모델 호출 없음, 다음 런의 history 에 남는다. `background` 작업은 정지와 무관하게 산다(종전과 같다).
+테스트: `tests/test_shell_stop.py`.
+
 ## 6. 기본 = 상한, 데몬화 조각은 지운다, 몸은 핸들 (v10.91.0)
 
 GLM 벤치 36 트라이얼(2026-10-31) 도구 사용 검토에서 나온 셋 — 사용자 결정은 "timeout 최대값을 줄이고 넘으면
