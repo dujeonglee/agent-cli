@@ -3,7 +3,8 @@
 f44cf539(v10.143.0) 에서 만든 기대값이 그 뒤의 구조 교체(우편함·장부)를 재는 자다. 그래서 이 드라이버는
 **공개 표면만** 쓴다 — 실제 세션 조립(`runtime.build_session_stores`·`build_session_owners`·`wire_session`),
 펌프, 대본 응답의 가짜 provider, 레지스트리의 공개 메서드(`request`·`deliver`·`stop_run`·`kill`·
-`stop_all_runs`·`answer_question`·`restore`·`shutdown_all`), 입력 큐. 레지스트리의 저장소를 읽지 않고,
+`stop_all_runs`·`answer_question`·`restore`·`shutdown_all`), main 앞 사람의 말(`MainInput` — v10.146.6 까지는
+입력 큐 `InputQueue`, 드라이버는 `Session` 의 메서드 다섯만 바뀌었다). 레지스트리의 저장소를 읽지 않고,
 조회도 쓰지 않는다(f44cf539 에 없는 표면). 가드 테스트(`test_oracle.py`)가 import 목록을 고정한다.
 
 담는 것: 배우(main·에이전트)마다 provider 호출의 마지막 메시지(꼬리의 `## Open Items` 가 여기 있다),
@@ -36,8 +37,8 @@ from types import SimpleNamespace
 from rich.console import Console
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.input_queue import InputQueue
 from agent_cli.main import web_instance_is_active
+from agent_cli.main_input import MainInput
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.pump import ForeverPolicy, QuietPolicy
@@ -352,10 +353,10 @@ class Session:
             verbose=False,
             record_turns=True,
         )
-        self.queue = InputQueue()
+        self.main_input = MainInput()
         if query is not None:
             self.say(query)  # argv 질의 — 큐가 조립보다 먼저 선다(`run` 과 같다)
-        self.stores = build_session_stores(self.spec, queue=self.queue)
+        self.stores = build_session_stores(self.spec, main_input=self.main_input)
         self.owners = build_session_owners(
             self.spec, self.stores, renderer=self.recorder
         )
@@ -364,7 +365,7 @@ class Session:
         self.surface = Surface(self.recorder)
         if path == "run":
             policy = QuietPolicy(
-                queue=self.queue,
+                main_input=self.main_input,
                 agent_registry=self.reg,
                 monitors=self.stores.monitors,
                 schedules=self.stores.schedules,
@@ -379,7 +380,6 @@ class Session:
             self.spec,
             self.stores,
             self.owners,
-            queue=self.queue,
             surface=self.surface,
             policy=policy,
             on_mail_notice=(
@@ -468,15 +468,15 @@ class Session:
 
     def say(self, text: str, nickname=None) -> dict:
         """사람의 입력 한 줄 — 입력 큐로 (CLI 의 argv 질의는 ``nickname=None``)."""
-        return self.queue.enqueue(None, text, nickname=nickname)
+        return self.main_input.enqueue(None, text, nickname=nickname)
 
     def pending_count(self) -> int:
         """main 앞에 줄 선 사람의 입력 수 — 웹 idle 리퍼가 보는 값."""
-        return self.queue.pending_count()
+        return self.main_input.pending_count()
 
     def main_idle(self) -> bool:
         """펌프가 런을 열 것을 기다리는 중인가(한가함) — CLI 메일 대기 줄의 ``busy`` 가 이 값이다."""
-        return self.wired.pump.deps.waker.idle.is_set()
+        return self.main_input.idle()
 
     def pump(self) -> None:
         """펌프를 돈다 — run 은 조용해지면, web 은 :meth:`close` 의 SHUTDOWN 에서 끝난다."""
@@ -496,7 +496,7 @@ class Session:
 
     def stop_pump(self) -> None:
         """펌프를 끝낸다(웹 서버 종료와 같은 길) — 줄 선 사람의 입력은 먼저 꺼낸다. 세션은 닫지 않는다."""
-        self.queue.shutdown()
+        self.main_input.close()
 
     def close(self) -> None:
         self.stop_pump()
@@ -1363,8 +1363,10 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
     """§4 재시작: 세션 끝(런 도중)·미배달 메일·에이전트→main 미배달 요청 → 저장 → 새 조립이 복원 → 로스터·
     다음 런의 모델 글·기다리는 회신. ``query`` 면 `run --resume` 처럼 첫 질의가 펌프보다 먼저 큐에 있다(질의가 먼저
     연다), 아니면 웹 resume 처럼 질의 없이 — 복원된 메일이 한가한 펌프를 깨운다. ``agents.json`` 바이트는 담지
-    않는다. ``query`` 쪽은 지금 메일 깨우기 항목이 질의 뒤에 줄 서서, 질의 런의 첫 턴 경계에서 사람 말풍선
-    (`push_user_message`)으로 한 번 그려진다 — 깨우기 항목이 없어지면 그 한 줄이 사라진다(s28 도 같다).
+    않는다. ``query`` 쪽은 사람의 말(질의)이 메일보다 먼저 런을 열고, 그 첫 턴 경계가 메일을 배달한다.
+
+    `[v10.146.6 뒤 재기록 — 메일 깨우기 항목이 없어져, 질의 런의 첫 경계에서 깨우기 문장이 사람 말풍선
+    (`push_user_message`)으로 그려지던 한 줄이 사라졌다(s28 도 같다). 모델이 읽는 글은 같다]`
 
     `[v10.145.0 에서 재기록 — 2단계 예외 D1: 재시작 뒤 main 메일함의 요청을 보낸 쪽이 기다리는 것으로 선다. 번호는
     정규화의 첫 등장 순서 때문에 r-1↔r-2 가 뒤바뀐다]`"""
@@ -1550,7 +1552,7 @@ def s17_mail_to_an_idle_main_on_the_run_path(root: Path) -> dict:
     box: dict = {}
 
     def notify_after_main_ended(msgs):
-        # 런 끝의 기록(`surface.run_ended`)은 펌프가 한가함을 세우기(`waker.mark_idle`) **전**이다 — 그 사이에
+        # 런 끝의 기록(`surface.run_ended`)은 펌프가 다시 기다림에 들어 한가함을 세우기 **전**이다 — 그 사이에
         # 통지가 오면 busy=True 로 찍힌다(컨테이너 cpus 0.5·부하 아래 1회, 2026-11-17). 한가함까지 잡는다.
         until(
             lambda: runs_ended(box["s"]) >= 1 and box["s"].main_idle(),
@@ -2084,7 +2086,7 @@ def s26_auditor_range(root: Path) -> dict:
     auditor.enabled = True
     # run 의 수명 판정 — 큐·에이전트가 조용할 때 끝나지 않는 이유는 진행 중인 감사뿐이다
     quiet = QuietPolicy(
-        queue=s.queue,
+        main_input=s.main_input,
         agent_registry=s.reg,
         monitors=s.stores.monitors,
         schedules=s.stores.schedules,
@@ -2204,8 +2206,10 @@ def s27_restart_after_wait(root: Path) -> dict:
 
 def s28_words_and_mail_after_the_last_boundary(root: Path, path: str) -> dict:
     """main 이 마지막 응답(`complete`)을 만드는 동안 작업 통지 한 통과 사람의 입력 한 줄이 함께 온다 — 그 런은
-    끝나고, 다음 런은 **사람의 입력**이 연다. 그 런의 첫 턴 경계가 사람 말 뒤에 메일을 배달한다. 지금은 메일
-    깨우기 항목이 사람 입력 뒤에 줄 서서 그 경계에서 사람 말풍선(`push_user_message`)으로 한 번 그려진다."""
+    끝나고, 다음 런은 **사람의 입력**이 연다. 그 런의 첫 턴 경계가 사람 말 뒤에 메일을 배달한다.
+
+    `[v10.146.6 뒤 재기록 — 그 경계에서 메일 깨우기 문장이 사람 말풍선(`push_user_message`)으로 그려지던 한 줄이
+    사라졌다]`"""
     box: dict = {}
 
     def mail_and_words_then_complete(msgs):

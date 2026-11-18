@@ -10,7 +10,7 @@ Coverage axes:
    a second connection does not end the first's stream.
 4. **POST /api/input** — chat / prompt / confirm routes wire through
    to the renderer (chat enqueues onto the pending message queue:
-   ``enqueue`` / ``queue.dequeue_blocking`` / ``queue.dequeue_nowait`` / cancel).
+   ``enqueue`` / ``main_input.wait_to_open`` / ``main_input.take_next`` / cancel).
 5. **POST /api/abort** — releases a blocked ``prompt_user`` /
    ``confirm`` call.
 
@@ -33,7 +33,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import agent_cli
-from agent_cli.input_queue import InputQueue
+from agent_cli.main_input import CLOSED
 from agent_cli.render.web import WebRenderer
 from agent_cli.web.server import (
     WebServer,
@@ -1672,8 +1672,8 @@ class TestInputEndpoint:
         pending = server.queue_snapshot()
         assert len(pending) == 1
         assert pending[0]["text"] == "hello" and pending[0]["conn_id"] == cid
-        # dequeue_blocking returns the item (text + nickname).
-        item = server.queue.dequeue_blocking()
+        # 펌프가 런을 열 것으로 꺼내면 그 항목이다(text + nickname).
+        item = server.main_input.wait_to_open(0)
         assert item["text"] == "hello"
 
     def test_prompt_response_goes_to_renderer_input_queue(self, server_and_client):
@@ -1997,8 +1997,8 @@ class TestWebResumeCli:
 
 
 class TestMessageQueue:
-    """``enqueue`` / ``queue.dequeue_blocking`` / ``queue.dequeue_nowait`` / cancel +
-    the ``shutdown`` sentinel that wakes a blocked worker."""
+    """``enqueue`` / ``main_input.wait_to_open`` / ``main_input.take_next`` / cancel +
+    the ``shutdown`` that wakes a blocked worker."""
 
     def test_shutdown_wakes_blocked_worker(self):
         renderer = WebRenderer()
@@ -2007,8 +2007,8 @@ class TestMessageQueue:
 
         def worker():
             while True:
-                m = srv.queue.dequeue_blocking()
-                if m is InputQueue.SHUTDOWN:
+                m = srv.main_input.wait_to_open(None)
+                if m is CLOSED:
                     msgs.append("done")
                     break
                 msgs.append(m["text"])
@@ -2031,13 +2031,13 @@ class TestMessageQueue:
         assert item["nickname"]  # a fun nickname was attached
         assert item["id"]
 
-    def test_dequeue_nowait_fifo_then_none(self):
+    def test_take_next_fifo_then_none(self):
         srv = WebServer(WebRenderer())
         srv.enqueue("a", "first")
         srv.enqueue("b", "second")
-        assert srv.queue.dequeue_nowait()["text"] == "first"
-        assert srv.queue.dequeue_nowait()["text"] == "second"
-        assert srv.queue.dequeue_nowait() is None  # empty → non-blocking None
+        assert srv.main_input.take_next()["text"] == "first"
+        assert srv.main_input.take_next()["text"] == "second"
+        assert srv.main_input.take_next() is None  # empty → non-blocking None
 
     def test_cancel_only_by_owner_and_pending(self):
         srv = WebServer(WebRenderer())
@@ -3708,7 +3708,7 @@ class TestChatWithImages:
             json={"kind": "chat", "content": "what is this?", "images": [full]},
         )
         assert r.status_code == 200, r.text
-        item = server.queue.dequeue_nowait()
+        item = server.main_input.take_next()
         assert item["text"] == "what is this?"
         assert len(item["images"]) == 1
         ref = item["images"][0]
@@ -3724,7 +3724,7 @@ class TestChatWithImages:
             json={"kind": "chat", "content": "", "images": [str(tmp_path / "a.png")]},
         )
         assert r.status_code == 200
-        assert server.queue.dequeue_nowait()["images"][0]["mime"] == "image/png"
+        assert server.main_input.take_next()["images"][0]["mime"] == "image/png"
 
     def test_bad_images_are_400_and_nothing_is_queued(
         self, server_and_client, tmp_path
@@ -3745,7 +3745,7 @@ class TestChatWithImages:
                 json={"kind": "chat", "content": "hi", "images": images},
             )
             assert r.status_code == 400, images
-        assert server.queue.dequeue_nowait() is None
+        assert server.main_input.take_next() is None
 
     def test_no_images_key_is_the_old_shape(self, server_and_client):
         server, _, client = server_and_client
@@ -3753,7 +3753,7 @@ class TestChatWithImages:
             "/api/input?token=testtoken", json={"kind": "chat", "content": "hi"}
         )
         assert r.status_code == 200
-        assert server.queue.dequeue_nowait()["images"] == []
+        assert server.main_input.take_next()["images"] == []
 
 
 class TestImageSupportEndpoint:

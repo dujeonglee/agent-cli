@@ -1,7 +1,7 @@
 """세션 펌프 (v10.33.0, docs/pump/DESIGN.md) — run 과 web 이 같은 루프.
 
-여기서 고정하는 것은 **루프의 계약**이다: 아이템 하나의 처리 순서, 깨우기
-판정, 라우팅, 예외 정책, 수명 정책. 표면은 대역(``tests.pump_support``)이고
+여기서 고정하는 것은 **루프의 계약**이다: 아이템 하나의 처리 순서, 메일 런,
+라우팅, 예외 정책, 수명 정책. 표면은 대역(``tests.pump_support``)이고
 run 표면(``_ConsoleSurface``)은 아래 따로 본다.
 """
 
@@ -10,42 +10,33 @@ from __future__ import annotations
 import threading
 from unittest.mock import MagicMock
 
-from agent_cli.input_queue import InputQueue
+from agent_cli.main_input import MainInput
+from agent_cli.post import envelope as post_envelope
 from agent_cli.pump import ForeverPolicy, QuietPolicy, RunRequest
 from agent_cli.tools.result import ToolResult
 from tests.pump_support import (
     FakeRegistry,
     FakeSurface,
-    FakeWaker,
     make_pump,
     run_pump_in_thread,
 )
 
 
-class _WakeWaker(FakeWaker):
-    """``WAKE`` 텍스트를 깨우기로 판정 — ``verdicts`` 에서 하나씩 꺼내 준다."""
-
-    def __init__(self, verdicts):
-        super().__init__()
-        self.verdicts = list(verdicts)
-        self.handled: list[str] = []
-        self.run_ends = 0
-
-    def handle_dequeued(self, text):
-        self.handled.append(text)
-        if text != self.WAKE_TEXT:
-            return None
-        return self.verdicts.pop(0)
-
-    def on_run_end(self):
-        self.run_ends += 1
+def _mail(mi: MainInput, *, wakes: bool = True) -> None:
+    """main 상자에 메일 한 통 — 작업 통지(깨움) 또는 깨우지 않는 회신."""
+    env = (
+        post_envelope.notice("n-900", "job", "main", "done")
+        if wakes
+        else post_envelope.reply("n-900", "agent:a", "main", "x", re="r-1", wakes=False)
+    )
+    mi.post.deliver(env)
 
 
 class TestOneItem:
     def test_the_run_end_reaches_the_registry_with_its_waiting_flag(self):
         """v10.77.0: main 런의 끝도 레지스트리의 `run_ended` 한 곳으로 — `wait` 로
         끝났는지는 펌프가 판정하지 않고 넘긴다(상주와 같은 판정 자리)."""
-        q = InputQueue()
+        q = MainInput()
         q.enqueue(None, "a", nickname="dj")
         q.enqueue(None, "b", nickname="dj")
         reg = FakeRegistry()
@@ -53,11 +44,11 @@ class TestOneItem:
             [ToolResult(True, output="x", waiting=True), ToolResult(True, output="y")]
         )
 
-        make_pump(queue=q, run_main=lambda req: next(outs), registry=reg).run()
+        make_pump(main_input=q, run_main=lambda req: next(outs), registry=reg).run()
         assert reg.ended == [("main", "x", True), ("main", "y", False)]
 
     def test_order_of_surface_calls_around_a_run(self):
-        q = InputQueue()
+        q = MainInput()
         q.enqueue(None, "hi", nickname="dj")
         surface = FakeSurface()
         reg = FakeRegistry()
@@ -67,7 +58,7 @@ class TestOneItem:
             seen.append(req)
             return ToolResult(True, output="ans")
 
-        make_pump(queue=q, run_main=run_main, surface=surface, registry=reg).run()
+        make_pump(main_input=q, run_main=run_main, surface=surface, registry=reg).run()
         kinds = [c[0] for c in surface.calls]
         assert kinds == [
             "idle",
@@ -97,93 +88,91 @@ class TestOneItem:
         assert reg.authors == [["dj"]]
 
     def test_quiet_policy_ends_after_the_queue_drains(self):
-        q = InputQueue()
+        q = MainInput()
         q.enqueue(None, "hi")
-        done = run_pump_in_thread(make_pump(queue=q, run_main=lambda r: None))
+        done = run_pump_in_thread(make_pump(main_input=q, run_main=lambda r: None))
         assert done.wait(2.0)
 
     def test_shutdown_ends_the_pump_even_under_forever_policy(self):
-        q = InputQueue()
-        pump = make_pump(queue=q, run_main=lambda r: None, policy=ForeverPolicy())
+        q = MainInput()
+        pump = make_pump(main_input=q, run_main=lambda r: None, policy=ForeverPolicy())
         done = run_pump_in_thread(pump)
         assert not done.wait(0.2), "영원 정책인데 혼자 끝났다"
-        q.shutdown()
+        q.close()
         assert done.wait(2.0)
 
     def test_routed_command_opens_no_run_but_still_closes_the_turn(self):
-        q = InputQueue()
+        q = MainInput()
         q.enqueue(None, "/skill x")
         surface = FakeSurface(routed={"/skill x"})
         run_main = MagicMock()
-        make_pump(queue=q, run_main=run_main, surface=surface).run()
+        make_pump(main_input=q, run_main=run_main, surface=surface).run()
         run_main.assert_not_called()
         assert ("route", "/skill x") in surface.calls
         assert ("bind_stop", False) in surface.calls  # finally 가 돌았다
 
 
-class TestWake:
-    def test_routed_command_still_tells_the_waker_the_run_ended(self):
-        """명령으로 끝난 차례도 런 끝 재확인(`on_run_end`)을 부른다 — 그 사이 도착한 메일을 놓치지 않게."""
-        q = InputQueue()
-        q.enqueue(None, "/skill x")
-        waker = _WakeWaker([])
-        make_pump(
-            queue=q,
-            run_main=MagicMock(),
-            surface=FakeSurface(routed={"/skill x"}),
-            waker=waker,
-        ).run()
-        assert waker.run_ends == 1
-
-    def test_wake_run_has_no_author_and_is_not_a_user(self):
-        q = InputQueue()
-        q.enqueue(None, "WAKE", system=True)
-        waker = _WakeWaker(["run"])
+class TestMailRun:
+    def test_a_waking_mail_opens_a_run_with_no_author_that_is_not_a_user(self):
+        mi = MainInput()
+        _mail(mi)
         surface = FakeSurface()
         reg = FakeRegistry()
         seen = []
+
+        def run_main(req):
+            seen.append(req)
+            mi.post.absorb_mail("main")  # 그 런의 첫 턴 경계가 하는 일
+            mi.close()
+
         make_pump(
-            queue=q,
-            run_main=lambda r: seen.append(r),
+            main_input=mi,
+            run_main=run_main,
             surface=surface,
-            waker=waker,
             registry=reg,
+            policy=ForeverPolicy(),
         ).run()
-        from agent_cli.pump import WAKE_AUTHOR
+        from agent_cli.pump import WAKE_AUTHOR, WAKE_TEXT
 
         assert seen[0].wake is True and seen[0].author == WAKE_AUTHOR
         assert seen[0].author_is_user is False  # 레코드가 깨우기 카드로 재생된다
-        assert ("echo", "WAKE", True) in surface.calls
+        assert seen[0].request_id == "" and seen[0].loop_query == ""
+        assert ("echo", WAKE_TEXT, True) in surface.calls
         assert reg.authors == [[]]
-        # 깨우기 텍스트는 라우팅하지 않는다 (사람 명령이 아니다)
-        assert ("route", "WAKE") not in surface.calls
+        # 메일 런의 글은 라우팅하지 않는다 (사람 명령이 아니다)
+        assert not [c for c in surface.calls if c[0] == "route"]
 
-    def test_stale_wake_is_skipped_without_a_run(self):
-        q = InputQueue()
-        q.enqueue(None, "WAKE", system=True)
-        waker = _WakeWaker(["skip"])
+    def test_words_open_before_the_mail_that_came_first(self):
+        mi = MainInput()
+        _mail(mi)
+        mi.enqueue(None, "hi", nickname="dj")
+        seen = []
+
+        def run_main(req):
+            seen.append(req.wake)
+            if req.wake:
+                mi.close()
+
+        make_pump(main_input=mi, run_main=run_main, policy=ForeverPolicy()).run()
+        assert seen == [False, True]
+
+    def test_a_mail_that_does_not_wake_opens_no_run(self):
+        mi = MainInput()
+        _mail(mi, wakes=False)
+        mi.close()
         surface = FakeSurface()
         run_main = MagicMock()
-        make_pump(queue=q, run_main=run_main, surface=surface, waker=waker).run()
+        make_pump(
+            main_input=mi, run_main=run_main, surface=surface, policy=ForeverPolicy()
+        ).run()
         run_main.assert_not_called()
         assert ("busy",) not in surface.calls
 
-    def test_route_consumes_an_injected_wake_through_the_waker(self):
-        """런 도중 큐에서 꺼낸 깨우기 — 텍스트를 컨텍스트에 넣지 않고 waker 의
-        무장을 푼다. 종전 web 은 사용자 메시지로 주입해 ``_armed`` 가 영영
-        남았다(이후 깨우기 전부 드롭)."""
-        waker = _WakeWaker(["run"])
-        surface = FakeSurface()
-        pump = make_pump(
-            queue=InputQueue(), run_main=lambda r: None, surface=surface, waker=waker
-        )
-        assert pump.route("WAKE") is True
-        assert waker.handled == ["WAKE"]
-        assert surface.calls == []  # 표면 라우팅까지 가지 않는다
-
     def test_route_passes_human_text_to_the_surface(self):
         surface = FakeSurface(routed={"/x"})
-        pump = make_pump(queue=InputQueue(), run_main=lambda r: None, surface=surface)
+        pump = make_pump(
+            main_input=MainInput(), run_main=lambda r: None, surface=surface
+        )
         assert pump.route("/x") is True
         assert pump.route("plain") is False
         assert [c for c in surface.calls if c[0] == "route"] == [
@@ -194,14 +183,14 @@ class TestWake:
 
 class TestFailurePolicy:
     def test_run_failed_false_propagates(self):
-        q = InputQueue()
+        q = MainInput()
         q.enqueue(None, "hi")
         surface = FakeSurface(swallow_errors=False)
 
         def boom(req):
             raise RuntimeError("x")
 
-        pump = make_pump(queue=q, run_main=boom, surface=surface)
+        pump = make_pump(main_input=q, run_main=boom, surface=surface)
         try:
             pump.run()
         except RuntimeError:
@@ -214,11 +203,11 @@ class TestFailurePolicy:
         """v10.130.6: 런 시작 알림은 ``run_main`` 바로 앞, 같은 try 안 — 표면의 예외도
         런 예외처럼 ``run_failed`` 로 가고, 런은 열리지 않는다(종전 web 의 비전
         알림이 ``_run_main`` 안에서 돌던 자리와 같다)."""
-        q = InputQueue()
+        q = MainInput()
         q.enqueue(None, "hi")
         surface = FakeSurface(swallow_errors=True, fail_on_start=True)
         run_main = MagicMock()
-        make_pump(queue=q, run_main=run_main, surface=surface).run()
+        make_pump(main_input=q, run_main=run_main, surface=surface).run()
         run_main.assert_not_called()
         kinds = [c[0] for c in surface.calls]
         assert kinds.index("run_starting") < kinds.index("run_failed")
@@ -226,14 +215,14 @@ class TestFailurePolicy:
         assert surface.calls[-1] == ("bind_stop", False)
 
     def test_routed_command_does_not_announce_a_run(self):
-        q = InputQueue()
+        q = MainInput()
         q.enqueue(None, "/skill x")
         surface = FakeSurface(routed={"/skill x"})
-        make_pump(queue=q, run_main=MagicMock(), surface=surface).run()
+        make_pump(main_input=q, run_main=MagicMock(), surface=surface).run()
         assert "run_starting" not in [c[0] for c in surface.calls]
 
     def test_run_failed_true_continues_with_the_next_item(self):
-        q = InputQueue()
+        q = MainInput()
         q.enqueue(None, "bad")
         q.enqueue(None, "good")
         surface = FakeSurface(swallow_errors=True)
@@ -245,7 +234,7 @@ class TestFailurePolicy:
             seen.append(req.text)
             return ToolResult(True, output="ok")
 
-        make_pump(queue=q, run_main=run_main, surface=surface).run()
+        make_pump(main_input=q, run_main=run_main, surface=surface).run()
         assert seen == ["good"]
         assert any(c[0] == "run_failed" for c in surface.calls)
 
@@ -254,11 +243,11 @@ class TestQuietPolicy:
     def _policy(
         self, *, registry_busy=False, monitors=None, schedules=None, waits=None
     ):
-        q = InputQueue()
+        q = MainInput()
         reg = MagicMock(has_active_work=MagicMock(return_value=registry_busy))
         return (
             QuietPolicy(
-                queue=q,
+                main_input=q,
                 agent_registry=reg,
                 monitors=monitors,
                 schedules=schedules,
@@ -544,7 +533,7 @@ class TestQuietPolicyWaitNotice:
         dead = MagicMock(has_active_work=MagicMock(return_value=False))
         waits: list[str] = []
         policy = QuietPolicy(
-            queue=InputQueue(),
+            main_input=MainInput(),
             agent_registry=MagicMock(has_active_work=MagicMock(return_value=False)),
             monitors=live,
             schedules=dead,
@@ -561,10 +550,10 @@ class TestQuietPolicyWaitNotice:
 
     def test_queue_or_agent_activity_is_not_a_wait(self):
         waits: list[str] = []
-        q = InputQueue()
+        q = MainInput()
         q.enqueue(None, "x")
         policy = QuietPolicy(
-            queue=q,
+            main_input=q,
             agent_registry=MagicMock(has_active_work=MagicMock(return_value=False)),
             monitors=MagicMock(has_active_work=MagicMock(return_value=True)),
             on_wait=waits.append,

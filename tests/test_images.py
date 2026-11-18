@@ -429,10 +429,10 @@ class TestLoopRecords:
 
 class TestQueueAndRequest:
     def test_enqueue_carries_images_into_the_run_request(self):
-        from agent_cli.input_queue import InputQueue
+        from agent_cli.main_input import MainInput
         from agent_cli.pump import RunRequest
 
-        q = InputQueue()
+        q = MainInput()
         ref = ImageRef("a.png", "image/png", 10, 10, 1, "").to_dict()
         item = q.enqueue(None, "look", images=[ref])
         assert item["images"] == [ref]

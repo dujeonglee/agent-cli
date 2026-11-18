@@ -21,8 +21,9 @@ from tests.oracle import driver
 HERE = Path(__file__).parent
 EXPECTED = HERE / "expected"
 
-#: 드라이버가 import 해도 되는 것 — f44cf539 에 있는 공개 표면과 표준 라이브러리. 새 우편 구조(`agent_cli.post`)와
-#: 읽기 전용 조회가 들어오면 안 된다: 리뷰어가 f44cf539 고정 worktree 에서 같은 드라이버로 같은 해시를 만든다.
+#: 드라이버가 import 해도 되는 것 — 공개 표면과 표준 라이브러리. 우편 구조(`agent_cli.post`)와 읽기 전용 조회가
+#: 들어오면 안 된다. 사람의 입력 자리만 `MainInput`(v10.146.6 까지는 `InputQueue`)이다 — 그 앞의 고정 worktree 에서
+#: 기대값을 다시 만들려면 그 트리의 드라이버를 쓴다.
 ALLOWED_IMPORTS = {
     "__future__": {"annotations"},
     "argparse": None,
@@ -38,7 +39,7 @@ ALLOWED_IMPORTS = {
     "types": {"SimpleNamespace"},
     "rich.console": {"Console"},
     "agent_cli.context.manager": {"ContextManager"},
-    "agent_cli.input_queue": {"InputQueue"},
+    "agent_cli.main_input": {"MainInput"},
     "agent_cli.main": {"web_instance_is_active"},
     "agent_cli.providers.base": {"LLMResponse"},
     "agent_cli.providers.capabilities": {"ModelCapabilities"},

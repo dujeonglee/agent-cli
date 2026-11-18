@@ -292,18 +292,18 @@ class TestRegistrationTimeGate:
 class TestLifetimeInBothRuntimes:
     def test_run_pump_does_not_exit_while_a_monitor_lives(self, reg, tmp_path):
         """모니터가 살아 있는데 런이 끝나면 감시가 조용히 사라진다."""
-        from agent_cli.input_queue import InputQueue
+        from agent_cli.main_input import MainInput
         from tests.pump_support import make_pump, run_pump_in_thread
 
         _watch(reg, tmp_path)
-        q = InputQueue()
+        q = MainInput()
         calls = []
 
         # 모니터가 살아 있으면 펌프가 안 끝난다 → 별도 스레드로 돌리고
         # 해제한 뒤 끝나는지 본다.
         done = run_pump_in_thread(
             make_pump(
-                queue=q,
+                main_input=q,
                 run_main=lambda req: calls.append(req.text),
                 monitors=reg,
                 poll_secs=0.05,
@@ -318,11 +318,11 @@ class TestLifetimeInBothRuntimes:
 
     def test_pump_still_exits_with_no_monitors_at_all(self, tmp_path):
         """회귀 가드 — monitors=None 이면 종전 그대로."""
-        from agent_cli.input_queue import InputQueue
+        from agent_cli.main_input import MainInput
         from tests.pump_support import make_pump, run_pump_in_thread
 
         done = run_pump_in_thread(
-            make_pump(queue=InputQueue(), run_main=lambda req: None, poll_secs=0.05)
+            make_pump(main_input=MainInput(), run_main=lambda req: None, poll_secs=0.05)
         )
         assert done.wait(2.0), "모니터 없이도 펌프가 안 끝난다 (회귀)"
 

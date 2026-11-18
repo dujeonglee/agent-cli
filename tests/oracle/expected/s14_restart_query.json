@@ -976,17 +976,6 @@
      {}
     ],
     [
-     "push_user_message",
-     [
-      "New agent mail has arrived. It is delivered as observation(s) at the start of this turn — review it and continue accordingly."
-     ],
-     {
-      "author": "",
-      "hidx": 7,
-      "images": null
-     }
-    ],
-    [
      "note_request",
      [
       "r-1",

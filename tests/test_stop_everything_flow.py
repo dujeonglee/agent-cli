@@ -99,7 +99,7 @@ class TestStopEverything:
             # 방이 걷힌다 — 뷰어 없음·main 한가·깨우는 메일 없음
             assert not web_instance_is_active(
                 _quiet_renderer(),
-                SimpleNamespace(pending_count=s.queue.pending_count),
+                SimpleNamespace(pending_count=s.main_input.pending_count),
                 s.reg,
                 monitors=s.stores.monitors,
                 schedules=s.stores.schedules,

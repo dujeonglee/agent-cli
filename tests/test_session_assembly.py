@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agent_cli import runtime as R
-from agent_cli.input_queue import InputQueue
+from agent_cli.main_input import MainInput
 from agent_cli.runtime import (
     SessionOwners,
     SessionSpec,
@@ -88,9 +88,7 @@ def _patch_parts(st: ExitStack, order: list, *, mainloop_boom=False):
         patch("agent_cli.harness.auditor.build_auditor", rec("auditor", lambda: "AUD"))
     )
     st.enter_context(patch("agent_cli.knobs.apply_all", rec("knobs")))
-    st.enter_context(
-        patch.object(R, "wire_agent_mail", rec("mail", lambda: ("WAKER", 1, 2)))
-    )
+    st.enter_context(patch.object(R, "wire_agent_mail", rec("mail", lambda: (1, 2))))
 
     def _mainloop(**kw):
         order.append("MainLoop")
@@ -113,13 +111,12 @@ class TestOrder:
         with ExitStack() as st:
             _patch_parts(st, order)
             spec = _spec()
-            stores = build_session_stores(spec, queue=InputQueue())
+            stores = build_session_stores(spec, main_input=MainInput())
             owners = build_session_owners(spec, stores, renderer="R")
             wired = wire_session(
                 spec,
                 stores,
                 owners,
-                queue=InputQueue(),
                 surface=_Surface(),
                 policy=None,
             )
@@ -144,14 +141,13 @@ class TestOrder:
         with ExitStack() as st:
             _patch_parts(st, order, mainloop_boom=True)
             spec = _spec()
-            stores = build_session_stores(spec, queue=InputQueue())
+            stores = build_session_stores(spec, main_input=MainInput())
             owners = build_session_owners(spec, stores, renderer="R")
             with pytest.raises(RuntimeError):
                 wire_session(
                     spec,
                     stores,
                     owners,
-                    queue=InputQueue(),
                     surface=_Surface(),
                     policy=None,
                 )
@@ -185,64 +181,64 @@ class TestOneQueue:
             if mail is not None:
                 st.enter_context(patch.object(R, "wire_agent_mail", mail))
             st.enter_context(patch.object(R, "MainLoop", _loop))
-            stores = build_session_stores(spec, queue=q)
+            stores = build_session_stores(spec, main_input=q)
             owners = build_session_owners(spec, stores, renderer=MagicMock())
             stores.schedules.start = lambda: None  # 스레드는 띄우지 않는다
-            wired = wire_session(
-                spec, stores, owners, queue=q, surface=_Surface(), policy=None
-            )
+            wired = wire_session(spec, stores, owners, surface=_Surface(), policy=None)
         return stores, wired, loops[0]
 
-    def test_schedule_and_loop_ports_reach_the_same_queue(self, tmp_path):
-        """예약 `enqueue`·`MainLoop` 포트·펌프가 **같은 큐 객체**에 닿는다 —
-        각각 넣어 보고 그 큐에서 꺼낸다."""
+    def test_schedule_and_loop_ports_reach_the_same_main_input(self, tmp_path):
+        """예약 `enqueue`·`MainLoop` 포트·펌프가 **같은 main 앞 사람의 말**에 닿는다 — 각각 넣어 보고 거기서 꺼낸다."""
         from agent_cli.session_slots import set_schedule_registry
 
-        q = InputQueue()
+        q = MainInput()
         stores = None
         try:
             stores, wired, main_loop = self._wire(q)
             stores.schedules.enqueue("weekly", "⏰ Scheduler")
-            assert wired.pump.deps.queue is q  # 펌프가 꺼내는 큐
+            assert wired.pump.deps.main_input is q  # 펌프가 런을 열 것을 꺼내는 자리
             main_kind_ports = main_loop.ports
             main_kind_ports.enqueue_user_message("hint", "dj")
-            # 둘 다 사람 입력과 같은 줄 — 화면 대기열에 보인다(합성 입력이 아니다)
+            # 둘 다 사람 입력과 같은 줄 — 화면 대기열에 보인다
             assert [(i["text"], i["nickname"]) for i in q.snapshot()] == [
                 ("weekly", "⏰ Scheduler"),
                 ("hint", "dj"),
             ]
 
-            first = q.dequeue_nowait()
+            first = q.take_next()
             assert (first["text"], first["nickname"]) == ("weekly", "⏰ Scheduler")
             assert main_kind_ports.dequeue_user_message()["text"] == "hint"
-            assert q.dequeue_nowait() is None
+            assert q.take_next() is None
         finally:
             if stores is not None:
                 stores.monitors.stop()
             set_schedule_registry(None)
 
-    def test_the_mail_wake_reaches_the_same_queue_as_synthetic_input(self, tmp_path):
-        """깨우기 자리(`enqueue_wake`)도 같은 큐로 — 합성 입력이라 화면 대기열엔 없다."""
+    def test_the_registry_gets_the_same_post_office(self, tmp_path):
+        """레지스트리가 main 앞 사람의 말과 **같은 창구**를 받는다 — 메일과 사람의 말이 한 상자에 서야 펌프가 둘을
+        한 자리에서 기다린다."""
         from agent_cli.session_slots import set_schedule_registry
 
-        q = InputQueue()
-        captured: dict = {}
+        q = MainInput()
+        seen: dict = {}
 
-        def _mail(registry, **kw):
-            captured.update(kw)
-            return MagicMock(WAKE_TEXT="WAKE"), 0, 0
+        def _registry(session_dir, runtime, **kw):
+            seen.update(kw)
+            return MagicMock()
 
         stores = None
         try:
-            stores, _wired, _loop = self._wire(q, mail=_mail)
-            captured["enqueue_wake"](None, "WAKE")
-            assert q.snapshot() == []
-            wake = q.dequeue_nowait()
-            assert (wake["text"], wake["nickname"], wake["system"]) == (
-                "WAKE",
-                None,
-                True,
-            )
+            with patch.object(R, "build_agent_registry", _registry):
+                spec = _spec(ctx=None, session=SimpleNamespace(session_id="s"))
+                with (
+                    patch.object(R, "build_snapshot_store"),
+                    patch.object(R, "build_hook_runner"),
+                    patch("agent_cli.harness.auditor.build_auditor", return_value=None),
+                    patch("agent_cli.knobs.apply_all"),
+                ):
+                    stores = build_session_stores(spec, main_input=q)
+                    build_session_owners(spec, stores, renderer=MagicMock())
+            assert seen["post"] is q.post
         finally:
             if stores is not None:
                 stores.monitors.stop()
@@ -258,7 +254,7 @@ class TestCloseSession:
         """조립 도중 죽은 경우 — 있는 것만 정리하고, MCP 해제·세션 마감은 늘 돈다."""
         spec = _spec()
         stores = (
-            SessionStores(monitors="MON", jobs="JOBS", schedules="SCH")
+            SessionStores(monitors="MON", jobs="JOBS", schedules="SCH", main_input="MI")
             if has_stores
             else None
         )
@@ -300,17 +296,16 @@ class TestHostHooks:
                 patch.object(
                     R,
                     "wire_agent_mail",
-                    lambda reg, **kw: (mail_kw.update(kw), ("W", 0, 0))[1],
+                    lambda reg, **kw: (mail_kw.update(kw), (0, 0))[1],
                 )
             )
             spec = _spec()
-            stores = build_session_stores(spec, queue=InputQueue())
+            stores = build_session_stores(spec, main_input=MainInput())
             owners = build_session_owners(spec, stores, renderer="R")
             wire_session(
                 spec,
                 stores,
                 owners,
-                queue=InputQueue(),
                 surface=_Surface(),
                 policy=None,
             )
@@ -335,7 +330,7 @@ class TestHostHooks:
             spec = _spec()
             stores = build_session_stores(
                 spec,
-                queue=InputQueue(),
+                main_input=MainInput(),
                 on_jobs_change=jobs_cb,
                 on_schedules_change=sched_cb,
             )
@@ -390,19 +385,21 @@ class TestSpecHooks:
             ),
             patch("agent_cli.harness.auditor.build_auditor", return_value=None),
             patch("agent_cli.knobs.apply_all"),
-            patch.object(R, "wire_agent_mail", return_value=("W", 0, 0)),
+            patch.object(R, "wire_agent_mail", return_value=(0, 0)),
             patch.object(R, "MainLoop", lambda **kw: loops.append(kw)),
             patch("agent_cli.pump.SessionPump"),
         ):
             stores = SessionStores(
-                monitors=None, jobs=None, schedules=MagicMock(name="sch")
+                monitors=None,
+                jobs=None,
+                schedules=MagicMock(name="sch"),
+                main_input=MainInput(),
             )
             owners = build_session_owners(spec, stores, renderer="R")
             wire_session(
                 spec,
                 stores,
                 owners,
-                queue=InputQueue(),
                 surface=_Surface(),
                 policy=None,
             )

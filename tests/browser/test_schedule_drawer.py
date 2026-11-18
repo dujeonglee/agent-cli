@@ -41,7 +41,7 @@ def clock():
 def reg(stack, tmp_path, clock):
     r = ScheduleRegistry(tmp_path, clock=clock)
     r.start = lambda: None
-    r.enqueue = lambda prompt, nickname: stack.server.queue.enqueue(
+    r.enqueue = lambda prompt, nickname: stack.server.main_input.enqueue(
         None, prompt, nickname=nickname
     )
     r.on_change = stack.renderer.broadcast_schedules_changed
@@ -126,11 +126,11 @@ class TestMissedCard:
             "#sched-missed"
         )
         assert page.inner_text("#schedule-badge") == "1!"
-        assert stack.server._queue.snapshot() == []  # 자동 실행 없음
+        assert stack.server.main_input.snapshot() == []  # 자동 실행 없음
 
         page.click("#sched-missed button:has-text('Run now')")
         assert _wait(lambda: page.locator("#sched-missed").is_hidden())
-        (item,) = stack.server._queue.snapshot()
+        (item,) = stack.server.main_input.snapshot()
         # 예약마다 가상 사용자 (v10.56.0, 장부 P3)
         assert item["text"] == "아침 점검" and item["nickname"] == "Scheduler-아침 점검"
 
@@ -144,5 +144,5 @@ class TestMissedCard:
         page.wait_for_selector("#sched-missed:not([hidden])", timeout=8000)
         page.click("#sched-missed button:has-text('Skip')")
         assert _wait(lambda: page.locator("#sched-missed").is_hidden())
-        assert stack.server._queue.snapshot() == []
+        assert stack.server.main_input.snapshot() == []
         assert reg.list_all()[0].missed_at is None

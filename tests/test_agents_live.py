@@ -1823,81 +1823,6 @@ class TestP4Events:
         assert entry["state"] == "dead"
 
 
-class TestMailWaker:
-    def _waker(self, pending=lambda: True):
-        from agent_cli.subagent.mail_waker import MailWaker
-
-        sent = []
-        w = MailWaker(lambda conn, text: sent.append((conn, text)), pending)
-        return w, sent
-
-    def test_mail_while_idle_arms_once(self):
-        w, sent = self._waker()
-        w.idle.set()
-        w.on_mail()
-        w.on_mail()  # 중복 mail → wake 1개
-        assert len(sent) == 1
-        assert sent[0] == (None, w.WAKE_TEXT)
-
-    def test_mail_while_busy_does_not_wake(self):
-        w, sent = self._waker()
-        w.on_mail()  # idle 아님
-        assert sent == []
-
-    def test_run_end_race_closure(self):
-        # run 마지막 턴 경계 이후 도착분 — on_run_end 가 봉합
-        w, sent = self._waker(pending=lambda: True)
-        w.on_run_end()
-        assert len(sent) == 1
-
-    def test_run_end_noop_without_pending(self):
-        w, sent = self._waker(pending=lambda: False)
-        w.on_run_end()
-        assert sent == []
-
-    def test_mark_idle_arms_when_mail_already_pending(self):
-        # Lost-wakeup closure: a reply that landed in the on_run_end()→idle
-        # window (on_mail() saw idle unset, dropped the wake) must still get a
-        # wake when the pump marks itself idle — else web parks forever.
-        w, sent = self._waker(pending=lambda: True)
-        w.on_mail()  # idle not set yet → dropped (the race)
-        assert sent == []
-        w.mark_idle()  # pump about to block → sets idle AND re-arms
-        assert len(sent) == 1
-        assert sent[0] == (None, w.WAKE_TEXT)
-        assert w.idle.is_set()
-
-    def test_mark_idle_no_arm_when_nothing_pending(self):
-        w, sent = self._waker(pending=lambda: False)
-        w.mark_idle()
-        assert sent == []
-        assert w.idle.is_set()
-
-    def test_mark_idle_then_later_mail_still_wakes(self):
-        # After mark_idle() (idle set), a fresh reply's on_mail() arms normally.
-        state = {"pending": False}
-        w, sent = self._waker(pending=lambda: state["pending"])
-        w.mark_idle()  # nothing pending yet → no arm, but idle set
-        assert sent == []
-        state["pending"] = True
-        w.on_mail()  # idle is set → arms
-        assert len(sent) == 1
-
-    def test_handle_dequeued_verdicts(self):
-        state = {"pending": True}
-        w, sent = self._waker(pending=lambda: state["pending"])
-        assert w.handle_dequeued("normal user message") is None
-        w.idle.set()
-        w.on_mail()
-        # 잔여 있음 → run (그리고 disarm — 다음 mail 이 다시 wake 가능)
-        assert w.handle_dequeued(w.WAKE_TEXT) == "run"
-        w.on_mail()
-        assert len(sent) == 2  # disarm 후 재무장 확인
-        # 이미 배달됨 → skip
-        state["pending"] = False
-        assert w.handle_dequeued(w.WAKE_TEXT) == "skip"
-
-
 # ── P5: CLI 큐 펌프 (quiescence) ────────────────
 
 
@@ -1919,19 +1844,18 @@ class TestQuiescenceHelpers:
 
 
 class TestRunMessagePump:
-    """CLI run 의 큐 펌프(세션 펌프 + QuietPolicy, v10.33.0) — 초기 질의 1회 /
-    teammate 회신 wake 재기동 / quiescence 종료 / 빈 wake skip."""
+    """CLI run 의 펌프(세션 펌프 + QuietPolicy, v10.33.0) — 초기 질의 1회 / 회신이 한가한 main 을 메일 런으로 /
+    조용해지면 끝 / 닫힘."""
 
     class _FakeReg:
-        def __init__(self):
-            self.pending = False
+        """레지스트리 대역 — 할 일은 일하는 에이전트(``busy``)와 main 상자의 깨우는 메일(실제 레지스트리와 같은 뜻)."""
+
+        def __init__(self, main_input):
+            self.main_input = main_input
             self.busy = False
 
-        def has_pending_replies(self):
-            return self.pending
-
         def has_active_work(self):
-            return self.pending or self.busy
+            return self.busy or any(e.wakes for e in self.main_input.post.mail("main"))
 
         def set_current_run_authors(self, authors):
             pass
@@ -1939,105 +1863,85 @@ class TestRunMessagePump:
         def run_ended(self, owner, output="", *, waiting=False, **kw):
             return 0
 
-    def _pump(self, queue, waker, reg, run_one):
-        """``waker`` 가 None 이면 깨우기 없는 대역(`pump_support.FakeWaker`)."""
+    @staticmethod
+    def _mail(q):
+        from agent_cli.post import envelope as post_envelope
+
+        q.post.deliver(post_envelope.notice("n-901", "job", "main", "done"))
+
+    def _pump(self, q, reg, run_one):
         from tests.pump_support import make_pump
 
         make_pump(
-            queue=queue,
-            waker=waker,
+            main_input=q,
             registry=reg,
             run_main=lambda req: run_one(req.text, wake=req.wake),
             poll_secs=0.05,
         ).run()
 
     def test_plain_run_executes_once_and_exits(self):
-        from agent_cli.input_queue import InputQueue
+        from agent_cli.main_input import MainInput
 
-        q = InputQueue()
-        reg = self._FakeReg()
+        q = MainInput()
+        reg = self._FakeReg(q)
         calls = []
         q.enqueue(None, "the query")
-        self._pump(q, None, reg, lambda text, *, wake: calls.append((text, wake)))
+        self._pump(q, reg, lambda text, *, wake: calls.append((text, wake)))
         assert calls == [("the query", False)]
 
     def test_wake_cycle_delivers_then_quiesces(self):
-        from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.mail_waker import MailWaker
+        from agent_cli.main_input import MainInput
+        from agent_cli.pump import WAKE_TEXT
 
-        q = InputQueue()
-        reg = self._FakeReg()
-        waker = MailWaker(q.enqueue, reg.has_pending_replies)
+        q = MainInput()
+        reg = self._FakeReg(q)
         calls = []
+        arrived = threading.Event()
 
         def run_one(text, *, wake):
             calls.append((text, wake))
             if len(calls) == 1:
-                # 첫 run 이 teammate 를 스폰해 busy 로 만들었다 치고,
-                # 잠시 후 회신이 도착하는 백그라운드를 흉내낸다.
+                # 첫 run 이 teammate 를 스폰해 busy 로 만들었다 치고, 그 회신이 나중에 오는 것을 흉내낸다.
                 reg.busy = True
 
                 def later():
-                    time.sleep(0.15)
+                    assert arrived.wait(5)
+                    self._mail(q)  # 회신이 main 상자에 든 **뒤** 에이전트가 한가해진다
                     reg.busy = False
-                    reg.pending = True
-                    waker.on_mail()  # registry.on_reply 배선과 동일
 
                 threading.Thread(target=later, daemon=True).start()
+                arrived.set()
             else:
-                reg.pending = False  # wake run 의 턴 경계 배달을 흉내
+                q.post.absorb_mail("main")  # 메일 런의 턴 경계 배달을 흉내
 
         q.enqueue(None, "spawn and go")
-        self._pump(q, waker, reg, run_one)
-        assert len(calls) == 2
-        assert calls[0] == ("spawn and go", False)
-        assert calls[1][1] is True  # wake run
-        assert calls[1][0] == waker.WAKE_TEXT
+        self._pump(q, reg, run_one)
+        assert calls == [("spawn and go", False), (WAKE_TEXT, True)]
 
-    def test_dropped_wake_reply_still_delivered(self):
-        # Lost-wakeup at the pump level: a reply is already pending but its
-        # on_mail() was dropped (arrived while idle unset — the race). With no
-        # wake in the queue, the pump must arm one via mark_idle and deliver it,
-        # not spin on the poll timeout (web would park forever).
-        from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.mail_waker import MailWaker
+    def test_a_reply_already_waiting_opens_a_mail_run(self):
+        from agent_cli.main_input import MainInput
+        from agent_cli.pump import WAKE_TEXT
 
-        q = InputQueue()
-        reg = self._FakeReg()
-        waker = MailWaker(q.enqueue, reg.has_pending_replies)
-        reg.pending = True  # reply pending, but NO wake was enqueued
+        q = MainInput()
+        reg = self._FakeReg(q)
+        self._mail(q)  # 펌프가 돌기 전에 이미 든 회신
         calls = []
 
         def run_one(text, *, wake):
             calls.append((text, wake))
-            reg.pending = False  # the wake run's turn boundary delivers it
+            q.post.absorb_mail("main")
 
-        self._pump(q, waker, reg, run_one)
-        assert calls == [(waker.WAKE_TEXT, True)]
+        self._pump(q, reg, run_one)
+        assert calls == [(WAKE_TEXT, True)]
 
-    def test_stale_wake_skipped(self):
-        from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.mail_waker import MailWaker
+    def test_close_exits(self):
+        from agent_cli.main_input import MainInput
 
-        q = InputQueue()
-        reg = self._FakeReg()
-        waker = MailWaker(q.enqueue, reg.has_pending_replies)
-        reg.pending = True
-        waker.idle.set()
-        waker.on_mail()  # wake 큐잉
-        reg.pending = False  # 다른 경로가 이미 배달
-        calls = []
-        self._pump(q, waker, reg, lambda text, *, wake: calls.append(text))
-        assert calls == []  # skip — 빈 run 없음
-
-    def test_shutdown_exits(self):
-        from agent_cli.input_queue import InputQueue
-
-        q = InputQueue()
-        reg = self._FakeReg()
-        reg.busy = True  # 활성 작업이 있어도 SHUTDOWN 이 우선
-        q.shutdown()
-        self._pump(q, None, reg, lambda text, *, wake: None)  # 즉시 반환
+        q = MainInput()
+        reg = self._FakeReg(q)
+        reg.busy = True  # 활성 작업이 있어도 닫힘이 우선
+        q.close()
+        self._pump(q, reg, lambda text, *, wake: None)  # 즉시 반환
 
 
 # ── 전문가 역할: died 통지·광고·auto-spawn (v4.59.0) ──
@@ -3043,12 +2947,12 @@ class TestRendererSignatureRegression:
         """web (v10.51.0): 미배달 메일은 입력창 위 대기열에 사용자 요청과 같은
         줄로 선다 — 도착 힌트 이벤트(``agent_mail``)도 깨우기 카드도 없다.
         drain 되면 줄이 빠진다(= 주입됐다)."""
-        from agent_cli.input_queue import InputQueue
+        from agent_cli.main_input import MainInput
         from agent_cli.subagent.agents_live import AgentRegistry
 
         reg = AgentRegistry(tmp_path)
         seen: list[list[dict]] = []
-        q = InputQueue()
+        q = MainInput()
         q.enqueue("c1", "user ask", nickname="dj")
         reg.on_pending_change = lambda: seen.append(q.snapshot() + reg.pending_mail())
         to_main(

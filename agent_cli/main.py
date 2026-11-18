@@ -2020,7 +2020,7 @@ def run(
         console.print(f"  Server:  {session.endpoint}", markup=False, highlight=False)
     ctx = _build_context(session, binding, resume=session_resumed is not None)
 
-    from agent_cli.input_queue import InputQueue
+    from agent_cli.main_input import MainInput
     from agent_cli.pump import QuietPolicy
     from agent_cli.runtime import (
         SessionSpec,
@@ -2029,9 +2029,9 @@ def run(
         wire_session,
     )
 
-    # 입력 큐는 저장소보다 먼저 선다 — 예약의 발화 자리를 저장소를 만드는 자리에서
+    # main 앞 사람의 말(과 그 창구)은 저장소보다 먼저 선다 — 예약의 발화 자리를 저장소를 만드는 자리에서
     # 묶는다(web 은 서버가 이미 들고 있다, v10.130.5).
-    input_queue = InputQueue()
+    main_input = MainInput()
     spec = SessionSpec.for_session(
         binding=binding,
         session=session,
@@ -2054,14 +2054,14 @@ def run(
     sigterm = SigTerm()
     try:
         # 세션 펌프 (v10.33.0, docs/pump/DESIGN.md): web 과 같은 루프 —
-        # 초기 질의를 InputQueue 에 넣고, teammate 회신의 wake 아이템
-        # (MailWaker)·예약 발화도 같은 큐로 들어온다. ``/skill``·``@agent``
+        # 초기 질의를 main 앞 사람의 말로 넣고, 예약 발화도 같은 자리로, 에이전트 회신은
+        # 같은 main 상자의 메일로 들어온다. ``/skill``·``@agent``
         # 는 펌프 안의 라우팅(_ConsoleSurface.route)이 web 의 route_one 과
         # 같은 공용 입구(try_dispatch_agent_or_skill)로 처리한다. 정지 =
-        # 큐·에이전트·모니터·예약 전부 조용(QuietPolicy).
+        # 사람의 말·에이전트·모니터·예약 전부 조용(QuietPolicy).
         # monitor·schedule 은 native — 시간을 재는 것도 발화도 이 프로세스 안에서
         # 일어난다. board 도 env 도 없이 항상 조립된다.
-        stores = build_session_stores(spec, queue=input_queue)
+        stores = build_session_stores(spec, main_input=main_input)
         owners = build_session_owners(spec, stores, renderer=get_renderer())
         surface = _ConsoleSurface(
             result_file=result_file,
@@ -2075,7 +2075,7 @@ def run(
             ),
         )
         policy = QuietPolicy(
-            queue=input_queue,
+            main_input=main_input,
             agent_registry=owners.agent_registry,
             monitors=stores.monitors,
             schedules=stores.schedules,
@@ -2099,13 +2099,12 @@ def run(
             spec,
             stores,
             owners,
-            queue=input_queue,
             surface=surface,
             policy=policy,
             on_mail_notice=_agent_mail_notice,
             # 대기 중에 친 명령(`/stop` 등)은 그 자리에서 라우팅한다 — 펌프는 아래에서 선다(늦은 바인딩)
             on_wait_input=_terminal_steer_input(
-                input_queue, route=lambda text: wired.pump.route(text)
+                main_input, route=lambda text: wired.pump.route(text)
             ),
         )
 
@@ -2144,7 +2143,7 @@ def run(
                 highlight=False,
                 soft_wrap=True,
             )
-        input_queue.enqueue(None, query, images=query_images)
+        main_input.enqueue(None, query, images=query_images)
         warn_stuck = True
         prev_term = sigterm.install_unwind()
         prev_int = _install_ctrl_c(surface, agent_registry)
@@ -2336,10 +2335,10 @@ def _install_ctrl_c(surface, agent_registry):
     return signal.signal(signal.SIGINT, on_sigint)
 
 
-def _terminal_steer_input(queue, route=None):
+def _terminal_steer_input(main_input, route=None):
     """run: 제자리 대기를 깨울 사람 입력 (v10.141.0, docs/agent-engine/DESIGN.md §6) —
-    ``(timeout) -> bool``. 입력 큐에 이미 온 것(예약 발화 등)이 있으면 참, 터미널이면 그 사이
-    친 한 줄을 입력 큐에 넣고 참(꺼내는 것은 다음 턴 경계의 흡수다). 터미널이 아니면 큐만 본다.
+    ``(timeout) -> bool``. main 앞에 이미 온 사람의 말(예약 발화 등)이 있으면 참, 터미널이면 그 사이
+    친 한 줄을 main 앞에 넣고 참(꺼내는 것은 다음 턴 경계의 흡수다). 터미널이 아니면 그것만 본다.
 
     터미널 줄은 main 이 제자리에서 기다리는 동안에만 읽는다 — 그 밖의 시간엔 `ask`·확인
     프롬프트가 같은 표준입력을 쓴다.
@@ -2351,13 +2350,13 @@ def _terminal_steer_input(queue, route=None):
 
     def wait(timeout: float) -> bool:
         if not sys.stdin.isatty():
-            return queue.wait_for_arrival(timeout)
-        if queue.wait_for_arrival(0):
+            return main_input.wait_for_arrival(timeout)
+        if main_input.wait_for_arrival(0):
             return True
         try:
             ready, _, _ = select.select([sys.stdin], [], [], timeout)
         except (OSError, ValueError):
-            return queue.wait_for_arrival(timeout)
+            return main_input.wait_for_arrival(timeout)
         if not ready:
             return False
         text = sys.stdin.readline().strip()
@@ -2365,7 +2364,7 @@ def _terminal_steer_input(queue, route=None):
             return False
         if route is not None and text[:1] in "/@" and route(text):
             return False
-        queue.enqueue(None, text)
+        main_input.enqueue(None, text)
         return True
 
     return wait
@@ -3201,14 +3200,14 @@ def web(
         verbose=verbose,
         record_turns=record_turns,
     )
-    # 입력 큐는 서버가 들고 있다 — 배선은 run 과 같다 (v10.130.8)
-    input_queue = server.queue
+    # main 앞 사람의 말은 서버가 들고 있다 — 배선은 run 과 같다 (v10.130.8)
+    main_input = server.main_input
     # 저장소는 worker 부트스트랩을 기다리지 않고 여기서 조립한다(`--idle-timeout`
     # 술어가 첫 메시지 전에도 모니터·예약을 봐야 한다). 🧵 칩·status.json ``jobs``
     # (v10.121.0)와 예약 칩의 관찰자는 렌더러의 것 — run 은 화면이 없어 꽂지 않는다.
     stores = build_session_stores(
         spec,
-        queue=input_queue,
+        main_input=main_input,
         on_jobs_change=renderer.jobs_changed,
         on_schedules_change=renderer.broadcast_schedules_changed,
     )
@@ -3271,7 +3270,6 @@ def web(
             spec,
             stores,
             owners,
-            queue=input_queue,
             surface=surface,
             policy=ForeverPolicy(),
         )

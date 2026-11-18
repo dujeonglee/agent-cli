@@ -1,8 +1,8 @@
 """main 이 바쁠 때 보낸 사람의 입력 — 입력창 위 대기열의 줄과 떠날 때의 영수증 (실브라우저).
 
 영수증은 서버가 보내지 않는다. 프런트가 추론한다: 대기열에서 빠진 줄과 같은 글의 말풍선(`user_message`)이 곧
-오면 주입, 아니면 취소. 그래서 줄을 꺼내는 자리마다 말풍선을 내야 "주입" 으로 보인다. 아래는 v10.146.6 의 동작
-그대로다 — 제자리 대기 중 명령으로 꺼낸 줄은 말풍선이 없어 "Cancelled" 로 보인다.
+오면 주입, 아니면 취소. 그래서 줄을 꺼내는 자리마다 말풍선을 내야 "주입" 으로 보인다 — 제자리 대기 중 명령으로
+꺼낸 줄은 말풍선이 없어 "Cancelled" 로 보인다(지금 동작).
 """
 
 from __future__ import annotations
@@ -34,12 +34,12 @@ def _send(page, text: str) -> None:
 
 def _take_next(stack) -> dict:
     """턴 경계가 하듯 맨 앞 줄을 꺼낸다(말풍선은 호출자가 낸다)."""
-    return stack.server.queue.dequeue_nowait()
+    return stack.server.main_input.take_next()
 
 
 def _take_first_command(stack) -> dict:
     """제자리 대기가 하듯 맨 앞 줄을 명령으로 꺼낸다 — 말풍선 없이."""
-    return stack.server.queue.take_first_human_if(lambda text: True)
+    return stack.server.main_input.take_first_if(lambda text: True)
 
 
 def _busy_page(stack, page):
@@ -70,7 +70,7 @@ class TestReceipts:
         assert _wait(lambda: _items(page).count() == 1)
         _items(page).first.locator(".queue-cancel").click()
         assert _wait(lambda: "Cancelled" in _queue_text(page))
-        assert stack.server.queue.snapshot() == []
+        assert stack.server.main_input.snapshot() == []
 
     def test_another_viewers_line_has_no_cancel(self, stack, page):
         _busy_page(stack, page)

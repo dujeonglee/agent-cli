@@ -59,7 +59,7 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
 
 from agent_cli import images as _images
-from agent_cli.input_queue import InputQueue
+from agent_cli.main_input import MainInput
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
 from agent_cli.session_slots import get_job_registry, get_schedule_registry
@@ -250,15 +250,13 @@ class WebServer:
         # ``secrets.token_urlsafe`` gives a URL-safe random token —
         # ``--token`` override sticks if provided.
         self.token = token or secrets.token_urlsafe(32)
-        # Pending user-message queue. Every connection may enqueue; the
-        # worker pops one (blocking) to START a run, and the running loop
-        # pops more at turn boundaries (non-blocking) to INJECT mid-run.
-        # 골격은 공용 InputQueue (teammate P5 — CLI run 의 큐 펌프와 공유);
-        # 서버는 닉네임 해석 + 라이브 큐 브로드캐스트(on_change)만 얹는다.
-        # Items: ``{id, conn_id, nickname, text}``.
+        # main 앞 사람의 말 — 모든 연결이 넣을 수 있다. 펌프가 하나를 꺼내 런을 열고, 도는 런이 턴 경계마다
+        # 나머지를 꺼내 주입한다. 창구(`MainInput.post`)는 세션의 것 — 워커 부트가 레지스트리에 같은 창구를 준다.
+        # 서버는 닉네임 해석 + 라이브 대기열 브로드캐스트(on_change)만 얹는다.
+        # Items: ``{id, conn_id, nickname, text, images}``.
         #: 미배달 메일의 대기열 줄 공급자 — web 부트가 꽂는다 (v10.51.0)
         self.mail_source = None
-        self._queue = InputQueue(on_change=self.broadcast_queue)
+        self.main_input = MainInput(on_change=self.broadcast_queue)
         # Stop handle for the in-flight chat turn. The worker registers a
         # fresh ``threading.Event`` per message and passes it to
         # ``run_loop(stop_event=…)``; ``/api/stop`` sets it so the loop
@@ -318,14 +316,6 @@ class WebServer:
             return True
         return False
 
-    @property
-    def queue(self) -> InputQueue:
-        """세션 입력 큐 그 자체 (v10.130.8) — 워커 조립이 run 과 **같은 배선**으로 쓴다
-        (펌프의 ``dequeue_blocking``, 턴 경계의 ``dequeue_nowait``, 깨우기·예약·사람
-        요청의 ``enqueue``). 서버가 얹는 것은 아래 메서드들: 닉네임 해석
-        (:meth:`enqueue`), 소유자 취소, 화면 대기열, 라이브 브로드캐스트(``on_change``)."""
-        return self._queue
-
     def enqueue(
         self, conn_id: str | None, text: str, *, images: list[dict] | None = None
     ) -> dict:
@@ -333,7 +323,7 @@ class WebServer:
         Returns the queued item ``{id, conn_id, nickname, text, images}``.
         ``images`` (v10.60.0) — ``ImageRef`` dicts from :meth:`image_refs`."""
         nickname = self.renderer.hub.nickname_for(conn_id)
-        return self._queue.enqueue(conn_id, text, nickname=nickname, images=images)
+        return self.main_input.enqueue(conn_id, text, nickname=nickname, images=images)
 
     def image_refs(self, paths: list) -> list[dict]:
         """``/api/input`` 의 ``images: [path]`` → ``ImageRef`` dict 목록 (v10.60.0).
@@ -360,13 +350,13 @@ class WebServer:
     def cancel_pending(self, conn_id: str | None, msg_id: str) -> bool:
         """Remove a still-pending message — only its OWNER (matching
         ``conn_id``) may cancel. Returns True if removed."""
-        return self._queue.cancel(conn_id, msg_id)
+        return self.main_input.cancel(conn_id, msg_id)
 
     def queue_snapshot(self) -> list[dict]:
         """입력창 위 대기열 — 사용자 요청 뒤에 main 앞 미배달 메일(v10.51.0,
         ``mail_source`` = ``AgentRegistry.pending_mail``). 메일 줄은
         ``mail: True`` 이고 ``conn_id`` 가 비어 아무도 취소할 수 없다."""
-        items = self._queue.snapshot()
+        items = self.main_input.snapshot()
         src = self.mail_source
         if src is not None:
             items += src()
@@ -375,21 +365,16 @@ class WebServer:
     def pending_count(self) -> int:
         """Number of queued-but-undelivered user messages — the idle-reaper's
         'work is waiting' signal."""
-        return self._queue.pending_count()
+        return self.main_input.pending_count()
 
     def broadcast_queue(self) -> None:
-        """Push the live queue state to all clients (released the queue lock
-        first — ``queue_state`` takes the renderer lock; InputQueue 도
-        on_change 를 락 밖에서 호출한다)."""
+        """Push the live queue state to all clients — 창구의 락을 놓은 뒤에 불린다(``queue_state`` 는 렌더러 락을
+        잡는다; `MainInput` 도 레지스트리도 대기열 변경 알림을 락 밖에서 부른다)."""
         self.renderer.queue_state(self.queue_snapshot())
 
     def shutdown(self) -> None:
-        """Wake any worker blocked in ``queue.dequeue_blocking``.
-
-        Sets the shutdown flag and notifies so the worker's wait returns
-        ``SHUTDOWN``. Idempotent.
-        """
-        self._queue.shutdown()
+        """펌프를 깨워 끝나게 한다 — main 상자를 닫는다(줄 선 사람의 말은 먼저 꺼내진다). 멱등."""
+        self.main_input.close()
 
     # ─── Auth helper ──────────────────────────────────────────
 

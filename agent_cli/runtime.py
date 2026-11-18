@@ -7,7 +7,7 @@
   dict 리터럴을 손으로 나열했고, 키 구성부터 어긋나 있었다(run/web 엔
   ``compaction_enabled`` 부재, web 은 ``hooks_config`` 를 None 으로 고정).
 - :func:`build_agent_registry` / :func:`wire_agent_mail` — registry 생성+
-  main 슬롯 등록, 그리고 waker·회신 훅·restore/auto_spawn 조립의 공용화.
+  main 슬롯 등록, 그리고 회신 훅·restore/auto_spawn 조립의 공용화.
   두 단계로 쪼갠 이유: run 은 skill 조기-반환 **이전**에 registry 만 만들고
   restore 는 그 뒤에 하므로(순서 보존 = 등가성), 생성과 배선을 분리해야
   기존 순서를 바이트 그대로 유지한다.
@@ -94,7 +94,13 @@ class AgentRuntime:
 
 
 def build_agent_registry(
-    session_dir, runtime: AgentRuntime, max_agents=None, *, monitors=None, jobs=None
+    session_dir,
+    runtime: AgentRuntime,
+    max_agents=None,
+    *,
+    post,
+    monitors=None,
+    jobs=None,
 ):
     """AgentRegistry 생성 + main registry 슬롯 등록 (v7.17.0 배선 통일).
 
@@ -102,11 +108,12 @@ def build_agent_registry(
     첫 접촉(웹 창 인간 개입 등)을 받아도 provider 배선이 있도록.
 
     ``max_agents`` None = 미지정 → registry 가 env/기본값을 고른다 (v8.61.0,
-    CLI ``--max-agents``)."""
+    CLI ``--max-agents``). ``post`` — 세션의 창구(`MainInput.post`): main 앞 사람의 말과 메일이 한 상자에 서야
+    펌프가 둘을 한 자리에서 기다린다. 따로 만들면 메일이 다른 상자로 가 펌프가 깨지 않는다."""
     from agent_cli.subagent.agents_live import AgentRegistry
 
     registry = AgentRegistry(
-        session_dir, runtime=runtime.as_dict(), max_agents=max_agents
+        session_dir, runtime=runtime.as_dict(), max_agents=max_agents, post=post
     )
     set_agent_registry(registry)
     if monitors is not None:
@@ -226,7 +233,7 @@ def build_monitor_registry(session_dir=None):
 def build_schedule_registry(session_dir=None):
     """schedule 레지스트리 생성 + 프로세스 전역 등록 (run/web 공용).
 
-    만들기만 한다 — 발화는 입력 큐가 필요하므로, 호출자가 ``enqueue`` 를 꽂은
+    만들기만 한다 — 발화는 main 앞 사람의 말 자리가 필요하므로, 호출자가 ``enqueue`` 를 꽂은
     뒤 ``start()`` 를 부른다(첫 정산이 꺼져 있던 동안 지난 발화를 질문으로
     남긴다). docs/schedule/DESIGN.md §6.
     """
@@ -237,10 +244,10 @@ def build_schedule_registry(session_dir=None):
     return registry
 
 
-def wait_for_human_words(queue, route):
+def wait_for_human_words(main_input, route):
     """main 의 제자리 대기를 깨울 사람 입력 — ``(timeout) -> bool`` (v10.142.0, web 기본).
 
-    입력 큐에 사람 입력이 도착하면 깨우되, 맨 앞이 명령(``/``·``@`` 로 시작 — ``/stop agt-3`` 등)이면 그 자리에서
+    main 앞에 사람의 말이 도착하면 깨우되, 맨 앞이 명령(``/``·``@`` 로 시작 — ``/stop agt-3`` 등)이면 그 자리에서
     라우팅하고 깨우지 않는다: 큐에 둔 채 깨우면 main 이 "the user wrote to you" 관찰을 읽고 그 말은 다음 흡수의
     라우팅이 삼켜, 말 없는 관찰만 남았다. 라우팅이 받지 않은 것(명령 모양의 평범한 말)은 맨 앞으로 되돌리고 깨운다.
     CLI ``run`` 은 터미널 줄을 같은 규칙으로 읽는다(`main._terminal_steer_input`)."""
@@ -249,57 +256,46 @@ def wait_for_human_words(queue, route):
         return text[:1] in ("/", "@")
 
     def wait(timeout: float) -> bool:
-        if not queue.wait_for_arrival(timeout):
+        if not main_input.wait_for_arrival(timeout):
             return False
-        item = queue.take_first_human_if(is_command)
+        item = main_input.take_first_if(is_command)
         if item is None:
             return True
         if route(str(item.get("text") or "")):
             return (
                 False  # 명령은 처리했다 — 기다림은 계속(멈춘 에이전트의 회신이 깨운다)
             )
-        queue.put_back_first(item)
+        main_input.put_back_first(item)
         return True
 
     return wait
 
 
-def wire_agent_mail(registry, *, enqueue_wake, on_mail_notice=None, parent_ctx=None):
-    """MailWaker + 회신 알림 훅 + restore/auto_spawn 조립 (run/web 공용).
+def wire_agent_mail(registry, *, on_mail_notice=None, parent_ctx=None):
+    """회신 알림 훅 + restore/auto_spawn 조립 (run/web 공용).
 
-    종전엔 ``monitors`` 인자를 받아 술어에 ``or monitors.has_pending()`` 을
-    얹고 ``on_report`` 를 꽂았다. **둘 다 없앴다** — 모니터 보고가 이제
-    주소 배달로 메일박스에 들어오므로, ``has_pending_replies()`` 가 이미
-    참이 되고 ``on_reply`` 가 이미 깨운다. 얹을 항이 없는 것이 가장
-    안전하다: 그 항을 빠뜨린 것이 v9.11.0 의 "발화해도 조용함" 이었다.
+    한가한 main 을 메일이 깨우는 일은 따로 없다 — 메일과 사람의 말이 같은 상자·같은 조건변수에 서고 펌프가 그
+    둘을 기다린다(`MainInput.wait_to_open`). 모니터 보고·작업 통지도 주소 배달로 같은 상자에 든다.
 
-    Returns ``(waker, revived, auto)`` — 부활/auto-spawn 수는 호출자가 자기
-    표면(콘솔/렌더러)으로 알린다. 감사자 핸들(`harness.auditor.build_auditor`)은
-    호출자가 **이 앞에서** 만들고 노브를 적용한다(`knobs.apply_all`) — 상한
-    노브가 restore/auto_spawn 의 게이트이기 때문이다 (v10.43.0)."""
-    from agent_cli.subagent.mail_waker import MailWaker
+    Returns ``(revived, auto)`` — 부활/auto-spawn 수는 호출자가 자기 표면(콘솔/렌더러)으로 알린다. 감사자
+    핸들(`harness.auditor.build_auditor`)은 호출자가 **이 앞에서** 만들고 노브를 적용한다(`knobs.apply_all`) —
+    상한 노브가 restore/auto_spawn 의 게이트이기 때문이다 (v10.43.0)."""
 
-    # 깨울 메일만 센다 — "Stop everything" 의 정지 회신(``wakes_main`` 거짓)은 다음 사람 입력 런에 (v10.142.0)
-    waker = MailWaker(enqueue_wake, registry.has_mail_that_wakes_main)
+    if on_mail_notice is not None:
 
-    def _on_agent_mail(reply: dict, *, idle_at_delivery: bool | None) -> None:
-        # ``on_mail_notice(reply, busy)`` — CLI 만 건다(v10.51.0): main 이 바쁠
-        # 때만 대기 줄을 찍는다. web 은 None — 미배달 메일이 입력창 위
-        # 대기열에 사용자 요청과 같은 줄로 선다(`registry.on_pending_change`).
-        # busy 는 "그 메일이 도착한 순간 main 이 바빴는가" — 배달 구간에서 읽은 값이다(지금의 idle 을 읽으면 펌프가
-        # 이미 이 메일로 런을 연 뒤일 수 있다). 모름(None — 조회가 걸리지 않은 레지스트리)이면 찍지 않는다.
-        if on_mail_notice is not None and idle_at_delivery is not None:
+        def _on_agent_mail(reply: dict, *, idle_at_delivery: bool) -> None:
+            # ``on_mail_notice(reply, busy)`` — CLI 만 건다(v10.51.0): main 이 바쁠 때만 대기 줄을 찍는다. web 은
+            # 미배달 메일이 입력창 위 대기열에 사용자 요청과 같은 줄로 선다(`registry.on_pending_change`). busy 는
+            # "그 메일이 도착한 순간 main 이 바빴는가" — 배달 구간에서 읽은 값이다(지금의 한가함을 읽으면 펌프가 이미
+            # 이 메일로 런을 연 뒤일 수 있다).
             on_mail_notice(reply, not idle_at_delivery)
-        if reply.get("wakes_main", True):
-            waker.on_mail()  # 무장은 지금의 idle 로 — 놓친 것은 펌프의 `mark_idle` 재확인이 잡는다
 
-    registry.main_is_idle = waker.idle.is_set
-    registry.on_reply = _on_agent_mail
+        registry.on_reply = _on_agent_mail
     # P3 (D7): resume 세션이면 이전 에이전트 자동 재생성 + 미배달 회신
     # 복원 (fresh 세션은 agents.json 이 없어 no-op).
     revived = registry.restore(parent_ctx=parent_ctx)
     auto = registry.auto_spawn(parent_ctx=parent_ctx)
-    return waker, revived, auto
+    return revived, auto
 
 
 def main_run_ended(agent_registry, output: str = "", *, waiting: bool = False) -> int:
@@ -315,7 +311,7 @@ def main_run_ended(agent_registry, output: str = "", *, waiting: bool = False) -
     한쪽만 고치는 것이 이 파일이 존재하는 이유의 사고 유형이다
     (모듈 docstring 의 teardown 4갈래 참조).
 
-    독촉은 메일박스로 가고 ``MailWaker`` 가 유휴 main 도 깨운다. 건 수를
+    독촉은 main 의 상자로 가고 한가한 펌프가 그것으로 런을 연다. 건 수를
     돌려준다(0 = 빚 없음).
     """
     if agent_registry is None:
@@ -488,6 +484,8 @@ class SessionStores:
     monitors: Any
     jobs: Any
     schedules: Any
+    #: main 앞 사람의 말(`MainInput`) — 그 창구가 세션의 창구다(레지스트리가 받는다)
+    main_input: Any
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -510,10 +508,10 @@ class WiredSession:
 
 
 def build_session_stores(
-    spec: SessionSpec, *, queue, on_jobs_change=None, on_schedules_change=None
+    spec: SessionSpec, *, main_input, on_jobs_change=None, on_schedules_change=None
 ) -> SessionStores:
     """모니터 → 작업 → 훅 러너 → 스냅샷 저장소 → 예약. 예약의 발화 자리(``enqueue``)는
-    여기서 ``queue`` 에 묶는다 — 스레드는 :func:`wire_session` 의 끝에서 켠다.
+    여기서 ``main_input`` 에 묶는다 — 스레드는 :func:`wire_session` 의 끝에서 켠다.
     ``on_*_change`` 는 화면이 있는 호스트의 관찰자(web 칩·status.json)."""
     monitors = build_monitor_registry(spec.session_dir)
     jobs = build_job_registry()  # 🧵 백그라운드 작업 (v10.47.0)
@@ -523,13 +521,15 @@ def build_session_stores(
     # 📸 저장소가 서야 `snapshot` 도구가 광고된다 (v10.36.0)
     build_snapshot_store(spec.session.session_id)
     schedules = build_schedule_registry(spec.session_dir)
-    # 예약 발화는 사용자 요청처럼 같은 큐로 들어온다 (docs/schedule/DESIGN.md §5·§6.3)
-    schedules.enqueue = lambda prompt, nickname: queue.enqueue(
+    # 예약 발화는 사용자 요청처럼 main 앞 사람의 말로 들어온다 (docs/schedule/DESIGN.md §5·§6.3)
+    schedules.enqueue = lambda prompt, nickname: main_input.enqueue(
         None, prompt, nickname=nickname
     )
     if on_schedules_change is not None:
         schedules.on_change = on_schedules_change
-    return SessionStores(monitors=monitors, jobs=jobs, schedules=schedules)
+    return SessionStores(
+        monitors=monitors, jobs=jobs, schedules=schedules, main_input=main_input
+    )
 
 
 def apply_knobs(knob_args, *, ctx, registry, renderer, auditor) -> None:
@@ -562,6 +562,7 @@ def build_session_owners(
             session=spec.session,
             hooks_config=spec.hooks_config,
         ),
+        post=stores.main_input.post,
         monitors=stores.monitors,
         jobs=stores.jobs,
     )
@@ -581,7 +582,6 @@ def wire_session(
     stores: SessionStores,
     owners: SessionOwners,
     *,
-    queue,
     surface,
     policy,
     on_mail_notice=None,
@@ -591,34 +591,30 @@ def wire_session(
     **소비자를 다 세운 뒤에 생산자를 켠다** 가 이 함수 하나에서 보장된다 — 도중에
     죽으면 예약은 켜지지 않는다. ``surface``·``policy`` 는 호스트의 것(펌프 표면·수명),
     ``on_mail_notice`` 는 main 이 바쁠 때의 메일 알림(run 만 — web 은 대기열이 그 자리),
-    ``on_wait_input`` 은 제자리 대기를 깨울 사람 입력을 기다리는 법(없으면 입력 큐 — run 은
-    터미널 줄도)."""
+    ``on_wait_input`` 은 제자리 대기를 깨울 사람 입력을 기다리는 법(없으면 main 앞 사람의 말 — run 은
+    터미널 줄도). 사람의 말은 ``stores.main_input`` 이다."""
     from agent_cli.pump import PumpDeps, SessionPump
 
     registry = owners.agent_registry
-    waker, revived, auto = wire_agent_mail(
-        registry,
-        # 합성 입력 — 화면 대기열에 뜨지 않는다.
-        enqueue_wake=lambda cid, t: queue.enqueue(cid, t, system=True),
-        on_mail_notice=on_mail_notice,
-        parent_ctx=spec.ctx,
+    main_input = stores.main_input
+    revived, auto = wire_agent_mail(
+        registry, on_mail_notice=on_mail_notice, parent_ctx=spec.ctx
     )
-    # main 루프의 종류 (v10.87.0) — 세션에 하나. 런 도중 주입: 예약 발화가 다음 턴
-    # 경계에 요청으로 합류하고, 합성 깨우기는 pump.route 가 소비한다(펌프는 아래서
-    # 만들어지므로 호출 시점에 푸는 콜러블).
+    # main 루프의 종류 (v10.87.0) — 세션에 하나. 런 도중 주입: 사람의 말·예약 발화가 다음 턴
+    # 경계에 요청으로 합류한다(펌프는 아래서 만들어지므로 라우팅은 호출 시점에 푸는 콜러블).
     main_kind = MainLoop(
         binding=spec.binding,
         ctx=spec.ctx,
         session=spec.session,
         agent_registry=registry,
         mcp_manager=spec.mcp_manager,
-        dequeue_user_message=queue.dequeue_nowait,
-        enqueue_user_message=lambda text, nickname: queue.enqueue(
+        dequeue_user_message=main_input.take_next,
+        enqueue_user_message=lambda text, nickname: main_input.enqueue(
             None, text, nickname=nickname
         ),
         route_message=lambda text: pump.route(text),
         wait_for_user_input=on_wait_input
-        or wait_for_human_words(queue, lambda text: pump.route(text)),
+        or wait_for_human_words(main_input, lambda text: pump.route(text)),
         max_turns=spec.max_turns,
         max_depth=spec.max_depth,
         verbose=spec.verbose,
@@ -628,8 +624,7 @@ def wire_session(
     )
     pump = SessionPump(
         PumpDeps(
-            queue=queue,
-            waker=waker,
+            main_input=main_input,
             agent_registry=registry,
             run_main=lambda req: main_kind.run(main_kind.start(req)),
             surface=surface,
@@ -638,7 +633,7 @@ def wire_session(
         )
     )
     # 첫 정산이 꺼져 있던 동안 지난 발화를 질문으로 남긴다. 펌프가 돌기 전에 발화한
-    # 예약은 큐에 들어갈 뿐이다 (v10.130.5).
+    # 예약은 main 상자에 줄 설 뿐이다 (v10.130.5).
     stores.schedules.start()
     return WiredSession(pump=pump, revived=revived, auto=auto)
 
@@ -768,7 +763,7 @@ class MainLoop(LoopKind):
         wait_for_user_input=None,
     ) -> LoopPorts:
         """``wait_for_user_input`` (v10.141.0): ``(timeout) -> bool`` — 사람 입력이 도착했는가
-        (꺼내지 않는다; 호스트의 것 — web 은 입력 큐, run 은 터미널 줄 + 입력 큐). 기다리는
+        (꺼내지 않는다; 호스트의 것 — web 은 main 앞 사람의 말, run 은 터미널 줄 + 그것). 기다리는
         회신을 둔 제자리 `wait` 를 사람의 말이 깨운다."""
         return LoopPorts(
             owner="main",
@@ -802,7 +797,7 @@ class MainLoop(LoopKind):
     def wait_policy(self) -> str:
         """기다리는 회신이 있으면 제자리(v10.141.0, docs/agent-engine/DESIGN.md §3) — 같은 런에서
         회신·사람 입력·체크인에 깬다(감사 범위도 그 런 하나). 작업·모니터만 기다리면 런을 끝내고
-        펌프가 깨우기를 기다린다(체크인 타이머는 레지스트리)."""
+        펌프가 메일을 기다린다(체크인 타이머는 레지스트리)."""
         return WAIT_BLOCK if self.ports.mailbox.awaited() else WAIT_END_RUN
 
     def wait_refused_next(self) -> str:
@@ -810,7 +805,7 @@ class MainLoop(LoopKind):
         return WAIT_NEXT_MAIN
 
     def intake(self) -> list[dict]:
-        """입력 큐를 전부 비우고(라우팅은 엔진), 레지스트리의 미배달 회신을 받는다."""
+        """main 앞 사람의 말을 전부 꺼내고(라우팅은 엔진), 그다음 상자의 메일을 받는다 — 사람 먼저, 메일 뒤."""
         items: list[dict] = []
         dequeue = self.ports.dequeue_user_message
         if dequeue is not None:
