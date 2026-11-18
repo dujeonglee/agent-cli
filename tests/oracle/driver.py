@@ -2331,6 +2331,70 @@ def s31_schedule_fires_while_main_waits(root: Path) -> dict:
     return s.collect(facts)
 
 
+# ── 메일 런이 열리는 모양 (런을 봉투로 열기 전의 기준) ─────────────
+
+
+def s32_quiet_reply_then_waking_mail(root: Path) -> dict:
+    """ "Stop everything" 의 깨우지 않는 정지 회신이 한가한 main 앞에 먼저 서고, 그 뒤 작업 통지(깨움)가 온다 — 메일
+    런이 열리고 그 첫 턴 경계가 둘을 **도착 순서**로 읽는다 (web). s11 과 같은 정지, 다음 런을 사람 말 대신 메일이 연다."""
+    box: dict = {}
+    facts: dict = {}
+
+    def stop_everything(msgs):
+        s = box["s"]
+        assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        s.surface.stop.set()  # main 먼저 (서버·Ctrl+C 와 같은 순서)
+        box["stopped"] = s.reg.stop_all_runs(wakes_requesters=False)
+        return call("shell", command="true")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="run", task="TASK-T slow work"),
+                _after_runs_began(box, 1, call("wait")),
+                complete_all("read both"),
+            ],
+            "TASK-T": [stop_everything],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.reg.checkin_timer_factory = _HeldTimer  # 5분 체크인이 저절로 나가지 않게
+
+    def done(s):
+        until(lambda: runs_ended(s) >= 1)
+        key = s.agent_keys()[0]
+        until(lambda: s.agent_state(key) == "dead", "run came down")
+        until(lambda: len(s.reg.pending_mail()) == 1, "quiet reply")
+        facts["job"] = _job_mail(s, 1)
+        until(lambda: runs_ended(s) >= 2, "mail run")
+
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=done)
+    facts["stopped"] = len(box.get("stopped") or [])
+    return s.collect(facts)
+
+
+def s33_words_right_after_a_mail_run_opens(root: Path) -> dict:
+    """메일 런이 열린 직후(런을 열기 직전의 표면 알림에서), 그 런의 첫 턴 경계 전에 사람 말이 온다 — 지금은 그 경계가
+    사람 말 → 메일 순서로 넣는다 (web)."""
+    box: dict = {}
+    facts: dict = {}
+    p = Provider({"MAIN": [complete_all("first answer"), complete_all("saw both")]})
+    s = box["s"] = Session(root, p, path="web")
+    s.surface.before_run = lambda req: (
+        s.say("MAIN while it opens", nickname="dj") if req.wake else None
+    )
+
+    def done(s):
+        until(lambda: runs_ended(s) >= 1 and s.main_idle(), "main idle")
+        facts["job"] = _job_mail(s, 1)
+        until(lambda: runs_ended(s) >= 2, "mail run")
+
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
 SCENARIOS = {
     "s01_run": lambda root: s01_request_to_run_agent_explicit_reply(root, "run"),
     "s01_web": lambda root: s01_request_to_run_agent_explicit_reply(root, "web"),
@@ -2376,6 +2440,9 @@ SCENARIOS = {
     "s29_words_before_wait": s29_words_already_there_when_main_waits,
     "s30_slash_words_while_waiting": s30_slash_words_that_are_not_a_command_while_waiting,
     "s31_schedule_while_waiting": s31_schedule_fires_while_main_waits,
+    # 메일 런이 열리는 모양
+    "s32_quiet_reply_then_waking_mail": s32_quiet_reply_then_waking_mail,
+    "s33_words_right_after_mail_run_opens": s33_words_right_after_a_mail_run_opens,
 }
 
 
