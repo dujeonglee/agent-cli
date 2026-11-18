@@ -87,11 +87,12 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.wake import (
     AgentFact,
     WakeFacts,
+    agent_relations,
     harness_record,
+    parked_view,
     release_owner,
     wait_checkin,
     wake_source_ids,
-    wake_sources,
 )
 
 if TYPE_CHECKING:
@@ -752,7 +753,8 @@ class AgentRegistry:
 
         lines: list[str] = []
         question = False
-        for kind, me in self._agent_relations(addr):
+        facts = self.wake_facts()  # 관계와 잠든 채무자를 같은 사본에서
+        for kind, me in agent_relations(facts, addr):
             key = me.split(":", 1)[1]
             tm = self._agents.get(key)
             if tm is None:
@@ -784,9 +786,10 @@ class AgentRegistry:
                     f"{_label(key)} · owes you a reply · busy on another request"
                     f"{_last_step(tm)}"
                 )
-        for debtor in self.parked_debtors_for(addr):
+        for debtor, on in parked_view(
+            addr, frozenset({addr}), agents=self, facts=facts
+        ):
             key = debtor.split(":", 1)[1]
-            on = wake_sources(debtor, frozenset({addr}), agents=self)
             if not on:
                 continue  # 깨울 것이 없는 채무자는 깨울 근거가 아니다 (v10.77.0)
             line = (
@@ -1750,7 +1753,7 @@ class AgentRegistry:
         # 워커가 다시 꺼내지 않아 **영영 안 읽힌다**. `tm.stop_event` 를
         # 세우는 곳은 그 둘뿐이라(SIGINT 핸들러는 메인 스레드 전용, 웹
         # `/api/stop` 은 main 의 이벤트) 죽지 않는데 서는 경로가 없다.
-        if tm.state == "dead" or tm.stop_event.is_set():
+        if not self._agent_alive(f"agent:{key}"):
             reason = f" ({tm.error})" if tm.error else ""
             return f'agent "{key}" is dead{reason} — spawn a new one'
         if not message.strip():

@@ -13,7 +13,7 @@ from agent_cli.runtime import MainLoop
 from agent_cli.session_slots import set_agent_registry
 from agent_cli.skills.executor import SkillLoop
 from agent_cli.subagent.resident_loop import ResidentLoop
-from agent_cli.wake import Mailbox
+from agent_cli.wake import AgentFact, Mailbox, WakeFacts
 
 _S = object()
 
@@ -36,7 +36,12 @@ class TestWithRegistry:
         reg = MagicMock()
         reg.arrived_for.return_value = 2
         reg.next_checkin_s.return_value = 300
-        reg.parked_debtors_for.return_value = ["agent:k"]
+        # 잠든 채무자는 레지스트리의 사본에서 판정한다(`wake.parked_debtors`) — k 는 a 에게 빚진 채 잠들었다
+        reg.wake_facts.return_value = WakeFacts(
+            agents=(AgentFact("agent:k", False, False, (), ()),),
+            owing=(("agent:k", "agent:a"),),
+            awaited=frozenset(),
+        )
         reg.wait_mail.return_value = "mail"
         mb = Mailbox(reg, "agent:a")
         stop, still = object(), (lambda: True)
@@ -49,7 +54,7 @@ class TestWithRegistry:
         mb.drop()
         reg.arrived_for.assert_called_once_with("agent:a")
         reg.next_checkin_s.assert_called_once_with("agent:a")
-        reg.parked_debtors_for.assert_called_once_with("agent:a")
+        reg.wake_facts.assert_called_once_with()
         reg.wait_mail.assert_called_once_with(
             "agent:a", stop_event=stop, still_waiting=still, wait_input=None
         )

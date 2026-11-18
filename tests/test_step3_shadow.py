@@ -14,7 +14,17 @@ import threading
 import pytest
 
 from agent_cli import wake
-from agent_cli.subagent.question_port import judge_reply, reply_refusal
+from agent_cli.constants import has_words
+from agent_cli.session_slots import (
+    set_job_registry,
+    set_monitor_registry,
+    set_schedule_registry,
+)
+from agent_cli.subagent.question_port import (
+    _not_delivered,
+    judge_reply,
+    reply_refusal,
+)
 from tests.test_agents_live import _FakeLoopResult, make_registry
 from tests.test_engine_p2 import wait_until
 
@@ -31,6 +41,9 @@ def world(tmp_path):
         door.wait()
         return _FakeLoopResult(output="ok"), 0.01
 
+    set_job_registry(None)
+    set_monitor_registry(None)
+    set_schedule_registry(None)
     reg = make_registry(tmp_path, runner=runner)
     keys = [reg.spawn(name=f"s{i}")[0] for i in range(3)]
     assert wait_until(lambda: all(reg.get(k).state == "idle" for k in keys))
@@ -43,19 +56,33 @@ def _addrs(keys):
     return ["main", *(f"agent:{k}" for k in keys), "user", "harness:x"]
 
 
+def _old_walk(reg, owner, _seen=frozenset()):
+    """옛 `wake._wake_items` 의 에이전트 몫(v10.145.2) 그대로 — 작업·모니터·예약 슬롯은 이 테스트에서 비어 있다."""
+    out = list(reg.pending_agents_for(owner, exclude=_seen))
+    seen = _seen | {owner}
+    for debtor in reg.parked_debtors_for(owner):
+        if debtor in seen:
+            continue
+        if _old_walk(reg, debtor, seen):
+            out.append((debtor, f"{debtor} owes you a reply (it is waiting on others)"))
+    return out
+
+
 def _old_wake(reg, addr, exclude):
     return (
         reg._agent_relations(addr, exclude),
         reg.pending_agents_for(addr, exclude),
         reg.parked_debtors_for(addr),
+        _old_walk(reg, addr, exclude),
     )
 
 
-def _new_wake(facts, addr, exclude):
+def _new_wake(facts, addr, exclude, reg):
     return (
         wake.agent_relations(facts, addr, exclude),
         wake.relation_items(facts, addr, exclude),
         wake.parked_debtors(facts, addr),
+        wake._wake_items(addr, exclude, agents=reg, facts=facts),
     )
 
 
@@ -74,13 +101,104 @@ def _compare_wake(reg, keys, extra_excludes):
         }
         if before == after:
             for (a, ex), old in before.items():
-                assert _new_wake(facts, a, ex) == old, (a, ex)
+                assert _new_wake(facts, a, ex, reg) == old, (a, ex)
             return True
     return False  # 계속 움직였다 — 이 걸음은 비교하지 않는다
 
 
 def _ids(reg):
     return [r.rid for r in reg._post.rows()]
+
+
+# ── 옛 `QuestionPort.reply` (v10.145.2) 그대로 — 3-나 전환 뒤에도 대조를 잇는다. 거절만 낸다(갚지 않는다). ──
+
+
+def _old_listing(owed) -> str:
+    return "; ".join(
+        f'[{d.id}] {d.to.split(":", 1)[-1]}: "{d.text[:60]}"' for d in owed
+    )
+
+
+def _old_main_reply(reg, me, text, id):
+    owed = reg.reply_debts(me)
+    if not owed:
+        return (
+            "nothing to reply to — no agent is waiting on a reply from you. "
+            "To give an agent new work, use `message`."
+        )
+    listing = _old_listing(owed)
+    id = str(id or "").strip()
+    if not id:
+        return (
+            "reply needs `id` — which request is this the reply to? You owe: "
+            f"{listing}. Send `reply` with that `id`."
+        )
+    d = next((x for x in owed if x.id == id), None)
+    if d is None:
+        return f'no unpaid request "{id}" — you owe: {listing}.'
+    return PAY
+
+
+PAY = object()
+
+
+def _old_reply(reg, key, text, id=""):
+    """옛 판정 — 거절 글, 또는 갚을 차례면 `PAY`."""
+    me = "main" if key is None else f"agent:{key}"
+    text = (text or "").strip()
+    if not text:
+        return "empty reply — nothing sent"
+    if not has_words(text):
+        return f"reply has no words ({text[:20]!r}) — nothing sent; say it in words"
+    if key is None:
+        return _old_main_reply(reg, me, text, id)
+    tm = reg.get(key)
+    if tm is None:
+        return "unknown agent"
+    owed = reg.reply_debts(me)
+    if not owed:
+        a = tm.current_author
+        d = reg.reply_debt(me, a)
+        if d is not None and d.human:
+            return (
+                "nothing to send — your requester is a person watching this "
+                "window, and they see your `complete` here. Just `complete`."
+            )
+        if d is not None and d.settled and d.closed_by == "unsent":
+            return _not_delivered(d)
+        if d is not None and d.settled:
+            return (
+                f"already replied to {a} in this run — a second reply is not "
+                "delivered. If you must correct it, send the correction with "
+                f'`message` (`to` "{a.split(":", 1)[-1]}", `text` your correction).'
+            )
+        return (
+            "nothing to reply to — this run was not started by a request "
+            "that expects one (it was a delivered reply, a notice, or an "
+            "answer). Do not acknowledge those. If you need something from "
+            "someone, use `message` (`to` the recipient, `text` your message)."
+        )
+    listing = _old_listing(owed)
+    id = str(id or "").strip()
+    if not id:
+        return (
+            "reply needs `id` — which request is this the reply to? You owe: "
+            f"{listing}. Send `reply` with that `id`."
+        )
+    d = next((x for x in owed if x.id == id), None)
+    if d is None:
+        prior = reg.debt_by_id(me, id)
+        if prior is not None and prior.settled and prior.closed_by == "unsent":
+            return _not_delivered(prior)
+        if prior is not None and prior.settled:
+            return (
+                f"already replied to [{id}] ({prior.to}) in this run — a second "
+                "reply is not delivered. If you must correct it, send the "
+                f'correction with `message` (`to` "{prior.to.split(":", 1)[-1]}", '
+                "`text` your correction)."
+            )
+        return f'no unpaid request "{id}" — you owe: {listing}.'
+    return PAY
 
 
 def _compare_reply(reg, keys):
@@ -93,12 +211,12 @@ def _compare_reply(reg, keys):
             for rid in ["", "r-999", "u-0", *_ids(reg)]:
                 facts = reg.reply_facts(me, rid.strip())
                 verdict, d = judge_reply(text.strip(), rid.strip(), facts)
+                old = _old_reply(reg, who, text, rid)
                 if verdict == "pay":
-                    assert d is not None and d.id == rid.strip()
+                    assert old is PAY and d is not None and d.id == rid.strip()
                     continue
-                assert reply_refusal(verdict, text.strip(), rid.strip(), facts) == (
-                    port.reply(text, id=rid)
-                ), (who, text, rid, verdict)
+                new = reply_refusal(verdict, text.strip(), rid.strip(), facts)
+                assert new == old == port.reply(text, id=rid), (who, text, rid, verdict)
                 seen += 1
     return seen
 

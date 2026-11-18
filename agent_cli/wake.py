@@ -133,14 +133,20 @@ def relation_items(
 
 
 def _wake_items(
-    owner: str, _seen: frozenset = frozenset(), *, agents
+    owner: str,
+    _seen: frozenset = frozenset(),
+    *,
+    agents,
+    facts: WakeFacts | None = None,
 ) -> list[tuple[str, str]]:
     """`wake_sources` 의 재료 — ``(id, 사람이 읽을 줄)`` 쌍 (v10.79.0).
 
     id 는 ``"job:1"``·``"mon:mon-504d33"``·``"agent:k"``·``"schedule"`` — 중간
     깨우기가 "같은 대상을 다시 기다리는가" 를 이 집합으로 비교한다. 사람이 읽는
     줄로 비교하면 같은 에이전트라도 "queued↔working" 처럼 글이 바뀌어 헛되이
-    5분으로 돌아간다."""
+    5분으로 돌아간다.
+
+    에이전트 몫은 레지스트리의 사본(``facts`` — 없으면 맨 위에서 한 번 뜬다)을 재귀 내내 함께 쓴다."""
     out: list[tuple[str, str]] = []
     jobs = get_job_registry()
     if jobs is not None:
@@ -152,12 +158,12 @@ def _wake_items(
             if m.owner == owner:
                 out.append((f"mon:{m.id}", f"monitor {m.id}"))
     if agents is not None:
-        out.extend(agents.pending_agents_for(owner, exclude=_seen))
-        seen = _seen | {owner}
-        for debtor in agents.parked_debtors_for(owner):
-            if debtor in seen:
-                continue  # 고리 — 나를 기다리는 쪽은 나를 깨우지 못한다
-            if _wake_items(debtor, seen, agents=agents):
+        facts = facts if facts is not None else agents.wake_facts()
+        out.extend(relation_items(facts, owner, _seen))
+        for debtor, waits_on in parked_view(
+            owner, _seen | {owner}, agents=agents, facts=facts
+        ):
+            if waits_on:
                 out.append(
                     (debtor, f"{debtor} owes you a reply (it is waiting on others)")
                 )
@@ -167,6 +173,23 @@ def _wake_items(
     if sched is not None and sched.has_active_work() and not is_private_owner(owner):
         out.append((_SCHEDULE_ID, "a schedule"))
     return out
+
+
+def parked_view(
+    owner: str, seen: frozenset, *, agents, facts: WakeFacts
+) -> list[tuple[str, list[str]]]:
+    """고리 찾기의 걸음 하나 — ``owner`` 에게 빚진 채 잠든 채무자마다 ``(주소, 그를 깨울 것의 줄)`` (v10.77.0). ``seen``
+    (거슬러 온 주소들, ``owner`` 포함)에 든 채무자는 뺀다 — 고리다, 나를 기다리는 쪽은 나를 깨우지 못한다. 그를 깨울
+    것은 ``seen`` 을 뺀 채 다시 묻는다. `wait` 의 판정(`wake_sources`)과 중간 깨우기의 에이전트 줄
+    (`AgentRegistry.checkin_agent_lines`)이 같은 이 걸음을 쓴다."""
+    return [
+        (
+            debtor,
+            [text for _, text in _wake_items(debtor, seen, agents=agents, facts=facts)],
+        )
+        for debtor in parked_debtors(facts, owner)
+        if debtor not in seen
+    ]
 
 
 def harness_work_running(owner: str) -> bool:
@@ -430,9 +453,10 @@ class Mailbox:
         return self._registry.next_checkin_s(self.owner)
 
     def parked_debtors(self) -> list[str]:
+        """이 주소에게 빚진 채 잠든 에이전트 — `wait` 거절 문장의 주어(`parked_debtors`)."""
         if self._registry is None:
             return []
-        return self._registry.parked_debtors_for(self.owner)
+        return parked_debtors(self._registry.wake_facts(), self.owner)
 
     def drop(self) -> None:
         """메일함과 걸린 체크인을 버린다 — 런이 끝나 읽을 사람이 없다."""
