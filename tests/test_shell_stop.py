@@ -1,4 +1,4 @@
-"""런의 정지가 전경 `shell` 명령을 끝낸다 (N8).
+"""런의 정지가 전경 `shell` 명령을 끝낸다 (v10.146.2).
 
 실측(v10.146.0): 웹 방에서 "Stop everything" 을 눌러도 전경 `sleep 100; echo finished` 는 95초 뒤
 끝까지 돌았고, 그동안 에이전트는 busy 였다 — 전경 실행이 `communicate(timeout=)` 로만 기다리며 정지를

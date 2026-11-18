@@ -1648,7 +1648,7 @@ class TestShellTimeout:
                 pass
 
         def _wait(proc, timeout, stopped):
-            # 기다림은 정지를 보느라 짧게 나뉜다(N8) — 명령이 받는 상한은 `_wait_or_stop` 의 인자다
+            # 기다림은 정지를 보느라 짧게 나뉜다(v10.146.2) — 명령이 받는 상한은 `_wait_or_stop` 의 인자다
             captured["timeout"] = timeout
             return "", b"", b""
 

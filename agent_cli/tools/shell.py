@@ -235,7 +235,7 @@ def _guard(cmd: str) -> str | None:
 FOREGROUND_LIMIT = 120
 
 #: 전경 명령을 기다리며 런의 정지를 보는 간격(초) — 이만큼 `communicate` 로 기다리고(select,
-#: 바쁜 대기 아님) 사이마다 정지를 본다 (N8). 서 있으면 명령은 시간 초과 때처럼 끝난다.
+#: 바쁜 대기 아님) 사이마다 정지를 본다 (v10.146.2). 서 있으면 명령은 시간 초과 때처럼 끝난다.
 STOP_POLL_S = 0.2
 
 #: 모델이 제 손으로 떼어 내는 조각 — `nohup`·`setsid`·`disown` 단어(토큰 경계), 명령
@@ -347,7 +347,7 @@ def tool_shell(
     args: dict, *, owner: str = "main", stopped: Callable[[], bool] | None = None
 ) -> ToolResult:
     """Run a shell command and return stdout/stderr. ``stopped`` — 이 런의 정지가 섰는가
-    (`RunContext.stopped`); 서면 명령의 프로세스 그룹을 끝내고 그 사실을 돌려준다 (N8)."""
+    (`RunContext.stopped`); 서면 명령의 프로세스 그룹을 끝내고 그 사실을 돌려준다 (v10.146.2)."""
 
     cmd = args.get("command", "")
     if not cmd or not cmd.strip():
@@ -383,7 +383,7 @@ def tool_shell(
             )
         except BaseException:
             # 기다리는 도중 끊겼다(CLI 의 창 밖 Ctrl+C 가 던지는 KeyboardInterrupt, SIGTERM 의
-            # Terminated) — 자기 세션의 명령이 고아로 남지 않게 그룹을 끝내고 그대로 던진다 (N8).
+            # Terminated) — 자기 세션의 명령이 고아로 남지 않게 그룹을 끝내고 그대로 던진다 (v10.146.2).
             _stop_group(proc)
             raise
         if ended:
@@ -466,7 +466,7 @@ def _output_so_far(head: str, raw_out: bytes, raw_err: bytes) -> str:
 
 
 def _run_stopped_message(ran: int, raw_out: bytes, raw_err: bytes) -> str:
-    """런의 정지로 끝낸 명령의 결과 (N8) — 주체 없음: 도구는 누가 멈췄는지 모른다(사람의 ■·Ctrl+C,
+    """런의 정지로 끝낸 명령의 결과 (v10.146.2) — 주체 없음: 도구는 누가 멈췄는지 모른다(사람의 ■·Ctrl+C,
     모델의 `agent` `kill`, 세션 종료). 교정 줄은 없다(시간 문제가 아니다)."""
     return _output_so_far(
         f"This run was stopped, so the command was ended after {ran}s, together "

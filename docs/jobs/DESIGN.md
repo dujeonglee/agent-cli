@@ -54,7 +54,7 @@ timeout=)` 이 `/bin/sh` 만 죽였고, 그 아래 `apt-get` 이 dpkg 잠금을 
 시간 초과 8건 중 5건이 foreground `apt-get install` 이었다(설명의 작업 종류 나열 "an install" 이 있는데도). 나열은 지우고
 교정은 이 자리(트리거 직후)가 맡는다.
 
-**런의 정지도 같은 길로 끝낸다 (N8).** v10.146.0 실측: 웹 방에서 "Stop everything" 을 눌러도 전경 `sleep 100; echo finished`
+**런의 정지도 같은 길로 끝낸다 (v10.146.2).** v10.146.0 실측: 웹 방에서 "Stop everything" 을 눌러도 전경 `sleep 100; echo finished`
 는 95초 뒤 끝까지 돌았고 그동안 에이전트는 busy, 정지 회신도 그때서야 갔다 — 기다림이 `communicate(timeout=)` 하나라 정지를
 보지 않았다. 이제 `tool_shell` 은 `STOP_POLL_S`(0.2 s)씩 `communicate` 로 기다리고(select — 바쁜 대기 아님) 사이마다
 `RunContext.stopped`(브리지가 부를 때의 `state.stop_event.is_set()` 을 읽는 콜러블 — main 은 런마다 새 Event, 에이전트는
