@@ -907,10 +907,14 @@ def s04_notices_both_ways(root: Path) -> dict:
 
 
 def _reply_then_settle(box, me: str, to: str, rid: str, text: str) -> str:
-    """``me`` 가 ``to`` 에게 `reply` — 회신이 깨운 ``to`` 의 새 런은 ``me`` 가 런을 끝낸(한가한) 뒤에 연다."""
+    """``me`` 가 ``to`` 에게 `reply` — 회신이 깨운 ``to`` 의 새 런은 ``me`` 가 런을 끝낸(한가한) 뒤에 열고, ``me`` 의
+    다음 꼬리는 ``to`` 가 그 회신을 집은 뒤(바쁨)에 짓는다(`_held_request_to` 와 같은 규칙 — 안 잡으면 느린 러너에서
+    그 꼬리가 "idle · 1 queued" 로 찍힌다: 컨테이너 cpus 0.5, 750회 중 2회)."""
     s = box["s"]
     a, b = _agent_key(s, me), _agent_key(s, to)
     s.recorder.hold("begin_agent_work", b, lambda: s.agent_state(a) == "idle")
+    # 회신의 창 줄(`agent_message` — 받는 쪽 키, 보낸 쪽 스레드, 받은편지함에 넣은 뒤)에서 보낸 쪽을 잡는다
+    s.recorder.hold("agent_message", b, lambda: s.agent_state(b) == "busy")
     return call("reply", id=rid, text=text)
 
 
