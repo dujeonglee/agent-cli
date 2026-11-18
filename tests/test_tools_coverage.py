@@ -1647,11 +1647,13 @@ class TestShellTimeout:
             def __init__(self, cmd, **kw):
                 pass
 
-            def communicate(self, timeout=None):
-                captured["timeout"] = timeout
-                return b"", b""
+        def _wait(proc, timeout, stopped):
+            # 기다림은 정지를 보느라 짧게 나뉜다(v10.146.2) — 명령이 받는 상한은 `_wait_or_stop` 의 인자다
+            captured["timeout"] = timeout
+            return "", b"", b""
 
         monkeypatch.setattr(sh.subprocess, "Popen", _P)
+        monkeypatch.setattr(sh, "_wait_or_stop", _wait)
         sh.tool_shell(args)
         return captured.get("timeout")
 

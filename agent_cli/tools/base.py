@@ -93,6 +93,10 @@ class RunContext:
     #: 이름을 받았을 때 이 목록을 그대로 나열한다. 루프가 `tool_guide` 와 함께 묶어
     #: 준다(도구가 레지스트리를 올려다보지 않게). 루프 상수라 위 캐시 조건에 맞는다.
     tool_names: tuple[str, ...] = ()
+    #: 이 런의 정지가 섰는가를 돌려주는 콜러블 (v10.146.2, None = 정지 없음). 같은 이유로 콜러블 —
+    #: main 은 런마다 새 Event 라 읽을 때 본다. 전경 `shell` 이 기다리는 사이사이 보고, 서면
+    #: 명령의 프로세스 그룹을 끝낸다. ``is_set()`` 만 쓴다(`agent_stop.LinkedStop` 의 부모까지 본다).
+    stopped: Callable[[], bool] | None = None
 
 
 # ── Oversized-output policy (ONE policy, every tool) ─────────────
