@@ -600,7 +600,7 @@ class TestRegistryLifecycle:
     def test_on_reply_callback_fires(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         seen = []
-        reg.on_reply = seen.append
+        reg.on_reply = lambda mail, **_: seen.append(mail)
         key, _ = reg.spawn()
         reg.request(key, "ping")
         assert wait_until(lambda: len(seen) == 1)
