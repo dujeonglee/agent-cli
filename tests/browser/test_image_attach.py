@@ -282,3 +282,85 @@ def test_changed_image_gets_a_fresh_thumbnail(stack, page, ws):
             " && a[0].naturalWidth === 64 && a[1].naturalWidth === 40; }"
         )
     ), "새로고침 뒤 옛 카드가 지금 파일의 그림을 그린다"
+
+
+def test_image_only_message_opens_a_run_and_the_worker_lives_on(stack, page, ws):
+    """글 없이 이미지만 보낸다 — 실제 웹 표면·펌프가 런을 열고 말풍선에 썸네일이 서며,
+    그 뒤 보낸 말도 처리된다. 빈 글의 명령 판정이 예외를 내면 펌프가 런을 열기 전에
+    터져 main 워커가 죽고, 다음 말은 대기열에만 선다."""
+    import threading
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from agent_cli.main import _command_dispatch
+    from agent_cli.providers.capabilities import ModelCapabilities
+    from agent_cli.pump import ForeverPolicy
+    from agent_cli.web.slash import WebDispatchOutput
+    from agent_cli.web.surface import WebSurface
+    from tests.binding_support import make_binding
+    from tests.pump_support import make_pump
+
+    caps = ModelCapabilities(32768, 4096, True, supports_vision=True)
+    stack.server.binding.capabilities = caps
+    spec = SimpleNamespace(
+        binding=None, max_turns=0, verbose=False, max_depth=2, ctx=None, session=None
+    )
+    output = WebDispatchOutput(stack.renderer)
+    surface = WebSurface(
+        renderer=stack.renderer,
+        server=stack.server,
+        ctx=stack.ctx,
+        binding=make_binding(provider=MagicMock(), capabilities=caps),
+        dispatch=_command_dispatch(
+            spec,
+            SimpleNamespace(agent_registry=stack.server.agent_registry),
+            lambda: output,
+            graceful_interrupt=True,
+        ),
+    )
+    ran: list = []
+
+    def run_main(req):
+        ran.append((req.text, [i["path"] for i in req.images]))
+        return SimpleNamespace(output="", success=True, waiting=False)
+
+    pump = make_pump(
+        main_input=stack.server.main_input,
+        run_main=run_main,
+        registry=stack.server.agent_registry,
+        surface=surface,
+        policy=ForeverPolicy(),
+    )
+    worker = threading.Thread(target=pump.run, daemon=True)
+    worker.start()
+    try:
+        stack.emit_ready()
+        page.goto(stack.url)
+        page.wait_for_selector("#attach", timeout=8000)
+        page.set_input_files(
+            "#attach-input",
+            {"name": "shot.png", "mimeType": "image/png", "buffer": _png_bytes()},
+        )
+        page.wait_for_selector(
+            "#attach-strip .attach-chip:not(.uploading)", timeout=8000
+        )
+        page.press("#input", "Enter")  # 글은 비어 있다
+        assert _wait(lambda: len(ran) == 1), "이미지만 든 말이 런을 열지 않았다"
+        assert ran[0][0] == ""
+        assert ran[0][1][0].startswith(".agent-cli/tmp/uploads/")
+        page.wait_for_selector("#messages .card-user .thumbs img", timeout=8000)
+        assert _wait(
+            lambda: page.evaluate(
+                "() => { const i = document.querySelector('#messages .card-user .thumbs img');"
+                " return i.complete && i.naturalWidth === 64; }"
+            )
+        ), "말풍선 썸네일이 로드되지 않았다"
+        assert worker.is_alive()
+        page.fill("#input", "and then this")
+        page.press("#input", "Enter")
+        assert _wait(lambda: len(ran) == 2), "다음 말이 처리되지 않았다 — 워커가 죽었다"
+        assert ran[1] == ("and then this", [])
+    finally:
+        stack.server.main_input.close()
+        worker.join(timeout=5)
+    assert not worker.is_alive()
