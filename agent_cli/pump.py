@@ -198,9 +198,10 @@ class SessionPump:
             d.surface.bind_stop(stop_event)
             start = d.main.start(item, stop_event)
             try:
-                if item is not None and d.surface.route(start.query, start):
-                    continue
                 try:
+                    # 명령의 라우팅도 런과 같은 보호 안 — 그 예외도 `run_failed` 로 간다(web 은 알리고 계속)
+                    if item is not None and d.surface.route(start.query, start):
+                        continue
                     d.surface.run_starting(start)
                     result = d.main.run(start)
                     from agent_cli.runtime import main_run_ended

@@ -10,6 +10,8 @@ from __future__ import annotations
 import threading
 from unittest.mock import MagicMock
 
+import pytest
+
 from agent_cli.loop.kind import Start
 from agent_cli.main_input import MainInput
 from agent_cli.post import envelope as post_envelope
@@ -216,6 +218,32 @@ class TestFailurePolicy:
         kinds = [c[0] for c in surface.calls]
         assert kinds.index("run_starting") < kinds.index("run_failed")
         assert "run_ended" not in kinds
+        assert surface.calls[-1] == ("bind_stop", False)
+
+    def test_a_route_that_raises_goes_to_run_failed_and_the_pump_goes_on(self):
+        """명령 라우팅의 예외도 런의 예외처럼 ``run_failed`` 로 — web 은 화면에 알리고 다음 말을 받는다(워커가 죽으면
+        대기열만 쌓인다), 런은 열리지 않는다."""
+        q = MainInput()
+        q.enqueue(None, "/bad x")
+        q.enqueue(None, "good")
+        surface = FakeSurface(swallow_errors=True, fail_on_route={"/bad x"})
+        seen = []
+        make_pump(
+            main_input=q, run_main=lambda s: seen.append(s.query), surface=surface
+        ).run()
+        assert seen == ["good"]
+        kinds = [c[0] for c in surface.calls]
+        assert kinds.index("route") < kinds.index("run_failed")
+        assert "run_starting" in kinds[kinds.index("run_failed") :]
+        assert surface.calls.count(("bind_stop", False)) == 2  # 두 차례 다 해제
+
+    def test_a_route_that_raises_propagates_on_the_run_surface(self):
+        q = MainInput()
+        q.enqueue(None, "/bad x")
+        surface = FakeSurface(swallow_errors=False, fail_on_route={"/bad x"})
+        with pytest.raises(RuntimeError, match="route failed"):
+            make_pump(main_input=q, run_main=MagicMock(), surface=surface).run()
+        assert [c[0] for c in surface.calls].count("run_failed") == 1
         assert surface.calls[-1] == ("bind_stop", False)
 
     def test_routed_command_does_not_announce_a_run(self):
