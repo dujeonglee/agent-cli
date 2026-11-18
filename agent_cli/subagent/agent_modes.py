@@ -153,7 +153,9 @@ def _agent_resume(registry, args: dict, *, caller, runtime) -> ToolResult:
 
 
 def _agent_status(registry, args: dict, *, caller, runtime) -> ToolResult:
-    return ToolResult(True, output=registry.format_status(args.get("key", "")))
+    return ToolResult(
+        True, output=registry.format_status(args.get("key", ""), viewer=caller.owner)
+    )
 
 
 def _agent_kill(registry, args: dict, *, caller, runtime) -> ToolResult:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -883,28 +884,32 @@ class TestWaitAndScope:
         assert entry["name"] == "ui"  # snapshot 필드명 계약
         reg.shutdown_all()
 
-    def test_status_nudges_complete_while_waiting(self, tmp_path, renderer):
-        """v7.9.0: 모델이 회신을 status 폴링으로 기다리는 패턴 차단 —
-        working/미처리 inbox 가 있으면 "`wait` 로 턴을 마쳐라, 회신은
-        자동 배달·도착 시 깨워진다" 힌트를 관찰 말미에 붙인다. 전부
-        idle 인 로스터 확인용 status 엔 안 붙임(노이즈)."""
+    def test_status_nudges_wait_only_while_a_reply_is_awaited(self, tmp_path, renderer):
+        """v7.9.0: 모델이 회신을 status 폴링으로 기다리는 패턴 차단 — 묻는 쪽(``viewer``)이 회신을
+        기다릴 때만 "`wait` 로 턴을 마쳐라" 를 붙인다. 바쁜 에이전트가 있어도 나를 깨울 회신이 없으면
+        `wait` 는 거절되니 붙이지 않는다; 묻는 쪽이 없는 사람의 `@agents` 에도 없다."""
+        from agent_cli.subagent.agent_modes import _agent_status
+
         gate = threading.Event()
         reg = make_registry(tmp_path, runner=make_runner(block=gate))
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        # 대기 상황 아님 → 힌트 없음
-        assert "finish this turn" not in reg.format_status()
-        # working 상태 → 힌트 (v10.85.0: 한 줄 — 기다리는 법은 꼬리가 말한다)
-        reg.get(key).state = "busy"
-        s = reg.format_status()
-        assert "finish this turn with `wait`" in s
-        assert "wake you" in s and "polling `status`" in s
+        reg.get(key).state = "busy"  # 일하는 중이지만 main 에게 빚진 것은 없다
+        assert "finish this turn" not in reg.format_status(viewer="main")
         reg.get(key).state = "idle"
-        # inbox 에 미처리 요청 → 힌트 (worker 픽업 전 창)
-        _queue_behind_a_held_run(reg, key)
-        reg.get(key).state = "idle"
+        _queue_behind_a_held_run(reg, key)  # main 의 요청 둘 — 회신을 기다린다
         try:
-            assert "finish this turn" in reg.format_status()
+            s = reg.format_status(viewer="main")
+            assert "finish this turn with `wait`" in s
+            assert "wake you" in s and "polling `status`" in s
+            # `agent` `status` 는 부른 루프의 주소를 넘긴다
+            out = _agent_status(
+                reg, {}, caller=SimpleNamespace(owner="main"), runtime=None
+            ).output
+            assert "finish this turn with `wait`" in out
+            # 그 회신을 기다리지 않는 쪽·사람에게는 없다
+            assert "finish this turn" not in reg.format_status(viewer=f"agent:{key}")
+            assert "finish this turn" not in reg.format_status()
         finally:
             gate.set()
         reg.shutdown_all()
