@@ -682,14 +682,19 @@ def _held_peer_message(box, sender: str, to: str, text: str) -> str:
     return call("message", to=to, text=text)
 
 
-def _held_request_to(box, to: str, text: str) -> str:
-    """보내는 쪽이 ``to`` 에게 회신 기대 `message` — 보낸 쪽의 다음 꼬리는 받는 쪽이 일을 집은 뒤(바쁨)에 짓게
-    잡는다(요청의 창 줄 `agent_message` 에서). 안 잡으면 부하 아래 그 꼬리가 "idle · 1 queued" 로 찍힌다(s22 가,
-    컨테이너 cpus 0.5·부하 1회, 2026-11-17)."""
+def _held_request_to(box, to: str, text: str, *, expects_reply: bool = True) -> str:
+    """보내는 쪽이 ``to`` 에게 `message`(회신 기대, ``expects_reply`` 가 거짓이면 통지) — 보낸 쪽의 다음 꼬리는 받는
+    쪽이 일을 집은 뒤(바쁨)에 짓게 잡는다(요청의 창 줄 `agent_message` 에서). 안 잡으면 부하 아래 그 꼬리가
+    "idle · 1 queued" 로 찍힌다(s22 가, 컨테이너 cpus 0.5·부하 1회, 2026-11-17; s17 의 통지도, 750회 중 1회)."""
     s = box["s"]
     b = _agent_key(s, to)
     s.recorder.hold("agent_message", b, lambda: s.agent_state(b) == "busy")
-    return call("message", to=to, text=text)
+    return call(
+        "message",
+        to=to,
+        text=text,
+        **({} if expects_reply else {"expects_reply": False}),
+    )
 
 
 def _wake_runs_after_idle(s: Session, name: str) -> None:
@@ -1545,11 +1550,8 @@ def s17_mail_to_an_idle_main_on_the_run_path(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="spawn", name="helper"),
-                call(
-                    "message",
-                    to="helper",
-                    text="TASK-R do it and tell me",
-                    expects_reply=False,
+                lambda m: _held_request_to(
+                    box, "helper", "TASK-R do it and tell me", expects_reply=False
                 ),
                 complete_all("handed off"),
                 _after_agents_settle(box, complete_all("heard back")),
@@ -1715,7 +1717,12 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
                 _bb_dead_then(
                     box, crash, _after_main_calls(box, 12, lambda m: call("wait"))
                 ),
-                lambda m: call("reply", id=owed_id(m), text="aa: bb did not answer"),
+                # main 의 첫 런(died 통지로 깬 런)이 끝난 뒤 — 먼저 갚으면 그 런의 마지막 띠(`open_items`)에서 기다리는
+                # 회신 r-2 가 빠진다(컨테이너 cpus 0.5, 40회 중 1회)
+                lambda m: (
+                    until(lambda: runs_ended(box["s"]) >= 1, "main's first run ends"),
+                    call("reply", id=owed_id(m), text="aa: bb did not answer"),
+                )[1],
                 call("complete", result="ok"),
             ],
         }
@@ -1871,7 +1878,11 @@ def s23_checkin_main_in_place(root: Path) -> dict:
 
     def done(s):
         assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        # 대기 표시(`wait_in_place(True)`)는 체크인을 걸기(`arm_checkin`) 전이다 — 걸린 뒤에 쏜다(걸기 전이면
+        # `fire_checkin` 이 빈 채로 돌아오고 체크인은 영영 오지 않는다, 컨테이너 cpus 0.5 300회 중 4회)
+        until(lambda: "main" in s.reg._checkin_armed, "checkin armed")
         facts["checkin"] = s.reg.fire_checkin("main")
+        assert facts["checkin"], "checkin fired before it was armed"
         fired.set()
         facts["persisted_kinds"] = _agents_file_kinds(s)
         until(

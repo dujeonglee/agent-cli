@@ -340,6 +340,8 @@ class TestMainWaitsFirstInACycle:
             accepted,  # 둘째 `wait` — 상주가 아직 일한다(그 뒤 잠든다)
             "Observation: nothing you were waiting on is running any more.",
         ]
+        # 상주가 런을 다 끝낸 뒤에 그 기록을 읽는다 — 마지막 줄을 쓰는 도중에 읽으면 반쪽 JSON 이다(컨테이너 1회)
+        assert wait_until(lambda: s["reg"].get(key).state == "idle")
         helper = "\n".join(_resident_history(s["reg"], key))
         assert (
             "Observation: waiting — will wake on: main owes you a reply, or in 5m if "

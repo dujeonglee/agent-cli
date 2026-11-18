@@ -31,8 +31,13 @@ LONG_PATH = (
 
 def _open_timeline(page, stack):
     """v9.4.0 ②: #messages 가 유일한 표면이라 열 드로어가 없다 — goto 만으로
-    카드가 보인다. (이름은 호출부 보존을 위해 유지.)"""
+    카드가 보인다. (이름은 호출부 보존을 위해 유지.)
+
+    SSE 연결이 서버에 등록될 때까지 기다린다 — load 는 EventSource 를 기다리지
+    않고, 비영속 이벤트(tick·status)는 연결 전에 나가면 재생되지 않는다(
+    느린 러너에서 첫 tick 이 연결 전에 나가 생성 줄이 끝내 안 떴다)."""
     page.goto(stack.url)
+    assert stack.wait_connected()
 
 
 def _wait(cond, timeout=8.0):
@@ -614,14 +619,46 @@ class TestGeneratingIndicator:
         stack.renderer.stream_end()
         assert _wait(lambda: self._gen(page).count() == 0)
 
-    def test_only_one_indicator_regardless_of_tick_count(self, stack, page):
+    def test_only_one_indicator_regardless_of_tick_count(
+        self, stack, page, monkeypatch
+    ):
         """틱마다 줄이 생기면 그게 곧 스트리밍이다 — 한 줄이 제자리 갱신."""
+        # 스로틀을 끄고 5틱을 전부 내보낸다(종전의 `_last_stream_emit = 0.0` 은
+        # v9.9.0 스코프별 분리 뒤로 아무도 안 읽는 속성이라 1틱만 나갔다).
+        monkeypatch.setattr(type(stack.renderer), "_TICK_THROTTLE_S", 0.0)
         stack.emit_ready()
         _open_timeline(page, stack)
         for _ in range(5):
-            stack.renderer._last_stream_emit = 0.0  # 스로틀 무시하고 강제 방출
             stack.renderer.stream_chunk("x" * 400)
-        assert _wait(lambda: self._gen(page).count() == 1)
+        # 마지막 틱(5×100 토큰)이 그려질 때까지 기다린 뒤 줄 수를 본다.
+        assert _wait(lambda: "~500 tokens" in self._gen(page).inner_text())
+        assert self._gen(page).count() == 1
+
+    def test_tick_before_connect_is_dropped_next_tick_draws(
+        self, stack, page, monkeypatch
+    ):
+        """지금 동작을 고정한다: tick 은 비영속이라 연결 **전**에 나간 것은
+        버려지고 재생되지 않는다 — 생성 중이면 다음 tick 이 곧 오므로 그걸로 낫는다.
+        서버의 누적은 그대로라 다음 tick 의 숫자엔 버려진 몫도 들어 있다.
+
+        순서 강제: sync playwright 의 라우트 콜백은 테스트 스레드가 다음
+        playwright 호출에 들어갈 때만 돈다 — 그 사이의 방출은 연결 전이다."""
+        monkeypatch.setattr(type(stack.renderer), "_TICK_THROTTLE_S", 0.0)
+        stack.emit_ready()
+        page.route("**/api/stream*", lambda route: route.continue_())
+        page.goto(stack.url, wait_until="commit")
+        stack.renderer.stream_chunk("x" * 400)  # 100 토큰 — 연결 전
+        assert not stack.renderer.hub.has_live_connections()
+
+        page.wait_for_load_state("load")  # 라우트 콜백이 돌아 연결이 붙는다
+        assert stack.wait_connected()
+        # 동기화 지점: 연결 뒤의 영속 카드가 보이면 그 앞(스냅샷)은 다 처리됐다.
+        stack.renderer.final("이전 답", turn=0)
+        assert _wait(lambda: page.locator("#messages > .card").count() == 1)
+        assert self._gen(page).count() == 0, "연결 전 tick 이 재생됐다"
+
+        stack.renderer.stream_chunk("x" * 400)  # 다음 tick — 누적 200 토큰
+        assert _wait(lambda: "~200 tokens" in self._gen(page).inner_text())
         assert self._gen(page).count() == 1
 
     def test_rejected_emission_draws_no_card(self, stack, page):

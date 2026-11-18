@@ -65,8 +65,8 @@ class TestStaleBand:
         got: dict = {}
 
         def worker():
-            while not stack.renderer.hub.has_live_connections():
-                time.sleep(0.05)
+            if not stack.wait_connected():
+                return
             stack.renderer.stale_loop(_info(6, asking=True, fires=2))
             try:
                 got["answer"] = stack.renderer.confirm(
@@ -106,8 +106,8 @@ class TestStaleBand:
         got: dict = {}
 
         def worker():
-            while not stack.renderer.hub.has_live_connections():
-                time.sleep(0.05)
+            if not stack.wait_connected():
+                return
             stack.renderer.stale_loop(_info(6, asking=True, fires=2))
             try:
                 got["answer"] = stack.renderer.confirm(

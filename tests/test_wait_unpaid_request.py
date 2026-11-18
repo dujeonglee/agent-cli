@@ -198,13 +198,16 @@ class TestWhoWakesTheRequester:
 class TestMainSeesIt:
     def test_main_reading_the_reply_first_gets_wait_refused_not_parked(self, session):
         """CI min-deps 에서 난 순서를 결정적으로 — 회신이 main 의 다음 경계 전에 오고, run 에이전트는 아직
-        내려오지 않았다. 종전엔 그 `wait` 가 "working on your request" 로 런을 끝냈다(waiting)."""
+        내려오지 않았다. 종전엔 그 `wait` 가 "working on your request" 로 런을 끝냈다(waiting).
+
+        회신 순서는 테스트가 쥔다: 에이전트는 main 의 둘째 모델 호출이 시작된 뒤에야 `reply` 한다 — `agent`
+        호출 뒤 경계보다 회신이 먼저 오면 그 경계가 회신을 배달해 버려 이 순서를 볼 수 없다."""
         holder: dict = {}
-        replied = threading.Event()
+        main_second_call = threading.Event()
         release = threading.Event()
 
         def agent_reply(msgs):
-            replied.set()
+            assert main_second_call.wait(10)  # main 이 `agent` 호출 뒤 경계를 지났다
             return call("reply", id=owed_id(msgs), text="3 callers: a.py, b.py, c.py")
 
         def agent_linger(msgs):
@@ -214,7 +217,7 @@ class TestMainSeesIt:
             return call("complete", result="replied")
 
         def main_wait_after_reply(msgs):
-            assert replied.wait(10)
+            main_second_call.set()
             # 회신이 main 메일함에 든 뒤 — 이 호출의 결과 뒤 경계가 그것을 먼저 배달한다
             assert wait_until(lambda: holder["reg"].has_pending_replies())
             return call("shell", command="true")
