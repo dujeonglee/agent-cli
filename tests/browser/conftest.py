@@ -118,7 +118,7 @@ class WebStack:
 
         등록 뒤의 publish 는 그 연결 큐로 가서 스냅샷 다음에 빠짐없이 도착한다.
         등록 전의 비영속 이벤트(tick·status)는 재생되지 않으므로, 그런 이벤트를
-        내는 테스트는 먼저 이걸 기다린다 (N13: ``page.goto`` 의 load 는
+        내는 테스트는 먼저 이걸 기다린다 (``page.goto`` 의 load 는
         EventSource 를 기다리지 않는다)."""
         deadline = time.time() + timeout
         while not self.renderer.hub.has_live_connections():

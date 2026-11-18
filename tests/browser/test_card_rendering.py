@@ -34,7 +34,7 @@ def _open_timeline(page, stack):
     카드가 보인다. (이름은 호출부 보존을 위해 유지.)
 
     SSE 연결이 서버에 등록될 때까지 기다린다 — load 는 EventSource 를 기다리지
-    않고, 비영속 이벤트(tick·status)는 연결 전에 나가면 재생되지 않는다(N13:
+    않고, 비영속 이벤트(tick·status)는 연결 전에 나가면 재생되지 않는다(
     느린 러너에서 첫 tick 이 연결 전에 나가 생성 줄이 끝내 안 떴다)."""
     page.goto(stack.url)
     assert stack.wait_connected()
@@ -637,7 +637,7 @@ class TestGeneratingIndicator:
     def test_tick_before_connect_is_dropped_next_tick_draws(
         self, stack, page, monkeypatch
     ):
-        """지금 동작을 고정한다 (N13): tick 은 비영속이라 연결 **전**에 나간 것은
+        """지금 동작을 고정한다: tick 은 비영속이라 연결 **전**에 나간 것은
         버려지고 재생되지 않는다 — 생성 중이면 다음 tick 이 곧 오므로 그걸로 낫는다.
         서버의 누적은 그대로라 다음 tick 의 숫자엔 버려진 몫도 들어 있다.
 
