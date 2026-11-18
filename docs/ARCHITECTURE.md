@@ -74,6 +74,7 @@ agent_cli/
 ├── token_estimator.py       토큰 추정(chars/4)과 `utf8_len` — import 없는 잎
 ├── instance_file.py         세션별 `web.json`·`status.json` 쓰기·읽기·지우기 — 서버와 렌더러가 같이 쓴다(`fsio` 만 import)
 ├── input_queue.py           세션 입력 큐 `InputQueue` — run 과 web 이 공유하는 펌프의 큐(사용자 입력·깨우기 항목)
+├── main_input.py            main 앞 사람의 입력 `MainInput` — 창구의 main 상자에 봉투로 넣기·보이기·취소·런을 열 것 기다리기
 ├── input_history.py         readline 입력 히스토리 — `ask` 답과 설정 마법사의 터미널 입력
 ├── item_ids.py              열린 항목 id `<접두>-<토큰>` 의 할당·해석 — 접두가 닫는 법을 말한다 (docs/ledger/DESIGN.md)
 ├── images.py                이미지 입력 — `ImageRef` 참조·보관본(`.agent-cli/images/`)·공급자 경계 `expand` (docs/vision/DESIGN.md)
@@ -366,7 +367,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 | 4 | `context/` · `prompts/` · `providers/` (한 묶음) |
 | 3 | `dialects/` · `mcp/` · `web/` |
 | 2 | `tools/` · `render/` · `pump` · `setup` |
-| 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `input_history` · `browser` · `web_sources` · `instance_file` · `wake` |
+| 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `main_input` · `input_history` · `browser` · `web_sources` · `instance_file` · `wake` |
 | 0 | `post/` · `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `snapshot_nested` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `session_slots` · `terminate` · `agents/` |
 
 `context/`·`prompts/`·`providers/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).

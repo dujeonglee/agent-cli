@@ -55,6 +55,30 @@ class Postbox:
         out, self._queued = tuple(self._queued), []
         return out
 
+    def take_first_words(self) -> Envelope | None:
+        """줄 선 첫 사람의 말 하나를 상자에서 뺀다(런이 들지 않는다). 없으면 None."""
+        i = next((i for i, e in enumerate(self._queued) if is_human_words(e)), None)
+        return None if i is None else self._queued.pop(i)
+
+    def take_all_but_words(self) -> tuple[Envelope, ...]:
+        """사람의 말을 뺀 줄 선 것 전부 — 도착 순서로, 런이 든다(main 의 턴 경계: 메일)."""
+        return self._move(
+            [i for i, e in enumerate(self._queued) if not is_human_words(e)]
+        )
+
+    def remove(self, env_id: str) -> Envelope | None:
+        """줄 선 봉투 하나를 id 로 뺀다. 없으면 None."""
+        for i, e in enumerate(self._queued):
+            if e.id == env_id:
+                return self._queued.pop(i)
+        return None
+
+    def put_first(self, env: Envelope) -> None:
+        """줄 맨 앞에 넣는다."""
+        if self.holds(env.id):
+            raise BoxError(f"{env.id}: already in this box")
+        self._queued.insert(0, env)
+
     def take_reply(self, rid: str) -> Envelope | None:
         """요청 ``rid`` 에 대한 회신 하나를 상자에서 꺼낸다(런이 들지 않는다 — `@agent` 명령의 답)."""
         for i, e in enumerate(self._queued):
@@ -95,6 +119,14 @@ class Postbox:
 
     def has_waking(self) -> bool:
         return any(e.wakes for e in self._queued)
+
+    def words(self) -> tuple[Envelope, ...]:
+        """줄 선 사람의 말 — 도착 순서."""
+        return tuple(e for e in self._queued if is_human_words(e))
+
+    def mail(self) -> tuple[Envelope, ...]:
+        """줄 선 것 가운데 사람의 말이 아닌 것 — 도착 순서."""
+        return tuple(e for e in self._queued if not is_human_words(e))
 
     # ── 안쪽 ────────────────────────────────────────
 
