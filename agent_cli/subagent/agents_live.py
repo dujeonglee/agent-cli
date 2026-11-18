@@ -77,10 +77,16 @@ from agent_cli.subagent.agent_mail import (
     view_of_main_mail,
 )
 from agent_cli.subagent.delegation_checks import depth_or_recursion_refusal
-from agent_cli.subagent.question_port import REPLY_REQUESTER_GONE, QuestionPort
+from agent_cli.subagent.question_port import (
+    REPLY_REQUESTER_GONE,
+    QuestionPort,
+    ReplyFacts,
+)
 from agent_cli.terminate import wait_left
 from agent_cli.tools.result import ToolResult
 from agent_cli.wake import (
+    AgentFact,
+    WakeFacts,
     harness_record,
     release_owner,
     wait_checkin,
@@ -595,6 +601,41 @@ class AgentRegistry:
             f"agent limit reached ({self.max_agents} alive). "
             f'Kill one first (`mode` "kill") or raise the limit in the web UI.'
         )
+
+    def wake_facts(self) -> WakeFacts:
+        """ "누가 깨우는가" 의 재료 — 명단과 우편 장부의 사본 하나(`wake.WakeFacts`), ``_cv`` 를 한 번 쥐고 뜬다.
+        판정은 `wake` 의 순수 함수가 한다(`agent_relations`·`parked_debtors`). 읽기만 한다."""
+
+        def heads(items: list[dict]) -> tuple[tuple[str, str], ...]:
+            return tuple(
+                (str(it.get("author") or ""), str(it.get("id") or "")) for it in items
+            )
+
+        with self._cv:
+            agents = tuple(
+                AgentFact(
+                    addr=f"agent:{tm.key}",
+                    active=self.state_is_active(tm.state),
+                    dead=tm.state == "dead",
+                    queued=heads(self._queued(tm)),
+                    taken=heads(self._taken(tm)),
+                )
+                for tm in list(self._agents.values())
+            )
+            rows = self._post.rows()
+            return WakeFacts(
+                agents=agents,
+                owing=tuple(
+                    (r.dst, r.src)
+                    for r in rows
+                    if r.kind == "r" and r.state == "picked"
+                ),
+                awaited=frozenset(
+                    (r.src, r.rid)
+                    for r in rows
+                    if r.kind == "r" and r.state != "closed"
+                ),
+            )
 
     def pending_for(self, addr: str, exclude: frozenset = frozenset()) -> list[str]:
         """``addr`` 를 **깨울** 에이전트 활동 (v10.65.0, `wait` 의 판정 재료) —
@@ -1119,6 +1160,26 @@ class AgentRegistry:
             return err
         self._log_outbound(key, text, to=requester)
         return ""
+
+    def reply_facts(self, debtor: str, id: str) -> ReplyFacts:
+        """`reply` 판정의 재료(`question_port.ReplyFacts`) — ``_cv`` 를 한 번 쥐고 뜬다. 런을 연 주소는 에이전트만
+        안다(지금 런의 첫 항목 author); main 의 런은 펌프가 연다 — None. 읽기만 한다."""
+        with self._cv:
+            known, opener = True, None
+            if debtor.startswith("agent:"):
+                tm = self._agents.get(debtor.split(":", 1)[1])
+                known = tm is not None
+                if (
+                    tm is not None
+                ):  # 빈 author 도 "아는" 것이다 — 그 주소에게 진 줄이 없을 뿐
+                    opener = str(tm.current_author or "")
+            return ReplyFacts(
+                known=known,
+                owed=tuple(self.reply_debts(debtor)),
+                opener=opener,
+                opener_row=None if opener is None else self.reply_debt(debtor, opener),
+                by_id=self.debt_by_id(debtor, id) if id else None,
+            )
 
     def reply_debt(self, debtor: str, to: str) -> ReplyDebt | None:
         """``to`` 에게 진 빚 중 **가장 최근** 것 — 갚았든 아니든 (거부 사유용)."""

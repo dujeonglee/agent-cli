@@ -7,12 +7,12 @@ import 하지 않는다(타입만).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from agent_cli.constants import has_words
 
 if TYPE_CHECKING:
-    from agent_cli.subagent.agents_live import AgentRegistry
+    from agent_cli.subagent.agents_live import AgentRegistry, ReplyDebt
 
 #: `reply` 가 요청자에게 가지 못했다 — 그때 요청자가 명단에서 사라졌거나 죽었거나 멈추는 중이었다(v10.145.2). 빚은
 #: 닫혔다. 같은 키가 나중에 되살아날 수 있으므로(`resume`·재시작) 과거형이다 — 그 요청자도 더는 이 회신을
@@ -26,6 +26,141 @@ REPLY_REQUESTER_GONE = (
 def _not_delivered(d) -> str:
     """회신이 가지 못한 채 닫힌 빚(``closed_by == "unsent"``)에 다시 `reply` 했다 — 처음과 같은 사실."""
     return REPLY_REQUESTER_GONE.format(key=d.to.split(":", 1)[-1], rid=d.id)
+
+
+# ── `reply` 판정 — main·에이전트 하나 (v10.146.0, 단일 구조 3단계) ─────────────────────────
+#
+# 판정(`judge_reply`)은 레지스트리의 사본(`ReplyFacts` — `AgentRegistry.reply_facts`, 락 한 번)만 읽고, 거절 글
+# (`reply_refusal`)은 판정의 이름에서 짓는다. main 과 에이전트가 갈리는 것은 사실 하나 — 레지스트리가 **이 런을 연
+# 주소**를 아는가(``opener``): 에이전트는 런을 연 항목의 author 를 안다, main 의 런은 펌프가 연다(None).
+
+Verdict = Literal[
+    "empty",
+    "no_words",
+    "unknown_self",
+    "none_owed_human",
+    "none_owed_unsent",
+    "none_owed_replied",
+    "none_owed",
+    "needs_id",
+    "id_unsent",
+    "id_replied",
+    "id_not_owed",
+    "pay",
+]
+
+
+class ReplyFacts(NamedTuple):
+    """`reply` 판정의 재료 — 갚는 주체의 사본. ``opener_row`` 는 ``opener`` 에게 진 가장 최근 줄(갚았든 아니든),
+    ``by_id`` 는 그 ``id`` 의 줄(이 주체의 것일 때만)."""
+
+    known: bool  # 주체가 명단에 있는가 (main 은 언제나)
+    owed: tuple[ReplyDebt, ...]  # 아직 갚지 않은 빚 — 열린 순서
+    opener: str | None  # 이 런을 연 주소 — 레지스트리가 모르면 None
+    opener_row: ReplyDebt | None
+    by_id: ReplyDebt | None
+
+
+def judge_reply(
+    text: str, id: str, facts: ReplyFacts
+) -> tuple[Verdict, ReplyDebt | None]:
+    """`reply(text, id)` 의 판정 — ``(판정, 갚을 빚)``; 갚을 빚은 ``"pay"`` 일 때만. 읽기만 한다. ``text``·``id`` 는
+    앞뒤 공백을 걷은 값이다.
+
+    순서: 글 → 주체 → 빚이 없음(런을 연 주소에게 진 줄로 사유를 고른다) → ``id`` 없음 → ``id`` 가 빚에 없음(그 id
+    의 줄로 사유를 고른다) → 갚음."""
+    if not text:
+        return "empty", None
+    if not has_words(text):
+        return "no_words", None
+    if not facts.known:
+        return "unknown_self", None
+    if not facts.owed:
+        d = facts.opener_row
+        if d is not None and d.human:
+            # 사람이 창에서 직접 시킨 런 — 창이 곧 배달이라 빚이 없다(D8)
+            return "none_owed_human", None
+        if d is not None and d.settled and d.closed_by == "unsent":
+            return "none_owed_unsent", None
+        if d is not None and d.settled:
+            return "none_owed_replied", None
+        return "none_owed", None
+    if not id:
+        return "needs_id", None
+    d = next((x for x in facts.owed if x.id == id), None)
+    if d is not None:
+        return "pay", d
+    prior = facts.by_id
+    if prior is not None and prior.settled and prior.closed_by == "unsent":
+        return "id_unsent", None
+    if prior is not None and prior.settled:
+        return "id_replied", None
+    return "id_not_owed", None
+
+
+def _owed_listing(owed) -> str:
+    return "; ".join(
+        f'[{d.id}] {d.to.split(":", 1)[-1]}: "{d.text[:60]}"' for d in owed
+    )
+
+
+def reply_refusal(verdict: Verdict, text: str, id: str, facts: ReplyFacts) -> str:
+    """거절 판정 → 모델이 읽는 글. 런을 연 주소를 모르면(main) "빚 없음" 은 그 주소를 단언하지 않는 글이고, 그 id 의
+    줄로 고른 사유(가지 못함·이미 갚음)는 "그런 빚 없음" 으로 말한다 — 지금 글 그대로(3단계 기준 R-1, 사용자 결정 전)."""
+    opener_known = facts.opener is not None
+    if verdict in ("id_unsent", "id_replied") and not opener_known:
+        verdict = "id_not_owed"
+    if verdict == "empty":
+        return "empty reply — nothing sent"
+    if verdict == "no_words":
+        return f"reply has no words ({text[:20]!r}) — nothing sent; say it in words"
+    if verdict == "unknown_self":
+        return "unknown agent"
+    if verdict == "none_owed_human":
+        return (
+            "nothing to send — your requester is a person watching this "
+            "window, and they see your `complete` here. Just `complete`."
+        )
+    if verdict == "none_owed_unsent":
+        return _not_delivered(facts.opener_row)
+    if verdict == "none_owed_replied":
+        a = facts.opener
+        return (
+            f"already replied to {a} in this run — a second reply is not "
+            "delivered. If you must correct it, send the correction with "
+            f'`message` (`to` "{a.split(":", 1)[-1]}", `text` your correction).'
+        )
+    if verdict == "none_owed":
+        if not opener_known:
+            return (
+                "nothing to reply to — no agent is waiting on a reply from you. "
+                "To give an agent new work, use `message`."
+            )
+        return (
+            "nothing to reply to — this run was not started by a request "
+            "that expects one (it was a delivered reply, a notice, or an "
+            "answer). Do not acknowledge those. If you need something from "
+            "someone, use `message` (`to` the recipient, `text` your message)."
+        )
+    listing = _owed_listing(facts.owed)
+    if verdict == "needs_id":
+        return (
+            "reply needs `id` — which request is this the reply to? You owe: "
+            f"{listing}. Send `reply` with that `id`."
+        )
+    if verdict == "id_unsent":
+        return _not_delivered(facts.by_id)
+    if verdict == "id_replied":
+        prior = facts.by_id
+        return (
+            f"already replied to [{id}] ({prior.to}) in this run — a second "
+            "reply is not delivered. If you must correct it, send the "
+            f'correction with `message` (`to` "{prior.to.split(":", 1)[-1]}", '
+            "`text` your correction)."
+        )
+    if verdict == "id_not_owed":
+        return f'no unpaid request "{id}" — you owe: {listing}.'
+    raise ValueError(f"not a refusal: {verdict}")
 
 
 class QuestionPort:

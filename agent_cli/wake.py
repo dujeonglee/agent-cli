@@ -28,6 +28,110 @@ if TYPE_CHECKING:
 _SCHEDULE_ID = "schedule"
 
 
+# ── 에이전트 관계 — 장부·명단의 사본 하나에서 (v10.146.0, 단일 구조 3단계) ─────────────
+#
+# "누가 이 주소를 깨우는가" 의 에이전트 몫은 레지스트리의 사본(`AgentRegistry.wake_facts` — 락 한 번)만 읽는
+# 순수 함수다. main·상주·run·하니스 주소가 같은 함수를 지난다 — 주소 종류로 갈리는 것은 "잠든 채무자는 에이전트
+# 뿐" 하나다(`parked_debtors`).
+
+
+class AgentFact(NamedTuple):
+    """명단의 에이전트 하나 — 사본. ``queued``·``taken`` 은 항목의 ``(author, id)`` 이고 ``queued`` 는 깨우지 않는
+    봉투도 든다(받은편지함에 무엇이든 있으면 잠들지 않은 것으로 본다)."""
+
+    addr: str
+    active: bool
+    dead: bool
+    queued: tuple[tuple[str, str], ...]
+    taken: tuple[tuple[str, str], ...]
+
+
+class WakeFacts(NamedTuple):
+    """장부와 명단의 사본 — ``agents`` 는 명단 순서, ``owing`` 은 집힌 r 줄의 ``(빚진 쪽, 요청자)`` 장부 순서,
+    ``awaited`` 는 닫히지 않은 r 줄의 ``(요청자, id)``."""
+
+    agents: tuple[AgentFact, ...]
+    owing: tuple[tuple[str, str], ...]
+    awaited: frozenset[tuple[str, str]]
+
+
+def _debtors_owing(facts: WakeFacts, addr: str) -> list[str]:
+    """``addr`` 에게 갚지 않은 회신을 빚진 쪽들(``addr`` 자신 빼고) — 빚진 쪽의 첫 열린 줄 순서. 빚진 쪽이 죽었는지는
+    보지 않는다(죽은 빚도 근거로 남는다 — 4c 에서 바뀐다)."""
+    order: list[str] = []
+    for debtor, _ in facts.owing:
+        if debtor not in order:
+            order.append(debtor)
+    owes = set(facts.owing)
+    return [d for d in order if d != addr and (d, addr) in owes]
+
+
+def _is_parked(facts: WakeFacts, debtor: str) -> bool:
+    """빚진 쪽이 **스스로 잠들어 있다** — 명단에 있고 죽지 않았고 일하지 않으며 받은편지함이 빈 에이전트. 그런 채무자는
+    그 자체로는 아무도 깨우지 못한다: 그를 깨울 것이 있어야 회신이 온다. main 과 에이전트가 아닌 주소는 잠든 채무자로
+    세지 않는다(main 의 제자리 대기를 보지 못한다 — 5단계에서 창구의 기다림 표시로 바뀐다)."""
+    if debtor == "main" or not debtor.startswith("agent:"):
+        return False
+    fact = next((a for a in facts.agents if a.addr == debtor), None)
+    if fact is None or fact.dead:
+        return False
+    return not fact.active and not fact.queued
+
+
+def parked_debtors(facts: WakeFacts, addr: str) -> list[str]:
+    """``addr`` 에게 회신을 빚진 채 잠든 에이전트 주소들 (v10.77.0) — 그들을 깨울 것이 있는지는 `parked_view` 가
+    거슬러 본다. 서로 `message` 하고 둘 다 `wait` 하면 아무도 깨지 않는 교착을 여기서 끊는다."""
+    return [d for d in _debtors_owing(facts, addr) if _is_parked(facts, d)]
+
+
+def _holds_unpaid_request_from(
+    facts: WakeFacts, items: tuple[tuple[str, str], ...], addr: str
+) -> bool:
+    """``items`` 가운데 ``addr`` 가 보낸 요청으로 아직 회신이 가지 않은 것이 있는가 (v10.143.0, 사용자 결정) — 이미
+    회신한 요청·통지로는 그 에이전트가 무엇을 해도 ``addr`` 에게 돌아올 것이 없다."""
+    return any(author == addr and (addr, rid) in facts.awaited for author, rid in items)
+
+
+def agent_relations(
+    facts: WakeFacts, addr: str, exclude: frozenset = frozenset()
+) -> list[tuple[str, str]]:
+    """``addr`` 를 깨울 에이전트들과 그 관계 — ``("owes"|"working"|"queued", 주소)`` (v10.65.0). 빚진 채 **스스로
+    잠든** 쪽은 여기 없다 — `parked_debtors` 가 따로 들고 `parked_view` 가 거슬러 본다. ``exclude`` (v10.77.0):
+    순환 대기 판정에서 거슬러 온 주소들. **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `arrived_mail`."""
+    out: list[tuple[str, str]] = []
+    for debtor in _debtors_owing(facts, addr):
+        if debtor in exclude:
+            continue
+        if not _is_parked(facts, debtor):
+            out.append(("owes", debtor))
+    for a in facts.agents:
+        if a.addr == addr or a.addr in exclude:
+            continue
+        if a.active and _holds_unpaid_request_from(facts, a.taken, addr):
+            out.append(("working", a.addr))
+        elif _holds_unpaid_request_from(facts, a.queued, addr):
+            out.append(("queued", a.addr))  # 받은편지함에 줄 선 것으로 본다
+    return out
+
+
+#: 관계 → `wait` 수락 문장의 한 조각
+_RELATION_TEXT = {
+    "owes": "{me} owes you a reply",
+    "working": "{me} working on your request",
+    "queued": "{me} has your request queued",
+}
+
+
+def relation_items(
+    facts: WakeFacts, addr: str, exclude: frozenset = frozenset()
+) -> list[tuple[str, str]]:
+    """`agent_relations` 를 ``(에이전트 주소, 사람이 읽을 줄)`` 로 (v10.79.0) — 주소는 중간 깨우기의 대상 id 가 된다."""
+    return [
+        (me, _RELATION_TEXT[kind].format(me=me))
+        for kind, me in agent_relations(facts, addr, exclude)
+    ]
+
+
 def _wake_items(
     owner: str, _seen: frozenset = frozenset(), *, agents
 ) -> list[tuple[str, str]]:
