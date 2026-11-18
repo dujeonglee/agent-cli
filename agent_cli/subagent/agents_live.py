@@ -2169,9 +2169,9 @@ class AgentRegistry:
             if err:
                 return "", err
             line = delivered_line(rec_id, expects_reply=bool(expects_reply))
-            target = self._agents.get(to)
-            backlog = self.backlog_of(to) if target is not None else 0
-            stacked = REQUEST_STACKED.format(n=backlog) if backlog >= 2 else ""
+            # 쌓임은 이 보낸 쪽의 시작 안 한 요청만 센다 — 회신·통지·남의 요청은 재촉이 아니다
+            mine = self._post.queued_requests_from(addr, sender) if expects_reply else 0
+            stacked = REQUEST_STACKED.format(n=mine) if mine >= 2 else ""
             return line + stacked, ""
 
         return handler
@@ -3085,9 +3085,10 @@ def delivered_line(rid: str, *, expects_reply: bool) -> str:
 
 
 REQUEST_STACKED = (
-    "\n⚠ it now has {n} queued requests — if these are progress checks or re-sends "
-    "of the same ask, that is interference: each one queues more work and delays "
-    "the answer. Its `reply` reaches you on its own; stop re-sending."
+    "\n⚠ {n} of your requests to it are still queued — if these are progress "
+    "checks or re-sends of the same ask, that is interference: each one queues "
+    "more work and delays the answer. Its `reply` reaches you on its own; stop "
+    "re-sending."
 )
 STATUS_DEAD_SUFFIX = ' | resumable with `mode` "resume"'
 STATUS_WAIT_NUDGE = (

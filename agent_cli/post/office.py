@@ -299,6 +299,15 @@ class PostOffice:
         with self.cv:
             return self._box_or_empty(addr).backlog()
 
+    def queued_requests_from(self, addr: str, src: str) -> int:
+        """``addr`` 앞에 줄 선(아직 시작 안 한) ``src`` 의 요청 수 — 회신·통지·남의 요청은 세지 않는다."""
+        with self.cv:
+            return sum(
+                1
+                for e in self._box_or_empty(addr).queued()
+                if e.src == src and e.expects_reply
+            )
+
     def has_waking(self, addr: str) -> bool:
         with self.cv:
             return self._box_or_empty(addr).has_waking()

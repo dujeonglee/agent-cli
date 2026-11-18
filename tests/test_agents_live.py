@@ -2794,18 +2794,50 @@ class TestPeerMessaging:
 
     def test_message_ack_warns_on_stacked_duplicates(self, tmp_path, renderer):
         """이미 밀린 에이전트에 또 요청(`message`, v10.141.0 — 종전 `agent` request) → 적체
-        경고(재촉 재전송이 중복 작업으로 쌓여 실제로 느려짐을 명시)."""
+        경고(재촉 재전송이 중복 작업으로 쌓여 실제로 느려짐을 명시). 수는 이 보낸 쪽의 시작 안 한 요청."""
         gate = threading.Event()
         reg = make_registry(tmp_path, runner=make_runner(block=gate))
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        reg.request(key, "first")  # worker 가 집어 busy 로 블록
+        reg.request(
+            key, "first"
+        )  # worker 가 집어 busy 로 블록 — 시작한 요청은 세지 않는다
         wait_until(lambda: reg.get(key).state == "busy")
         reg.request(key, "second")  # inbox 1 적체
         out, _err = reg.message_handler("main")(key, "third")
         gate.set()
-        assert "queued requests" in out  # 적체 수 명시
+        assert "\n⚠ 2 of your requests to it are still queued — " in out
         assert "reaches you on its own" in out
+        reg.shutdown_all()
+
+    def test_stacked_warning_counts_only_my_queued_requests(self, tmp_path, renderer):
+        """회신·통지·남의 요청은 재촉이 아니다 — 상자에 셋이 줄 서도 내 요청이 하나면 경고하지 않고,
+        통지를 보낼 때는 언제나 경고하지 않는다."""
+        gate = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
+        key, _ = reg.spawn(name="busy")
+        other, _ = reg.spawn(name="other")
+        wait_until(
+            lambda: reg.get(key).state == "idle" and reg.get(other).state == "idle"
+        )
+        reg.request(key, "first")
+        wait_until(lambda: reg.get(key).state == "busy")
+        try:
+            assert reg.request(key, "theirs 1", author=f"agent:{other}") == ""
+            assert reg.request(key, "theirs 2", author=f"agent:{other}") == ""
+            send = reg.message_handler("main")
+            out, _ = send(key, "fyi one", False)
+            assert "⚠" not in out
+            out, _ = send(
+                key, "fyi two", False
+            )  # 내 통지 둘 — 통지는 세지도 경고하지도 않는다
+            assert "⚠" not in out
+            out, _ = send(key, "mine 1")
+            assert "⚠" not in out
+            out, _ = send(key, "mine 2")
+            assert "⚠ 2 of your requests to it are still queued" in out
+        finally:
+            gate.set()
         reg.shutdown_all()
 
     def test_build_reply_record_peer_message(self):
