@@ -552,7 +552,7 @@ class TestDiedWorkerDebts:
     )
 
     def _gone(self, reg, tm, me):
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         assert agent_wake_lines(reg, me) == []
         assert reg.checkin_agent_lines(me, {}) == ([], False, False)
         assert reg.awaited_replies(me) == []
@@ -604,7 +604,7 @@ class TestDiedWorkerDebts:
         busy_with(reg, stage, tm, "DIE6", "r-53", author=f"agent:{p6.key}")
         p6.state = "dead"
         stage.absorb["DIE6"].set()
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         assert peer_replies(p6) == []
         assert reg._post.row("r-53") is None
         assert reg.reply_debts(f"agent:{tm.key}") == []
@@ -614,7 +614,7 @@ class TestDiedWorkerDebts:
         tm = spawn(reg)
         busy_with(reg, stage, tm, "DIE7", "r-54", author=f"agent:{p6.key}")
         stage.absorb["DIE7"].set()
-        assert until(lambda: tm.state == "dead")
+        assert until(lambda: gone(tm))
         reg.kill(tm.key, by="main")
         assert len(peer_replies(p6)) == 1
 

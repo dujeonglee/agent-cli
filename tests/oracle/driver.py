@@ -1665,14 +1665,14 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
 
     - ``who="requested"`` (가) `[단계 4c 에서 바뀜 — 변화 5]`: 상주 aa 가 bb 에게 요청하고 `wait` → bb 사망. main
       은 died 통지를 받고, aa 는 bb 가 집어 든 그 요청의 died 회신(`· died` — "… died while it was working on your
-      request …")을 받아 그 런에서 읽는다 `[N9 에서 바뀜 — 종전엔 aa 가 아무것도 받지 않았다]`.
+      request …")을 받아 그 런에서 읽는다 `[v10.146.3 에서 바뀜 — 종전엔 aa 가 아무것도 받지 않았다]`.
     - ``who="requester"`` (나) `[단계 4c 에서 바뀜 — 변화 10]`: aa 가 bb 에게 요청한 뒤 aa 사망. bb 는 죽은 쪽에
       빚진 회신을 Open Items 에 든 채 일한다. 죽은 aa 가 main 에게 빚진 과제 요청에는 main 의 died 통지와 함께 died
-      회신이 간다 `[N9 에서 바뀜]`.
+      회신이 간다 `[v10.146.3 에서 바뀜]`.
       `[v10.145.2 에서 바뀜]` bb 의 `reply` 는 "not delivered — … was already gone" 을 실패로 듣고, 배달되지 않은 회신은
       발신 줄(conversation)에도 남지 않는다(종전엔 "delivered to whoever was waiting on it").
     - ``who="main_waits"`` (다) `[단계 4c 에서 바뀔 수 있음 — died 가 회신 모양이 되면]`: main 이 bb 에게 요청하고
-      제자리 대기 중 bb 사망 — main 이 같은 런에서 깨어 died 통지를 읽고, 기다리던 회신이 닫히는가. `[N9 에서 바뀜]`
+      제자리 대기 중 bb 사망 — main 이 같은 런에서 깨어 died 통지를 읽고, 기다리던 회신이 닫히는가. `[v10.146.3 에서 바뀜]`
       bb 가 집어 든 그 요청에 died 회신이 와 main 의 기다리던 회신을 회신으로 닫는다. 죽음은 통지와 회신 두 통을
       잇달아 보낸다 — 둘 다 닿은 뒤에 main 이 기다리기 시작하게 강제한다(하나만 보고 깨면 회신이 런을 하나 더 연다)."""
     box: dict = {}
@@ -1798,7 +1798,7 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
             until(lambda: s.agent_state(_agent_key(s, "bb")) == "idle", "bb done")
             until(lambda: runs_ended(s) >= 1, "main read the death")
         else:
-            # requested 는 main 의 런 둘 — died 통지로 깬 런, aa 의 회신이 연 런 [N9 에서 바뀜 — 종전엔 하나]
+            # requested 는 main 의 런 둘 — died 통지로 깬 런, aa 의 회신이 연 런 [v10.146.3 에서 바뀜 — 종전엔 하나]
             runs = 2 if who == "requested" else 1
             until(lambda: runs_ended(s) >= runs, "main runs")
         until(
@@ -1977,7 +1977,7 @@ def s24_commands_while_waiting(root: Path) -> dict:
 def s25_run_agent_leaves_queue(root: Path) -> dict:
     """1단계 ⑦ `[단계 4c 에서 바뀜 — 변화 9]`: run 에이전트가 마지막 응답(`complete`)을 만드는 동안 main 이 그에게
     회신 기대 요청을 보낸다 — 줄 선 채로 run 이 내려온다. 보낸 쪽(main)의 기다리는 회신과 `wait` 판정(받아들여
-    막히면 ■ 로 끝낸다 — 막힘은 대기 표시로 판정). v10.146.1(N5) 부터 내려오는 run 이 그 요청에 `· ended` 회신을
+    막히면 ■ 로 끝낸다 — 막힘은 대기 표시로 판정). v10.146.1 부터 내려오는 run 이 그 요청에 `· ended` 회신을
     보내고 줄을 닫는다 — main 은 그 회신으로 깨어 읽고 끝난다(종전엔 `wait` 가 "has your request queued" 를 근거로
     받아들였다)."""
     box: dict = {}

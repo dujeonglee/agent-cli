@@ -447,7 +447,7 @@ class TestWaitInPlaceWakes:
     def test_an_agent_that_main_owes_gets_its_checkin(self, session):
         """main 이 run 에이전트에게 회신을 빚진 채 그 에이전트가 `wait` — 실제 타이머 스레드가 만든 체크인이
         에이전트에게 가고, 그 줄은 ``main · owes you a reply`` 하나다(걸음 수·kill 안내 없음). 종전엔 그 줄을
-        그리다(`checkin_agent_lines`) 타이머 스레드가 IndexError 로 죽어 체크인이 오지 않았다(N10)."""
+        그리다(`checkin_agent_lines`) 타이머 스레드가 IndexError 로 죽어 체크인이 오지 않았다(v10.146.3)."""
         seen: dict = {}
 
         def until_checkin(msgs):
