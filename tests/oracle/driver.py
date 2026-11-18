@@ -2032,7 +2032,11 @@ def s25_run_agent_leaves_queue(root: Path) -> dict:
             ]
             + [complete_all("main finished")] * 10,
             "TASK-Q1": [
-                lambda m: call("reply", id=owed_id(m), text="Q1 done"),
+                # main 의 둘째 호출이 시작된(그 꼬리를 지은) 뒤에 회신한다 — 먼저 오면 그 턴 경계가 회신을 흡수한다
+                # (컨테이너 cpus 0.25 부하 아래 1회)
+                _after_main_calls(
+                    box, 2, lambda m: call("reply", id=owed_id(m), text="Q1 done")
+                ),
                 _after_main_calls(box, 3, lambda m: call("complete", result="ok")),
             ],
         }
