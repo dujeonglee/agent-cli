@@ -106,3 +106,13 @@ def test_web_route_answers_as_the_table(text):
 @pytest.mark.parametrize("text", sorted(TABLE))
 def test_cli_route_answers_as_the_table(text):
     assert _answer(_cli(), text) == TABLE[text][1]
+
+
+@pytest.mark.parametrize("text", sorted(t for t in TABLE if "raises" not in TABLE[t]))
+def test_web_is_command_says_what_route_does(text):
+    assert _web().is_command(text) is TABLE[text][0]
+
+
+@pytest.mark.parametrize("text", sorted(t for t in TABLE if "raises" not in TABLE[t]))
+def test_cli_is_command_says_what_route_does(text):
+    assert _cli().is_command(text) is TABLE[text][1]

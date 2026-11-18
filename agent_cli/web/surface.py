@@ -60,6 +60,13 @@ class WebSurface:
         self._stop = event
         self._server.set_stop_handle(event)
 
+    def is_command(self, text: str) -> bool:
+        """``text`` 를 `route` 가 명령으로 받는가 — 실행하지 않고 판정만."""
+        from agent_cli.command_table import command_kind
+        from agent_cli.web.slash import is_web_command
+
+        return is_web_command(text) or command_kind(text) is not None
+
     def route(self, text: str) -> bool:
         from agent_cli.web.slash import handle_slash_command
 

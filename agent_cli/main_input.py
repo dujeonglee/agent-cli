@@ -16,10 +16,10 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from agent_cli import item_ids
-from agent_cli.post.envelope import Envelope, words
+from agent_cli.post.envelope import Envelope, is_human_words, words
 from agent_cli.post.office import CLOSED, OPEN_MAIL, PostOffice
 
-__all__ = ["CLOSED", "MAIN", "OPEN_MAIL", "MainInput"]
+__all__ = ["CLOSED", "MAIN", "OPEN_MAIL", "MainInput", "intake_item"]
 
 #: 사람의 입력을 받는 주소
 MAIN = "main"
@@ -162,3 +162,11 @@ class MainInput:
             "text": env.text,
             "images": list(p.get("images") or []),
         }
+
+
+def intake_item(env: Envelope) -> dict:
+    """main 상자의 봉투 하나 → 턴 경계 흡수 항목: 사람의 말은 ``{"message": 항목}``(`MainInput.item_of`), 메일은
+    ``{"mail": 회신}``(봉투가 싣고 온 옛 dict)."""
+    if is_human_words(env):
+        return {"message": MainInput.item_of(env)}
+    return {"mail": dict(env.payload)}

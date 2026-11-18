@@ -57,6 +57,7 @@ from agent_cli.constants import (
     is_private_owner,
 )
 from agent_cli.loop.kind import LoopKindError
+from agent_cli.main_input import intake_item
 from agent_cli.post.office import PostOffice
 from agent_cli.post.request_book import RowError
 from agent_cli.session.store import AGENTS_DIR
@@ -2176,6 +2177,16 @@ class AgentRegistry:
             return line + stacked, ""
 
         return handler
+
+    def absorb_main(self) -> list[dict]:
+        """main 의 턴 경계 — 상자의 줄 선 것 전부를 지금 런의 흡수 항목으로(사람의 말 먼저, 메일 뒤, `intake_item`).
+        메일을 꺼냈으면 디스크 미러도 소비하고, 무엇이든 꺼냈으면 대기열을 다시 그린다."""
+        out = [intake_item(e) for e in self._post.absorb("main", human_first=True)]
+        if any("mail" in it for it in out):
+            self._save_state()
+        if out:
+            self._pending_changed()
+        return out
 
     def drain_replies(self) -> list[dict]:
         """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지 — main 앞 사람의 말은 남긴다(`MainInput`)."""

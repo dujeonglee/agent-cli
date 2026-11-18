@@ -15,6 +15,7 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
+from agent_cli.command_table import command_kind, looks_like_slash_command
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import (
@@ -529,6 +530,10 @@ class _ConsoleSurface:
         """지금 런의 stop Event(한가하면 None) — Ctrl+C 처리기가 본다. 읽기만 한다."""
         return self._stop
 
+    def is_command(self, text: str) -> bool:
+        """``text`` 를 `route` 가 명령으로 받는가 — 실행하지 않고 판정만. ``/sh`` 는 run 에 없다(평범한 질의)."""
+        return not text.startswith("/sh") and command_kind(text) is not None
+
     def route(self, text: str) -> bool:
         if text.startswith("/sh"):
             return False
@@ -807,37 +812,6 @@ def _collect_agents() -> list[tuple[str, str]]:
         ((name, res.meta.get("description", "")) for name, res in resources.items()),
         key=lambda x: x[0].lower(),
     )
-
-
-_SLASH_CMD_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
-
-
-def looks_like_slash_command(message: str) -> bool:
-    """``/...`` 메시지가 **명령**인지 — 경로/일반 텍스트 오인 방지 (v4.51.1).
-
-    이전엔 ``startswith("/")`` 만으로 skill dispatch 로 보내서
-    ``/Users/me/proj 분석해줘`` 같은 경로-선두 메시지가 SKILL_NOT_FOUND
-    로 먹혔다. 판별 규칙(보수적 — 명령이라고 확신할 때만 True):
-
-    1. 첫 토큰에 두 번째 ``/`` 가 있으면 경로 (``/tmp/a.py``) → False
-    2. 첫 토큰이 파일시스템에 실존하면 경로 (``/etc``, ``/Users``) → False
-    3. 이름이 명령 문법(영숫자·-_)이 아니면 → False
-    4. 그 외 → True — unknown 이름은 기존대로 not-found 안내(오타 안전망)
-
-    ``@agent`` 라우팅과 web 의 정확-매치 명령(/help·/sh·/compact)은 무관.
-    """
-    first = message.split(maxsplit=1)[0]
-    body = first[1:]
-    if "/" in body:  # 규칙 1
-        return False
-    if not _SLASH_CMD_NAME.match(body):  # 규칙 3 (빈 문자열 포함)
-        return False
-    try:
-        if Path(first).exists():  # 규칙 2 — /etc, /Users 등 한 단어 경로
-            return False
-    except OSError:
-        pass
-    return True
 
 
 def try_dispatch_agent_or_skill(
