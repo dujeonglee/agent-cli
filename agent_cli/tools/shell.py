@@ -377,9 +377,15 @@ def tool_shell(
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
-        ended, raw_out, raw_err = _wait_or_stop(
-            proc, timeout, stopped or (lambda: False)
-        )
+        try:
+            ended, raw_out, raw_err = _wait_or_stop(
+                proc, timeout, stopped or (lambda: False)
+            )
+        except BaseException:
+            # 기다리는 도중 끊겼다(CLI 의 창 밖 Ctrl+C 가 던지는 KeyboardInterrupt, SIGTERM 의
+            # Terminated) — 자기 세션의 명령이 고아로 남지 않게 그룹을 끝내고 그대로 던진다 (N8).
+            _stop_group(proc)
+            raise
         if ended:
             return ToolResult(False, error=ended)
         out = raw_out.decode("utf-8", errors="replace").strip()

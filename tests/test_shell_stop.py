@@ -158,3 +158,18 @@ def test_bridge_context_reads_the_current_run_stop():
     assert ctx.stopped() is False
     st.stop_event = None
     assert ctx.stopped() is False
+
+
+def test_interrupt_while_waiting_ends_the_command_and_propagates(tmp_path):
+    """기다리는 도중 끊기면(CLI 의 창 밖 Ctrl+C 가 던지는 ``KeyboardInterrupt``, SIGTERM 의
+    ``Terminated``) 그룹을 끝내고 그대로 던진다 — 종전엔 자기 세션의 명령이 고아로 남았다."""
+    import pytest
+
+    def interrupted() -> bool:
+        if (tmp_path / "started").exists():
+            raise KeyboardInterrupt
+        return False
+
+    with pytest.raises(KeyboardInterrupt):
+        tool_shell({"command": _endless(tmp_path)}, stopped=interrupted)
+    _assert_all_gone(tmp_path)
