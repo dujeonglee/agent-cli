@@ -345,10 +345,12 @@ def test_the_web_agent_message_needs_no_io_and_no_callback(tmp_path, monkeypatch
 def test_a_stuck_terminal_does_not_hold_the_registry_lock(tmp_path, monkeypatch):
     """막힐 수 있는 표면(터미널 — stdout 이 막힌 Ctrl+S·파이프)이 출력에서 서 있어도 레지스트리 락은 비어 있다."""
     entered, release = threading.Event(), threading.Event()
+    owned: list[bool] = []
 
     class StuckTerminal(RecordingRenderer):
         def agent_message(self, **kw):
             if kw.get("direction") == "out":
+                owned.append(reg._cv._is_owned())  # 이 출력이 레지스트리 락을 쥔 채인가
                 entered.set()
                 release.wait(10)
 
@@ -360,9 +362,10 @@ def test_a_stuck_terminal_does_not_hold_the_registry_lock(tmp_path, monkeypatch)
     t.start()
     try:
         assert entered.wait(10)  # 보낸 쪽 out 을 찍다가 섰다
-        assert reg._cv.acquire(blocking=False)  # 그동안 락은 누구의 것도 아니다
-        reg._cv.release()
-        assert [m.id for m in reg.queued_for("main")]  # 배달은 이미 끝났다
+        assert owned == [False]  # 락 밖에서 섰다
+        assert [
+            m.id for m in reg.queued_for("main")
+        ]  # 그동안 다른 스레드가 락을 잡는다 — 배달은 이미 끝났다
     finally:
         release.set()
         t.join(10)
