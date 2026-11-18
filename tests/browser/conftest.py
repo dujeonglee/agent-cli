@@ -112,6 +112,21 @@ class WebStack:
         self.base = f"http://127.0.0.1:{port}"
         return self.url
 
+    def wait_connected(self, timeout: float = 10.0) -> bool:
+        """브라우저의 SSE 연결이 서버에 등록될 때까지 기다린다 — 등록되면 True,
+        시간이 다 되거나 ``stop()`` 이 걸리면 False. 읽기만 한다.
+
+        등록 뒤의 publish 는 그 연결 큐로 가서 스냅샷 다음에 빠짐없이 도착한다.
+        등록 전의 비영속 이벤트(tick·status)는 재생되지 않으므로, 그런 이벤트를
+        내는 테스트는 먼저 이걸 기다린다 (N13: ``page.goto`` 의 load 는
+        EventSource 를 기다리지 않는다)."""
+        deadline = time.time() + timeout
+        while not self.renderer.hub.has_live_connections():
+            if self._uv.should_exit or time.time() > deadline:
+                return False
+            time.sleep(0.05)
+        return True
+
     def stop(self):
         # ★worker 가 다음 confirm/ask 에서 블록된 채 남으면 모듈-전역
         # interactive_lock 을 쥐고 있어 다음 테스트가 락을 못 얻는다
@@ -140,10 +155,8 @@ class WebStack:
         ]
 
         def worker():
-            while not self.renderer.hub.has_live_connections():
-                if self._uv.should_exit:
-                    return
-                time.sleep(0.05)
+            if not self.wait_connected():
+                return
             while not self._uv.should_exit:
                 try:
                     res = self.renderer.confirm(
@@ -166,10 +179,8 @@ class WebStack:
         """ask(prompt_user) 1회 — 답을 results 에 적재."""
 
         def worker():
-            while not self.renderer.hub.has_live_connections():
-                if self._uv.should_exit:
-                    return
-                time.sleep(0.05)
+            if not self.wait_connected():
+                return
             try:
                 results.append(
                     self.renderer.prompt_user(
