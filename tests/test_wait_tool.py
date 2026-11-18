@@ -23,8 +23,10 @@ from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.session_slots import get_agent_registry, set_job_registry
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 from agent_cli.tools.virtual import WaitTool
+from agent_cli.wake import parked_debtors
 from tests.loop_ports import TEST_PORTS, make_ports
 from tests.loopkit import make_loop
+from tests.mail_support import agent_wake_lines
 
 #: main 모양의 포트 — 입력 큐가 있어 깨울 수 있다(빈 큐).
 WAKEABLE = make_ports(dequeue_user_message=lambda: None)
@@ -188,9 +190,9 @@ class TestWaitEndsTheRun:
 
         reg = make_registry(tmp_path)
         reg.note_owes("agent:a", "main", "do X")
-        assert reg.pending_for("main") == ["agent:a owes you a reply"]
-        assert reg.pending_for("agent:a") == []  # 자기 빚은 자기를 깨우지 않는다
-        assert reg.pending_for("agent:b") == []
+        assert agent_wake_lines(reg, "main") == ["agent:a owes you a reply"]
+        assert agent_wake_lines(reg, "agent:a") == []  # 자기 빚은 자기를 깨우지 않는다
+        assert agent_wake_lines(reg, "agent:b") == []
 
     def test_agent_scoped_jobs_do_not_wake_main(self, jobs):
         jobs.start("sleep 30", owner="agent:x")
@@ -281,7 +283,7 @@ class TestAlreadyArrived:
 
     def test_resident_inbox_items_count_for_that_agent(self, tmp_path):
         """받은편지함 미러 `inbox_items` 로 센다 — `SimpleQueue` 엔 `queue` 속성이
-        없어 종전 `pending_for` 의 "has your request queued" 가지는 늘 비었다."""
+        없어 종전 `pending_for`(지금은 `wake.agent_relations`) 의 "has your request queued" 가지는 늘 비었다."""
         from tests.test_wait_checkin import _fake_agent
 
         reg = self._registry(tmp_path)
@@ -289,7 +291,7 @@ class TestAlreadyArrived:
         _fake_agent(reg, "k", inbox=[{"author": "main"}])
         assert reg.arrived_for("agent:k") == 1
         assert reg.arrived_for("main") == 0
-        assert reg.pending_for("main") == ["agent:k has your request queued"]
+        assert agent_wake_lines(reg, "main") == ["agent:k has your request queued"]
 
     def test_wait_is_refused_and_the_mail_lands_in_the_next_turn(self, jobs, tmp_path):
         reg = self._registry(tmp_path)
@@ -349,8 +351,8 @@ class TestResidentRunEndingInWait:
         assert [d.to for d in debts] == ["main"]  # 빚은 그대로
         # 잠든 채무자는 직접 깨울 근거가 아니다 — 그를 깨울 것이 있는지 거슬러
         # 본다(v10.77.0 순환 대기 가드). 여기선 가짜 러너라 아무것도 없다.
-        assert reg.pending_for("main") == []
-        assert reg.parked_debtors_for("main") == [f"agent:{key}"]
+        assert agent_wake_lines(reg, "main") == []
+        assert parked_debtors(reg.wake_facts(), "main") == [f"agent:{key}"]
 
 
 class TestCompleteNag:
@@ -489,7 +491,7 @@ class TestCircularWait:
         tb = r.get(b)
         tb.state, tb.current_author = "busy", f"agent:{a}"
         assert wake_sources(f"agent:{b}", agents=get_agent_registry()) == []
-        assert r.parked_debtors_for(f"agent:{b}") == [f"agent:{a}"]
+        assert parked_debtors(r.wake_facts(), f"agent:{b}") == [f"agent:{a}"]
 
     def test_a_chain_to_a_working_agent_still_wakes(self, reg):
         from agent_cli.wake import wake_sources
@@ -532,7 +534,7 @@ class TestRunEnded:
         assert reg.run_ended("agent:a", "끊김", stopped=True) == 0
         assert reg.reply_debts("agent:a") == []
         assert not reg.has_pending_replies()
-        assert reg.pending_for("main") == []
+        assert agent_wake_lines(reg, "main") == []
 
     def test_a_normal_end_sends_the_labelled_summary_and_clears(self, reg):
         from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL

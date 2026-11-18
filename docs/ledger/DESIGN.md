@@ -54,7 +54,7 @@
 | 압축 | 미답 id 의 user 레코드 핀(`manager.py:381-399`), `_SUMMARY_CHAR_CAP//4` 초과는 핀 안 함. **상주의 시작 요청은 `request_id` 가 안 찍혀 핀 안 됨** |
 | 루프 | main · 상주(사람이 창에 쓴 것). delegate·skill 없음 |
 
-### 3.2 회신 빚 — `ReplyDebt` (`agents_live.py:194`, `_reply_debts`)
+### 3.2 회신 빚 — `ReplyDebt` (`subagent/question_port.py`, 장부는 `post/`)
 
 | | |
 |---|---|

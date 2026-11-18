@@ -80,6 +80,7 @@ from agent_cli.subagent.delegation_checks import depth_or_recursion_refusal
 from agent_cli.subagent.question_port import (
     REPLY_REQUESTER_GONE,
     QuestionPort,
+    ReplyDebt,
     ReplyFacts,
 )
 from agent_cli.terminate import wait_left
@@ -181,37 +182,6 @@ class Question:
             "asked_at": self.asked_at,
             "asked_in": self.asked_in,
         }
-
-
-@dataclass
-class ReplyDebt:
-    """회신 빚 하나의 공개 모양 — 우편 장부의 빚 줄(`_debt_view`)을 이 모양으로 보여 준다(v10.145.0 — 장부는
-    `agent_cli.post`).
-
-    런이 받은 **요청**(``expects_reply=True`` 항목·main 에 배달된 `message`)
-    마다 하나(v9.25.0 — 종전엔 상대별 하나라 같은 상대의 새 요청이 앞 것을
-    덮었다; 런 도중 흡수된 요청이 여럿이면 각각 회신을 받아야 한다는 사용자
-    결정). ``id`` 가 그 요청을 가리킨다 — 그 요청 배달의 id(`item_ids`,
-    전역에서 유일). 갚으면(`reply(id)`·요청자에게 `message`)
-    ``settled`` — 지우지 않는다: "이미 갚았다" 는 거부 사유가 사실이어야
-    한다. 사람 주소(``user:*``)의 빚은 창이 곧 배달이라 갚을 것이 없지만
-    **적어는 둔다** — 그 런의 `reply` 를 거부할 때 사유가 "요청이 없었다" 가
-    아니라 "요청자가 창을 보는 사람" 이어야 하기 때문이다.
-    """
-
-    to: str  # "main" | "agent:<key>" | "user" | "user:<nick>"
-    text: str  # 무엇에 대한 회신인지 (빚 목록의 설명)
-    answers: list = field(default_factory=list)  # 요청 항목의 귀속 스냅샷
-    hop: int = 0  # peer 폴백 배달의 hop
-    settled: bool = False
-    id: str = ""  # 요청 번호 — `reply(id=…)` 가 가리키는 값
-    #: 닫힌 줄이면 닫힌 사유(장부의 ``Row.how`` — "reply"·"unsent"·…), 열린 줄이면 "". "unsent" 는 회신이
-    #: 요청자에게 가지 못한 채 닫힌 것이다 — 다시 `reply` 할 때 "이미 회신했다" 가 아니라 그 사실을 말한다.
-    closed_by: str = ""
-
-    @property
-    def human(self) -> bool:
-        return is_human_addr(self.to)
 
 
 def _debt_view(row) -> ReplyDebt:
@@ -638,80 +608,6 @@ class AgentRegistry:
                 ),
             )
 
-    def pending_for(self, addr: str, exclude: frozenset = frozenset()) -> list[str]:
-        """``addr`` 를 **깨울** 에이전트 활동 (v10.65.0, `wait` 의 판정 재료) —
-        사람이 읽을 한 줄씩. 세션 전체의 `has_active_work` 가 아니라 **요청자별**:
-        그 주소에게 회신을 빚진 에이전트, 그 주소가 보낸 항목을 받은편지함에
-        들고 있거나 지금 처리 중인 에이전트. 자기 자신은 빼지 않아도 된다 —
-        자기에게 빚지거나 자기 항목을 드는 일은 없다.
-
-        ``exclude`` (v10.77.0): 순환 대기 판정에서 거슬러 온 주소들 — 지금 `wait`
-        를 부르는 쪽은 바쁨 상태라 그대로 두면 상대의 깨울 근거로 잡힌다.
-
-        **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `arrived_for`.
-        종전엔 "그 주소로 가는 미배달 회신" 을 ``to`` 키로 세었는데, main 의
-        메일함에서 작업·모니터 통지는 ``to`` 가 없어 한 건도
-        안 잡혔고(벤치 실측: 모니터가 먼저 발화한 뒤의 wait 가 "nothing
-        pending" 으로 거부), 잡혔더라도 **곧 배달될 것** 을 깨울 것으로 쳐
-        런을 끝내고 바로 다시 깨우는 낭비였다."""
-        return [text for _, text in self.pending_agents_for(addr, exclude)]
-
-    def pending_agents_for(
-        self, addr: str, exclude: frozenset = frozenset()
-    ) -> list[tuple[str, str]]:
-        """`pending_for` 의 재료 — ``(에이전트 주소, 사람이 읽을 줄)`` 쌍 (v10.79.0).
-        주소는 `wait` 중간 깨우기의 대상 id(`wake.wake_source_ids`)가 된다."""
-        out: list[tuple[str, str]] = []
-        for kind, me in self._agent_relations(addr, exclude):
-            if kind == "owes":
-                out.append((me, f"{me} owes you a reply"))
-            elif kind == "working":
-                out.append((me, f"{me} working on your request"))
-            else:
-                out.append((me, f"{me} has your request queued"))
-        return out
-
-    def _agent_relations(
-        self, addr: str, exclude: frozenset = frozenset()
-    ) -> list[tuple[str, str]]:
-        """``addr`` 를 깨울 에이전트들과 그 관계 — ``("owes"|"working"|"queued",
-        주소)``. 빚진 채 **스스로 잠든** 쪽(`_debtor_is_parked`)은 여기 없다 —
-        `parked_debtors_for` 가 따로 들고 호출자가 거슬러 본다."""
-        out: list[tuple[str, str]] = []
-        with self._cv:
-            for debtor in self._debtors_owing(addr):
-                if debtor in exclude:
-                    continue
-                if not self._debtor_is_parked(debtor):
-                    out.append(("owes", debtor))
-        for tm in list(self._agents.values()):
-            me = f"agent:{tm.key}"
-            if me == addr or me in exclude:
-                continue
-            if self.state_is_active(tm.state) and self._holds_unpaid_request_from(
-                self._taken(tm), addr
-            ):
-                out.append(("working", me))
-            elif self._holds_unpaid_request_from(self._queued(tm), addr):
-                # 받은편지함(우편의 그 주소 상자)에 줄 선 것으로 본다
-                out.append(("queued", me))
-        return out
-
-    def _holds_unpaid_request_from(self, items: list[dict], addr: str) -> bool:
-        """``items``(런이 집은 항목 또는 받은편지함 미러) 가운데 ``addr`` 가 보낸 요청으로 아직 회신이 가지 않은
-        것이 있는가 — 읽기만 한다. ``addr`` 의 `wait` 를 깨울 근거는 이것뿐이다(v10.143.0, 사용자 결정): 이미
-        회신한 요청·통지로는 그 에이전트가 무엇을 해도 ``addr`` 에게 돌아올 것이 없다.
-
-        ``addr`` 의 기다리는 회신(우편 장부의 열린 r 줄 — 요청이 상자에 들 때 열리고 회신·폴백·버림과 한 락
-        구간에 닫힌다)만 센다. 통지는 처음부터 줄이 없다."""
-        with self._cv:
-            awaited = {r.rid for r in self._post.awaited_by(addr)}
-            return any(
-                str(it.get("author") or "") == addr
-                and str(it.get("id") or "") in awaited
-                for it in items
-            )
-
     def checkin_agent_lines(
         self, addr: str, step_marks: dict[str, int]
     ) -> tuple[list[str], bool]:
@@ -720,7 +616,7 @@ class AgentRegistry:
 
         작업·monitor 와 달리 에이전트는 로그 파일이 없다. 레지스트리가 **이미 아는
         것**만으로 그린다 — 상태·지금 처리 중인 요청자·받은편지함 미러·회신 빚과
-        스스로 잠듦·그 에이전트가 기다리는 것(`wake.wake_sources`)·열린 사람
+        스스로 잠듦·그 에이전트가 기다리는 것(`wake.parked_view`)·열린 사람
         질문·컨텍스트 기록의 서수와 시각. 새 필드는 없다. "step" 은 컨텍스트 기록
         하나(모델 턴 또는 관찰) — 모델에게 하니스 용어(턴·관찰)를 쓰지 않는다.
         ``step_marks`` 는 `wait` 때 적어 둔 에이전트별 `last_ordinal`.
@@ -805,38 +701,6 @@ class AgentRegistry:
                 question = True
             lines.append(line)
         return lines, question
-
-    def _debtor_is_parked(self, debtor: str) -> bool:
-        """빚진 쪽이 **스스로 잠들어 있다** — 런이 `wait` 로 끝나 빚만 남은
-        유휴 에이전트(보통의 런 끝은 빚을 비운다). 그런 채무자는 그 자체로는
-        아무도 깨우지 못한다: 그를 깨울 것이 있어야 회신이 온다
-        (:meth:`parked_debtors_for` 와 `wake.wake_sources` 가 거슬러 본다)."""
-        if debtor == "main" or not debtor.startswith("agent:"):
-            return False
-        tm = self._agents.get(debtor.split(":", 1)[1])
-        if tm is None or tm.state == "dead":
-            return False
-        return not self.state_is_active(tm.state) and not self._queued(tm)
-
-    def _debtors_owing(self, addr: str) -> list[str]:
-        """``addr`` 에게 아직 갚지 않은 회신을 빚진 쪽들(``addr`` 자신 빼고) — 빚진 쪽의 첫 열린 줄 순서. ``_cv``
-        아래에서. 빚진 쪽이 죽었는지는 보지 않는다(발견 1 — 죽은 빚도 근거로 남는다, 4c 에서 바뀐다)."""
-        order: list[str] = []
-        for row in self._post.rows():
-            if row.kind == "r" and row.state == "picked" and row.dst not in order:
-                order.append(row.dst)
-        return [
-            d
-            for d in order
-            if d != addr and any(r.src == addr for r in self._post.owed_by(d))
-        ]
-
-    def parked_debtors_for(self, addr: str) -> list[str]:
-        """``addr`` 에게 회신을 빚진 채 잠든 에이전트 주소들 (v10.77.0) — 그들을
-        깨울 것이 있는지는 호출자(`wake.wake_sources`)가 거슬러 본다. 서로
-        `message` 하고 둘 다 `wait` 하면 아무도 깨지 않는 교착을 여기서 끊는다."""
-        with self._cv:
-            return [d for d in self._debtors_owing(addr) if self._debtor_is_parked(d)]
 
     def awaited_replies(self, addr: str) -> list[dict]:
         """``addr`` 가 보낸 요청 중 회신이 아직 오지 않은 것 — 장부의 "기다리는 회신"
@@ -1082,7 +946,8 @@ class AgentRegistry:
 
     # ── 회신 빚 장부 (v9.22.1 — main·상주 공통) ──────
     # 요청(`expects_reply=True` 항목 / main 에 배달된 `message`)은 빚이다.
-    # 갚는 길: `reply`·요청자에게 `message` — main·에이전트 같다 (v10.141.0).
+    # 갚는 길: `reply` 하나 — main·에이전트 같은 판정(`question_port.judge_reply`, v10.146.0). `message` 는
+    # 갚지 않는다(v10.145.1).
     # 런의 끝은 `run_ended` 하나로 온다(v10.77.0) — 보통의 끝은 남은 빚을 폴백
     # (라벨 붙은 런 요약)으로 배달하고 비우며, `wait` 면 그대로 두고(다음 런이
     # 갚는다), 중단이면 버린다. 그래서 남아 있는 빚은 언제나 `wait` 가 남긴

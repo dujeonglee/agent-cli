@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent_cli.subagent.agents_live import ReplyDebt
 from agent_cli.subagent.question_port import (
+    ReplyDebt,
     ReplyFacts,
     judge_reply,
     reply_refusal,

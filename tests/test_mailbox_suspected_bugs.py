@@ -17,6 +17,7 @@ from agent_cli.session_slots import set_agent_registry
 from agent_cli.subagent.agents_live import AgentRegistry
 from agent_cli.wake import wake_sources
 from tests.binding_support import make_binding
+from tests.mail_support import agent_wake_lines
 from tests.test_agents_live import make_registry
 from tests.test_engine_p2 import CAPS, Provider, call, owed_id, wait_until
 
@@ -108,7 +109,7 @@ class TestHeldResidentAndTheRequestersWait:
     @pytest.mark.xfail(
         strict=True,
         reason="받은편지함에 깨우지 않는 항목만 든 한가한 상주를 '잠들지 않았다' 로 보아 요청자의 wait 를 "
-        "받아들인다(_debtor_is_parked 가 inbox_items 를 본다) — 새 구조에서 통과해야 함",
+        "받아들인다(wake._is_parked 가 받은편지함 전부를 본다) — 새 구조에서 통과해야 함",
     )
     def test_the_requesters_wait_has_nothing_to_wake_it(self, tmp_path, cleanup):
         reg, keys = self._setup(tmp_path, cleanup)
@@ -291,7 +292,7 @@ class TestStoppedReplyOrder:
 
         def at_delivery(mail, **_):
             if mail.get("re"):
-                seen.append(reg.pending_for("main"))
+                seen.append(agent_wake_lines(reg, "main"))
 
         reg.on_reply = at_delivery
         assert reg.request(key, "TASK-T1 job") == ""

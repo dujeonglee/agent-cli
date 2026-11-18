@@ -44,7 +44,7 @@
   `LoopPorts.wakeable()`(main 은 입력 큐, 상주는 받은편지함). 거기서 wait 로 끝낸
   결과는 호출자에게 "⏸ waiting" 으로 돌아가 버린다(일회성은 부모의 owner 를
   물려받아 부모의 작업이 판정에 걸렸을 것이다).
-- **에이전트 활동은 요청자별** — `AgentRegistry.pending_for(addr)`: 그 주소에게
+- **에이전트 활동은 요청자별** — `AgentRegistry.pending_for(addr)`(v10.146.0 부터 `wake.agent_relations` — 레지스트리 사본 `WakeFacts` 의 순수 함수): 그 주소에게
   빚진 회신, 그 주소의 항목을 들고 있거나 처리 중인 에이전트, 그 주소로 가는 미배달
   회신. 세션 전체 `has_active_work` 로 보면 상주 에이전트 **자신이 busy** 라 늘
   참이었다(아무것도 안 기다리는 wait 가 통과했을 것). run 모드에서도 "동료의
@@ -275,8 +275,8 @@ after the command line" 을 앞에 붙인다(`JobRegistry.log_growth`, 비용은
 
 **에이전트 줄 — 새 필드 없이.** 작업·monitor 와 달리 에이전트는 로그 파일이 없다. 레지스트리가
 이미 아는 것만으로 그린다(`AgentRegistry.checkin_agent_lines`): 상태·지금 처리 중인 요청자·
-받은편지함 미러·회신 빚과 스스로 잠듦(`parked_debtors_for`)·그 에이전트가 기다리는 것
-(`wake_sources(debtor)` 재귀)·열린 사람 질문과 `asked_at`·컨텍스트 기록의 서수(`ctx.last_ordinal`,
+받은편지함 미러·회신 빚과 스스로 잠듦·그 에이전트가 기다리는 것
+(`wake.parked_view` — `wait` 판정과 같은 걸음, v10.146.0)·열린 사람 질문과 `asked_at`·컨텍스트 기록의 서수(`ctx.last_ordinal`,
 `wait` 때 적어 둔 `step_marks` 와 비교)와 마지막 기록 시각(`ctx.last_added_at`, v10.79.0 에 더한
 float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(모델 턴 또는 관찰) — 모델에게 턴·관찰
 이라는 하니스 용어를 쓰지 않는다.

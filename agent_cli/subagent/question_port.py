@@ -7,12 +7,14 @@ import 하지 않는다(타입만).
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from agent_cli.constants import has_words
+from agent_cli.subagent.agent_mail import is_human_addr
 
 if TYPE_CHECKING:
-    from agent_cli.subagent.agents_live import AgentRegistry, ReplyDebt
+    from agent_cli.subagent.agents_live import AgentRegistry
 
 #: `reply` 가 요청자에게 가지 못했다 — 그때 요청자가 명단에서 사라졌거나 죽었거나 멈추는 중이었다(v10.145.2). 빚은
 #: 닫혔다. 같은 키가 나중에 되살아날 수 있으므로(`resume`·재시작) 과거형이다 — 그 요청자도 더는 이 회신을
@@ -21,6 +23,37 @@ REPLY_REQUESTER_GONE = (
     'not delivered — agent "{key}", which sent request [{rid}], was already gone. '
     "[{rid}] is closed; there is nothing more to do for it."
 )
+
+
+@dataclass
+class ReplyDebt:
+    """회신 빚 하나의 공개 모양 — 우편 장부의 빚 줄(`AgentRegistry` 의 `_debt_view`)을 이 모양으로 보여 준다(v10.145.0 — 장부는
+    `agent_cli.post`). `reply` 판정(`judge_reply`)이 읽는 모양이라 판정 곁에 둔다(v10.146.0).
+
+    런이 받은 **요청**(``expects_reply=True`` 항목·main 에 배달된 `message`)
+    마다 하나(v9.25.0 — 종전엔 상대별 하나라 같은 상대의 새 요청이 앞 것을
+    덮었다; 런 도중 흡수된 요청이 여럿이면 각각 회신을 받아야 한다는 사용자
+    결정). ``id`` 가 그 요청을 가리킨다 — 그 요청 배달의 id(`item_ids`,
+    전역에서 유일). 갚으면(`reply(id)`, 그 대신인 폴백·정지 회신 — `message` 는
+    갚지 않는다, v10.145.1) ``settled`` — 지우지 않는다: "이미 갚았다" 는 거부 사유가 사실이어야
+    한다. 사람 주소(``user:*``)의 빚은 창이 곧 배달이라 갚을 것이 없지만
+    **적어는 둔다** — 그 런의 `reply` 를 거부할 때 사유가 "요청이 없었다" 가
+    아니라 "요청자가 창을 보는 사람" 이어야 하기 때문이다.
+    """
+
+    to: str  # "main" | "agent:<key>" | "user" | "user:<nick>"
+    text: str  # 무엇에 대한 회신인지 (빚 목록의 설명)
+    answers: list = field(default_factory=list)  # 요청 항목의 귀속 스냅샷
+    hop: int = 0  # peer 폴백 배달의 hop
+    settled: bool = False
+    id: str = ""  # 요청 번호 — `reply(id=…)` 가 가리키는 값
+    #: 닫힌 줄이면 닫힌 사유(장부의 ``Row.how`` — "reply"·"unsent"·…), 열린 줄이면 "". "unsent" 는 회신이
+    #: 요청자에게 가지 못한 채 닫힌 것이다 — 다시 `reply` 할 때 "이미 회신했다" 가 아니라 그 사실을 말한다.
+    closed_by: str = ""
+
+    @property
+    def human(self) -> bool:
+        return is_human_addr(self.to)
 
 
 def _not_delivered(d) -> str:

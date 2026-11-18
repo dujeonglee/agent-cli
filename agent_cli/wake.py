@@ -207,7 +207,7 @@ def wake_sources(owner: str, _seen: frozenset = frozenset(), *, agents) -> list[
     """이 소유자를 **깨울 수 있는 것** — `wait` 도구의 판정 (v10.65.0, docs/wait/DESIGN.md).
 
     돌고 있는 백그라운드 작업·살아 있는 모니터는 소유자 것만, 에이전트 활동은
-    **요청자별**(`AgentRegistry.pending_for` — 세션 전체 `has_active_work` 로 보면
+    **요청자별**(`agent_relations` — 세션 전체 `has_active_work` 로 보면
     상주 에이전트 자신이 busy 라 늘 참이 된다), 예약은 세션 것. 사람이 읽을 한 줄씩.
 
     v10.77.0 — 순환 대기: 나에게 회신을 빚진 채 **스스로 잠든**(`wait`) 에이전트는
