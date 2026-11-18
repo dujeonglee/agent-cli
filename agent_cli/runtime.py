@@ -28,7 +28,14 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any
 
-from agent_cli.loop.kind import WAIT_BLOCK, WAIT_END_RUN, LoopKind, PromptProfile, Start
+from agent_cli.loop.kind import (
+    WAIT_BLOCK,
+    WAIT_END_RUN,
+    WAIT_NEXT_MAIN,
+    LoopKind,
+    PromptProfile,
+    Start,
+)
 from agent_cli.loop.ports import (
     _RESIDENT_ROSTER,
     LoopPorts,
@@ -797,6 +804,10 @@ class MainLoop(LoopKind):
         회신·사람 입력·체크인에 깬다(감사 범위도 그 런 하나). 작업·모니터만 기다리면 런을 끝내고
         펌프가 깨우기를 기다린다(체크인 타이머는 레지스트리)."""
         return WAIT_BLOCK if self.ports.mailbox.awaited() else WAIT_END_RUN
+
+    def wait_refused_next(self) -> str:
+        """main 은 요청을 보내야 회신이 온다 — 깨울 것이 없으면 그 길을 말한다."""
+        return WAIT_NEXT_MAIN
 
     def intake(self) -> list[dict]:
         """입력 큐를 전부 비우고(라우팅은 엔진), 레지스트리의 미배달 회신을 받는다."""

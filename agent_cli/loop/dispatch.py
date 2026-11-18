@@ -1134,7 +1134,7 @@ class TurnDispatcher:
         둔 main)은 런을 끝내지 않는다: 메일(또는 main 이면 사람 입력)이 올 때까지 **여기서
         막고** 런을 잇는다 — 다음 턴 경계의 흡수(`kind.intake`)가 그것을 넣는다. 장부는
         넘기지 않는다(같은 런)."""
-        from agent_cli.loop.kind import WAIT_BLOCK, WAIT_REFUSE
+        from agent_cli.loop.kind import WAIT_BLOCK, WAIT_NOTHING_PENDING, WAIT_REFUSE
 
         reason = ""
         if isinstance(op.action_input, dict):
@@ -1180,9 +1180,7 @@ class TurnDispatcher:
                 "you, so if you wait too, nobody wakes. Reply to what you owe, or "
                 "keep working; call `complete` if the task is done."
                 if parked
-                else "nothing you started is pending (no background job, monitor "
-                "or agent of yours), so nothing would wake you. Keep working, or "
-                "call `complete` if the task is done."
+                else WAIT_NOTHING_PENDING + self.cfg.kind.wait_refused_next()
             )
             _append_observation(
                 self.state.messages,

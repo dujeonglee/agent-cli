@@ -90,7 +90,7 @@ class Postbox:
         return len(self._queued)
 
     def backlog(self) -> int:
-        """앞에 쌓인 할 일 — 깨우는 봉투만(REQUEST_STACKED). 깨우지 않는 회신은 할 일을 열지 않는다."""
+        """앞에 쌓인 할 일 — 깨우는 봉투만(로스터·status 의 inbox). 깨우지 않는 회신은 할 일을 열지 않는다."""
         return sum(1 for e in self._queued if e.wakes)
 
     def has_waking(self) -> bool:

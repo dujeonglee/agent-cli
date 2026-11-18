@@ -2169,9 +2169,9 @@ class AgentRegistry:
             if err:
                 return "", err
             line = delivered_line(rec_id, expects_reply=bool(expects_reply))
-            target = self._agents.get(to)
-            backlog = self.backlog_of(to) if target is not None else 0
-            stacked = REQUEST_STACKED.format(n=backlog) if backlog >= 2 else ""
+            # 쌓임은 이 보낸 쪽의 시작 안 한 요청만 센다 — 회신·통지·남의 요청은 재촉이 아니다
+            mine = self._post.queued_requests_from(addr, sender) if expects_reply else 0
+            stacked = REQUEST_STACKED.format(n=mine) if mine >= 2 else ""
             return line + stacked, ""
 
         return handler
@@ -2276,7 +2276,8 @@ class AgentRegistry:
 
     # ── status / kill / 종료 ────────────────────
 
-    def format_status(self, key: str = "") -> str:
+    def format_status(self, key: str = "", *, viewer: str = "") -> str:
+        """`agent` `status` 의 글 — ``viewer`` 는 묻는 루프의 주소(대기 넛지를 붙일지)."""
         agents = list(self._agents.values())
         if key:
             tm = self._agents.get(key)
@@ -2311,16 +2312,10 @@ class AgentRegistry:
         undelivered = len(self._post.queued("main"))
         if undelivered:
             lines.append(f"(undelivered replies: {undelivered})")
-        # 폴링 차단 넛지: working 이거나 미처리 inbox 가 있으면 모델이
-        # status 를 돌려 기다리는 상황일 가능성이 높다 — 회신은 mail 로
-        # 자동 배달되고 도착 시 harness 가 깨우므로(폴링 금지 설계),
-        # `wait` 로 턴을 마치는 게 올바른 대기다(v10.65.0). 전부 idle 인 로스터
-        # 확인용 status 에는 붙이지 않는다(노이즈).
-        waiting = any(
-            self.state_is_active(tm.state) or self.backlog_of(tm.key) > 0
-            for tm in items
-        )
-        if waiting:
+        # 폴링 차단 넛지: 묻는 쪽(``viewer``)이 회신을 기다릴 때만 — 그 회신은 메일로 와서 깨우므로
+        # `wait` 로 턴을 마치는 게 올바른 대기다(v10.65.0). 기다리는 회신이 없으면 `wait` 는 거절되니 붙이지
+        # 않는다(사람의 `@agents` 처럼 묻는 쪽이 없어도).
+        if viewer and self.awaited_replies(viewer):
             lines.append(STATUS_WAIT_NUDGE)
         return "\n".join(lines)
 
@@ -3090,9 +3085,10 @@ def delivered_line(rid: str, *, expects_reply: bool) -> str:
 
 
 REQUEST_STACKED = (
-    "\n⚠ it now has {n} queued requests — if these are progress checks or re-sends "
-    "of the same ask, that is interference: each one queues more work and delays "
-    "the answer. Its `reply` reaches you on its own; stop re-sending."
+    "\n⚠ {n} of your requests to it are still queued — if these are progress "
+    "checks or re-sends of the same ask, that is interference: each one queues "
+    "more work and delays the answer. Its `reply` reaches you on its own; stop "
+    "re-sending."
 )
 STATUS_DEAD_SUFFIX = ' | resumable with `mode` "resume"'
 STATUS_WAIT_NUDGE = (

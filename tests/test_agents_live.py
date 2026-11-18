@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -883,28 +884,32 @@ class TestWaitAndScope:
         assert entry["name"] == "ui"  # snapshot 필드명 계약
         reg.shutdown_all()
 
-    def test_status_nudges_complete_while_waiting(self, tmp_path, renderer):
-        """v7.9.0: 모델이 회신을 status 폴링으로 기다리는 패턴 차단 —
-        working/미처리 inbox 가 있으면 "`wait` 로 턴을 마쳐라, 회신은
-        자동 배달·도착 시 깨워진다" 힌트를 관찰 말미에 붙인다. 전부
-        idle 인 로스터 확인용 status 엔 안 붙임(노이즈)."""
+    def test_status_nudges_wait_only_while_a_reply_is_awaited(self, tmp_path, renderer):
+        """v7.9.0: 모델이 회신을 status 폴링으로 기다리는 패턴 차단 — 묻는 쪽(``viewer``)이 회신을
+        기다릴 때만 "`wait` 로 턴을 마쳐라" 를 붙인다. 바쁜 에이전트가 있어도 나를 깨울 회신이 없으면
+        `wait` 는 거절되니 붙이지 않는다; 묻는 쪽이 없는 사람의 `@agents` 에도 없다."""
+        from agent_cli.subagent.agent_modes import _agent_status
+
         gate = threading.Event()
         reg = make_registry(tmp_path, runner=make_runner(block=gate))
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        # 대기 상황 아님 → 힌트 없음
-        assert "finish this turn" not in reg.format_status()
-        # working 상태 → 힌트 (v10.85.0: 한 줄 — 기다리는 법은 꼬리가 말한다)
-        reg.get(key).state = "busy"
-        s = reg.format_status()
-        assert "finish this turn with `wait`" in s
-        assert "wake you" in s and "polling `status`" in s
+        reg.get(key).state = "busy"  # 일하는 중이지만 main 에게 빚진 것은 없다
+        assert "finish this turn" not in reg.format_status(viewer="main")
         reg.get(key).state = "idle"
-        # inbox 에 미처리 요청 → 힌트 (worker 픽업 전 창)
-        _queue_behind_a_held_run(reg, key)
-        reg.get(key).state = "idle"
+        _queue_behind_a_held_run(reg, key)  # main 의 요청 둘 — 회신을 기다린다
         try:
-            assert "finish this turn" in reg.format_status()
+            s = reg.format_status(viewer="main")
+            assert "finish this turn with `wait`" in s
+            assert "wake you" in s and "polling `status`" in s
+            # `agent` `status` 는 부른 루프의 주소를 넘긴다
+            out = _agent_status(
+                reg, {}, caller=SimpleNamespace(owner="main"), runtime=None
+            ).output
+            assert "finish this turn with `wait`" in out
+            # 그 회신을 기다리지 않는 쪽·사람에게는 없다
+            assert "finish this turn" not in reg.format_status(viewer=f"agent:{key}")
+            assert "finish this turn" not in reg.format_status()
         finally:
             gate.set()
         reg.shutdown_all()
@@ -2789,18 +2794,50 @@ class TestPeerMessaging:
 
     def test_message_ack_warns_on_stacked_duplicates(self, tmp_path, renderer):
         """이미 밀린 에이전트에 또 요청(`message`, v10.141.0 — 종전 `agent` request) → 적체
-        경고(재촉 재전송이 중복 작업으로 쌓여 실제로 느려짐을 명시)."""
+        경고(재촉 재전송이 중복 작업으로 쌓여 실제로 느려짐을 명시). 수는 이 보낸 쪽의 시작 안 한 요청."""
         gate = threading.Event()
         reg = make_registry(tmp_path, runner=make_runner(block=gate))
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        reg.request(key, "first")  # worker 가 집어 busy 로 블록
+        reg.request(
+            key, "first"
+        )  # worker 가 집어 busy 로 블록 — 시작한 요청은 세지 않는다
         wait_until(lambda: reg.get(key).state == "busy")
         reg.request(key, "second")  # inbox 1 적체
         out, _err = reg.message_handler("main")(key, "third")
         gate.set()
-        assert "queued requests" in out  # 적체 수 명시
+        assert "\n⚠ 2 of your requests to it are still queued — " in out
         assert "reaches you on its own" in out
+        reg.shutdown_all()
+
+    def test_stacked_warning_counts_only_my_queued_requests(self, tmp_path, renderer):
+        """회신·통지·남의 요청은 재촉이 아니다 — 상자에 셋이 줄 서도 내 요청이 하나면 경고하지 않고,
+        통지를 보낼 때는 언제나 경고하지 않는다."""
+        gate = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
+        key, _ = reg.spawn(name="busy")
+        other, _ = reg.spawn(name="other")
+        wait_until(
+            lambda: reg.get(key).state == "idle" and reg.get(other).state == "idle"
+        )
+        reg.request(key, "first")
+        wait_until(lambda: reg.get(key).state == "busy")
+        try:
+            assert reg.request(key, "theirs 1", author=f"agent:{other}") == ""
+            assert reg.request(key, "theirs 2", author=f"agent:{other}") == ""
+            send = reg.message_handler("main")
+            out, _ = send(key, "fyi one", False)
+            assert "⚠" not in out
+            out, _ = send(
+                key, "fyi two", False
+            )  # 내 통지 둘 — 통지는 세지도 경고하지도 않는다
+            assert "⚠" not in out
+            out, _ = send(key, "mine 1")
+            assert "⚠" not in out
+            out, _ = send(key, "mine 2")
+            assert "⚠ 2 of your requests to it are still queued" in out
+        finally:
+            gate.set()
         reg.shutdown_all()
 
     def test_build_reply_record_peer_message(self):
