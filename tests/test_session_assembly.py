@@ -208,7 +208,7 @@ class TestOneQueue:
                 ("hint", "dj"),
             ]
 
-            first = q.take_next()
+            first = q.wait_to_open(0)
             assert (first["text"], first["nickname"]) == ("weekly", "⏰ Scheduler")
             assert (
                 main_kind_ports.mailbox.has_inbox

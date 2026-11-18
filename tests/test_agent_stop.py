@@ -25,7 +25,7 @@ from agent_cli.subagent.agents_live import AgentInstance, AgentRegistry
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
-from tests.mail_support import agent_wake_lines
+from tests.mail_support import absorbed_mail, agent_wake_lines
 
 CAPS = ModelCapabilities(
     context_window=32768, max_output_tokens=4096, supports_thinking=False
@@ -380,7 +380,7 @@ class TestRemove:
         assert until(lambda: gone(tm))
         # 끝난 워커는 아무것도 들고 있지 않다(끝내라는 표식은 꺼내지 않은 채 나갔다 — 그 표식은 구현의 것)
         assert reg.taken_by(f"agent:{tm.key}") == ()
-        reg.drain_replies()
+        absorbed_mail(reg)
         assert not reg.has_active_work() and not reg.any_activity()
 
     def test_kill_of_a_dead_agent_and_shutdown_send_nothing(self, reg, stage):
@@ -600,7 +600,7 @@ class TestDiedWorkerDebts:
             )
             in text
         )
-        died = [m for m in reg.drain_replies() if m.get("kind") == "died"]
+        died = [m for m in absorbed_mail(reg) if m.get("kind") == "died"]
         assert [m["output"] for m in died] == ["WorkerDies: DIE5"]
 
     def test_a_dead_requester_gets_nothing_and_the_debt_closes(self, reg, stage):

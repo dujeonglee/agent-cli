@@ -12,6 +12,11 @@ def to_main(reg, mail: dict) -> str:
     return reg.deliver("main", mail=mail, text="", author="", expects_reply=False)
 
 
+def absorbed_mail(reg) -> list[dict]:
+    """main 의 턴 경계가 지금 흡수할 메일 — 꺼내 돌려준다(`AgentRegistry.absorb_main` 의 메일 항목, 도착 순)."""
+    return [it["mail"] for it in reg.absorb_main() if "mail" in it]
+
+
 def agent_wake_lines(reg, addr: str) -> list[str]:
     """``addr`` 를 깨울 에이전트 활동의 줄 — `wait` 수락 문장의 에이전트 조각(`wake.relation_items`, 레지스트리 사본)."""
     from agent_cli.wake import relation_items

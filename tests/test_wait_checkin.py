@@ -36,7 +36,7 @@ from agent_cli.subagent.agents_live import AgentInstance
 from agent_cli.wake import wake_source_ids, wake_sources
 from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
-from tests.mail_support import agent_wake_lines
+from tests.mail_support import absorbed_mail, agent_wake_lines
 from tests.monitor_delivery import RecordingDelivery
 from tests.test_agents_live import make_registry, make_runner, wait_until
 
@@ -100,7 +100,7 @@ def _armed(reg, owner="main"):
 
 
 def _mail(reg):
-    return [m for m in reg.drain_replies() if m.get("kind") == "checkin"]
+    return [m for m in absorbed_mail(reg) if m.get("kind") == "checkin"]
 
 
 # ── 걸고 풀기 ────────────────────────────────────────────────

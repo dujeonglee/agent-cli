@@ -19,6 +19,7 @@ from agent_cli.session_slots import set_agent_registry
 from agent_cli.subagent.agents_live import AgentInstance
 from agent_cli.wake import relation_items, wake_sources
 from tests import test_engine_p2
+from tests.mail_support import absorbed_mail
 from tests.test_agents_live import make_registry
 from tests.test_engine_p2 import (
     Provider,
@@ -111,7 +112,7 @@ class TestWhoWakesTheRequester:
         assert reg.pay_debt("agent:agt-w", d, "3 callers") == ""
         assert tm.state == "busy" and reg.taken_by("agent:agt-w")[0].id == item["id"]
         if requester == "main":
-            reg.drain_replies()  # 회신은 이미 읽었다
+            absorbed_mail(reg)  # 회신은 이미 읽었다
         else:
             reg.absorb_pending(reg.get("agt-req"))  # 요청자가 회신을 읽었다
         assert wake_sources(requester, agents=reg) == []
@@ -217,7 +218,7 @@ class TestMainSeesIt:
         def main_wait_after_reply(msgs):
             main_second_call.set()
             # 회신이 main 메일함에 든 뒤 — 이 호출의 결과 뒤 경계가 그것을 먼저 배달한다
-            assert wait_until(lambda: holder["reg"].has_pending_replies())
+            assert wait_until(lambda: holder["reg"].arrived_for("main"))
             return call("shell", command="true")
 
         def main_complete(msgs):

@@ -32,9 +32,9 @@ def _send(page, text: str) -> None:
     page.click("#send")
 
 
-def _take_next(stack) -> dict:
+def _open_next(stack) -> dict:
     """턴 경계가 하듯 맨 앞 줄을 꺼낸다(말풍선은 호출자가 낸다)."""
-    return stack.server.main_input.take_next()
+    return stack.server.main_input.wait_to_open(0)
 
 
 def _take_first_command(stack) -> dict:
@@ -57,7 +57,7 @@ class TestReceipts:
         row = _items(page).first
         assert row.locator(".queue-text").inner_text().endswith("please also check y")
         assert row.locator(".queue-cancel").count() == 1  # 내 줄 — 취소할 수 있다
-        item = _take_next(stack)
+        item = _open_next(stack)
         stack.renderer.push_user_message(
             f"[{item['nickname']}]: {item['text']}", author=item["nickname"]
         )

@@ -24,6 +24,7 @@ from agent_cli.runtime import MainLoop
 from agent_cli.session_slots import set_agent_registry
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.binding_support import make_binding
+from tests.mail_support import absorbed_mail
 
 CAPS = ModelCapabilities(
     context_window=65536, max_output_tokens=4096, supports_thinking=False
@@ -857,8 +858,8 @@ class TestResume:
             assert reg.restore() == 1
             tm = reg.get("agt-run1")
             assert tm.ends_after_task and tm.task_id != "r-7"  # 새 id 로 다시 들어갔다
-            assert wait_until(reg.has_pending_replies)
-            (mail,) = reg.drain_replies()
+            assert wait_until(lambda: reg.arrived_for("main"))
+            (mail,) = absorbed_mail(reg)
             assert "recounted" in mail["output"] and mail["re"] == tm.task_id
             assert wait_until(lambda: tm.state == "dead") and tm.revivable is False
         finally:
@@ -886,8 +887,8 @@ class TestResume:
         reg = AgentRegistry(sdir, runner=make_runner("orphan done"))
         try:
             assert reg.restore() == 1
-            assert wait_until(reg.has_pending_replies)
-            (mail,) = reg.drain_replies()
+            assert wait_until(lambda: reg.arrived_for("main"))
+            (mail,) = absorbed_mail(reg)
             assert "orphan done" in mail["output"] and mail["key"] == "agt-run2"
         finally:
             reg.shutdown_all()

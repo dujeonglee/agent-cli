@@ -129,7 +129,7 @@ class TestMailRun:
 
         def run_main(req):
             seen.append(req)
-            mi.post.absorb_mail("main")  # 그 런의 첫 턴 경계가 하는 일
+            mi.post.absorb("main", human_first=True)  # 그 런의 첫 턴 경계가 하는 일
             mi.close()
 
         make_pump(

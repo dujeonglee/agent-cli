@@ -23,7 +23,7 @@ from agent_cli.runtime import MainLoop
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
-from tests.mail_support import to_main
+from tests.mail_support import absorbed_mail, to_main
 
 JOB = {
     "kind": "job",
@@ -141,7 +141,7 @@ class TestOutOfLedgerMailIsNotPersisted:
         to_main(reg, {"kind": "monitor", "ledger": "none", "output": "⏰ check-in"})
         reg2 = AgentRegistry(tmp_path / "reg")
         reg2.restore()
-        assert [r["kind"] for r in reg2.drain_replies()] == ["job"]
+        assert [r["kind"] for r in absorbed_mail(reg2)] == ["job"]
 
 
 class TestWakeRunHasNoStarter:

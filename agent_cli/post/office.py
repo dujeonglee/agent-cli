@@ -267,18 +267,6 @@ class PostOffice:
 
     # ── 사람의 말 (줄 없는 봉투 — `envelope.words`) ─────────────
 
-    def take_words(self, addr: str) -> Envelope | None:
-        """``addr`` 앞에 줄 선 첫 사람의 말을 꺼낸다(런이 들지 않는다 — 줄이 없다). 없으면 None."""
-        with self.cv:
-            return self._take_first_words(self._box(addr))
-
-    def absorb_mail(self, addr: str) -> tuple[Envelope, ...]:
-        """턴 경계 — 사람의 말을 뺀 줄 선 것 전부를 지금 런으로(도착 순서). 그 줄은 picked."""
-        with self.cv:
-            envs = self._box(addr).take_all_but_words()
-            self._picked(envs)
-            return envs
-
     def withdraw(self, addr: str, env_id: str) -> Envelope | None:
         """줄 선 **줄 없는** 봉투 하나를 id 로 뺀다(취소·명령으로 꺼냄). 없으면 None, 줄이 있는 봉투면 아무것도
         바꾸지 않고 `RowError` — 줄을 닫을 길이 없어지기 때문이다."""
@@ -291,14 +279,6 @@ class PostOffice:
             box.remove(env_id)
             self.cv.notify_all()
             return env
-
-    def put_first(self, env: Envelope) -> None:
-        """줄 없는 봉투를 ``env.dst`` 의 상자 맨 앞에 넣는다(명령인 줄 알고 꺼냈는데 명령이 아니었다)."""
-        with self.cv:
-            self._ensure_rowless(env)
-            self._ensure_new([env])
-            self._box(env.dst).put_first(env)
-            self.cv.notify_all()
 
     def wait_words(self, addr: str, timeout: float | None) -> bool:
         """``addr`` 앞에 사람의 말이 줄 설 때까지 기다린다(꺼내지 않는다) — 있거나 ``timeout`` 안에 오면 True, 닫혔으면

@@ -17,7 +17,7 @@ from agent_cli.session_slots import set_agent_registry
 from agent_cli.subagent.agents_live import AgentRegistry
 from agent_cli.wake import wake_sources
 from tests.binding_support import make_binding
-from tests.mail_support import agent_wake_lines
+from tests.mail_support import absorbed_mail, agent_wake_lines
 from tests.test_agents_live import make_registry
 from tests.test_engine_p2 import CAPS, Provider, call, owed_id, wait_until
 
@@ -249,7 +249,7 @@ class TestReplyInTheMessageToMainGap:
 
         def main_answers_at_once(mail, **_):
             # main 의 턴 경계가 하는 일 — 꺼내고(빚이 적힌다), 바로 그 id 로 갚는다
-            (got,) = reg.drain_replies()
+            (got,) = absorbed_mail(reg)
             debt = reg.note_owes("main", f"agent:{key}", "q", id=got["item_id"])
             assert reg.pay_debt("main", debt, "use main") == ""
 

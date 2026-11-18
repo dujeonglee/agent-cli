@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 
 from agent_cli.jobs import Job, JobRegistry
 from agent_cli.session_slots import set_job_registry
+from tests.mail_support import absorbed_mail
 from tests.monitor_delivery import RecordingDelivery
 
 
@@ -438,7 +439,7 @@ class TestOwnerRouting:
             job = jobs.start("sleep 60", owner="main")
             jobs.kill(job, by="alice")
             assert requests == []
-            (m,) = registry.drain_replies()  # main 메일함에 든 그 메일
+            (m,) = absorbed_mail(registry)  # main 메일함에 든 그 메일
             assert m["kind"] == "job" and m["success"] is False
             rec = build_reply_record(m)
             assert rec["tool"] == "job" and rec["success"] is False

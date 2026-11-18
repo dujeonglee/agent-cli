@@ -14,6 +14,7 @@ import pytest
 
 from agent_cli.loop.ledger import Ledger
 from agent_cli.subagent.agent_mail import MailView
+from tests.mail_support import absorbed_mail
 from tests.test_agents_live import make_registry, wait_until
 
 
@@ -65,7 +66,7 @@ class TestQueuedFor:
             got[0].text = "changed"
         reg.message_to_main("agt-x", "two", notice=True)
         assert len(got) == 1  # 이미 받은 값은 뒤의 도착을 비추지 않는다
-        reg.drain_replies()
+        absorbed_mail(reg)
         assert len(got) == 1 and reg.queued_for("main") == ()
 
     def test_agent_inbox_in_arrival_order(self, held):

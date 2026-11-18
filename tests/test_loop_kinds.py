@@ -13,6 +13,7 @@ from agent_cli.loop.kind import Caller, LoopKind, LoopKindError, PrivateLoop, St
 from agent_cli.tools.result import ToolResult
 from tests.loop_kinds import make_caller, make_kind
 from tests.loop_ports import make_ports, queue_inbox
+from tests.mail_support import absorbed_mail
 
 
 class _Trace(LoopKind):
@@ -497,8 +498,8 @@ class TestResidentFinishIsOnePath:
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         assert reg.request(key, "do it", author="main") == ""
-        assert wait_until(reg.has_pending_replies)
-        (reply,) = reg.drain_replies()
+        assert wait_until(lambda: reg.arrived_for("main"))
+        (reply,) = absorbed_mail(reg)
         assert "agent internal error: RuntimeError: boom" in reply["output"]
         assert wait_until(lambda: reg.get(key).state == "idle")
         assert reg.get(key).handled == 1

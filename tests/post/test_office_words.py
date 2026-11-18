@@ -45,30 +45,27 @@ class TestTakeAndSplit:
         assert [e.id for e in po.words("main")] == ["u-2", "u-4"]
         assert [e.id for e in po.mail("main")] == ["n-1", "n-3"]
 
-    def test_take_words_leaves_mail_and_holds_nothing(self):
-        po = PostOffice()
-        po.deliver(_mail(1))
-        po.deliver(_words(2))
-        assert po.take_words("main").id == "u-2"
-        assert po.take_words("main") is None
-        assert po.taken("main") == () and [e.id for e in po.queued("main")] == ["n-1"]
-
-    def test_absorb_mail_takes_everything_but_words(self):
+    def test_absorb_human_first_takes_words_then_mail_and_holds_only_the_mail(self):
         po = PostOffice()
         for env in (_words(1), _mail(2), _words(3)):
             po.deliver(env)
-        assert [e.id for e in po.absorb_mail("main")] == ["n-2"]
-        assert [e.id for e in po.queued("main")] == ["u-1", "u-3"]
-        assert [e.id for e in po.taken("main")] == ["n-2"]
+        assert [e.id for e in po.absorb("main", human_first=True)] == [
+            "u-1",
+            "u-3",
+            "n-2",
+        ]
+        assert po.queued("main") == ()
+        # 런이 든다(런이 끝나면 비운다) — 줄은 메일의 것만, 사람의 말은 줄이 없다
+        assert [e.id for e in po.taken("main")] == ["u-1", "u-3", "n-2"]
+        po.check_consistency()
 
-    def test_withdraw_and_put_first(self):
+    def test_withdraw(self):
         po = PostOffice()
         po.deliver(_words(1))
         po.deliver(_words(2))
         env = po.withdraw("main", "u-1")
         assert env.id == "u-1" and po.withdraw("main", "u-1") is None
-        po.put_first(env)
-        assert [e.id for e in po.words("main")] == ["u-1", "u-2"]
+        assert [e.id for e in po.words("main")] == ["u-2"]
         po.check_consistency()
 
     def test_an_envelope_with_a_row_is_not_withdrawn(self):

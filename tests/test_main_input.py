@@ -54,13 +54,13 @@ class TestMainInput:
         t.join(timeout=2)
         assert got == [CLOSED]
 
-    def test_take_next_and_snapshot(self):
+    def test_open_and_snapshot(self):
         q = MainInput()
-        assert q.take_next() is None
+        assert q.wait_to_open(0) is None
         q.enqueue(None, "x")
         assert [i["text"] for i in q.snapshot()] == ["x"]
         assert q.pending_count() == 1
-        assert q.take_next()["text"] == "x"
+        assert q.wait_to_open(0)["text"] == "x"
 
     def test_cancel_owner_only(self):
         q = MainInput()
@@ -73,7 +73,7 @@ class TestMainInput:
         events = []
         q = MainInput(on_change=lambda: events.append(q.pending_count()))
         q.enqueue(None, "a")  # 락 밖 호출이라 pending_count 재진입 가능해야 한다
-        q.take_next()
+        q.wait_to_open(0)
         assert events == [1, 0]
 
     def test_words_are_not_saved(self):
@@ -88,4 +88,4 @@ class TestMainInput:
         q.post.deliver(post_envelope.notice("n-1", "job", "main", "done"))
         q.enqueue(None, "hi")
         assert [i["text"] for i in q.snapshot()] == ["hi"] and q.pending_count() == 1
-        assert q.take_next()["text"] == "hi" and q.take_next() is None
+        assert q.wait_to_open(0)["text"] == "hi" and q.pending_count() == 0

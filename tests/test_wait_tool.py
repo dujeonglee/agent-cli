@@ -26,7 +26,7 @@ from agent_cli.tools.virtual import WaitTool
 from agent_cli.wake import parked_debtors
 from tests.loop_ports import TEST_PORTS, make_ports, queue_inbox
 from tests.loopkit import make_loop
-from tests.mail_support import agent_wake_lines
+from tests.mail_support import absorbed_mail, agent_wake_lines
 
 #: main 모양의 포트 — 입력 큐가 있어 깨울 수 있다(빈 큐).
 WAKEABLE = make_ports(inbox=queue_inbox(lambda: None))
@@ -346,7 +346,7 @@ class TestResidentRunEndingInWait:
         assert wait_until(
             lambda: reg.get(key).state == "idle" and reg.get(key).handled >= 1
         )
-        assert not reg.has_pending_replies()  # 폴백이 main 으로 가지 않았다
+        assert not reg.arrived_for("main")  # 폴백이 main 으로 가지 않았다
         debts = reg.reply_debts(f"agent:{key}")
         assert [d.to for d in debts] == ["main"]  # 빚은 그대로
         # 잠든 채무자는 직접 깨울 근거가 아니다 — 그를 깨울 것이 있는지 거슬러
@@ -525,7 +525,7 @@ class TestRunEnded:
         reg.note_owes("agent:a", "main", "일감", id="r-1")
         assert reg.run_ended("agent:a", "⏸ waiting", waiting=True) == 0
         assert [d.id for d in reg.reply_debts("agent:a")] == ["r-1"]
-        assert not reg.has_pending_replies()
+        assert not reg.arrived_for("main")
 
     def test_stopped_drops_the_debt_without_a_summary(self, reg):
         """끊긴 요청은 재시작이 새 id 로 다시 적는다 — 남기면 빚이 둘이 되고, 죽은
@@ -533,7 +533,7 @@ class TestRunEnded:
         reg.note_owes("agent:a", "main", "일감", id="r-1")
         assert reg.run_ended("agent:a", "끊김", stopped=True) == 0
         assert reg.reply_debts("agent:a") == []
-        assert not reg.has_pending_replies()
+        assert not reg.arrived_for("main")
         assert agent_wake_lines(reg, "main") == []
 
     def test_a_normal_end_sends_the_labelled_summary_and_clears(self, reg):
@@ -542,7 +542,7 @@ class TestRunEnded:
         reg.note_owes("agent:a", "main", "일감", id="r-1")
         assert reg.run_ended("agent:a", "요약", run="r-1", success=True) == 1
         assert reg.reply_debts("agent:a") == []
-        (mail,) = reg.drain_replies()
+        (mail,) = absorbed_mail(reg)
         assert mail["output"] == f"{_NO_REPLY_LABEL}\n요약" and mail["re"] == "r-1"
 
     def test_main_run_ended_routes_through_the_same_place(self, reg):

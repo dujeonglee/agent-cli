@@ -17,6 +17,7 @@ from agent_cli.main_input import MainInput
 from agent_cli.pump import ForeverPolicy
 from agent_cli.runtime import wire_agent_mail
 from agent_cli.subagent.agents_live import AgentRegistry
+from tests.mail_support import absorbed_mail
 from tests.pump_support import FakeSurface, make_pump, run_pump_in_thread
 from tests.test_engine_p2 import wait_until
 
@@ -72,7 +73,7 @@ class TestNumbersAroundAMailRun:
         def run_main(req):
             opened.append(req.query)
             if not req.author_is_user:
-                reg.drain_replies()  # 메일 런의 첫 턴 경계가 하는 일
+                absorbed_mail(reg)  # 메일 런의 첫 턴 경계가 하는 일
             run_done.set()
 
         pump = make_pump(
@@ -113,5 +114,5 @@ class TestTheMailThatOpensARunSurvivesARestart:
         assert self._pending(tmp_path) == ["job"]
         reg._save_state()  # 그 사이 다른 저장(에이전트의 상태 변화 등)
         assert self._pending(tmp_path) == ["job"]
-        assert [m.get("kind") for m in reg.drain_replies()] == ["job"]  # 첫 턴 경계
+        assert [m.get("kind") for m in absorbed_mail(reg)] == ["job"]  # 첫 턴 경계
         assert self._pending(tmp_path) == []

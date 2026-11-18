@@ -69,33 +69,7 @@ class MainInput:
         self._changed()
         return self.item_of(env)
 
-    def put_back_first(self, item: dict) -> None:
-        """꺼낸 항목을 맨 앞으로 되돌린다 — 명령인 줄 알고 꺼냈는데 라우팅이 받지 않았을 때(평범한 말)."""
-        nickname = item.get("nickname")
-        self.post.put_first(
-            words(
-                str(item["id"]),
-                f"user:{nickname}" if nickname else "user",
-                MAIN,
-                str(item.get("text") or ""),
-                payload={
-                    "conn_id": item.get("conn_id") or "",
-                    "nickname": nickname,
-                    "images": list(item.get("images") or []),
-                },
-            )
-        )
-        self._changed()
-
     # ── 꺼내기 ───────────────────────────────────────
-
-    def take_next(self) -> dict | None:
-        """턴 경계: 맨 앞의 사람의 말 하나, 없으면 None (막지 않는다)."""
-        env = self.post.take_words(MAIN)
-        if env is None:
-            return None
-        self._changed()
-        return self.item_of(env)
 
     def wait_to_open(self, timeout: float | None):
         """펌프: 다음 런을 열 것 — 사람의 말 항목(꺼냄), `OPEN_MAIL`(깨우는 메일이 있다), `CLOSED`, 또는 None

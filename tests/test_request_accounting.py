@@ -963,9 +963,8 @@ class TestAgentLoopsAreUntouched:
     """회계·되돌림·독촉·칩은 **웹 main 루프에만** 걸린다 (사용자 우려).
 
     장부(`state.ledger`)를 채우는 입구는 둘뿐이다 — 스타터의 `query_request_id`
-    와 드레인 포트 `dequeue_user_message`. 둘 다 `main.py` 의 웹 워커만
-    넘긴다. 상주·일회성·스킬 루프의 포트 빌더는 전부 `dequeue_user_message=
-    None` 이고 `query_request_id` 는 기본값 "" 이다. 그래서 그 루프들에선
+    와 main 상자 흡수(`Mailbox(take=…)` 의 사람의 말). 둘 다 main 만 넘긴다. 상주·일회성·스킬
+    루프는 main 상자를 흡수하지 않고 `query_request_id` 는 기본값 "" 이다. 그래서 그 루프들에선
     목록이 항상 비고, 새 기계가 전부 조용하다.
 
     여기서 **프로덕션 빌더**(`ResidentLoop.make_ports` / `PrivateLoop.make_ports`)

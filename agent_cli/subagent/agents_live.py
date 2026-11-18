@@ -3,7 +3,7 @@
 delegate 가 "파견"(스폰→완주→ctx 폐기)이라면 teammate 는 "상주 팀원"이다:
 spawn 이 key 를 반환하고, 이후 request 가 같은 ctx 위에서 반복 처리된다
 (D1 비동기 mailbox). 회신은 LLM 폴링이 아니라 **harness 가 배달**한다 —
-main 루프가 턴 경계에서 :meth:`AgentRegistry.drain_replies` 를 비워
+main 루프가 턴 경계에서 :meth:`AgentRegistry.absorb_main` 으로 비워
 관찰 레코드로 주입한다 (D2, ``AgentLoop._deliver_agent_mail``).
 
 스레딩 모델
@@ -815,9 +815,6 @@ class AgentRegistry:
         if addr.startswith("agent:") or is_private_owner(addr):
             return self._post.arrived(addr)
         return 0
-
-    def has_pending_replies(self) -> bool:
-        return bool(self._post.mail("main"))
 
     def has_mail_that_wakes_main(self) -> bool:
         """main 메일함에 main 을 깨울 메일이 있는가 — ``wakes_main`` 이 거짓인 메일("Stop everything" 의 정지
@@ -2186,15 +2183,6 @@ class AgentRegistry:
             self._save_state()
         if out:
             self._pending_changed()
-        return out
-
-    def drain_replies(self) -> list[dict]:
-        """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지 — main 앞 사람의 말은 남긴다(`MainInput`)."""
-        envs = self._post.absorb_mail("main")
-        out = [dict(e.payload) for e in envs]
-        if out:
-            self._save_state()  # 배달 완료 → 디스크 미러도 소비
-            self._pending_changed()  # 대기열에서 빠진다 = 주입됐다
         return out
 
     # ── private 메일함 (v10.84.0, docs/wait/DESIGN.md §7) ─────────────────
