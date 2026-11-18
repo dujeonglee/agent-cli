@@ -39,7 +39,6 @@ P1 경계: teammate 안 teammate 금지(레지스트리 미전파로 도구가 �
 
 from __future__ import annotations
 
-import json
 import re
 import threading
 import time
@@ -62,7 +61,7 @@ from agent_cli.post.office import PostOffice
 from agent_cli.post.request_book import RowError
 from agent_cli.session.store import AGENTS_DIR
 from agent_cli.session_slots import get_job_registry
-from agent_cli.subagent import agent_stop, agents_state
+from agent_cli.subagent import agent_stop, agents_state, conversation_log
 from agent_cli.subagent.agent_mail import (
     _NO_REPLY_LABEL,
     MailView,
@@ -416,8 +415,8 @@ class AgentRegistry:
         #: 때 참. 그 전에는 있는 파일을 덮어쓰지 않는다(`_save_state`).
         self._state_owned = False
         #: 저장 하나가 뜨기부터 쓰기까지를 쥔다 — 겹친 저장이 옛 사본을 나중에 쓰지 않게.
-        #: ``_cv`` 를 쥔 채로는 저장을 부르지 않는다(순서: ``_save_lock`` → ``_cv``). ``_cv`` 안에 드는 I/O 는
-        #: 배달의 대화 파일 append 하나다(`_write_lines`, v10.146.4) — 렌더러는 구간 밖(`_show_lines`).
+        #: ``_cv`` 를 쥔 채로는 저장을 부르지 않는다(순서: ``_save_lock`` → ``_cv``). ``_cv`` 안에 드는 것은 대화 파일
+        #: append 와 막히지 않는 렌더러의 창 줄뿐이다(`_lines_in_section`, v10.146.4·N12).
         self._save_lock = threading.Lock()
         # 동시 생존 상한 (세션 한정, web UI 조절). 0 = 무제한. None = 기본값 —
         # env·CLI 는 부트가 `knobs.apply_all` 로 적용한다 (v10.43.0).
@@ -881,8 +880,8 @@ class AgentRegistry:
             self._post.ask(q.id, f"agent:{asker}", q.target, text, meta=q)
             # 질문 줄은 질문을 여는 구간에서 적는다 — 답의 in 이 앞서지 않게 (v10.146.4)
             lines = self._question_line(q)
-            self._write_lines(lines)
-        self._show_lines(lines)
+            self._lines_in_section(lines)
+        self._lines_after_section(lines)
         self._save_state()
         # 트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
         # 질문이 다음 로스터 브로드캐스트까지 화면에 안 뜬다.
@@ -1708,13 +1707,13 @@ class AgentRegistry:
     ) -> None:
         """받은편지함(우편의 그 주소 상자)에 넣고 ``agents.json`` 에 남긴다 (v9.24.5). 회신을 기다리는 요청이면
         그 줄이 보낸 쪽의 "기다리는 회신" 이다(v10.141.0 — 넣는 것과 한 락 구간). ``lines`` 는 이 배달의 대화
-        줄(받는 쪽 in·보낸 쪽 out) — 파일은 넣기가 성공한 같은 구간에서, 창은 그 바로 뒤에 (v10.146.4, `_write_lines`)."""
+        줄(받는 쪽 in·보낸 쪽 out) — 넣기가 성공한 같은 구간에서 `_lines_in_section`, 그 뒤 `_lines_after_section`."""
         with self._cv:
             self._post_deliver(
                 envelope_of_item(item, f"agent:{tm.key}"), settles=settles
             )
-            self._write_lines(lines)
-        self._show_lines(lines)
+            self._lines_in_section(lines)
+        self._lines_after_section(lines)
         self._save_state()
 
     def _begin_items(self, tm: AgentInstance, items: list[dict]) -> None:
@@ -1947,8 +1946,8 @@ class AgentRegistry:
             self._stamp_mail(reply)
             self._post_deliver(envelope_of_main_mail(reply), settles=settles)
             idle_at_delivery = self.main_is_idle() if self.main_is_idle else None
-            self._write_lines(lines)
-        self._show_lines(lines)
+            self._lines_in_section(lines)
+        self._lines_after_section(lines)
         self._save_state()  # P3: 미배달분 디스크 미러 — resume 시 유실 없음
         cb = self.on_reply
         if cb is not None:
@@ -2874,66 +2873,33 @@ class AgentRegistry:
         except OSError:
             return ""
 
-    def _conversation_path(self, tm: AgentInstance) -> Path:
-        return tm.home_dir / "conversation.jsonl"
+    def _lines_in_section(self, lines) -> None:
+        """배달 구간(``_cv``) 안의 몫 — 줄을 파일에 적고, 막히지 않는 렌더러면 창에도 낸다. 규칙(`conversation_log`):
+        기록이 원본이고 화면은 그 순서를 따른다 — 막히지 않는 표면만 구간 안에서. 받는 쪽은 ``_cv`` 없이 못 꺼내니
+        그 배달로 생기는 줄(런의 out·답의 in)이 앞서지 않는다."""
+        conversation_log.append(lines)
+        if conversation_log.never_blocks():
+            conversation_log.show(p for _, p in lines)
 
-    def _write_lines(self, lines) -> None:
-        """🤝 대화 줄을 ``conversation.jsonl``(창의 진짜 소스 — resume 이 :meth:`_replay_conversation` 으로 재발행)에
-        append, best-effort. 배달의 줄은 그 배달이 상자에 드는 ``_cv`` 구간 안에서 적는다(v10.146.4) — 받는 쪽은 ``_cv`` 없이
-        못 꺼내니 그 배달로 생기는 줄(런의 out·답의 in)이 앞서지 않는다. 창(`_show_lines`)은 구간 뒤라 경주가 남는다."""
-        for tm, payload in lines:
-            try:
-                tm.home_dir.mkdir(parents=True, exist_ok=True)
-                with self._conversation_path(tm).open("a", encoding="utf-8") as f:
-                    f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-            except OSError:
-                pass
-
-    def _show_lines(self, lines) -> None:
-        """대화 줄을 🤝 창에 낸다(`agent_message`) — 표시용이라 실패를 삼킨다. ``_cv`` 밖에서 부른다."""
-        from agent_cli.render import get_renderer
-
-        for _tm, payload in lines:
-            try:
-                get_renderer().agent_message(**payload)
-            except Exception:
-                pass  # 표시용 — 전송 경로를 막지 않는다
+    def _lines_after_section(self, lines) -> None:
+        """구간 뒤의 몫 — 막힐 수 있는 렌더러(터미널)면 창에 낸다(막힌 stdout 이 ``_cv`` 를 잡지 않게)."""
+        if not conversation_log.never_blocks():
+            conversation_log.show(p for _, p in lines)
 
     def _record(self, tm: AgentInstance, payload: dict) -> None:
-        """배달이 아닌 대화 줄 하나(흡수·런의 out) — 파일에 적고 창에 낸다."""
-        self._write_lines([(tm, payload)])
-        self._show_lines([(tm, payload)])
+        """배달이 아닌 대화 줄 하나(흡수·런의 out) — 배달의 줄과 같은 구간 규칙으로."""
+        with self._cv:
+            self._lines_in_section([(tm, payload)])
+        self._lines_after_section([(tm, payload)])
 
     def _replay_conversation(self, tm: AgentInstance) -> None:
-        """``conversation.jsonl`` 을 순회해 🤝 대화창을 재발행 (5.13).
-
-        라이브와 같은 ``agent_message`` 표면을 통과하므로 web 은 persistent
-        버퍼에 다시 쌓여 재접속 뷰어까지 복원되고, 저장해 둔 ``ts`` 로 원래
-        대화 시각이 유지된다. 파일 없으면 no-op. kill→resume 대칭: kill 이
-        표면을 정리(clear_agent_conversation)하고 resume 이 여기서 다시 채움."""
-        path = self._conversation_path(tm)
-        if not path.exists():
-            return
+        """``conversation.jsonl`` 로 🤝 창을 다시 채운다 (5.13) — kill 이 표면을 정리하고 resume 이 여기서 채운다. 먼저
+        비운다(멱등 — 비정상 사망으로 남은 옛 줄이 겹치지 않게). 라이브와 같은 표면이라 웹은 재접속 버퍼에 다시 쌓이고
+        저장된 ``ts`` 가 원래 시각을 지킨다."""
         from agent_cli.render import get_renderer
 
-        renderer = get_renderer()
-        # 재생 전에 표면을 비운다 → 멱등: 비정상 사망(kill 아님)으로 옛
-        # agent_msg 가 버퍼에 남아 있어도 중복 없이 정확히 한 벌만 남는다.
-        renderer.clear_agent_conversation(tm.key)
-        try:
-            with path.open(encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
-                        continue
-                    if isinstance(rec, dict) and rec.get("key"):
-                        renderer.agent_message(**rec)
-        except OSError:
-            pass
+        get_renderer().clear_agent_conversation(tm.key)
+        conversation_log.show(conversation_log.read(tm.home_dir))
 
     def _worker(self, tm: AgentInstance, parent_ctx) -> None:
         """teammate 의 전 생애: 스코프 열기 → ctx 생성 → inbox 루프 → 정리.

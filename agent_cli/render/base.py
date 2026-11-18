@@ -51,6 +51,11 @@ class Renderer(ABC):
     - Thread-local output capture for parallel delegate buffering
     """
 
+    #: `agent_message` 가 막히지 않는가 — 디스크 I/O·콜백·외부 출력 없이 끝나는가(N12). 규칙 한 문장: **막히지 않는
+    #: 표면만 배달 구간 안에서 낸다.** 참이면 레지스트리가 대화 줄을 기록(conversation.jsonl)과 같은 ``_cv`` 구간에서
+    #: 내 화면 순서가 기록 순서를 따른다. 거짓(터미널 — stdout 이 막힐 수 있다)이면 구간 밖에서 낸다.
+    agent_message_never_blocks: bool = False
+
     def __init__(self) -> None:
         self._depth: int = 0
         self._captures: dict[int, list[str]] = {}  # thread_id → captured lines
@@ -389,9 +394,9 @@ class Renderer(ABC):
         이름. ``items`` — 이 런이 처리하는 inbox 항목들의 id. 보통 ``[item]``
         이고 사람-직접 배치는 N개. 웹의 런 블록이 이걸로 큐에서 먼저 도착한
         수신 줄(``agent_message(in)``)을 자기 머리로 끌어온다 — 수신 줄은
-        넣기 구간 바로 뒤에 나가므로 보통 런보다 앞서지만 보장은 아니다(v10.146.4:
-        대화 파일은 넣기와 한 구간이라 언제나 앞선다, 창 이벤트는 경주가 남아
-        런 시작보다 늦게 올 수 있다 — 웹은 늦게 온 in 도 블록 머리로 끌어온다).
+        넣기와 한 구간에서 나가는 렌더러(``agent_message_never_blocks`` — 웹)에선
+        언제나 런보다 앞서고, 터미널처럼 구간 뒤에 내는 렌더러에선 보장이 아니다
+        (v10.146.4·N12 — 웹은 늦게 온 in 도 블록 머리로 끌어온다).
         이 목록 없이는 어느 항목이 이 런의 것인지 알 수 없다(배치가 특히 그렇다).
 
         ``caller_task`` — run 에이전트의 과제 런만: 부른 자리(`current_task_id`, main 이면

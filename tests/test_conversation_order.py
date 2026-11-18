@@ -5,8 +5,9 @@
 (`HookedCondition`)으로 강제한다: 봉투가 상자에 든 구간을 나온 **직후**, 부른 스레드가 다음 줄로 가기 **전**에 받는 쪽의
 동작을 끼운다. 시간을 재지 않는다.
 
-창 이벤트(`agent_message`)는 구간 **뒤**에 나간다(사용자 결정 전의 (나′) — 락을 쥔 채 출력하지 않는다). 그래서 같은
-장면의 라이브 순서는 지금도 뒤집힐 수 있다 — `test_live_order` 가 그 사실을 strict xfail 로 적는다.
+창 이벤트(`agent_message`)는 막히지 않는 렌더러(웹)면 같은 구간 안에서, 터미널이면 구간 **뒤**에서 나간다(N12 —
+막힌 stdout 이 락을 잡지 않게). 그래서 `test_live_order` 는 웹에선 파일과 같은 순서이고, 터미널(기록용 렌더러)에선
+뒤집힐 수 있다는 지금의 사실을 strict xfail 로 적는다.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import pytest
 
 import agent_cli.render as render_mod
 from agent_cli.post.office import PostOffice
+from agent_cli.render.web import WebRenderer
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.test_agents_live import RecordingRenderer, _FakeLoopResult
 from tests.test_engine_p2 import wait_until
@@ -84,7 +86,15 @@ class World:
         return [r["direction"] for r in self.lines(key)]
 
     def live(self, key) -> list[tuple[str, str]]:
-        """그 창의 라이브 이벤트 ``(direction, text)`` — 파일과 같은 순서여야 한다."""
+        """그 창의 라이브 이벤트 ``(direction, text)`` — 웹은 허브 버퍼(재접속 스냅샷과 같은 것), 터미널은 호출 기록."""
+        if isinstance(self.renderer, WebRenderer):
+            with self.renderer.hub._lock:
+                events = list(self.renderer.hub._event_buffer)
+            return [
+                (d["direction"], d["text"])
+                for event, d in events
+                if event == "agent_msg" and d["key"] == key
+            ]
         with self.renderer.lock:
             calls = list(self.renderer.calls)
         return [
@@ -95,8 +105,14 @@ class World:
 
 
 @pytest.fixture
-def world(tmp_path, monkeypatch):
-    renderer = RecordingRenderer()
+def world(tmp_path, monkeypatch, request):
+    """``request.param`` — ``"cli"``(기록용 렌더러, 막힐 수 있는 표면으로 취급 — 기본) 또는 ``"web"``(진짜 웹 렌더러)."""
+    surface = getattr(request, "param", "cli")
+    renderer = (
+        WebRenderer(workspace=str(tmp_path))
+        if surface == "web"
+        else RecordingRenderer()
+    )
     monkeypatch.setattr(render_mod, "get_renderer", lambda: renderer)
     cv = HookedCondition()
     office = LandingOffice(cv)
@@ -236,13 +252,23 @@ def test_file_order(world, scene):
     assert world.directions(key)[: len(expected)] == expected
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="라이브 창 순서는 아직 경주 — 창 이벤트는 배달 구간 뒤에 나가 경주가 남는다(고치지 않았다, (나′))",
+@pytest.mark.parametrize(
+    "world",
+    [
+        "web",
+        pytest.param(
+            "cli",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="터미널 몫 — 막힐 수 있는 표면은 배달 구간 뒤에 내 경주가 남는다(N12, 손대지 않음)",
+            ),
+        ),
+    ],
+    indirect=True,
 )
 @pytest.mark.parametrize("scene", list(SCENES))
 def test_live_order(world, scene):
-    """창 이벤트 — 같은 장면에서 라이브 순서는 지금도 뒤집힌다(파일과 다르다)."""
+    """창 이벤트 — 웹은 기록(파일)과 같은 순서, 터미널은 뒤집힐 수 있다."""
     key, expected = SCENES[scene](world)
     assert world.fired_once()
     live = [d for d, _ in world.live(key)]
@@ -270,3 +296,74 @@ def test_a_refused_delivery_leaves_no_line(world):
     answers = [t for d, t in world.live(key) if d == "in"]
     assert answers == ["Your question: which branch?\nAnswer: main"]
     assert [r["text"] for r in world.lines(key) if r["direction"] == "in"] == answers
+
+
+# ── 가드: 구간 안에서 부르는 표면은 막히지 않는다 / 막힐 수 있는 표면은 구간 밖이다 (N12) ──
+
+
+def test_only_the_web_surface_claims_it_never_blocks():
+    from agent_cli.render.base import Renderer
+    from agent_cli.render.minimal import MinimalRenderer
+
+    assert Renderer.agent_message_never_blocks is False
+    assert MinimalRenderer.agent_message_never_blocks is False
+    assert WebRenderer.agent_message_never_blocks is True
+
+
+def test_the_web_agent_message_needs_no_io_and_no_callback(tmp_path, monkeypatch):
+    """`agent_message_never_blocks` 의 근거 — 파일·OS 쓰기·허브 콜백을 막아도 `agent_msg` 가 버퍼에 든다."""
+    import builtins
+    import os
+    import pathlib
+
+    renderer = WebRenderer(workspace=str(tmp_path))
+    renderer._scope_log_path = (
+        tmp_path / "scopes.jsonl"
+    )  # 있어도 agent_msg 는 쓰지 않는다
+
+    def forbidden(*a, **k):
+        raise AssertionError("agent_message must not do I/O or call back")
+
+    renderer.hub._on_viewers_changed = forbidden
+    monkeypatch.setattr(builtins, "open", forbidden)
+    monkeypatch.setattr(os, "open", forbidden)
+    monkeypatch.setattr(os, "write", forbidden)
+    monkeypatch.setattr(pathlib.Path, "open", forbidden)
+    for direction in ("in", "out", "question", "absorbed"):
+        renderer.agent_message(
+            key="agt-1", direction=direction, author="main", text=direction, to="agt-1"
+        )
+    monkeypatch.undo()
+    with renderer.hub._lock:
+        shown = [
+            d["direction"] for e, d in renderer.hub._event_buffer if e == "agent_msg"
+        ]
+    assert shown == ["in", "out", "question", "absorbed"]
+    assert not renderer._scope_log_path.exists()
+
+
+def test_a_stuck_terminal_does_not_hold_the_registry_lock(tmp_path, monkeypatch):
+    """막힐 수 있는 표면(터미널 — stdout 이 막힌 Ctrl+S·파이프)이 출력에서 서 있어도 레지스트리 락은 비어 있다."""
+    entered, release = threading.Event(), threading.Event()
+
+    class StuckTerminal(RecordingRenderer):
+        def agent_message(self, **kw):
+            if kw.get("direction") == "out":
+                entered.set()
+                release.wait(10)
+
+    monkeypatch.setattr(render_mod, "get_renderer", lambda: StuckTerminal())
+    reg = AgentRegistry(tmp_path, runtime={"model": "m", "timeout": 5})
+    key, _ = reg.spawn(name="helper")
+    assert wait_until(lambda: reg.get(key).state == "idle")
+    t = threading.Thread(target=reg.message_to_main, args=(key, "status"))
+    t.start()
+    try:
+        assert entered.wait(10)  # 보낸 쪽 out 을 찍다가 섰다
+        assert reg._cv.acquire(blocking=False)  # 그동안 락은 누구의 것도 아니다
+        reg._cv.release()
+        assert [m.id for m in reg.queued_for("main")]  # 배달은 이미 끝났다
+    finally:
+        release.set()
+        t.join(10)
+        reg.shutdown_all()
