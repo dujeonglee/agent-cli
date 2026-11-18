@@ -2082,7 +2082,7 @@ def run(
             on_mail_notice=_agent_mail_notice,
             # 대기 중에 친 명령(`/stop` 등)은 그 자리에서 라우팅한다 — 펌프는 아래에서 선다(늦은 바인딩)
             on_wait_input=_terminal_steer_input(
-                main_input, route=lambda text: wired.pump.route(text)
+                main_input, surface.is_command, lambda text: wired.pump.route(text)
             ),
         )
 
@@ -2313,34 +2313,40 @@ def _install_ctrl_c(surface, agent_registry):
     return signal.signal(signal.SIGINT, on_sigint)
 
 
-def _terminal_steer_input(main_input, route=None):
+def _terminal_steer_input(main_input, is_command, route):
     """run: 제자리 대기를 깨울 사람 입력 (v10.141.0, docs/agent-engine/DESIGN.md §6) —
-    ``(timeout) -> bool``. main 앞에 이미 온 사람의 말(예약 발화 등)이 있으면 참, 터미널이면 그 사이
-    친 한 줄을 main 앞에 넣고 참(꺼내는 것은 다음 턴 경계의 흡수다). 터미널이 아니면 그것만 본다.
+    ``(timeout) -> bool``. main 앞에 이미 온 사람의 말(예약 발화 등)은 웹과 같은 규칙(`wait_for_human_words`)으로
+    보고, 터미널이면 그 사이 친 한 줄을 같은 판정으로: 명령이 아니면 main 앞에 넣고 참(꺼내는 것은 다음 턴 경계의
+    흡수다). 터미널이 아니면 줄 선 말만 본다.
 
     터미널 줄은 main 이 제자리에서 기다리는 동안에만 읽는다 — 그 밖의 시간엔 `ask`·확인
     프롬프트가 같은 표준입력을 쓴다.
 
-    ``route`` (v10.142.0): 명령(``/stop agt-3`` 등)이면 그 자리에서 처리하고 기다림을 깨우지 않는다 — 큐에
-    넣으면 main 이 "사용자가 썼다" 로 깨어 그 말이 없는 관찰을 읽는다(명령은 흡수 때 소비된다). 멈춘 에이전트의
-    회신이 따로 깨운다."""
+    명령(``is_command`` — 표면의 판정, ``/stop agt-3`` 등)은 줄 선 것이든 친 것이든 그 자리에서 ``route`` 하고
+    기다림을 깨우지 않는다 — 깨우면 main 이 "사용자가 썼다" 로 깨어 그 말이 없는 관찰을 읽는다(명령은 흡수 때
+    소비된다). 멈춘 에이전트의 회신이 따로 깨운다 (vNEXT: 줄 선 명령도 — 종전엔 친 줄만)."""
     import select
+
+    from agent_cli.runtime import wait_for_human_words
+
+    queued = wait_for_human_words(main_input, is_command, route)
 
     def wait(timeout: float) -> bool:
         if not sys.stdin.isatty():
-            return main_input.wait_for_arrival(timeout)
-        if main_input.wait_for_arrival(0):
+            return queued(timeout)
+        if queued(0):
             return True
         try:
             ready, _, _ = select.select([sys.stdin], [], [], timeout)
         except (OSError, ValueError):
-            return main_input.wait_for_arrival(timeout)
+            return queued(timeout)
         if not ready:
             return False
         text = sys.stdin.readline().strip()
         if not text:
             return False
-        if route is not None and text[:1] in "/@" and route(text):
+        if is_command(text):
+            route(text)
             return False
         main_input.enqueue(None, text)
         return True

@@ -250,7 +250,7 @@ def wait_for_human_words(main_input, is_command, route):
     main 앞에 사람의 말이 도착하면 깨우되, 맨 앞이 명령(``is_command`` — 표면의 판정, ``/stop agt-3`` 등)이면 그
     자리에서 꺼내 라우팅하고 깨우지 않는다: 줄에 둔 채 깨우면 main 이 "the user wrote to you" 관찰을 읽고 그 말은
     다음 흡수의 라우팅이 삼켜, 말 없는 관찰만 남았다. 명령이 아닌 말(명령 모양의 경로 등)은 꺼내지 않고 깨운다.
-    CLI ``run`` 은 터미널 줄을 같은 규칙으로 읽는다(`main._terminal_steer_input`)."""
+    CLI ``run`` 은 이것 위에 터미널 줄을 같은 판정으로 읽는다(`main._terminal_steer_input`)."""
 
     def wait(timeout: float) -> bool:
         if not main_input.wait_for_arrival(timeout):
