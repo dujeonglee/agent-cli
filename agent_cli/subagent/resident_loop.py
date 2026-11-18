@@ -323,7 +323,6 @@ class ResidentLoop(LoopKind):
         """
         import time as _time
 
-        from agent_cli.render import get_renderer
         from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg, tm, items = self.registry, self.tm, self._items
@@ -363,8 +362,7 @@ class ResidentLoop(LoopKind):
                 # 하니스 폴백 = 도구 호출 없는 유일한 발신 (v9.23.0) — 웹은 ⚠ 폴백 줄로
                 "fallback": owed,
             }
-            get_renderer().agent_message(**out_payload)
-            reg._log_conversation(tm, out_payload)
+            reg._record(tm, out_payload)
         # 런 끝 정리 — 판정은 `run_ended` 한 곳에 (wait·중단·보통)
         reg.run_ended(
             me,
