@@ -34,9 +34,9 @@ from tests.test_engine_p2 import (
 session = test_engine_p2.session
 
 REFUSED = (
-    "Observation: wait refused — nothing you started is pending (no background job, "
-    "monitor or agent of yours), so nothing would wake you. Keep working, or call "
-    "`complete` if the task is done."
+    "Observation: wait refused — nothing would wake you: no job or monitor of yours is "
+    "running and no agent owes you a reply. Keep working, or call `complete` if the "
+    "task is done. To hear from an agent, send it a request with `message` first."
 )
 
 

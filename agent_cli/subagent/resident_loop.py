@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 from agent_cli.loop.kind import (
     WAIT_END_RUN,
+    WAIT_NEXT_KEEP_WORKING,
+    WAIT_NEXT_RESIDENT,
     LoopKind,
     LoopKindError,
     PromptProfile,
@@ -128,6 +130,10 @@ class ResidentLoop(LoopKind):
     # ── 엔진이 묻는 것 (v10.88.0) ──
     def wait_policy(self) -> str:
         return WAIT_END_RUN  # 런을 끝내고 받은편지함(회신·통지)이 다음 런을 연다
+
+    def wait_refused_next(self) -> str:
+        """run 에이전트는 런이 끝나면 내려간다; 상주는 다음 메시지가 새 런을 연다(ctx 는 수명에 하나)."""
+        return WAIT_NEXT_KEEP_WORKING if self.tm.ends_after_task else WAIT_NEXT_RESIDENT
 
     def intake(self) -> list[dict]:
         """런 도중 받은편지함에 도착한 항목을 지금 흡수한다 (v9.25.0) — 11시간 런 동안

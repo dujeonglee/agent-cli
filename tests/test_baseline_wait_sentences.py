@@ -231,7 +231,7 @@ def resident(tmp_path, renderer):
     history 글을 돌려준다(런이 끝나 한가해질 때까지)."""
     made: dict = {}
 
-    def run(scripts: dict, *, before=None) -> str:
+    def run(scripts: dict, *, before=None, ends_after_task=False) -> str:
         p = Provider(scripts)
         binding = make_binding(provider=p, capabilities=CAPS, model="m")
         reg = AgentRegistry(
@@ -241,14 +241,21 @@ def resident(tmp_path, renderer):
         reg.checkin_timer_factory = FakeTimer
         set_agent_registry(reg)
         made["reg"] = reg
-        key, _ = reg.spawn(name="aa")
+        key, _ = reg.spawn(name="aa", ends_after_task=ends_after_task)
         made["key"] = key
         assert wait_until(lambda: reg.get(key).state == "idle")
         if before is not None:
             before(f"agent:{key}")
         assert reg.request(key, "TASK-R1 the job") == ""
         assert wait_until(lambda: _ended(renderer, key) >= 1)
-        assert wait_until(lambda: reg.get(key).state == "idle")
+        if ends_after_task:  # run 에이전트는 런 하나 뒤 내려간다
+            assert wait_until(
+                lambda: (
+                    reg.get(key).state == "dead" and not reg.get(key).worker.is_alive()
+                )
+            )
+        else:
+            assert wait_until(lambda: reg.get(key).state == "idle")
         hist = tmp_path / "s" / "agents" / key / "history.jsonl"
         import json
 
@@ -341,11 +348,71 @@ class TestResidentRefuses:
                 ]
             }
         )
+        # 상주는 런을 끝내면 다음 메시지가 새 런을 연다 — 거절이 그 길을 말한다
         assert _wait_lines(text) == [
             (
-                "Observation: wait refused — nothing you started is pending (no background "
-                "job, monitor or agent of yours), so nothing would wake you. Keep working, or "
-                "call `complete` if the task is done."
+                "Observation: wait refused — nothing would wake you: no job or monitor of "
+                "yours is running and no agent owes you a reply. You do not need `wait` to "
+                "receive messages: end this run with `complete`, and the next message to "
+                "you starts a new run with your memory intact."
+            )
+        ]
+
+    def test_complete_then_next_message_opens_a_new_run_with_memory(
+        self, resident, renderer
+    ):
+        """거절 문장이 말하는 사실의 가드 — 갚은 뒤 `wait` 가 거절된 상주가 그 안내대로 `complete` 하면 아무것도
+        더 보내지 않고 한가해지고, 다음 메시지가 새 런을 연다. 새 런의 모델은 앞 런을 기억한다(같은 ctx)."""
+        seen: list = []
+
+        def second_run(msgs):
+            seen.append(list(msgs))
+            return call("reply", id=owed_id(msgs), text="second done")
+
+        text = resident["run"](
+            {
+                "TASK-R1": [
+                    lambda m: call("reply", id=owed_id(m), text="first done"),
+                    call("wait"),
+                    call("complete", result="ok"),
+                    second_run,
+                    call("complete", result="ok"),
+                ]
+            }
+        )
+        assert "You do not need `wait` to receive messages" in text
+        reg, key = resident["reg"], resident["key"]
+        replies = [m.get("output") for m in reg.drain_replies()]
+        assert replies == [
+            "first done"
+        ]  # `complete` 의 result 는 아무에게도 가지 않는다
+        assert reg.request(key, "SECOND ask") == ""
+        assert wait_until(lambda: _ended(renderer, key) >= 2)
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        assert [m.get("output") for m in reg.drain_replies()] == ["second done"]
+        (msgs,) = seen
+        body = "\n".join(str(m.get("content") or "") for m in msgs)
+        # 앞 런(과제·회신·거절)이 그대로 있고 그 뒤에 새 메시지
+        assert body.index("TASK-R1 the job") < body.index("first done")
+        assert body.index("You do not need `wait`") < body.index("SECOND ask")
+
+    def test_nothing_pending_run_agent(self, resident):
+        """run 에이전트는 런이 끝나면 내려간다 — 상주의 "다음 메시지가 새 런" 은 사실이 아니다."""
+        text = resident["run"](
+            {
+                "TASK-R1": [
+                    call("wait"),
+                    lambda m: call("reply", id=owed_id(m), text="done"),
+                    call("complete", result="ok"),
+                ]
+            },
+            ends_after_task=True,
+        )
+        assert _wait_lines(text) == [
+            (
+                "Observation: wait refused — nothing would wake you: no job or monitor of "
+                "yours is running and no agent owes you a reply. Keep working, or call "
+                "`complete` if the task is done."
             )
         ]
 
