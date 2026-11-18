@@ -58,7 +58,7 @@ agent_cli/
 ├── __main__.py              `python -m agent_cli` 진입점
 ├── main.py                  typer CLI — `run`·`web`·`setup`·`mcp`·`knobs`·`sessions`·`stats`·`update` 명령과 `@agent`·`/skill` 디스패치
 ├── runtime.py               run/web 세션 조립(`SessionSpec`→stores→owners→`wire_session`)·정리, `MainLoop`
-├── wake.py                  한 주소를 무엇이 깨우나(`wake_sources`)·체크인 알림·메일 → 레코드·`release_owner`, 루프의 우편 창구 `Mailbox`(포트 `mailbox`)
+├── wake.py                  한 주소를 무엇이 깨우나(`wake_sources` — 에이전트 몫은 장부·명단 사본 `WakeFacts` 의 순수 함수, 고리 찾기 `parked_view`)·체크인 알림·메일 → 레코드·`release_owner`, 루프의 우편 창구 `Mailbox`(포트 `mailbox`)
 ├── pump.py                  세션 펌프 — 큐에서 꺼내 깨우기·라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
 ├── command_table.py         사용자 명령 표 하나 — 웹 `/help` 와 `run "/help"` 가 여기서 나온다
 ├── config.py                config.json 의 서버(endpoint) 표·고르는 순서·이 프로세스의 서버, 서버별 models.json 읽기·저장, 옛 모양 판정·`.v1` 이름 바꾸기, 방언 바인딩(`bind_user_dialect`)
@@ -214,7 +214,7 @@ agent_cli/
 │   ├── agents_live.py       `AgentRegistry`·`AgentInstance` — 명단·상한·스레드·agents.json 저장 시점, spawn·`message` 라우팅·메일함·회신 배달(`pay_debt`)·보낸 쪽 기록(기다리는 회신)·읽기 전용 조회(`queued_for`·`taken_by`)
 │   ├── agent_modes.py       `agent` 도구의 실행 — 모드 표 `_MODE_HANDLERS`·`tool_agent`·모드 결과 문구
 │   ├── agent_mail.py        에이전트 메일의 글 — 봉투 `envelope`·main 관찰 레코드 `build_reply_record`·대기열 한 줄·조회의 불변 사본 `MailView`
-│   ├── question_port.py     루프의 질문·회신 seam `QuestionPort` — `reply(id)` 의 거부 규칙
+│   ├── question_port.py     루프의 질문·회신 seam `QuestionPort` — `reply(id)` 의 판정 하나(`judge_reply`, main·에이전트 공통)와 거절 글·`ReplyDebt`
 │   ├── agents_state.py      상태 어휘 `state_is_active`·`agents.json` 의 모양 — 항목 ↔ 에이전트, 버전·읽기
 │   ├── mail_waker.py        `MailWaker` — 한가한 main 을 메일이 깨운다
 │   └── report.py            세션 하위 디렉터리 이름(`generate_subdir_name` — 스킬 런)

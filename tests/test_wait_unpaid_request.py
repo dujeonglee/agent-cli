@@ -17,7 +17,7 @@ import pytest
 
 from agent_cli.session_slots import set_agent_registry
 from agent_cli.subagent.agents_live import AgentInstance
-from agent_cli.wake import wake_sources
+from agent_cli.wake import relation_items, wake_sources
 from tests import test_engine_p2
 from tests.test_agents_live import make_registry
 from tests.test_engine_p2 import (
@@ -83,7 +83,7 @@ def _pick_up(reg, tm):
 
 
 def _relations(reg, addr) -> dict[str, str]:
-    """``addr`` 를 깨울 에이전트와 그 관계(owes·working·queued) — 공개 판정(`pending_agents_for`)의 글에서."""
+    """``addr`` 를 깨울 에이전트와 그 관계(owes·working·queued) — 공개 판정(`wake.relation_items`)의 글에서."""
     kinds = (
         ("owes you a reply", "owes"),
         ("working on", "working"),
@@ -91,7 +91,7 @@ def _relations(reg, addr) -> dict[str, str]:
     )
     return {
         who: next(k for frag, k in kinds if frag in text)
-        for who, text in reg.pending_agents_for(addr)
+        for who, text in relation_items(reg.wake_facts(), addr)
     }
 
 
@@ -115,7 +115,7 @@ class TestWhoWakesTheRequester:
         else:
             reg.absorb_pending(reg.get("agt-req"))  # 요청자가 회신을 읽었다
         assert wake_sources(requester, agents=reg) == []
-        assert reg.pending_agents_for(requester) == []
+        assert relation_items(reg.wake_facts(), requester) == []
 
     @pytest.mark.parametrize("requester", ["main", "agent:agt-req"])
     def test_unpaid_request_keeps_waking(self, reg, requester):

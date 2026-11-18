@@ -28,6 +28,7 @@ from agent_cli.subagent.delegation_checks import (
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller, runtime_of
+from tests.mail_support import agent_wake_lines
 
 CAPS = ModelCapabilities(
     context_window=32768, max_output_tokens=4096, supports_thinking=False
@@ -367,7 +368,7 @@ class TestNoHiddenSideEffects:
         reg.resolve_key(tm.key)
         reg.resolve_key(run_tm.key)
         reg.agent_limit_refusal()
-        reg.pending_for("main")
+        agent_wake_lines(reg, "main")
         reg.awaited_replies("main")
         reg._run_ended_by_wait((ToolResult(True, output="x"), 0.0))
         assert writes == []

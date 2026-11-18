@@ -28,15 +28,125 @@ if TYPE_CHECKING:
 _SCHEDULE_ID = "schedule"
 
 
+# ── 에이전트 관계 — 장부·명단의 사본 하나에서 (v10.146.0, 단일 구조 3단계) ─────────────
+#
+# "누가 이 주소를 깨우는가" 의 에이전트 몫은 레지스트리의 사본(`AgentRegistry.wake_facts` — 락 한 번)만 읽는
+# 순수 함수다. main·상주·run·하니스 주소가 같은 함수를 지난다 — 주소 종류로 갈리는 것은 "잠든 채무자는 에이전트
+# 뿐" 하나다(`parked_debtors`).
+
+
+class AgentFact(NamedTuple):
+    """명단의 에이전트 하나 — 사본. ``queued``·``taken`` 은 항목의 ``(author, id)`` 이고 ``queued`` 는 깨우지 않는
+    봉투도 든다(받은편지함에 무엇이든 있으면 잠들지 않은 것으로 본다)."""
+
+    addr: str
+    active: bool
+    dead: bool
+    queued: tuple[tuple[str, str], ...]
+    taken: tuple[tuple[str, str], ...]
+
+
+class WakeFacts(NamedTuple):
+    """장부와 명단의 사본 — ``agents`` 는 명단 순서, ``owing`` 은 집힌 r 줄의 ``(빚진 쪽, 요청자)`` 장부 순서,
+    ``awaited`` 는 닫히지 않은 r 줄의 ``(요청자, id)``."""
+
+    agents: tuple[AgentFact, ...]
+    owing: tuple[tuple[str, str], ...]
+    awaited: frozenset[tuple[str, str]]
+
+
+def _debtors_owing(facts: WakeFacts, addr: str) -> list[str]:
+    """``addr`` 에게 갚지 않은 회신을 빚진 쪽들(``addr`` 자신 빼고) — 빚진 쪽의 첫 열린 줄 순서. 빚진 쪽이 죽었는지는
+    보지 않는다(죽은 빚도 근거로 남는다 — 4c 에서 바뀐다)."""
+    order: list[str] = []
+    for debtor, _ in facts.owing:
+        if debtor not in order:
+            order.append(debtor)
+    owes = set(facts.owing)
+    return [d for d in order if d != addr and (d, addr) in owes]
+
+
+def _is_parked(facts: WakeFacts, debtor: str) -> bool:
+    """빚진 쪽이 **스스로 잠들어 있다** — 명단에 있고 죽지 않았고 일하지 않으며 받은편지함이 빈 에이전트. 그런 채무자는
+    그 자체로는 아무도 깨우지 못한다: 그를 깨울 것이 있어야 회신이 온다. main 과 에이전트가 아닌 주소는 잠든 채무자로
+    세지 않는다(main 의 제자리 대기를 보지 못한다 — 5단계에서 창구의 기다림 표시로 바뀐다)."""
+    if debtor == "main" or not debtor.startswith("agent:"):
+        return False
+    fact = next((a for a in facts.agents if a.addr == debtor), None)
+    if fact is None or fact.dead:
+        return False
+    return not fact.active and not fact.queued
+
+
+def parked_debtors(facts: WakeFacts, addr: str) -> list[str]:
+    """``addr`` 에게 회신을 빚진 채 잠든 에이전트 주소들 (v10.77.0) — 그들을 깨울 것이 있는지는 `parked_view` 가
+    거슬러 본다. 서로 `message` 하고 둘 다 `wait` 하면 아무도 깨지 않는 교착을 여기서 끊는다."""
+    return [d for d in _debtors_owing(facts, addr) if _is_parked(facts, d)]
+
+
+def _holds_unpaid_request_from(
+    facts: WakeFacts, items: tuple[tuple[str, str], ...], addr: str
+) -> bool:
+    """``items`` 가운데 ``addr`` 가 보낸 요청으로 아직 회신이 가지 않은 것이 있는가 (v10.143.0, 사용자 결정) — 이미
+    회신한 요청·통지로는 그 에이전트가 무엇을 해도 ``addr`` 에게 돌아올 것이 없다."""
+    return any(author == addr and (addr, rid) in facts.awaited for author, rid in items)
+
+
+def agent_relations(
+    facts: WakeFacts, addr: str, exclude: frozenset = frozenset()
+) -> list[tuple[str, str]]:
+    """``addr`` 를 깨울 에이전트들과 그 관계 — ``("owes"|"working"|"queued", 주소)`` (v10.65.0). 빚진 채 **스스로
+    잠든** 쪽은 여기 없다 — `parked_debtors` 가 따로 들고 `parked_view` 가 거슬러 본다. ``exclude`` (v10.77.0):
+    순환 대기 판정에서 거슬러 온 주소들. **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `arrived_mail`."""
+    out: list[tuple[str, str]] = []
+    for debtor in _debtors_owing(facts, addr):
+        if debtor in exclude:
+            continue
+        if not _is_parked(facts, debtor):
+            out.append(("owes", debtor))
+    for a in facts.agents:
+        if a.addr == addr or a.addr in exclude:
+            continue
+        if a.active and _holds_unpaid_request_from(facts, a.taken, addr):
+            out.append(("working", a.addr))
+        elif _holds_unpaid_request_from(facts, a.queued, addr):
+            out.append(("queued", a.addr))  # 받은편지함에 줄 선 것으로 본다
+    return out
+
+
+#: 관계 → `wait` 수락 문장의 한 조각
+_RELATION_TEXT = {
+    "owes": "{me} owes you a reply",
+    "working": "{me} working on your request",
+    "queued": "{me} has your request queued",
+}
+
+
+def relation_items(
+    facts: WakeFacts, addr: str, exclude: frozenset = frozenset()
+) -> list[tuple[str, str]]:
+    """`agent_relations` 를 ``(에이전트 주소, 사람이 읽을 줄)`` 로 (v10.79.0) — 주소는 중간 깨우기의 대상 id 가 된다."""
+    return [
+        (me, _RELATION_TEXT[kind].format(me=me))
+        for kind, me in agent_relations(facts, addr, exclude)
+    ]
+
+
 def _wake_items(
-    owner: str, _seen: frozenset = frozenset(), *, agents
+    owner: str,
+    _seen: frozenset = frozenset(),
+    *,
+    agents,
+    facts: WakeFacts | None = None,
 ) -> list[tuple[str, str]]:
     """`wake_sources` 의 재료 — ``(id, 사람이 읽을 줄)`` 쌍 (v10.79.0).
 
     id 는 ``"job:1"``·``"mon:mon-504d33"``·``"agent:k"``·``"schedule"`` — 중간
     깨우기가 "같은 대상을 다시 기다리는가" 를 이 집합으로 비교한다. 사람이 읽는
     줄로 비교하면 같은 에이전트라도 "queued↔working" 처럼 글이 바뀌어 헛되이
-    5분으로 돌아간다."""
+    5분으로 돌아간다.
+
+    에이전트 몫은 레지스트리의 사본(``facts`` — 없으면 맨 위에서 한 번 뜬다)을 재귀 내내 함께 쓴다."""
     out: list[tuple[str, str]] = []
     jobs = get_job_registry()
     if jobs is not None:
@@ -48,12 +158,12 @@ def _wake_items(
             if m.owner == owner:
                 out.append((f"mon:{m.id}", f"monitor {m.id}"))
     if agents is not None:
-        out.extend(agents.pending_agents_for(owner, exclude=_seen))
-        seen = _seen | {owner}
-        for debtor in agents.parked_debtors_for(owner):
-            if debtor in seen:
-                continue  # 고리 — 나를 기다리는 쪽은 나를 깨우지 못한다
-            if _wake_items(debtor, seen, agents=agents):
+        facts = facts if facts is not None else agents.wake_facts()
+        out.extend(relation_items(facts, owner, _seen))
+        for debtor, waits_on in parked_view(
+            owner, _seen | {owner}, agents=agents, facts=facts
+        ):
+            if waits_on:
                 out.append(
                     (debtor, f"{debtor} owes you a reply (it is waiting on others)")
                 )
@@ -63,6 +173,23 @@ def _wake_items(
     if sched is not None and sched.has_active_work() and not is_private_owner(owner):
         out.append((_SCHEDULE_ID, "a schedule"))
     return out
+
+
+def parked_view(
+    owner: str, seen: frozenset, *, agents, facts: WakeFacts
+) -> list[tuple[str, list[str]]]:
+    """고리 찾기의 걸음 하나 — ``owner`` 에게 빚진 채 잠든 채무자마다 ``(주소, 그를 깨울 것의 줄)`` (v10.77.0). ``seen``
+    (거슬러 온 주소들, ``owner`` 포함)에 든 채무자는 뺀다 — 고리다, 나를 기다리는 쪽은 나를 깨우지 못한다. 그를 깨울
+    것은 ``seen`` 을 뺀 채 다시 묻는다. `wait` 의 판정(`wake_sources`)과 중간 깨우기의 에이전트 줄
+    (`AgentRegistry.checkin_agent_lines`)이 같은 이 걸음을 쓴다."""
+    return [
+        (
+            debtor,
+            [text for _, text in _wake_items(debtor, seen, agents=agents, facts=facts)],
+        )
+        for debtor in parked_debtors(facts, owner)
+        if debtor not in seen
+    ]
 
 
 def harness_work_running(owner: str) -> bool:
@@ -80,7 +207,7 @@ def wake_sources(owner: str, _seen: frozenset = frozenset(), *, agents) -> list[
     """이 소유자를 **깨울 수 있는 것** — `wait` 도구의 판정 (v10.65.0, docs/wait/DESIGN.md).
 
     돌고 있는 백그라운드 작업·살아 있는 모니터는 소유자 것만, 에이전트 활동은
-    **요청자별**(`AgentRegistry.pending_for` — 세션 전체 `has_active_work` 로 보면
+    **요청자별**(`agent_relations` — 세션 전체 `has_active_work` 로 보면
     상주 에이전트 자신이 busy 라 늘 참이 된다), 예약은 세션 것. 사람이 읽을 한 줄씩.
 
     v10.77.0 — 순환 대기: 나에게 회신을 빚진 채 **스스로 잠든**(`wait`) 에이전트는
@@ -326,9 +453,10 @@ class Mailbox:
         return self._registry.next_checkin_s(self.owner)
 
     def parked_debtors(self) -> list[str]:
+        """이 주소에게 빚진 채 잠든 에이전트 — `wait` 거절 문장의 주어(`parked_debtors`)."""
         if self._registry is None:
             return []
-        return self._registry.parked_debtors_for(self.owner)
+        return parked_debtors(self._registry.wake_facts(), self.owner)
 
     def drop(self) -> None:
         """메일함과 걸린 체크인을 버린다 — 런이 끝나 읽을 사람이 없다."""

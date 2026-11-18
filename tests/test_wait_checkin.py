@@ -36,6 +36,7 @@ from agent_cli.subagent.agents_live import AgentInstance
 from agent_cli.wake import wake_source_ids, wake_sources
 from tests.loop_ports import make_ports
 from tests.loopkit import make_loop
+from tests.mail_support import agent_wake_lines
 from tests.monitor_delivery import RecordingDelivery
 from tests.test_agents_live import make_registry, make_runner, wait_until
 
@@ -409,14 +410,14 @@ class TestAgentLines:
         )
 
     def test_pending_for_text_is_unchanged(self, reg):
-        """`pending_for` 는 `pending_agents_for` 의 글만 — 종전 문장 그대로."""
+        """에이전트 몫의 줄(`wake.relation_items`) — 종전 문장 그대로."""
         _fake_agent(reg, "k", state="busy")
         _fake_agent(reg, "j", inbox=[{"author": "main"}])
         # 손으로 고른 id 는 할당기가 이 테스트에서 내지 않는 값 — 같은 id 의 봉투가 뒤에 오지 않게
         reg.note_owes("agent:p", "main", "t", id="r-903")
         _fake_agent(reg, "p", state="busy", current_author="agent:q")
         # 일하는 중인 k 는 집어 든 main 의 요청을 빚진다 — 실제 흐름에선 "working" 이 "owes" 와 함께 선다
-        assert reg.pending_for("main") == [
+        assert agent_wake_lines(reg, "main") == [
             "agent:k owes you a reply",
             "agent:p owes you a reply",
             "agent:k working on your request",
