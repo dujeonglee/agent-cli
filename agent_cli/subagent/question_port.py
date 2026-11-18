@@ -100,14 +100,20 @@ def judge_reply(
     """`reply(text, id)` 의 판정 — ``(판정, 갚을 빚)``; 갚을 빚은 ``"pay"`` 일 때만. 읽기만 한다. ``text``·``id`` 는
     앞뒤 공백을 걷은 값이다.
 
-    순서: 글 → 주체 → 빚이 없음(런을 연 주소에게 진 줄로 사유를 고른다) → ``id`` 없음 → ``id`` 가 빚에 없음(그 id
-    의 줄로 사유를 고른다) → 갚음."""
+    순서: 글 → 주체 → ``id`` 가 이 런에서 이미 닫힌 내 줄(가지 못함·이미 갚음 — 그 줄로 말한다) → 빚이 없음(런을
+    연 주소에게 진 줄로 사유를 고른다) → ``id`` 없음 → ``id`` 가 빚에 없음 → 갚음."""
     if not text:
         return "empty", None
     if not has_words(text):
         return "no_words", None
     if not facts.known:
         return "unknown_self", None
+    prior = facts.by_id
+    if prior is not None and prior.settled:
+        # 이 런에서 이미 닫힌 내 줄 — 누구든(main·에이전트, 빚이 남았든 아니든) 그 줄로 말한다
+        if prior.closed_by == "unsent":
+            return "id_unsent", None
+        return "id_replied", None
     if not facts.owed:
         d = facts.opener_row
         if d is not None and d.human:
@@ -123,11 +129,6 @@ def judge_reply(
     d = next((x for x in facts.owed if x.id == id), None)
     if d is not None:
         return "pay", d
-    prior = facts.by_id
-    if prior is not None and prior.settled and prior.closed_by == "unsent":
-        return "id_unsent", None
-    if prior is not None and prior.settled:
-        return "id_replied", None
     return "id_not_owed", None
 
 
@@ -138,11 +139,9 @@ def _owed_listing(owed) -> str:
 
 
 def reply_refusal(verdict: Verdict, text: str, id: str, facts: ReplyFacts) -> str:
-    """거절 판정 → 모델이 읽는 글. 런을 연 주소를 모르면(main) "빚 없음" 은 그 주소를 단언하지 않는 글이고, 그 id 의
-    줄로 고른 사유(가지 못함·이미 갚음)는 "그런 빚 없음" 으로 말한다 — 지금 글 그대로(3단계 기준 R-1, 사용자 결정 전)."""
+    """거절 판정 → 모델이 읽는 글. 런을 연 주소를 모르면(main) "빚 없음" 은 그 주소를 단언하지 않는 글이다. 그 id 의
+    줄로 고른 사유(가지 못함·이미 갚음)는 main·에이전트 같은 글이다."""
     opener_known = facts.opener is not None
-    if verdict in ("id_unsent", "id_replied") and not opener_known:
-        verdict = "id_not_owed"
     if verdict == "empty":
         return "empty reply — nothing sent"
     if verdict == "no_words":

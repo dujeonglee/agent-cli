@@ -116,23 +116,27 @@ class TestMainReplySentences:
             door.set()
             reg.shutdown_all()
 
-    def test_replying_again_by_id_says_no_unpaid_request(self, tmp_path):
-        """R-1 (1) [3단계 기준 — 바뀌면 사용자 결정] — 에이전트라면 "already replied to [id]" 를 읽는다."""
+    def test_replying_again_by_id_says_already_replied(self, tmp_path):
+        """R-1 (1) — 에이전트와 같은 "already replied to [id]" (사용자 결정 2026-11-18)."""
         reg, (a, _b), door = _agents(tmp_path)
         try:
             d1 = reg.note_owes("main", f"agent:{a}", "first")
             d2 = reg.note_owes("main", f"agent:{a}", "second")
             port = reg.question_port(None)
             assert port.reply("answer", id=d1.id) == ""
-            assert port.reply("again", id=d1.id) == _no_unpaid(
-                d1.id, f'[{d2.id}] {a}: "second"'
+            assert port.reply("again", id=d1.id) == _already_replied_id(
+                d1.id, f"agent:{a}"
+            )
+            assert port.reply("done", id=d2.id) == ""
+            assert port.reply("again", id=d2.id) == _already_replied_id(
+                d2.id, f"agent:{a}"
             )
         finally:
             door.set()
             reg.shutdown_all()
 
     def test_replying_again_to_a_gone_requester_while_owing_another(self, tmp_path):
-        """R-1 (2) [3단계 기준 — 바뀌면 사용자 결정] — 에이전트라면 같은 "not delivered" 를 다시 읽는다."""
+        """R-1 (2) — 에이전트와 같이 "not delivered" 를 다시 읽는다 (사용자 결정 2026-11-18)."""
         reg, (a, b), door = _agents(tmp_path)
         try:
             d = reg.note_owes("main", f"agent:{a}", "late one")
@@ -141,15 +145,17 @@ class TestMainReplySentences:
             assert wait_until(lambda: reg.get(a).state == "dead")
             port = reg.question_port(None)
             assert port.reply("late", id=d.id) == _gone(a, d.id)
-            assert port.reply("late again", id=d.id) == _no_unpaid(
-                d.id, f'[{other.id}] {b}: "keep open"'
+            assert port.reply("late again", id=d.id) == _gone(a, d.id)
+            assert port.reply("x", id="r-999") == _no_unpaid(
+                "r-999", f'[{other.id}] {b}: "keep open"'
             )
         finally:
             door.set()
             reg.shutdown_all()
 
     def test_replying_again_to_a_gone_requester_with_nothing_left(self, tmp_path):
-        """R-1 (2) [3단계 기준 — 바뀌면 사용자 결정] — 빚이 하나도 안 남았으면 "nothing to reply to"."""
+        """R-1 (2) — 빚이 하나도 안 남아도 그 id 의 줄로 "not delivered" (사용자 결정 2026-11-18). 다른 id 는
+        "nothing to reply to"."""
         reg, (a, _b), door = _agents(tmp_path)
         try:
             d = reg.note_owes("main", f"agent:{a}", "late one")
@@ -157,7 +163,8 @@ class TestMainReplySentences:
             assert wait_until(lambda: reg.get(a).state == "dead")
             port = reg.question_port(None)
             assert port.reply("late", id=d.id) == _gone(a, d.id)
-            assert port.reply("late again", id=d.id) == MAIN_NOTHING_OWED
+            assert port.reply("late again", id=d.id) == _gone(a, d.id)
+            assert port.reply("x", id="r-999") == MAIN_NOTHING_OWED
         finally:
             door.set()
             reg.shutdown_all()
@@ -222,9 +229,9 @@ class TestAgentReplySentences:
             door.set()
             reg.shutdown_all()
 
-    def test_replying_again_names_the_opener_not_the_id(self, tmp_path):
-        """D-1 [3단계 기준 — 바뀌면 사용자 결정] — 빚이 하나도 안 남으면 `id` 를 보지 않고 런을 연 주소로 판정한다:
-        a 의 r 에 다시 답했는데 main 에게 정정하라고 안내한다."""
+    def test_replying_again_names_the_id_not_the_opener(self, tmp_path):
+        """D-1 — 빚이 하나도 안 남아도 `id` 가 이 런에서 닫힌 줄이면 그 줄로 말한다(사용자 결정 2026-11-18): a 의 r 에
+        다시 답하면 a 에게 정정하라고 안내한다. id 없이 다시 답하면 런을 연 주소(main)로."""
         reg, (a, b), door = _agents(tmp_path)
         try:
             me = f"agent:{b}"
@@ -234,15 +241,20 @@ class TestAgentReplySentences:
             port = reg.question_port(b)
             assert port.reply("task done", id=opened.id) == ""
             assert port.reply("side answer", id=absorbed.id) == ""
-            assert port.reply("side again", id=absorbed.id) == _already_replied_to(
-                "main"
+            assert port.reply("side again", id=absorbed.id) == _already_replied_id(
+                absorbed.id, f"agent:{a}"
             )
+            assert port.reply("task again", id=opened.id) == _already_replied_id(
+                opened.id, "main"
+            )
+            assert port.reply("again") == _already_replied_to("main")
         finally:
             door.set()
             reg.shutdown_all()
 
-    def test_replying_again_in_a_human_opened_run_says_person(self, tmp_path):
-        """D-1 [3단계 기준 — 바뀌면 사용자 결정] — 사람이 연 런에서 흡수한 요청에 다시 답하면 "requester is a person"."""
+    def test_replying_again_in_a_human_opened_run_names_the_id(self, tmp_path):
+        """D-1 — 사람이 연 런에서 흡수한 요청에 다시 답하면 그 줄로 "already replied to [id]" (사용자 결정 2026-11-18).
+        id 없이 다시 답하면 "requester is a person"."""
         reg, (a, b), door = _agents(tmp_path)
         try:
             me = f"agent:{b}"
@@ -251,7 +263,10 @@ class TestAgentReplySentences:
             reg.get(b).current_author = "user"
             port = reg.question_port(b)
             assert port.reply("side answer", id=absorbed.id) == ""
-            assert port.reply("side again", id=absorbed.id) == HUMAN_REQUESTER
+            assert port.reply("side again", id=absorbed.id) == _already_replied_id(
+                absorbed.id, f"agent:{a}"
+            )
+            assert port.reply("again") == HUMAN_REQUESTER
         finally:
             door.set()
             reg.shutdown_all()
@@ -332,8 +347,8 @@ class TestMainWaitsFirstInACycle:
             )
         ]
         accepted = (
-            f"Observation: waiting — will wake on: agent:{key} owes you a reply; agent:{key} "
-            "working on your request, or in 5m if nothing has reported."
+            f"Observation: waiting — will wake on: agent:{key} working on your request, "
+            "or in 5m if nothing has reported."
         )
         assert main_lines == [
             accepted,  # 첫 `wait` — 상주의 물음에 깬다

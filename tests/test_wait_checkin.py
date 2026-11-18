@@ -409,6 +409,21 @@ class TestAgentLines:
             in text
         )
 
+    def test_idle_debtor_line_says_idle(self, reg):
+        """빚진 채 idle 이고 받은편지함엔 런을 열지 않는 항목뿐 — "busy on another request" 가 아니다."""
+        reg.note_owes("agent:p", "main", "t", id="r-903")
+        _fake_agent(reg, "p", state="idle")
+        _fake_agent(reg, "q", state="idle")
+        reg._deliver_peer_reply(
+            "p", "q", "stopped", 0, re="r-1", mark="stopped by user", opens_run=False
+        )
+        assert [v.wakes for v in reg.queued_for("agent:p")] == [False]
+        assert reg.checkin_agent_lines("main", {}) == (
+            ["agent:p (explorer) · owes you a reply · idle"],
+            True,
+            False,
+        )
+
     def test_pending_for_text_is_unchanged(self, reg):
         """에이전트 몫의 줄(`wake.relation_items`) — 종전 문장 그대로."""
         _fake_agent(reg, "k", state="busy")
@@ -416,9 +431,8 @@ class TestAgentLines:
         # 손으로 고른 id 는 할당기가 이 테스트에서 내지 않는 값 — 같은 id 의 봉투가 뒤에 오지 않게
         reg.note_owes("agent:p", "main", "t", id="r-903")
         _fake_agent(reg, "p", state="busy", current_author="agent:q")
-        # 일하는 중인 k 는 집어 든 main 의 요청을 빚진다 — 실제 흐름에선 "working" 이 "owes" 와 함께 선다
+        # 일하는 중인 k 는 집어 든 main 의 요청을 빚지기도 하지만 한 에이전트는 한 줄 — "working" 하나
         assert agent_wake_lines(reg, "main") == [
-            "agent:k owes you a reply",
             "agent:p owes you a reply",
             "agent:k working on your request",
             "agent:j has your request queued",

@@ -1,7 +1,7 @@
 """`reply` 판정 하나 — `judge_reply` 와 거절 글 `reply_refusal` 을 손으로 만든 사본(`ReplyFacts`)으로 (v10.146.0).
 
 main 과 에이전트가 갈리는 것은 ``opener``(레지스트리가 이 런을 연 주소를 아는가) 하나다. 글은 전문으로 본다.
-``[3단계 기준]`` 칸은 지금 글이 덜 알려 주는 곳(R-1) — 사용자 결정 뒤 바뀐다.
+``id`` 가 이 런에서 이미 닫힌 내 줄이면 누구든 그 줄로 말한다(빚이 남았든, 런을 누가 열었든).
 """
 
 from __future__ import annotations
@@ -32,6 +32,12 @@ def facts(*, owed=(), opener=None, opener_row=None, by_id=None, known=True):
 GONE_R4 = (
     'not delivered — agent "a", which sent request [r-4], was already gone. '
     "[r-4] is closed; there is nothing more to do for it."
+)
+
+ALREADY_R3 = (
+    "already replied to [r-3] (agent:a) in this run — a second reply is not "
+    "delivered. If you must correct it, send the correction with `message` (`to` "
+    '"a", `text` your correction).'
 )
 
 CASES = [
@@ -133,11 +139,7 @@ CASES = [
         "r-3",
         facts(owed=[R1], opener="main", by_id=PAID),
         "id_replied",
-        (
-            "already replied to [r-3] (agent:a) in this run — a second reply is not "
-            "delivered. If you must correct it, send the correction with `message` (`to` "
-            '"a", `text` your correction).'
-        ),
+        ALREADY_R3,
     ),
     (
         "에이전트 — 가지 못한 id",
@@ -148,20 +150,75 @@ CASES = [
         GONE_R4,
     ),
     (
-        "[3단계 기준] main — 이미 답한 id 는 '그런 빚 없음'",
+        "main — 이미 답한 id",
         "ok",
         "r-3",
         facts(owed=[R1], by_id=PAID),
         "id_replied",
-        'no unpaid request "r-3" — you owe: [r-1] a: "pick one".',
+        ALREADY_R3,
     ),
     (
-        "[3단계 기준] main — 가지 못한 id 는 '그런 빚 없음'",
+        "main — 가지 못한 id",
         "ok",
         "r-4",
         facts(owed=[R1], by_id=UNSENT),
         "id_unsent",
-        'no unpaid request "r-4" — you owe: [r-1] a: "pick one".',
+        GONE_R4,
+    ),
+    (
+        "main — 빚이 다 닫힌 뒤 이미 답한 id",
+        "ok",
+        "r-3",
+        facts(by_id=PAID),
+        "id_replied",
+        ALREADY_R3,
+    ),
+    (
+        "main — 요청자가 main 인 줄에 이미 답함",
+        "ok",
+        "r-6",
+        facts(by_id=PAID_MAIN),
+        "id_replied",
+        (
+            "already replied to [r-6] (main) in this run — a second reply is not "
+            "delivered. If you must correct it, send the correction with `message` (`to` "
+            '"main", `text` your correction).'
+        ),
+    ),
+    (
+        "에이전트 — 빚이 다 닫힌 뒤 이미 답한 id 는 런을 연 주소가 아니라 그 줄로",
+        "ok",
+        "r-3",
+        facts(opener="main", opener_row=PAID_MAIN, by_id=PAID),
+        "id_replied",
+        ALREADY_R3,
+    ),
+    (
+        "에이전트 — 사람이 연 런에서 이미 답한 id 는 그 줄로",
+        "ok",
+        "r-3",
+        facts(opener="user", opener_row=HUMAN, by_id=PAID),
+        "id_replied",
+        ALREADY_R3,
+    ),
+    (
+        "에이전트 — 통지가 연 런에서 가지 못한 id 는 그 줄로",
+        "ok",
+        "r-4",
+        facts(opener="", by_id=UNSENT),
+        "id_unsent",
+        GONE_R4,
+    ),
+    (
+        "에이전트 — 사람 줄을 id 로 가리켜도 사람이 연 런의 글",
+        "ok",
+        "u-5",
+        facts(opener="user", opener_row=HUMAN, by_id=HUMAN),
+        "none_owed_human",
+        (
+            "nothing to send — your requester is a person watching this window, and "
+            "they see your `complete` here. Just `complete`."
+        ),
     ),
 ]
 
@@ -186,9 +243,17 @@ def test_pay_returns_the_owed_debt():
     assert judge_reply("ok", "r-2", facts(owed=[R1, R2])) == ("pay", R2)
 
 
-def test_owed_wins_over_the_id_row():
-    """빚에 든 id 면 그 id 의 줄(by_id)은 보지 않는다."""
-    assert judge_reply("ok", "r-1", facts(owed=[R1], by_id=PAID)) == ("pay", R1)
+def test_an_open_id_row_is_paid():
+    """id 의 줄이 열려 있으면(빚) 갚는다 — 닫힌 줄만 사유가 된다."""
+    assert judge_reply("ok", "r-1", facts(owed=[R1], by_id=R1)) == ("pay", R1)
+
+
+def test_a_human_row_by_id_is_not_settled_so_owed_rules_apply():
+    """사람 줄(u)은 런 안에서 닫혀 남지 않는다 — 빚이 남았으면 그 id 는 "그런 빚 없음"."""
+    assert judge_reply("ok", "u-5", facts(owed=[R1], by_id=HUMAN)) == (
+        "id_not_owed",
+        None,
+    )
 
 
 def test_listing_cuts_long_texts():

@@ -37,7 +37,7 @@ RELATIONS = [
         [("owes", A)],
     ),
     (
-        "빚지고 그 요청을 처리 중이면 둘 다",
+        "빚지고 그 요청을 처리 중이면 working 하나",
         facts(
             [agent(A, active=True, taken=[("main", "r-1")])],
             owing=[(A, "main")],
@@ -45,7 +45,7 @@ RELATIONS = [
         ),
         "main",
         frozenset(),
-        [("owes", A), ("working", A)],
+        [("working", A)],
     ),
     (
         "줄 선 요청",

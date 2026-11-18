@@ -704,7 +704,7 @@
     "role": "assistant"
    },
    {
-    "content": "Observation: waiting — will wake on: agent:agt-A owes you a reply; agent:agt-A working on your request, or in 5m if nothing has reported.",
+    "content": "Observation: waiting — will wake on: agent:agt-A working on your request, or in 5m if nothing has reported.",
     "role": "user",
     "success": true,
     "tool": "wait"

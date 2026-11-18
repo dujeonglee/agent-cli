@@ -97,21 +97,26 @@ def agent_relations(
 ) -> list[tuple[str, str]]:
     """``addr`` 를 깨울 에이전트들과 그 관계 — ``("owes"|"working"|"queued", 주소)`` (v10.65.0). 빚진 채 **스스로
     잠든** 쪽은 여기 없다 — `parked_debtors` 가 따로 들고 `parked_view` 가 거슬러 본다. ``exclude`` (v10.77.0):
-    순환 대기 판정에서 거슬러 온 주소들. **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `arrived_mail`."""
-    out: list[tuple[str, str]] = []
-    for debtor in _debtors_owing(facts, addr):
-        if debtor in exclude:
-            continue
-        if not _is_parked(facts, debtor):
-            out.append(("owes", debtor))
+    순환 대기 판정에서 거슬러 온 주소들. **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `arrived_mail`.
+
+    한 에이전트는 한 관계로만 나온다 — working > queued > owes: 내 요청을 들고 일하는(줄 세운) 쪽은 그 요청을 빚진
+    쪽이기도 하지만 더 많이 말하는 쪽 하나로 센다."""
+    held: dict[str, str] = {}
     for a in facts.agents:
         if a.addr == addr or a.addr in exclude:
             continue
         if a.active and _holds_unpaid_request_from(facts, a.taken, addr):
-            out.append(("working", a.addr))
+            held[a.addr] = "working"
         elif _holds_unpaid_request_from(facts, a.queued, addr):
-            out.append(("queued", a.addr))  # 받은편지함에 줄 선 것으로 본다
-    return out
+            held[a.addr] = "queued"  # 받은편지함에 줄 선 것으로 본다
+    owes = [
+        ("owes", debtor)
+        for debtor in _debtors_owing(facts, addr)
+        if debtor not in exclude
+        and debtor not in held
+        and not _is_parked(facts, debtor)
+    ]
+    return [*owes, *((kind, me) for me, kind in held.items())]
 
 
 #: 관계 → `wait` 수락 문장의 한 조각

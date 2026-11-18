@@ -8,7 +8,7 @@
 | 들고 있던 것 | ■ (상주) | ✕ · run 에이전트 |
 |---|---|---|
 | 지금 하던 일의 요청자 · 그 밖의 빚 | stopped 회신 | 같음 |
-| 아직 시작 안 한 대기 요청 | 남김(다음 차례) | removed 회신 |
+| 아직 시작 안 한 대기 요청 | 남김(다음 차례) | 원인의 회신(✕ removed · run 의 ■ stopped) |
 | 자기가 맡긴 하위 일 | 그대로 | 하위 run 은 함께 멈춤 · 하위 상주는 남음 |
 
 세션 종료(`shutdown_all`)는 사람의 정지가 아니다 — 원인이 비어 있고, 빚은 지금처럼 버려 재시작이 되넣는다.
@@ -36,6 +36,7 @@ REMOVED = "removed"
 #: 쪽 — 사람이면 ``user``, 모델의 `agent` `kill` 이면 ``main``·에이전트 키.
 STOPPED_MARK = "stopped by {by}"
 REMOVED_MARK = "removed by {by}"
+_MARKS = {STOPPED: STOPPED_MARK, REMOVED: REMOVED_MARK}
 #: 사람이 한 일이 아닌 내려감의 표지 — ``by`` 가 없다. 정상 종료한 run 에이전트와 죽은 워커.
 ENDED_MARK = "ended"
 DIED_MARK = "died"
@@ -44,8 +45,10 @@ DIED_MARK = "died"
 STOPPED_REPLY = (
     '{who} stopped {agent} while it was working on your request [{rid}] ("{quote}").'
 )
-REMOVED_REPLY = (
-    "{who} removed {agent} before it started your request [{rid}] "
+#: 시작 전에 멈춘 요청의 회신 — ``cause`` 는 정지 원인 그대로의 동사(``stopped``·``removed``): run 에이전트의 ■ 는
+#: 정지이고 ✕(모델의 `kill` 포함)는 제거다.
+UNSTARTED_REPLY = (
+    "{who} {cause} {agent} before it started your request [{rid}] "
     '("{quote}"). Nothing was done for it.'
 )
 #: 내려간 에이전트(정상 종료한 run·죽은 워커)의 받은편지함에 줄 서 있던 요청의 회신 — 사용자 승인 문장.
@@ -75,7 +78,9 @@ class StopRule(NamedTuple):
     """한 정지가 그 에이전트의 것들에 하는 일 — `STOP_RULES` 의 한 칸."""
 
     ends_agent: bool  # 에이전트가 없어진다(내려옴·제거)
-    answers_queued: bool  # 시작 안 한 대기 요청에도 회신(removed)
+    answers_queued: (
+        bool  # 시작 안 한 대기 요청에도 회신(원인의 동사 — `unstarted_reply`)
+    )
     stops_sub_runs: bool  # 그 에이전트가 띄운 run 에이전트도 멈춘다
 
 
@@ -197,12 +202,18 @@ def stopped_reply(
     return "\n".join(lines)
 
 
-def removed_reply(agent: str, rid: str, request: str, *, by: str) -> str:
-    """시작 전에 제거된 요청에 대한 회신의 본문."""
+def stop_mark(cause: str, by: str) -> str:
+    """정지 원인(``STOPPED``·``REMOVED``)과 멈춘 쪽 → 봉투 머리 표지·화면 한 줄의 ``stopped by user``·``removed by main``."""
+    return _MARKS[cause].format(by=by)
+
+
+def unstarted_reply(agent: str, rid: str, request: str, *, by: str, cause: str) -> str:
+    """시작 전에 멈춘(``cause``) 요청에 대한 회신의 본문."""
     return "\n".join(
         [
-            REMOVED_REPLY.format(
+            UNSTARTED_REPLY.format(
                 who=stop_actor(by),
+                cause=cause,
                 agent=agent,
                 rid=rid,
                 quote=one_line(request, QUOTE_CHARS),
