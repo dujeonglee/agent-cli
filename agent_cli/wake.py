@@ -297,10 +297,10 @@ def wait_checkin(
             lines.append(f"monitor {m.id} · {m.cond.describe()} · {left} left")
     if had_monitor and running:
         stops.append(MONITOR_DELETE_HINT)
-    agent_lines, question = (
+    agent_lines, agents, question = (
         registry.checkin_agent_lines(owner, step_marks)
         if registry is not None
-        else ([], False)
+        else ([], False, False)
     )
     lines.extend(agent_lines)
     if not lines:
@@ -316,7 +316,7 @@ def wait_checkin(
         closing.append(CHECKIN_STOP.format(stops="; ".join(stops)))
     elif had_monitor:
         closing.append(CHECKIN_STOP_MONITOR)
-    if agent_lines:
+    if agents:
         closing.append(CHECKIN_AGENT_STUCK)
     if question:
         closing.append(CHECKIN_QUESTION)

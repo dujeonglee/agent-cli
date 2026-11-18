@@ -611,9 +611,10 @@ class AgentRegistry:
 
     def checkin_agent_lines(
         self, addr: str, step_marks: dict[str, int]
-    ) -> tuple[list[str], bool]:
+    ) -> tuple[list[str], bool, bool]:
         """`wait` 중간 깨우기 알림의 에이전트 줄 (v10.79.0, docs/wait/DESIGN.md §6.3)
-        — ``(줄 목록, 사람 질문에 막힌 줄이 있는가)``.
+        — ``(줄 목록, 에이전트 줄이 있는가, 사람 질문에 막힌 줄이 있는가)``. 빚진 쪽이 main 이면 그 줄은
+        ``main · owes you a reply`` 뿐이다 — 에이전트가 아니라 걸음 수·일감이 없다.
 
         작업·monitor 와 달리 에이전트는 로그 파일이 없다. 레지스트리가 **이미 아는
         것**만으로 그린다 — 상태·지금 처리 중인 요청자·받은편지함 미러·회신 빚과
@@ -649,9 +650,13 @@ class AgentRegistry:
             return f", last step {format_duration(now - at)} ago" if at else ""
 
         lines: list[str] = []
+        main_lines: list[str] = []  # 빚진 main — 에이전트만 일하거나 줄 세운다
         question = False
         facts = self.wake_facts()  # 관계와 잠든 채무자를 같은 사본에서
         for kind, me in agent_relations(facts, addr):
+            if not me.startswith("agent:"):
+                main_lines.append(f"{me} · owes you a reply")
+                continue
             key = me.split(":", 1)[1]
             tm = self._agents.get(key)
             if tm is None:
@@ -701,7 +706,7 @@ class AgentRegistry:
                 )
                 question = True
             lines.append(line)
-        return lines, question
+        return [*main_lines, *lines], bool(lines), question
 
     def awaited_replies(self, addr: str) -> list[dict]:
         """``addr`` 가 보낸 요청 중 회신이 아직 오지 않은 것 — 장부의 "기다리는 회신"

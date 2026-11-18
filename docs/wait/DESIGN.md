@@ -288,6 +288,7 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
 | 내 요청이 대기열 | `agent:j (writer) · has your request queued behind 2 others · busy on another request, last step 1m ago` |
 | 회신을 빚진 채 스스로 잠듦 | `agent:m (coder) · owes you a reply · itself waiting on job #3 (`pytest -x tests/`)` |
 | 사람 질문에 막힘 | `agent:n (reviewer) · owes you a reply · itself waiting on job #1 (`…`) · blocked on question q-3 to the user, unanswered for 9m` |
+| main 이 회신을 빚짐(기다리는 쪽이 에이전트) | `main · owes you a reply` — 에이전트가 아니라 걸음 수·일감·kill 안내가 없다 |
 
 "내 요청을 처리 중"·"대기열" 은 그 런·받은편지함이 내 요청 중 아직 회신이 가지 않은 것을 들고 있을 때만이다
 (v10.143.0) — 회신한 뒤 마무리 중인 런·통지로 도는 런·대기열의 통지는 줄도 깨울 근거도 아니다(docs/agent-engine/DESIGN.md §2.2).
@@ -295,7 +296,7 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
 선택지는 다시 기다리기 / kill 둘뿐이다. "메시지로 물어보라" 는 넣지 않는다 — `agent` 요청 결과에
 이미 "progress checks or re-sends … queue MORE work" 경고가 있고, 중간 깨우기가 재촉을 유발하면
 역효과다. 사람 질문 줄이 있을 때만 "A question to the user is answered by the user, not by you."
-한 줄을 더한다. 한계: 걸음 수·시각은 근사값이고 "일하고 있다" 와 "쓸모 있는 일을 하고 있다" 는
+한 줄을 더한다. kill 안내(`CHECKIN_AGENT_STUCK`)는 에이전트 줄이 있을 때만 붙는다 — `main` 줄만이면 없다. 한계: 걸음 수·시각은 근사값이고 "일하고 있다" 와 "쓸모 있는 일을 하고 있다" 는
 구별하지 못한다. 벤치에는 에이전트를 기다린 사례가 거의 없어 실측 근거가 없다 — 상주 에이전트를
 쓰는 라이브 세션용이다.
 

@@ -444,6 +444,67 @@ class TestWaitInPlaceWakes:
         text = contents(s["ctx"])
         assert "⏰ Check-in after" in text and "after checkin" in text
 
+    def test_an_agent_that_main_owes_gets_its_checkin(self, session):
+        """main 이 run 에이전트에게 회신을 빚진 채 그 에이전트가 `wait` — 실제 타이머 스레드가 만든 체크인이
+        에이전트에게 가고, 그 줄은 ``main · owes you a reply`` 하나다(걸음 수·kill 안내 없음). 종전엔 그 줄을
+        그리다(`checkin_agent_lines`) 타이머 스레드가 IndexError 로 죽어 체크인이 오지 않았다(N10)."""
+        seen: dict = {}
+
+        def until_checkin(msgs):
+            text = contents_of(msgs)
+            if "⏰ Check-in" in text and "checkin" not in seen:
+                seen["checkin"] = text[text.rindex("⏰ Check-in") :]
+            return call("wait")
+
+        def answer(msgs):
+            assert wait_until(lambda: "checkin" in seen)
+            return call("reply", id=owed_id(msgs), text="src/lexer.py")
+
+        def relay(msgs):
+            if "src/lexer.py" not in contents_of(msgs):
+                return call("wait")
+            return call("reply", id=owed_id(msgs), text="K: src/lexer.py")
+
+        p = Provider(
+            {
+                "MAIN": [
+                    call("agent", mode="run", task="TASK-K ask main"),
+                    call("wait"),
+                    answer,
+                    *[
+                        lambda msgs: (
+                            complete_all("ok")(msgs)
+                            if "K: src/lexer.py" in contents_of(msgs)
+                            else call("wait")
+                        )
+                    ]
+                    * 6,
+                ],
+                "TASK-K": [
+                    call("message", to="main", text="which file?"),
+                    call("wait"),
+                    until_checkin,
+                    *[relay] * 6,
+                    call("complete", result="k"),
+                ],
+            }
+        )
+        s = session(p)
+        # 에이전트의 체크인 타이머만 곧바로 — main 의 것은 제 간격(런이 시작되면 풀린다)
+        s["reg"].checkin_timer_factory = lambda interval, fn, args: threading.Timer(
+            0.2 if args[0].startswith("agent:") else interval, fn, args=args
+        )
+        result = s["run"]()
+        assert result.success
+        assert "K: src/lexer.py" in contents(s["ctx"])
+        head, line, closing = seen["checkin"].splitlines()[:3]
+        assert head == "⏰ Check-in after 5m — still running:"
+        assert line == "main · owes you a reply"
+        assert closing == (
+            "If they are making progress, call `wait` again; if nothing reports, you "
+            "are woken again in 10m."
+        )
+
     def test_wait_without_awaited_reply_still_ends_the_run(self, session, tmp_path):
         """작업·모니터만 기다리면 지금처럼 런을 끝낸다(범위 밖)."""
         from agent_cli.jobs import JobRegistry

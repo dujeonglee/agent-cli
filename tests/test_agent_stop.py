@@ -464,7 +464,7 @@ class TestGoneAgentQueue:
         assert not reg.request(tm.key, "NEXT parser", author="main", item_id="r-42")
         me = f"agent:{p6.key}"
         assert agent_wake_lines(reg, me) == [f"agent:{tm.key} has your request queued"]
-        (line,), _ = reg.checkin_agent_lines(me, {})
+        (line,), _, _ = reg.checkin_agent_lines(me, {})
         assert "has your request queued, next in line" in line
         return p6
 
@@ -486,7 +486,7 @@ class TestGoneAgentQueue:
         assert agent_wake_lines(reg, me) == []
         # main 의 줄 선 요청(r-42)의 근거는 사라진다 — 집어 든 r-40 은 이 규칙 밖(죽음이면 빚으로 남는다)
         assert not [ln for ln in agent_wake_lines(reg, "main") if "queued" in ln]
-        assert reg.checkin_agent_lines(me, {}) == ([], False)
+        assert reg.checkin_agent_lines(me, {}) == ([], False, False)
         assert reg.awaited_replies(me) == [] and reg.awaited_replies("main") == []
 
     ENDED = (
@@ -554,7 +554,7 @@ class TestDiedWorkerDebts:
     def _gone(self, reg, tm, me):
         assert until(lambda: tm.state == "dead")
         assert agent_wake_lines(reg, me) == []
-        assert reg.checkin_agent_lines(me, {}) == ([], False)
+        assert reg.checkin_agent_lines(me, {}) == ([], False, False)
         assert reg.awaited_replies(me) == []
         assert reg.reply_debts(f"agent:{tm.key}") == []
 
