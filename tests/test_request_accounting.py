@@ -18,7 +18,7 @@ import types
 from unittest.mock import MagicMock
 
 from agent_cli.providers.capabilities import ModelCapabilities
-from tests.loop_ports import make_ports
+from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
 
 HANGUL = re.compile(r"[가-힣]")
@@ -32,7 +32,9 @@ def _loop(dequeue=None, route=None, **kw):
             context_window=32768, max_output_tokens=4096, supports_thinking=False
         ),
         model="m",
-        ports=make_ports(dequeue_user_message=dequeue, route_message=route),
+        ports=make_ports(
+            inbox=queue_inbox(dequeue) if dequeue else None, route_message=route
+        ),
         **kw,
     )
 
@@ -435,7 +437,7 @@ class TestThroughRunLoop:
             dialect="json_fc",
             ports=make_ports(
                 owner="main",
-                dequeue_user_message=lambda: queue.pop(0) if queue else None,
+                inbox=queue_inbox(lambda: queue.pop(0) if queue else None),
             ),
             **kw,
         )
@@ -498,7 +500,7 @@ class TestThroughRunLoop:
             dialect="json_fc",
             ports=make_ports(
                 owner="main",
-                dequeue_user_message=lambda: queue.pop(0) if queue else None,
+                inbox=queue_inbox(lambda: queue.pop(0) if queue else None),
             ),
         )
         assert provider.call.call_count == 3
@@ -576,7 +578,7 @@ class TestThroughRunLoop:
                 dialect="json_fc",
                 ports=make_ports(
                     owner="main",
-                    dequeue_user_message=lambda: queue.pop(0) if queue else None,
+                    inbox=queue_inbox(lambda: queue.pop(0) if queue else None),
                 ),
             )
 

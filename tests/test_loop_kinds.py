@@ -12,7 +12,7 @@ import pytest
 from agent_cli.loop.kind import Caller, LoopKind, LoopKindError, PrivateLoop, Start
 from agent_cli.tools.result import ToolResult
 from tests.loop_kinds import make_caller, make_kind
-from tests.loop_ports import make_ports
+from tests.loop_ports import make_ports, queue_inbox
 
 
 class _Trace(LoopKind):
@@ -256,7 +256,6 @@ class TestKindsStateTheirPolicy:
             session=None,
             agent_registry=None,
             mcp_manager=None,
-            dequeue_user_message=lambda: None,
             enqueue_user_message=lambda text, nickname: {},
             route_message=lambda t: False,
             max_turns=0,
@@ -309,7 +308,7 @@ class TestKindsStateTheirPolicy:
         # 맨 종류: 깨울 길 없음 → 거부, private 주소 → 제자리, 그 외 → 런 종료
         assert make_kind().wait_policy() == WAIT_REFUSE
         assert (
-            make_kind(ports=make_ports(dequeue_user_message=lambda: None)).wait_policy()
+            make_kind(ports=make_ports(inbox=queue_inbox(lambda: None))).wait_policy()
             == WAIT_END_RUN
         )
         assert (
@@ -322,8 +321,8 @@ class TestKindsStateTheirPolicy:
         빚이 main 이름으로 적혔다. 종전엔 `agent_registry` 만 보고 흡수했다."""
 
         class _Reg:
-            def drain_replies(self):
-                return [{"key": "agt-1", "output": "late reply"}]
+            def absorb_main(self):
+                return [{"mail": {"key": "agt-1", "output": "late reply"}}]
 
         caller = make_caller(agent_registry=_Reg())
         from agent_cli.skills.executor import SkillLoop
@@ -333,7 +332,7 @@ class TestKindsStateTheirPolicy:
             Skill(name="s", description="", prompt_template="x"), "", caller
         )
         assert skill.intake() == []
-        # 같은 포트의 맨 종류·main 은 받는다
+        # main 상자를 흡수하는 맨 종류는 받는다
         bare = make_kind(ports=make_ports(agent_registry=_Reg()))
         assert [i["mail"]["output"] for i in bare.intake()] == ["late reply"]
 

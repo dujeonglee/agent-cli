@@ -11,7 +11,7 @@ from agent_cli.providers.credentials import Credentials
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
-from tests.loop_ports import TEST_PORTS, make_ports, split_ports
+from tests.loop_ports import TEST_PORTS, make_ports, queue_inbox, split_ports
 from tests.loopkit import run_loop
 
 
@@ -4365,7 +4365,7 @@ class TestMessageInjection:
         run_loop(
             query="do Y",
             query_author="Brave Penguin",
-            ports=make_ports(dequeue_user_message=dq),
+            ports=make_ports(inbox=queue_inbox(dq)),
             provider=provider,
             capabilities=caps,
             model="m",
@@ -4421,7 +4421,7 @@ class TestMessageInjection:
         run_loop(
             query="do Y",
             query_author="Pen",
-            ports=make_ports(dequeue_user_message=dq, route_message=route),
+            ports=make_ports(inbox=queue_inbox(dq), route_message=route),
             provider=provider,
             capabilities=caps,
             model="m",
@@ -4451,9 +4451,7 @@ class TestMessageInjection:
         run_loop(
             query="do Y",
             query_author="Pen",
-            ports=make_ports(
-                dequeue_user_message=dq, route_message=lambda _text: False
-            ),
+            ports=make_ports(inbox=queue_inbox(dq), route_message=lambda _text: False),
             # never a command
             provider=provider,
             capabilities=caps,
@@ -4491,9 +4489,7 @@ class TestMessageInjection:
         run_loop(
             query="starter",
             query_author="Pen",
-            ports=make_ports(
-                dequeue_user_message=dq, route_message=lambda _text: False
-            ),
+            ports=make_ports(inbox=queue_inbox(dq), route_message=lambda _text: False),
             # all plain chat
             provider=provider,
             capabilities=caps,
@@ -4539,7 +4535,7 @@ class TestMessageInjection:
         run_loop(
             query="plain chat starter",
             query_author="Pen",
-            ports=make_ports(dequeue_user_message=dq, route_message=route),
+            ports=make_ports(inbox=queue_inbox(dq), route_message=route),
             provider=provider,
             capabilities=caps,
             model="m",
@@ -4892,7 +4888,7 @@ class TestRunAuthors:
 
         stub, prev = self._with_stub_renderer()
         try:
-            loop = self._loop(caps, dequeue_user_message=lambda: None)
+            loop = self._loop(caps, inbox=queue_inbox(lambda: None))
             loop._add_user_message("q1", "Bob")
             loop._add_user_message("q2", "두정")
             assert stub.author_sets == [["Bob"], ["Bob", "두정"]]
@@ -4906,7 +4902,7 @@ class TestRunAuthors:
 
         stub, prev = self._with_stub_renderer()
         try:
-            loop = self._loop(caps)  # dequeue_user_message=None
+            loop = self._loop(caps)  # inbox=queue_inbox(None)
             loop._add_user_message("task prompt", "Bob")
             assert stub.author_sets == []
         finally:
@@ -4919,7 +4915,7 @@ class TestRunAuthors:
         try:
             items = [{"text": "steer it", "nickname": "두정"}]
             loop = self._loop(
-                caps, dequeue_user_message=lambda: items.pop() if items else None
+                caps, inbox=queue_inbox(lambda: items.pop() if items else None)
             )
             loop.run_authors.append("Bob")  # as the starter would have
             loop._intake()
@@ -4953,7 +4949,7 @@ class TestRunAuthors:
             items = [{"text": "/compact", "nickname": "두정"}]
             loop = self._loop(
                 caps,
-                dequeue_user_message=lambda: items.pop() if items else None,
+                inbox=queue_inbox(lambda: items.pop() if items else None),
                 route_message=lambda text: True,
             )
             loop._intake()
@@ -4979,9 +4975,9 @@ class TestMailAnswersInheritance:
             self._replies = replies
             self.author_sets = []
 
-        def drain_replies(self):
+        def absorb_main(self):
             out, self._replies = self._replies, []
-            return out
+            return [{"mail": r} for r in out]
 
         def set_current_run_authors(self, authors):
             self.author_sets.append(list(authors))
@@ -5032,7 +5028,7 @@ class TestMailAnswersInheritance:
         render.set_renderer(stub)
         try:
             reg = self._StubRegistry([self._reply(["Bob"])])
-            loop = self._loop(caps, reg, dequeue_user_message=lambda: None)
+            loop = self._loop(caps, reg, inbox=queue_inbox(lambda: None))
             loop._intake()
             assert loop.run_authors == ["Bob"]
             assert stub.author_sets[-1] == ["Bob"]
@@ -5116,7 +5112,7 @@ class TestRendererAbcPromotion:
                 capabilities=caps,
                 model="m",
                 ports=make_ports(
-                    dequeue_user_message=lambda: items.pop() if items else None
+                    inbox=queue_inbox(lambda: items.pop() if items else None)
                 ),
             )
             loop._intake()  # push_user_message → no-op

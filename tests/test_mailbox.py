@@ -77,7 +77,6 @@ class TestEveryKindHasOne:
         main = MainLoop.make_ports(
             agent_registry=reg,
             mcp_manager=None,
-            dequeue_user_message=None,
             enqueue_user_message=None,
             route_message=None,
         ).mailbox
@@ -101,7 +100,7 @@ class TestEveryKindHasOne:
             }.items()
         }
         assert got == {
-            "main": ("Mailbox", "main", False),
+            "main": ("Mailbox", "main", True),  # 턴 경계가 main 상자를 흡수한다
             "resident": ("Mailbox", "agent:k1", True),
             "private": ("Mailbox", "run:t1", True),
             "skill": ("Mailbox", "agent:p", False),
@@ -153,7 +152,6 @@ class TestWakeableTruthTable:
         main = MainLoop.make_ports(
             agent_registry=MagicMock(),
             mcp_manager=None,
-            dequeue_user_message=lambda: None,
             enqueue_user_message=lambda *a: None,
             route_message=lambda *a: None,
         )

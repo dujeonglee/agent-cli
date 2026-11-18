@@ -2428,7 +2428,7 @@ class WebRenderer(Renderer):
         servicing (starter + turn-boundary chat injections so far). Called at
         run start and again after every injection; consumed by ``final`` on
         the main timeline as the ``answers`` attribution. Sub-loops never
-        call this (they have no ``dequeue_user_message``)."""
+        call this (they do not take the main box)."""
         self._run_authors = list(authors)
 
     def push_abort(self) -> None:

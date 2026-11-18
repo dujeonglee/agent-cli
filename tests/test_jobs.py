@@ -449,15 +449,13 @@ class TestResultFileContinuation:
         ), out
 
     def _req(self, *, query: bool):
-        from agent_cli.pump import RunRequest
+        from agent_cli.loop.kind import Start
 
-        return RunRequest(
-            text="t",
-            author=None if query else "🤝 agent",
+        # argv 질의 = 작성자 없는 사람의 요청, 메일 런 = 사람의 요청이 아님
+        return Start(
+            query="t" if query else "",
             author_is_user=query,
-            request_id="",
             stop_event=__import__("threading").Event(),
-            wake=not query,
         )
 
     def _ok(self, text):

@@ -23,7 +23,7 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.harness.auditor import SessionAuditor, build_auditor
 from agent_cli.harness.jobs import HarnessJobs, load_harness_profile
 from agent_cli.knobs import KNOB_BY_NAME, KnobSession
-from agent_cli.pump import WAKE_AUTHOR, RunRequest
+from agent_cli.loop.kind import Start
 from agent_cli.subagent.profiles import available_profiles, load_profile
 from agent_cli.tools.registry import extract_file_paths
 from agent_cli.tools.result import ToolResult
@@ -34,14 +34,17 @@ def _ctx(tmp_path):
     return ContextManager(tmp_path / "s", max_context_tokens=10_000)
 
 
-def _req(*, wake: bool = False, author=None) -> RunRequest:
-    return RunRequest(
-        text="q",
-        author=WAKE_AUTHOR if wake else author,
+#: 메일 런의 레코드 작성자 — 옛 세션의 history 에 남은 모양(v10.55.0 전의 깨우기 시작 레코드)
+WAKE_AUTHOR = "🤝 agent"
+
+
+def _req(*, wake: bool = False, author=None) -> Start:
+    """감사자가 받는 런의 시작 — ``wake`` 는 메일이 연 런(사람의 요청이 아니다)."""
+    return Start(
+        query="" if wake else "q",
+        author=None if wake else author,
         author_is_user=not wake,
-        request_id="",
         stop_event=threading.Event(),
-        wake=wake,
     )
 
 

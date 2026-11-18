@@ -244,16 +244,13 @@ def build_schedule_registry(session_dir=None):
     return registry
 
 
-def wait_for_human_words(main_input, route):
+def wait_for_human_words(main_input, is_command, route):
     """main 의 제자리 대기를 깨울 사람 입력 — ``(timeout) -> bool`` (v10.142.0, web 기본).
 
-    main 앞에 사람의 말이 도착하면 깨우되, 맨 앞이 명령(``/``·``@`` 로 시작 — ``/stop agt-3`` 등)이면 그 자리에서
-    라우팅하고 깨우지 않는다: 큐에 둔 채 깨우면 main 이 "the user wrote to you" 관찰을 읽고 그 말은 다음 흡수의
-    라우팅이 삼켜, 말 없는 관찰만 남았다. 라우팅이 받지 않은 것(명령 모양의 평범한 말)은 맨 앞으로 되돌리고 깨운다.
+    main 앞에 사람의 말이 도착하면 깨우되, 맨 앞이 명령(``is_command`` — 표면의 판정, ``/stop agt-3`` 등)이면 그
+    자리에서 꺼내 라우팅하고 깨우지 않는다: 줄에 둔 채 깨우면 main 이 "the user wrote to you" 관찰을 읽고 그 말은
+    다음 흡수의 라우팅이 삼켜, 말 없는 관찰만 남았다. 명령이 아닌 말(명령 모양의 경로 등)은 꺼내지 않고 깨운다.
     CLI ``run`` 은 터미널 줄을 같은 규칙으로 읽는다(`main._terminal_steer_input`)."""
-
-    def is_command(text: str) -> bool:
-        return text[:1] in ("/", "@")
 
     def wait(timeout: float) -> bool:
         if not main_input.wait_for_arrival(timeout):
@@ -261,12 +258,8 @@ def wait_for_human_words(main_input, route):
         item = main_input.take_first_if(is_command)
         if item is None:
             return True
-        if route(str(item.get("text") or "")):
-            return (
-                False  # 명령은 처리했다 — 기다림은 계속(멈춘 에이전트의 회신이 깨운다)
-            )
-        main_input.put_back_first(item)
-        return True
+        route(str(item.get("text") or ""))
+        return False  # 명령은 처리했다 — 기다림은 계속(멈춘 에이전트의 회신이 깨운다)
 
     return wait
 
@@ -608,13 +601,14 @@ def wire_session(
         session=spec.session,
         agent_registry=registry,
         mcp_manager=spec.mcp_manager,
-        dequeue_user_message=main_input.take_next,
         enqueue_user_message=lambda text, nickname: main_input.enqueue(
             None, text, nickname=nickname
         ),
         route_message=lambda text: pump.route(text),
         wait_for_user_input=on_wait_input
-        or wait_for_human_words(main_input, lambda text: pump.route(text)),
+        or wait_for_human_words(
+            main_input, surface.is_command, lambda text: pump.route(text)
+        ),
         max_turns=spec.max_turns,
         max_depth=spec.max_depth,
         verbose=spec.verbose,
@@ -626,7 +620,7 @@ def wire_session(
         PumpDeps(
             main_input=main_input,
             agent_registry=registry,
-            run_main=lambda req: main_kind.run(main_kind.start(req)),
+            main=main_kind,
             surface=surface,
             auditor=owners.auditor,
             policy=policy,
@@ -706,10 +700,10 @@ def _main_questions(agent_registry):
 
 
 class MainLoop(LoopKind):
-    """main 루프의 종류 — 세션에 하나, ``run(start)`` 은 요청(`RunRequest`)마다 (v10.87.0).
+    """main 루프의 종류 — 세션에 하나, ``run(start)`` 은 런을 연 것마다 (v10.87.0).
 
-    run 과 web 이 같다(v10.33.0, docs/pump/DESIGN.md): 펌프가 요청을 꺼내 `start(req)` 로
-    넘기고, 결과·`run_ended`·표면 알림은 펌프가 한다(호스트의 것). 깊이 0, 도구 전부(MCP 포함),
+    run 과 web 이 같다(v10.33.0, docs/pump/DESIGN.md): 펌프가 main 상자에서 꺼낸 것을 `start(item, stop_event)`
+    로 넘기고, 결과·`run_ended`·표면 알림은 펌프가 한다(호스트의 것). 깊이 0, 도구 전부(MCP 포함),
     세션 ctx 그대로, 런마다 거둘 것 없음(세션 teardown 이 전부). ``route_message`` 는 펌프의
     메서드라 세션 수명이고 펌프보다 먼저 만들어지므로 호출 시점에 푸는 콜러블로 받는다.
     """
@@ -722,7 +716,6 @@ class MainLoop(LoopKind):
         session,
         agent_registry,
         mcp_manager,
-        dequeue_user_message,
         enqueue_user_message,
         route_message,
         max_turns: int,
@@ -746,7 +739,6 @@ class MainLoop(LoopKind):
         self.ports = self.make_ports(
             agent_registry=agent_registry,
             mcp_manager=mcp_manager,
-            dequeue_user_message=dequeue_user_message,
             enqueue_user_message=enqueue_user_message,
             route_message=route_message,
             wait_for_user_input=wait_for_user_input,
@@ -757,7 +749,6 @@ class MainLoop(LoopKind):
         *,
         agent_registry,
         mcp_manager,
-        dequeue_user_message,
         enqueue_user_message,
         route_message,
         wait_for_user_input=None,
@@ -770,7 +761,6 @@ class MainLoop(LoopKind):
             questions=_main_questions(agent_registry),
             agent_registry=agent_registry,
             mcp_manager=mcp_manager,
-            dequeue_user_message=dequeue_user_message,
             enqueue_user_message=enqueue_user_message,
             route_message=route_message,
             # main 도 `message` 로 요청·통지를 보낸다 (v10.141.0 — 종전 `agent` "request")
@@ -781,7 +771,13 @@ class MainLoop(LoopKind):
             ),
             hook_runner=_hook_runner_port(),
             peer_roster=None,
-            mailbox=Mailbox(agent_registry, "main", wait_input=wait_for_user_input),
+            # 턴 경계의 흡수는 main 상자 하나(사람의 말 먼저, 메일 뒤 — `AgentRegistry.absorb_main`)
+            mailbox=Mailbox(
+                agent_registry,
+                "main",
+                take=agent_registry.absorb_main if agent_registry is not None else None,
+                wait_input=wait_for_user_input,
+            ),
             unwired={
                 **(
                     {"message_handler": "레지스트리가 없는 세션 — 보낼 상대가 없다"}
@@ -805,19 +801,9 @@ class MainLoop(LoopKind):
         return WAIT_NEXT_MAIN
 
     def intake(self) -> list[dict]:
-        """main 앞 사람의 말을 전부 꺼내고(라우팅은 엔진), 그다음 상자의 메일을 받는다 — 사람 먼저, 메일 뒤."""
-        items: list[dict] = []
-        dequeue = self.ports.dequeue_user_message
-        if dequeue is not None:
-            while True:
-                item = dequeue()
-                if not item:
-                    break
-                items.append({"message": item})
-        registry = self.ports.agent_registry
-        if registry is not None:
-            items.extend({"mail": r} for r in registry.drain_replies())
-        return items
+        """main 상자의 줄 선 것 전부 — 사람의 말 먼저(라우팅은 엔진), 메일 뒤 (``mailbox.take``)."""
+        mailbox = self.ports.mailbox
+        return list(mailbox.take() or []) if mailbox.has_inbox else []
 
     def prompt_profile(self) -> PromptProfile:
         return PromptProfile(
@@ -845,13 +831,17 @@ class MainLoop(LoopKind):
             True  # 웹 다중 사용자 귀속 — 렌더러와 레지스트리의 요청자 스냅샷을 비춘다
         )
 
-    def start(self, req) -> Start:
-        """펌프의 `RunRequest` → 시작. 깨우기 런은 빈 질의(`loop_query`), 작성자는 깨우기 라벨."""
+    @staticmethod
+    def start(item: dict | None, stop_event) -> Start:
+        """펌프가 꺼낸 것 → 시작. 사람의 말이면 그 말이 시작 메시지(작성자 = 닉네임, 없으면 run 의 argv 질의), ``None``
+        이면 메일이 연 런 — 시작 메시지가 없고 사람의 요청이 아니다(그 런의 첫 턴 경계가 메일을 배달한다)."""
+        if item is None:
+            return Start(query="", author_is_user=False, stop_event=stop_event)
         return Start(
-            query=req.loop_query,
-            images=list(req.images or []),
-            author=req.author,
-            author_is_user=req.author_is_user,
-            request_id=req.request_id,
-            stop_event=req.stop_event,
+            query=str(item.get("text") or ""),
+            images=list(item.get("images") or []),
+            author=item.get("nickname") or None,
+            author_is_user=True,
+            request_id=str(item.get("id") or ""),
+            stop_event=stop_event,
         )

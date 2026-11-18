@@ -51,7 +51,7 @@ class TestClosingThePump:
         ran: list[str] = []
         pump = make_pump(
             main_input=q,
-            run_main=lambda req: ran.append(req.text),
+            run_main=lambda req: ran.append(req.query),
             policy=ForeverPolicy(),
             surface=FakeSurface(),
         )
@@ -70,8 +70,8 @@ class TestNumbersAroundAMailRun:
         run_done = threading.Event()
 
         def run_main(req):
-            opened.append(req.text)
-            if req.wake:
+            opened.append(req.query)
+            if not req.author_is_user:
                 reg.drain_replies()  # 메일 런의 첫 턴 경계가 하는 일
             run_done.set()
 

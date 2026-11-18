@@ -24,12 +24,12 @@ from agent_cli.session_slots import get_agent_registry, set_job_registry
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 from agent_cli.tools.virtual import WaitTool
 from agent_cli.wake import parked_debtors
-from tests.loop_ports import TEST_PORTS, make_ports
+from tests.loop_ports import TEST_PORTS, make_ports, queue_inbox
 from tests.loopkit import make_loop
 from tests.mail_support import agent_wake_lines
 
 #: main 모양의 포트 — 입력 큐가 있어 깨울 수 있다(빈 큐).
-WAKEABLE = make_ports(dequeue_user_message=lambda: None)
+WAKEABLE = make_ports(inbox=queue_inbox(lambda: None))
 
 
 @pytest.fixture
@@ -255,7 +255,7 @@ class TestAlreadyArrived:
 
     def _loop(self, reg, provider):
         loop = provider.holder["loop"] = make_loop(
-            ports=make_ports(dequeue_user_message=lambda: None, agent_registry=reg),
+            ports=make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg),
             query="Q",
             query_request_id="u-1",
             provider=provider,

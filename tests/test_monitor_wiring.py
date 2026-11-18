@@ -304,7 +304,7 @@ class TestLifetimeInBothRuntimes:
         done = run_pump_in_thread(
             make_pump(
                 main_input=q,
-                run_main=lambda req: calls.append(req.text),
+                run_main=lambda req: calls.append(req.query),
                 monitors=reg,
                 poll_secs=0.05,
             )

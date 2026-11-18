@@ -117,8 +117,8 @@ class AgentLoop:
         binding = kind.binding
         ports = kind.ports
         # Web multi-user intake. ``query_author`` = nickname of whoever sent the
-        # run-STARTING message (None for CLI / single user). ``dequeue_user_message``
-        # pulls ONE queued message at each turn boundary; ``route_message(text)``
+        # run-STARTING message (None for CLI / single user). The kind's ``intake``
+        # takes the queued messages at each turn boundary; ``route_message(text)``
         # routes it through the SAME command path as a run-starter (``/sh``,
         # ``/compact``, ``@agent``, ``/skill``) and returns True when it handled
         # the message — so an injected command behaves identically to one typed
@@ -704,7 +704,7 @@ class AgentLoop:
                 starter_rid, self.query_author or "", self.query, turn=self.turn
             )
         if not self.query:
-            # 시작 메시지 없는 런 = 깨우기 런 (v10.55.0, `RunRequest.loop_query`):
+            # 시작 메시지 없는 런 = 메일이 연 런 (v10.55.0, `MainLoop.start`):
             # 첫 입력은 첫 턴 경계가 배달하는 메일 관찰이다.
             return
         self._add_user_message(

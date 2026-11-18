@@ -110,13 +110,11 @@ class ResidentLoop(LoopKind):
             mcp_manager=None,
             hook_runner=_hook_runner_port(),
             route_message=None,
-            dequeue_user_message=None,
             enqueue_user_message=None,
             unwired={
                 "mcp_manager": _AS_BEFORE,
                 **_hook_unwired(),
                 "route_message": _WEB_ONLY,
-                "dequeue_user_message": _WEB_ONLY,
                 "enqueue_user_message": _WEB_ONLY,
             },
         )

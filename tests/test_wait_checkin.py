@@ -34,7 +34,7 @@ from agent_cli.session_slots import (
 from agent_cli.subagent.agent_mail import build_reply_record
 from agent_cli.subagent.agents_live import AgentInstance
 from agent_cli.wake import wake_source_ids, wake_sources
-from tests.loop_ports import make_ports
+from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
 from tests.mail_support import agent_wake_lines
 from tests.monitor_delivery import RecordingDelivery
@@ -521,7 +521,7 @@ def _loop(provider, *, query="Q", rid="u-1"):
     # 포트는 런마다 만든다 — 메일함은 포트를 만들 때의 슬롯 레지스트리를 쥔다(v10.133.28,
     # 프로덕션 빌더와 같다). 모듈 수준 상수면 import 때(슬롯 None)의 것이 된다.
     return make_loop(
-        ports=make_ports(dequeue_user_message=lambda: None),
+        ports=make_ports(inbox=queue_inbox(lambda: None)),
         query=query,
         query_request_id=rid,
         provider=provider,
@@ -588,7 +588,7 @@ class TestLoopWiring:
         reg.arm_checkin("main")
         reg.fire_checkin("main")
         loop = make_loop(
-            ports=make_ports(dequeue_user_message=lambda: None, agent_registry=reg),
+            ports=make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg),
             query="",
             provider=_provider({"action": "wait"}),
             capabilities=ModelCapabilities(

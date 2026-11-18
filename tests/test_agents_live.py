@@ -1875,7 +1875,7 @@ class TestRunMessagePump:
         make_pump(
             main_input=q,
             registry=reg,
-            run_main=lambda req: run_one(req.text, wake=req.wake),
+            run_main=lambda start: run_one(start.query, wake=not start.author_is_user),
             poll_secs=0.05,
         ).run()
 
@@ -1891,7 +1891,6 @@ class TestRunMessagePump:
 
     def test_wake_cycle_delivers_then_quiesces(self):
         from agent_cli.main_input import MainInput
-        from agent_cli.pump import WAKE_TEXT
 
         q = MainInput()
         reg = self._FakeReg(q)
@@ -1916,11 +1915,10 @@ class TestRunMessagePump:
 
         q.enqueue(None, "spawn and go")
         self._pump(q, reg, run_one)
-        assert calls == [("spawn and go", False), (WAKE_TEXT, True)]
+        assert calls == [("spawn and go", False), ("", True)]
 
     def test_a_reply_already_waiting_opens_a_mail_run(self):
         from agent_cli.main_input import MainInput
-        from agent_cli.pump import WAKE_TEXT
 
         q = MainInput()
         reg = self._FakeReg(q)
@@ -1932,7 +1930,7 @@ class TestRunMessagePump:
             q.post.absorb_mail("main")
 
         self._pump(q, reg, run_one)
-        assert calls == [(WAKE_TEXT, True)]
+        assert calls == [("", True)]
 
     def test_close_exits(self):
         from agent_cli.main_input import MainInput

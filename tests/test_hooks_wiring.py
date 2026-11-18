@@ -28,6 +28,9 @@ class _Reg:
     def question_port(self, key):
         return object()
 
+    def absorb_main(self):  # main 의 턴 경계 흡수
+        return []
+
     def message_handler(self, sender):  # main 의 `message` (v10.141.0)
         return object()
 
@@ -45,7 +48,6 @@ def _all_ports():
         "main": MainLoop.make_ports(
             agent_registry=_Reg(),
             mcp_manager=_S,
-            dequeue_user_message=_S,
             enqueue_user_message=_S,
             route_message=_S,
         ),
@@ -187,7 +189,6 @@ class TestBuiltinHooksDir:
         ports = MainLoop.make_ports(
             agent_registry=None,
             mcp_manager=None,
-            dequeue_user_message=None,
             enqueue_user_message=None,
             route_message=None,
         )

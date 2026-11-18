@@ -439,7 +439,8 @@ class TestCommandsTypedDuringTheWait:
             routed.append(text)
             return text in handled
 
-        return q, routed, wait_for_human_words(q, route)
+        # 판정은 표면의 것 — 여기서는 "라우팅이 받는 글" 그대로
+        return q, routed, wait_for_human_words(q, lambda t: t in handled, route)
 
     def test_a_command_is_routed_in_place_and_does_not_wake(self):
         q, routed, wait = self._setup()
@@ -452,11 +453,11 @@ class TestCommandsTypedDuringTheWait:
         q.enqueue("c", "Skip tests/")
         assert wait(0) is True and routed == [] and q.pending_count() == 1
 
-    def test_a_command_route_refused_goes_back_first_and_wakes(self):
+    def test_words_that_are_not_a_command_stay_first_and_wake(self):
         q, routed, wait = self._setup(handled=())
         q.enqueue("c", "/Users/me/x — look at this")
         q.enqueue("c", "second")
-        assert wait(0) is True and routed == ["/Users/me/x — look at this"]
+        assert wait(0) is True and routed == []  # 명령이 아니면 꺼내지 않는다
         assert [i["text"] for i in q.snapshot()] == [
             "/Users/me/x — look at this",
             "second",

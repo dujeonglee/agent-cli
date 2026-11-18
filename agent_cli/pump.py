@@ -19,51 +19,10 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from agent_cli.main_input import CLOSED, OPEN_MAIL, MainInput
-
-#: 메일이 연 런의 시작 글 — 모델에게 가지 않는다(`RunRequest.loop_query` 가 빈 글이다). 펌프 표면이 받는 런 요청의
-#: ``text`` 로만 남는다.
-WAKE_TEXT = (
-    "New agent mail has arrived. It is delivered as observation(s) at "
-    "the start of this turn — review it and continue accordingly."
-)
-
-#: 메일이 연 런의 작성자 — 사람이 아니다. history 레코드에 ``author`` +
-#: ``author_is_user=False`` 로 남아 web 재생이 깨우기 카드로 그린다(없으면
-#: 사용자 말풍선이 된다 — ``_add_user_message`` 는 author 가 있어야 플래그를 쓴다).
-WAKE_AUTHOR = "🤝 agent"
-
-
-@dataclass(frozen=True, kw_only=True)
-class RunRequest:
-    """런 하나의 입력 — `MainLoop.start` 가 엔진의 `Start`(질의·귀속·이미지·중단 핸들)로 옮긴다."""
-
-    text: str
-    author: str | None  # None = run 의 argv 질의; 메일 런은 WAKE_AUTHOR; 예약은 그 이름
-    author_is_user: bool  # 메일이 연 런(wake)은 사람 발화가 아니다
-    request_id: str  # 사람의 말의 id ("" = 없음 — 메일 런) — 런이 "무엇에 답하는지"
-    stop_event: threading.Event  # 이 런만의 중단 핸들 (web Stop 버튼)
-    wake: bool
-    #: 시작 메시지에 딸린 이미지 참조 (v10.59.0, `run --image`) — 빈 목록이 기본.
-    images: list[dict] = field(default_factory=list)
-
-    @property
-    def loop_query(self) -> str:
-        """루프에 넘길 시작 메시지 — 깨우기 런은 **없다** (v10.55.0, 장부 P2).
-
-        메일 런의 ``text``(:data:`WAKE_TEXT`)는 모델에게 가지 않는다 — 메일은 장부의 열린 항목(``[nK]``)이고
-        그 사실이 "이 런이 처리할 것" 을 말한다(docs/ledger/DESIGN.md P2). 메일 런의 첫 입력은 첫 턴 경계가
-        배달한 메일 관찰이다."""
-        return "" if self.wake else self.text
-
-    @property
-    def is_query(self) -> bool:
-        """run 의 argv 질의 런인가 — 깨우기(author=WAKE_AUTHOR)도 예약(author=
-        이름)도 아닌 것. ``--result-file`` 은 이 런의 답만 받는다(v10.34.1)."""
-        return self.author is None and not self.wake
 
 
 class LifetimePolicy(Protocol):
@@ -162,23 +121,26 @@ class PumpSurface(Protocol):
     def busy(self) -> None:
         """아이템을 받아 런을 열기 직전."""
 
-    def echo(self, item: dict, *, wake: bool) -> None:
-        """꺼낸 아이템을 화면에 — web 은 말풍선. 메일 런은 둘 다 그리지 않는다(관찰 줄이 말한다)."""
+    def echo(self, item: dict) -> None:
+        """사람의 말로 연 차례를 화면에 — web 은 말풍선. 메일이 연 런은 부르지 않는다(관찰 줄이 말한다)."""
 
     def bind_stop(self, event: threading.Event | None) -> None:
         """이 런의 중단 핸들을 표면에 건다(None = 해제)."""
 
-    def route(self, text: str) -> bool:
-        """``/``·``@`` 명령이면 처리하고 True — 런을 열지 않는다."""
+    def is_command(self, text: str) -> bool:
+        """``text`` 가 이 표면의 명령인가 — 실행하지 않고 판정만(`route` 가 받는 글 그대로)."""
 
-    def run_starting(self, req: RunRequest) -> None:
-        """런을 열기 직전 — ``run_main`` 바로 앞, 같은 try 안이라 예외는 ``run_failed``
-        로 간다. web 은 못 보는 모델에 이미지가 온 것을 알리고, run 은 할 일이 없다
-        (부트에서 막았다, ``_require_vision``)."""
+    def route(self, text: str, start: Any = None) -> bool:
+        """명령이면 처리하고 True — 런을 열지 않는다. ``start`` 는 펌프가 이 차례를 열 때의 시작(`Start`)이고, 턴
+        경계·제자리 대기의 라우팅은 None 이다(run 은 argv 질의였던 명령만 결과 파일·종료 코드에 쓴다)."""
 
-    def run_ended(self, result: Any, req: RunRequest) -> None:
-        """런이 끝났다(ToolResult) — run 은 ``--result-file``. ``req`` 로 그 런이
-        무엇이었는지(argv 질의 / 메일 런 / 예약) 안다."""
+    def run_starting(self, start: Any) -> None:
+        """런을 열기 직전 — 런 바로 앞, 같은 try 안이라 예외는 ``run_failed`` 로 간다. web 은 못 보는 모델에 이미지가
+        온 것을 알리고, run 은 할 일이 없다(부트에서 막았다, ``_require_vision``)."""
+
+    def run_ended(self, result: Any, start: Any) -> None:
+        """런이 끝났다(ToolResult) — run 은 ``--result-file``. ``start`` 로 그 런이 무엇이었는지(argv 질의 = 작성자
+        없는 사람의 요청 / 메일 런 = 사람의 요청이 아님 / 예약 = 그 이름) 안다."""
 
     def run_failed(self, exc: Exception) -> bool:
         """런이 예외로 죽었다. True = 삼키고 계속(web), False = 전파(run)."""
@@ -190,7 +152,8 @@ class PumpDeps:
 
     main_input: MainInput
     agent_registry: Any
-    run_main: Callable[[RunRequest], Any]  # run_loop 바인딩 → ToolResult
+    #: main 루프의 종류(`runtime.MainLoop`) — ``start(item, stop_event)`` 로 시작을 짓고 ``run(start)`` 으로 돈다
+    main: Any
     surface: PumpSurface
     policy: LifetimePolicy
     #: 세션 감사자 (v10.42.0, `runtime.SessionAuditor`) — main 의 사용자 런이
@@ -220,35 +183,26 @@ class SessionPump:
                 return
             if got is None:
                 continue  # timeout — 정지 조건을 다시 판정(한가함은 그대로 — 끄면 그 사이 온 메일이 "바쁨" 으로 보인다)
-            wake = got is OPEN_MAIL
-            item = {"text": WAKE_TEXT} if wake else got
-            text = item.get("text") or ""
+            item = (
+                None if got is OPEN_MAIL else got
+            )  # None = 메일이 연 런(메일은 그 첫 턴 경계가 배달한다)
             d.surface.busy()
-            d.surface.echo(item, wake=wake)
-            author = WAKE_AUTHOR if wake else (item.get("nickname") or None)
+            if item is not None:
+                d.surface.echo(item)
             # 귀속 승계의 런-시작 스냅샷: run_loop 를 안 타는 라우팅 명령이
             # 만든 요청도 이 런의 요청자를 물려받는다 — run_loop 는 주입마다
             # 재갱신한다. 메일 런엔 귀속할 사용자가 없다.
-            d.agent_registry.set_current_run_authors(
-                [author] if author and not wake else []
-            )
+            author = (item or {}).get("nickname") or None
+            d.agent_registry.set_current_run_authors([author] if author else [])
             stop_event = threading.Event()
             d.surface.bind_stop(stop_event)
+            start = d.main.start(item, stop_event)
             try:
-                if not wake and d.surface.route(text):
+                if item is not None and d.surface.route(start.query, start):
                     continue
                 try:
-                    req = RunRequest(
-                        text=text,
-                        author=author,
-                        author_is_user=not wake,
-                        request_id=item.get("id") or "",
-                        stop_event=stop_event,
-                        wake=wake,
-                        images=list(item.get("images") or []),
-                    )
-                    d.surface.run_starting(req)
-                    result = d.run_main(req)
+                    d.surface.run_starting(start)
+                    result = d.main.run(start)
                     from agent_cli.runtime import main_run_ended
 
                     # `wait` 로 끝난 런의 판정은 레지스트리 한 곳(`run_ended`, v10.77.0)
@@ -259,9 +213,9 @@ class SessionPump:
                     )
                     if d.auditor is not None:
                         d.auditor.run_ended(
-                            req, ok=bool(getattr(result, "success", False))
+                            start, ok=bool(getattr(result, "success", False))
                         )
-                    d.surface.run_ended(result, req)
+                    d.surface.run_ended(result, start)
                 except Exception as exc:
                     if not d.surface.run_failed(exc):
                         raise

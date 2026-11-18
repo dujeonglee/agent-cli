@@ -194,7 +194,7 @@ class Caller:
 @dataclass
 class Start:
     """런을 여는 것 — 시작 메시지와 그 귀속. 종류가 ``start(...)`` 로 만들거나(스킬은 템플릿
-    치환, 상주는 받은편지함 묶음) 호스트가 넘긴다(main 의 `RunRequest`)."""
+    치환, 상주는 받은편지함 묶음) 호스트가 넘긴다(main 은 펌프가 꺼낸 사람의 말로, 메일이 연 런은 빈 시작으로 — `MainLoop.start`)."""
 
     query: str
     images: list[dict] = field(default_factory=list)
@@ -289,21 +289,8 @@ class LoopKind:
         """⑮ 턴 경계에 흡수할 항목 — 종류가 **어디서 받을지** 정하고 엔진이 넣는다.
         모양: ``{"message": 큐 항목}`` · ``{"mail": 레지스트리 회신}`` · ``{"record": 레코드}`` ·
         ``{"user_request": {id, author, text}}``."""
-        items: list[dict] = []
-        dequeue = self.ports.dequeue_user_message
-        if dequeue is not None:
-            while True:
-                item = dequeue()
-                if not item:
-                    break
-                items.append({"message": item})
-        registry = self.ports.agent_registry
-        if registry is not None:
-            items.extend({"mail": r} for r in registry.drain_replies())
         mailbox = self.ports.mailbox
-        if mailbox.has_inbox:
-            items.extend(mailbox.take() or [])
-        return items
+        return list(mailbox.take() or []) if mailbox.has_inbox else []
 
     def prompt_profile(self) -> PromptProfile:
         """⑨ 프롬프트 윤곽."""
@@ -338,8 +325,9 @@ class LoopKind:
 
     @property
     def tracks_run_authors(self) -> bool:
-        """사용자 귀속(`run_authors`)을 렌더러·레지스트리에 비추나 — 입력 큐가 있는 main 만."""
-        return self.ports.dequeue_user_message is not None
+        """사용자 귀속(`run_authors`)을 렌더러·레지스트리에 비추나 — 기본은 포트에서 유도한다: main 주소의 상자를
+        흡수하는 루프(사람의 말을 받는 main 의 모양). 다섯 종류는 자기 답을 명시한다."""
+        return self.owner == "main" and self.ports.mailbox.has_inbox
 
     def _engine(self) -> Callable:
         return self.engine if self.engine is not None else self._run_loop
@@ -401,7 +389,6 @@ class PrivateLoop(LoopKind):
             message_handler=None,
             hook_runner=_hook_runner_port(),
             route_message=None,
-            dequeue_user_message=None,
             enqueue_user_message=None,
             peer_roster=None,
             mailbox=Mailbox(get_agent_registry(), owner, take=_private_inbox(owner)),
@@ -412,7 +399,6 @@ class PrivateLoop(LoopKind):
                 "message_handler": "하니스 작업은 에이전트가 아니다 — 받을 상대가 없다",
                 **_hook_unwired(),
                 "route_message": _WEB_ONLY,
-                "dequeue_user_message": _WEB_ONLY,
                 "enqueue_user_message": _WEB_ONLY,
                 "peer_roster": _RESIDENT_ROSTER,
             },

@@ -27,7 +27,7 @@ from rich.console import Console
 from agent_cli import render
 from agent_cli.context.manager import ContextManager
 from agent_cli.instance_file import read_status_file
-from agent_cli.main_input import MainInput
+from agent_cli.main_input import MainInput, intake_item
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.recovery.detectors import (
@@ -391,7 +391,7 @@ def _failures(ctx) -> list[dict]:
 
 def _main_ports(q: MainInput):
     return make_ports(
-        dequeue_user_message=q.take_next,
+        inbox=lambda: [intake_item(e) for e in q.post.absorb("main", human_first=True)],
         enqueue_user_message=lambda text, nickname: q.enqueue(
             None, text, nickname=nickname
         ),

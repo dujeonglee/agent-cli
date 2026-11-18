@@ -30,12 +30,17 @@ def make_ports(**overrides: Any) -> LoopPorts:
         "mcp_manager": None,
         "hook_runner": None,
         "route_message": None,
-        "dequeue_user_message": None,
         "enqueue_user_message": None,
         "peer_roster": None,
     }
     inbox = overrides.pop("inbox", None)
     base.update(overrides)
+    reg = base["agent_registry"]
+    if base["owner"] == "main" and callable(getattr(type(reg), "absorb_main", None)):
+        # 프로덕션 main 처럼: 턴 경계가 main 상자를 흡수한다(`absorb_main` — 사람의 말 먼저, 메일 뒤). 테스트가 따로
+        # 주는 사람의 말(``inbox``)은 그 앞에 선다.
+        words = inbox
+        inbox = lambda: (words() if words else []) + reg.absorb_main()
     if "mailbox" not in base:
         # 프로덕션 빌더처럼: 포트를 만들 때의 슬롯 레지스트리. ``inbox`` 는 받은편지함(`take`)
         # — 주면 상주·private 처럼 깨울 수 있는 루프가 된다.
@@ -43,10 +48,25 @@ def make_ports(**overrides: Any) -> LoopPorts:
     return LoopPorts(**base)
 
 
+def queue_inbox(pop):
+    """``pop()`` 이 사람의 말 항목을 하나씩(없으면 None) 내는 대역 → 턴 경계 흡수(``inbox`` — main 상자의 `take`
+    모양 ``{"message": 항목}``)."""
+
+    def take() -> list:
+        items = []
+        while True:
+            item = pop()
+            if not item:
+                return items
+            items.append({"message": item})
+
+    return take
+
+
 #: 포트를 안 쓰는 생성 지점용 공유 인스턴스 — frozen 이라 공유가 안전하다.
 TEST_PORTS = make_ports()
 
-_PORT_NAMES = frozenset(make_ports().handler_resources()) | {"owner"}
+_PORT_NAMES = frozenset(make_ports().handler_resources()) | {"owner", "inbox"}
 
 
 def split_ports(kw: dict) -> dict:

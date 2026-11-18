@@ -16,10 +16,10 @@ import time
 import pytest
 
 from agent_cli.context.manager import ContextManager
+from agent_cli.loop.kind import Start
 from agent_cli.main_input import MainInput
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.pump import RunRequest
 from agent_cli.runtime import MainLoop
 from agent_cli.session_slots import set_agent_registry
 from agent_cli.subagent.agents_live import AgentRegistry
@@ -134,7 +134,6 @@ def session(tmp_path):
             session=None,
             agent_registry=reg,
             mcp_manager=None,
-            dequeue_user_message=queue.take_next,
             enqueue_user_message=lambda text, nickname: queue.enqueue(None, text),
             route_message=lambda text: False,
             max_turns=30,
@@ -148,15 +147,13 @@ def session(tmp_path):
         built.update(reg=reg, ctx=ctx, queue=queue, main=main)
 
         def run(text="MAIN go", stop_event=None):
-            req = RunRequest(
-                text=text,
-                author=None,
+            start = Start(
+                query=text,
                 author_is_user=True,
                 request_id="u-0",
                 stop_event=stop_event or threading.Event(),
-                wake=False,
             )
-            return main.run(main.start(req))
+            return main.run(start)
 
         built["run"] = run
         return built
@@ -977,15 +974,13 @@ class TestAuditCoversTheWaitedRun:
         jobs = _Jobs()
         auditor = SessionAuditor(jobs, s["ctx"], enabled=True)
         s["run"]()
-        req = RunRequest(
-            text="MAIN go",
-            author=None,
+        start = Start(
+            query="MAIN go",
             author_is_user=True,
             request_id="u-0",
             stop_event=threading.Event(),
-            wake=False,
         )
-        assert auditor.run_ended(req, ok=True)
+        assert auditor.run_ended(start, ok=True)
         a, b = (int(x) for x in jobs.runs[0].split("-"))
         lines = s["ctx"].history_path.read_text(encoding="utf-8").splitlines()
         seq = next(i + 1 for i, ln in enumerate(lines) if "M-REPLY-TEXT" in ln)

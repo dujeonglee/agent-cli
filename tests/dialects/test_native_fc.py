@@ -15,7 +15,7 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
-from tests.loop_ports import TEST_PORTS
+from tests.loop_ports import TEST_PORTS, queue_inbox
 from tests.loopkit import run_loop
 
 
@@ -855,7 +855,7 @@ class TestTerminalBookkeepingReachesTheModel:
             dialect=wf,
             ports=make_ports(
                 owner="main",
-                dequeue_user_message=lambda: queue.pop(0) if queue else None,
+                inbox=queue_inbox(lambda: queue.pop(0) if queue else None),
             ),
         )
         assert result.output.strip() == "B done"

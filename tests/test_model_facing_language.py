@@ -164,11 +164,6 @@ class TestToolErrors:
 class TestInjectedNotices:
     """프롬프트에 직접 주입되는 안내문."""
 
-    def test_wake_text(self):
-        from agent_cli.pump import WAKE_TEXT
-
-        _assert_ascii_ish(WAKE_TEXT, "wake 마커")
-
     def test_human_question_notice(self, tmp_path):
         """에이전트 출력 끝에 붙어 main 이 읽는다."""
         from tests.test_agents_live import make_registry

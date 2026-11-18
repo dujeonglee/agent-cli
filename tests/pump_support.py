@@ -27,23 +27,26 @@ class FakeSurface:
     def busy(self):
         self.calls.append(("busy",))
 
-    def echo(self, item, *, wake):
-        self.calls.append(("echo", item.get("text"), wake))
+    def echo(self, item):
+        self.calls.append(("echo", item.get("text")))
 
     def bind_stop(self, event):
         self.calls.append(("bind_stop", event is not None))
         self.stop_events.append(event)
 
-    def route(self, text):
+    def is_command(self, text):
+        return text in self.routed
+
+    def route(self, text, start=None):
         self.calls.append(("route", text))
         return text in self.routed
 
-    def run_starting(self, req):
-        self.calls.append(("run_starting", req.text))
+    def run_starting(self, start):
+        self.calls.append(("run_starting", start.query))
         if self.fail_on_start:
             raise RuntimeError("run_starting failed")
 
-    def run_ended(self, result, req):
+    def run_ended(self, result, start):
         self.calls.append(("run_ended", result))
 
     def run_failed(self, exc):
@@ -80,16 +83,19 @@ def make_pump(
     auditor=None,
     policy=None,
 ):
-    """run 수명 정책의 펌프. ``run_main`` 은 ``RunRequest`` 를 받는다. ``policy`` 를 주면 그 수명 정책으로
-    (기본은 run 의 `QuietPolicy`)."""
+    """run 수명 정책의 펌프. ``run_main`` 은 시작(`Start` — `MainLoop.start` 가 꺼낸 것에서 짓는다)을 받는다.
+    ``policy`` 를 주면 그 수명 정책으로(기본은 run 의 `QuietPolicy`)."""
+    from types import SimpleNamespace
+
     from agent_cli.pump import PumpDeps, QuietPolicy, SessionPump
+    from agent_cli.runtime import MainLoop
 
     registry = registry if registry is not None else FakeRegistry()
     return SessionPump(
         PumpDeps(
             main_input=main_input,
             agent_registry=registry,
-            run_main=run_main,
+            main=SimpleNamespace(start=MainLoop.start, run=run_main),
             surface=surface if surface is not None else FakeSurface(),
             auditor=auditor,
             policy=policy

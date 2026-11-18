@@ -58,6 +58,9 @@ class _Schedules:
 class _Surface:
     graceful_interrupt = False
 
+    def is_command(self, text):
+        return False
+
 
 def _patch_parts(st: ExitStack, order: list, *, mainloop_boom=False):
     """조립 부품을 기록하는 대역으로 — 무엇이 어떤 순서로 불리는지."""
@@ -207,8 +210,9 @@ class TestOneQueue:
 
             first = q.take_next()
             assert (first["text"], first["nickname"]) == ("weekly", "⏰ Scheduler")
-            assert main_kind_ports.dequeue_user_message()["text"] == "hint"
-            assert q.take_next() is None
+            assert (
+                main_kind_ports.mailbox.has_inbox
+            )  # 턴 경계는 레지스트리의 main 상자 흡수
         finally:
             if stores is not None:
                 stores.monitors.stop()

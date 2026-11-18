@@ -1339,10 +1339,9 @@ class TestStaticUI:
         assert payload["item"] == "u-1" and payload["task_id"] == "agt-x#u-1"
         assert "index" not in payload
 
-    def test_wake_call_site_draws_nothing(self, server_and_client):
-        """깨우기 런은 화면에 아무것도 내지 않는다 (v10.51.0) — 그 런의 관찰
-        줄이 메일이다. 말풍선(v9.7.0 이전)으로도, 카드(v9.7.0~v10.50)로도
-        돌아가지 않게 호출부를 고정한다. 호출부는 ``WebSurface.echo``."""
+    def test_echo_draws_the_users_bubble(self, server_and_client):
+        """사람의 말로 연 차례는 말풍선 하나 — 메일이 연 런은 펌프가 ``echo`` 를 부르지 않는다(v10.51.0, 그 런의
+        관찰 줄이 메일이다; `tests/test_pump.py` 의 메일 런)."""
         from unittest.mock import MagicMock
 
         from agent_cli.web.surface import WebSurface
@@ -1356,9 +1355,7 @@ class TestStaticUI:
             binding=MagicMock(),
             dispatch=None,
         )
-        surface.echo({"text": "New agent mail has arrived."}, wake=True)
-        assert renderer.method_calls == []
-        surface.echo({"text": "hi", "nickname": "dj"}, wake=False)
+        surface.echo({"text": "hi", "nickname": "dj"})
         renderer.push_user_message.assert_called_once_with(
             "[dj]: hi", author="dj", hidx=7, images=None
         )

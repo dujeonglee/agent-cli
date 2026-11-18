@@ -235,7 +235,6 @@ class TestOwnerIsDecidedByTheKind:
                 mcp_manager=None,
                 hook_runner=None,
                 route_message=None,
-                dequeue_user_message=None,
             )
 
 

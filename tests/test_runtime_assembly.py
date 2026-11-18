@@ -609,7 +609,7 @@ class TestExitPathConvergence:
 
         wiring = (
             "schedules.enqueue = lambda prompt, nickname: main_input.enqueue(",
-            "dequeue_user_message=main_input.take_next",
+            "take=agent_registry.absorb_main if agent_registry is not None else None,",
             "enqueue_user_message=lambda text, nickname: main_input.enqueue(",
             "PumpDeps(main_input=main_input,",
             "post=stores.main_input.post,",
@@ -693,8 +693,8 @@ class TestExitPathConvergence:
 
 
 class _ItemsPump:
-    """SessionPump 대역 — 큐 대신 ``items`` ``[(text, wake), …]`` 를 펌프와 같은
-    순서(echo → 라우팅 → run_main → run_ended)로 한 번씩 돌린다."""
+    """SessionPump 대역 — main 상자 대신 ``items`` ``[(text, wake), …]`` 를 펌프와 같은
+    순서(echo → 라우팅 → 런 → run_ended)로 한 번씩 돌린다. ``wake`` 는 메일이 연 런."""
 
     items = (("hi", False),)
 
@@ -704,22 +704,15 @@ class _ItemsPump:
     def run(self):
         import threading
 
-        from agent_cli.pump import WAKE_AUTHOR, RunRequest
-
         for text, wake in self.items:
-            self.deps.surface.echo({"text": text, "nickname": None}, wake=wake)
-            if not wake and self.deps.surface.route(text):
+            item = None if wake else {"text": text, "nickname": None}
+            if item is not None:
+                self.deps.surface.echo(item)
+            start = self.deps.main.start(item, threading.Event())
+            if not wake and self.deps.surface.route(text, start):
                 continue
-            req = RunRequest(
-                text=text,
-                author=WAKE_AUTHOR if wake else None,
-                author_is_user=not wake,
-                request_id="",
-                stop_event=threading.Event(),
-                wake=wake,
-            )
-            res = self.deps.run_main(req)
-            self.deps.surface.run_ended(res, req)
+            res = self.deps.main.run(start)
+            self.deps.surface.run_ended(res, start)
             self.after_item(res)
 
     def after_item(self, res):

@@ -478,6 +478,12 @@ class DispatchOutput:
         """``@agt-<key>``/``@<profile>-spawn`` 의 결과/에러 (기본: 무시)."""
 
 
+def _is_query(start) -> bool:
+    """run 의 argv 질의로 연 런인가 — 작성자가 없는 사람의 요청(예약은 이름이 있고, 메일 런은 사람의 요청이 아니다).
+    ``--result-file`` 은 이 런의 답만 받는다(v10.34.1)."""
+    return start.author is None and start.author_is_user
+
+
 class _ConsoleSurface:
     """``agent-cli run`` 의 펌프 표면 (``pump.PumpSurface``, v10.33.0).
 
@@ -503,10 +509,7 @@ class _ConsoleSurface:
         #: 사슬은 깨우기 런이 작업을 새로 띄우지도, 돌리고 있지도 않을 때 닫힌다.
         self._continuing = False
         self.exit_code = 1
-        #: 방금 꺼낸 아이템이 argv 질의인가 — 펌프는 꺼낸 직후 ``echo`` → ``route``
-        #: 순으로 부른다. ``route`` 가 한 번 소비한다: 그 뒤의 ``route`` 는 런 도중
-        #: 주입(``SessionPump.route``)이라 질의의 답이 아니다.
-        self._item_is_query = False
+        #: 지금 라우팅하는 명령이 argv 질의였는가 — `route` 가 그 호출 동안만 세운다(`routed` 가 읽는다)
         self._routing_query = False
         self._run_started = 0.0
         self._dispatch = dispatch  # (text, stop_event) -> bool
@@ -518,10 +521,8 @@ class _ConsoleSurface:
     def busy(self) -> None:
         self._run_started = time.time()  # 이 런이 띄운 작업을 가르는 기준
 
-    def echo(self, item: dict, *, wake: bool) -> None:
-        # 그리지 않는다 — 깨우기 런은 그 런의 관찰 줄이 말한다 (v10.51.0).
-        # 판정용으로 질의 여부만 기억한다(``RunRequest.is_query`` 와 같은 규칙).
-        self._item_is_query = not wake and not item.get("nickname")
+    def echo(self, item: dict) -> None:
+        pass  # 그리지 않는다 — 터미널에는 친 줄이 이미 있다
 
     def bind_stop(self, event: threading.Event | None) -> None:
         self._stop = event
@@ -534,10 +535,11 @@ class _ConsoleSurface:
         """``text`` 를 `route` 가 명령으로 받는가 — 실행하지 않고 판정만. ``/sh`` 는 run 에 없다(평범한 질의)."""
         return not text.startswith("/sh") and command_kind(text) is not None
 
-    def route(self, text: str) -> bool:
+    def route(self, text: str, start=None) -> bool:
         if text.startswith("/sh"):
             return False
-        self._routing_query, self._item_is_query = self._item_is_query, False
+        # 펌프가 연 차례(``start``)의 argv 질의만 판정·결과 파일이 된다 — 턴 경계·제자리 대기의 라우팅은 ``None``
+        self._routing_query = start is not None and _is_query(start)
         try:
             return self._dispatch(text, self._stop)
         finally:
@@ -554,7 +556,7 @@ class _ConsoleSurface:
         if ok:
             _write_result_file(self._result_file, answer)
 
-    def run_ended(self, result, req) -> None:
+    def run_ended(self, result, start) -> None:
         # 런이 끝난 자리에서 바로 쓴다 — 펌프는 살아 있는 모니터가 있으면 그
         # deadline(기본 2h)까지 돌므로, 펌프 뒤에 쓰면 `complete` 한 답이
         # 파일로는 안 나온다(v10.31.2). **argv 질의 런의 답만** 쓴다(v10.34.1):
@@ -569,7 +571,8 @@ class _ConsoleSurface:
         # 남고 진짜 요약은 깨우기 런에 있었다). 그래서 그 뒤 첫 깨우기 런의
         # 답까지 쓴다(덮어씀). 작업 없이 끝난 질의는 종전 규칙 그대로.
         # 종료 코드(v10.124.0)도 같은 분기 — 실패 런도 사슬 안이면 판정에 든다.
-        if not (req.is_query or req.wake and self._continuing):
+        mail_run = not start.author_is_user
+        if not (_is_query(start) or mail_run and self._continuing):
             return
         self.exit_code = 0 if result.success else 1
         if not result.success:
@@ -586,7 +589,7 @@ class _ConsoleSurface:
             return False
         return bool(self._jobs.running() or self._jobs.started_since(self._run_started))
 
-    def run_starting(self, req) -> None:
+    def run_starting(self, start) -> None:
         pass  # 못 보는 모델의 이미지는 부트가 막았다 (`_require_vision`)
 
     def run_failed(self, exc: Exception) -> bool:
