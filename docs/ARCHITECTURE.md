@@ -59,7 +59,7 @@ agent_cli/
 ├── main.py                  typer CLI — `run`·`web`·`setup`·`mcp`·`knobs`·`sessions`·`stats`·`update` 명령과 `@agent`·`/skill` 디스패치
 ├── runtime.py               run/web 세션 조립(`SessionSpec`→stores→owners→`wire_session`)·정리, `MainLoop`
 ├── wake.py                  한 주소를 무엇이 깨우나(`wake_sources` — 에이전트 몫은 장부·명단 사본 `WakeFacts` 의 순수 함수, 고리 찾기 `parked_view`)·체크인 알림·메일 → 레코드·`release_owner`, 루프의 우편 창구 `Mailbox`(포트 `mailbox`)
-├── pump.py                  세션 펌프 — 큐에서 꺼내 깨우기·라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
+├── pump.py                  세션 펌프 — main 상자에서 런을 열 것(사람의 말 먼저, 없으면 깨우는 메일)을 꺼내 라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
 ├── command_table.py         사용자 명령 표 하나 — 웹 `/help` 와 `run "/help"` 가 여기서 나온다
 ├── config.py                config.json 의 서버(endpoint) 표·고르는 순서·이 프로세스의 서버, 서버별 models.json 읽기·저장, 옛 모양 판정·`.v1` 이름 바꾸기, 방언 바인딩(`bind_user_dialect`)
 ├── setup.py                 첫 실행 설정 마법사 `SetupWizard` (Rich TUI — 프로바이더·연결·모델)
@@ -73,7 +73,6 @@ agent_cli/
 ├── net_errors.py            `requests` 예외 사슬 순회와 TLS 사유 한 줄 — 도구 층·공급자 층이 같이 쓴다(표준 라이브러리만 import)
 ├── token_estimator.py       토큰 추정(chars/4)과 `utf8_len` — import 없는 잎
 ├── instance_file.py         세션별 `web.json`·`status.json` 쓰기·읽기·지우기 — 서버와 렌더러가 같이 쓴다(`fsio` 만 import)
-├── input_queue.py           세션 입력 큐 `InputQueue` — run 과 web 이 공유하는 펌프의 큐(사용자 입력·깨우기 항목)
 ├── main_input.py            main 앞 사람의 입력 `MainInput` — 창구의 main 상자에 봉투로 넣기·보이기·취소·런을 열 것 기다리기
 ├── input_history.py         readline 입력 히스토리 — `ask` 답과 설정 마법사의 터미널 입력
 ├── item_ids.py              열린 항목 id `<접두>-<토큰>` 의 할당·해석 — 접두가 닫는 법을 말한다 (docs/ledger/DESIGN.md)
@@ -156,7 +155,7 @@ agent_cli/
 │   ├── store.py             세션 디렉터리 배치·메타 `session.jsonl`·목록·resume
 │   ├── records.py           디스크 레코드 모양의 단일 리더·분류기(ops·개입 종류)
 │   └── lock.py              한 세션 한 프로세스 — `session.lock` flock
-├── post/                    우편함과 요청 장부 — 나르는 것·주소별 상자·기다리는 의무의 줄을 조건변수 하나 아래 함께 바꾼다(잎 — 아직 아무도 쓰지 않는다)
+├── post/                    우편함과 요청 장부 — 나르는 것·주소별 상자·기다리는 의무의 줄을 조건변수 하나 아래 함께 바꾼다(잎 — 레지스트리와 `main_input` 이 쓴다)
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── envelope.py          봉투 `Envelope`(머리 + 불투명 payload)와 종류별 만드는 함수 — 닫는 법(`closes_by`)은 여기서만 정한다
 │   ├── request_book.py      요청 장부 `RequestBook`·줄 `Row` — 줄 전이표(`CLOSES`)와 이름 있는 질문(빚·기다림·열린 요청·질문)
@@ -218,7 +217,6 @@ agent_cli/
 │   ├── question_port.py     루프의 질문·회신 seam `QuestionPort` — `reply(id)` 의 판정 하나(`judge_reply`, main·에이전트 공통)와 거절 글·`ReplyDebt`
 │   ├── conversation_log.py  🤝 창의 줄 — `conversation.jsonl` 쓰기·읽기와 창에 내기(규칙: 기록이 원본, 막히지 않는 표면만 배달 구간 안)
 │   ├── agents_state.py      상태 어휘 `state_is_active`·`agents.json` 의 모양 — 항목 ↔ 에이전트, 버전·읽기
-│   ├── mail_waker.py        `MailWaker` — 한가한 main 을 메일이 깨운다
 │   └── report.py            세션 하위 디렉터리 이름(`generate_subdir_name` — 스킬 런)
 ├── harness/                 하니스가 자기 몫으로 돌리는 일회성 작업 — 팀원이 아니다 (docs/auditor/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
@@ -367,7 +365,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 | 4 | `context/` · `prompts/` · `providers/` (한 묶음) |
 | 3 | `dialects/` · `mcp/` · `web/` |
 | 2 | `tools/` · `render/` · `pump` · `setup` |
-| 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `input_queue` · `main_input` · `input_history` · `browser` · `web_sources` · `instance_file` · `wake` |
+| 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `main_input` · `input_history` · `browser` · `web_sources` · `instance_file` · `wake` |
 | 0 | `post/` · `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `snapshot_nested` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `session_slots` · `terminate` · `agents/` |
 
 `context/`·`prompts/`·`providers/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).

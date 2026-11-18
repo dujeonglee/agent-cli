@@ -121,11 +121,6 @@ class TestRequestsReachTheRun:
         )
         assert _ids(loop) == []
 
-    def test_system_wake_item_is_not_a_request(self):
-        """`enqueue(..., system=True)` 의 합성 깨우기는 사람 발화가 아니다."""
-        loop = _drain([{"id": "w1", "nickname": "", "text": "wake", "system": True}])
-        assert _ids(loop) == []
-
     def test_cli_has_no_requests(self):
         """CLI 는 요청이 하나뿐이라 회계할 것이 없다 — 큐 자체가 없다."""
         loop = _loop()
@@ -930,19 +925,6 @@ class TestRequestIdOnUserRecords:
             route=lambda _t: True,
         )
         assert _ids(loop) == []
-
-    def test_system_wake_is_not_stamped(self):
-        import tempfile
-        from pathlib import Path
-
-        from agent_cli.context.manager import ContextManager
-
-        ctx = ContextManager(Path(tempfile.mkdtemp()) / "s", max_context_tokens=30000)
-        loop = _drain(
-            [{"id": "7", "nickname": "", "text": "wake", "system": True}], ctx=ctx
-        )
-        rec = [m for m in loop.ctx.get_raw_messages() if m.get("role") == "user"][-1]
-        assert "request_id" not in rec, "합성 wake 가 사용자 요청으로 찍혔다"
 
     def test_replay_resolves_ids_back_to_requests(self):
         """resume 에서도 같은 칩이 뜬다 — id → 요청 맵을 레코드에서 재구성."""

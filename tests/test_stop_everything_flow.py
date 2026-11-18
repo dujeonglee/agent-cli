@@ -1,6 +1,6 @@
 """ "Stop everything" 과 "Stop all agents" 의 회신 — 실제 조립(`wire_session`)과 펌프로 (시안 v4.1 §5 종료 술어).
 
-깨우기 장치(MailWaker)에 기대지 않고 펌프 바깥에서 보이는 것만 단언한다: 어떤 런이 어떤 순서로 열렸는가(펌프 표면의
+깨우기 장치에 기대지 않고 펌프 바깥에서 보이는 것만 단언한다: 어떤 런이 어떤 순서로 열렸는가(펌프 표면의
 기록), main 메일함에 무엇이 남았는가, `run` 이 끝나는가, web 리퍼가 방을 걷는가. `test_stop_surfaces` 의
 `TestStopEverythingDoesNotWakeMain`(깨우미 결합)과 같은 사실이다. 세션·대본은 오라클 드라이버의 것을 쓴다.
 """

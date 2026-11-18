@@ -13,7 +13,7 @@
 // to own queued messages.
 // ``workerBusy`` mirrors the server's ``worker_state`` event: true
 // means the chat worker is between popping a user message and
-// returning to the next ``dequeue_blocking`` call. While busy,
+// returning to wait for the next one (``wait_to_open``). While busy,
 // the chat ``Send`` button stays disabled so a second message
 // can't be queued into an in-flight turn. The prompt-mode answer
 // path is not gated by this flag — answering an ``ask`` is the

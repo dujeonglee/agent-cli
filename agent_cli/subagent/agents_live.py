@@ -33,7 +33,7 @@ P1 경계: teammate 안 teammate 금지(레지스트리 미전파로 도구가 �
 ---------
 레지스트리는 명단·배달·저장·스레드의 틀이다. 규칙과 모양은 레지스트리를 import 하지 않는 잎에 있고
 레지스트리가 부른다: 메일의 글(`agent_mail` — 봉투·관찰 레코드), 회신 갚기의 규칙(`question_port`),
-`agents.json` 직렬화(`agents_state`), main 깨우기(`mail_waker`), 사람의 정지(`agent_stop`), `agent` 도구의
+`agents.json` 직렬화(`agents_state`), 사람의 정지(`agent_stop`), `agent` 도구의
 모드 처리(`agent_modes`, run 은 `run_agent`).
 """
 

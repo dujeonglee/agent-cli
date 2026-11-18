@@ -1763,7 +1763,7 @@ class WebRenderer(Renderer):
     def worker_busy(self) -> None:
         """Signal that the chat worker just picked up a user message
         and is processing it. Stays busy until the worker returns to
-        ``dequeue_blocking`` — through every intermediate LLM turn, tool call,
+        waiting for the next one (``wait_to_open``) — through every intermediate LLM turn, tool call,
         and even any ``prompt_user`` / ``confirm`` wait. The frontend
         uses this to disable the chat ``Send`` button so the user
         doesn't queue a second message into an actively-running turn.
@@ -1782,7 +1782,7 @@ class WebRenderer(Renderer):
 
     def worker_idle(self) -> None:
         """Signal that the chat worker is back at the top-level
-        ``dequeue_blocking`` and ready to accept the next user message.
+        wait (``wait_to_open``) and ready to accept the next user message.
         Re-enables the frontend ``Send`` button. See ``worker_busy``
         for the persistence + reconnect semantics."""
         self._worker_busy = False

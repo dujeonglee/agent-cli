@@ -41,7 +41,7 @@
 ### 2.1 불완전하게 끝나는 길을 막은 것
 
 - **스킬·일회성 루프엔 광고하지 않는다** — `requires_handler="wake"`,
-  `LoopPorts.wakeable()`(main 은 입력 큐, 상주는 받은편지함). 거기서 wait 로 끝낸
+  `LoopPorts.wakeable()`(main 은 main 앞 사람의 말 `MainInput`, 상주는 받은편지함). 거기서 wait 로 끝낸
   결과는 호출자에게 "⏸ waiting" 으로 돌아가 버린다(일회성은 부모의 owner 를
   물려받아 부모의 작업이 판정에 걸렸을 것이다).
 - **에이전트 활동은 요청자별** — `AgentRegistry.pending_for(addr)`(v10.146.0 부터 `wake.agent_relations` — 레지스트리 사본 `WakeFacts` 의 순수 함수): 그 주소에게

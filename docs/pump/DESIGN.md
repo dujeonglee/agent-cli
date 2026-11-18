@@ -15,6 +15,15 @@ agent_result(result, ok=)`` 가 쓴다(run 전용 분기 삭제). run 의 ``/ski
 v10.130.8 부터는 서버가 큐를 내놓고(``WebServer.queue``) 펌프의 큐는 그 ``InputQueue`` 다 —
 서버의 대리 메서드(``dequeue_blocking``·``enqueue_named``·``enqueue_system``)는 없다.
 
+**vNEXT — 입력 큐와 메일 깨우기가 없어졌다.** 사람의 말(웹 채팅·argv 질의·제자리 대기 중 터미널 줄·예약 발화·
+StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_cli/post`)의 ``"main"`` 상자에 봉투로
+선다 — 메일과 같은 상자, 같은 조건변수. 펌프는 `MainInput.wait_to_open` 하나로 "사람의 말 먼저 하나, 없으면 깨우는
+메일(메일 런), 닫힘" 을 기다린다. 판정과 대기가 한 락 구간이라, 메일이 한가한 펌프를 깨우려고 큐에 넣던 합성 깨우기
+항목과 그것을 다루던 `MailWaker`(무장·`mark_idle` 재확인·`on_run_end`·skip)가 필요 없어 지웠다. main 이 한가한가
+(CLI 메일 대기 줄의 ``busy``)는 창구가 든다(`PostOffice.idle`). 웹 서버는 `server.main_input` 을 내놓고, 레지스트리는
+그 창구를 받는다(`build_agent_registry(post=…)`). 아래 §3 의 그림과 §3.4 의 깨우기 이야기는 그 전의 기록이다 — 지금의
+루프는 `agent_cli/pump.py` 의 `SessionPump.run` 이다.
+
 ## 1. 왜
 
 `agent-cli run` 과 `agent-cli web` 은 이미 같은 부품을 쓴다 — `InputQueue`,
@@ -61,12 +70,11 @@ v10.130.8 부터는 서버가 큐를 내놓고(``WebServer.queue``) 펌프의 �
 ```
                  ┌────────────── SessionPump.run() ──────────────┐
                  │ loop:                                          │
-  InputQueue ───▶│  surface.idle() · waker.mark_idle()            │
-  (run: argv 1건 │  item = queue.dequeue_blocking(poll)           │
-   web: HTTP,    │  SHUTDOWN → return                             │
-   예약, wake)   │  None(timeout) → if policy.should_stop(): return│
-                 │  verdict = waker.handle_dequeued(text)         │
-                 │  skip → continue                               │
+  main 상자 ────▶│  if policy.should_stop(): return               │
+  (사람의 말:    │  surface.idle()                                │
+   run argv,     │  got = main_input.wait_to_open(poll)           │
+   web HTTP,     │  CLOSED → return · None(timeout) → continue    │
+   예약 / 메일)  │  wake = got is OPEN_MAIL (메일은 꺼내지 않는다)│
                  │  surface.busy() · surface.echo(item, wake)     │
                  │  registry.set_current_run_authors(...)         │
                  │  stop = Event(); surface.bind_stop(stop)       │
@@ -78,7 +86,7 @@ v10.130.8 부터는 서버가 큐를 내놓고(``WebServer.queue``) 펌프의 �
                  │    surface.run_ended(res)                      │
                  │  except Exception as e:                        │
                  │    if not surface.run_failed(e): raise         │
-                 │  finally: surface.bind_stop(None); waker.on_run_end()
+                 │  finally: surface.bind_stop(None)
                  └────────────────────────────────────────────────┘
         ▲ run: 메인 스레드, 표면=ConsoleSurface, policy=QuietPolicy
         ▲ web: 워커 스레드, 표면=WebSurface,     policy=ForeverPolicy
@@ -89,8 +97,7 @@ v10.130.8 부터는 서버가 큐를 내놓고(``WebServer.queue``) 펌프의 �
 ```python
 @dataclass(frozen=True, kw_only=True)
 class PumpDeps:          # 세션 수명 객체 — 한 번 조립
-    queue: InputQueue
-    waker: MailWaker
+    main_input: MainInput          # vNEXT — 종전 queue: InputQueue + waker: MailWaker
     agent_registry: AgentRegistry
     run_main: Callable[[RunRequest], ToolResult]   # run_loop 바인딩 (아래 3.4)
     surface: PumpSurface
