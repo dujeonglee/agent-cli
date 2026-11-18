@@ -1623,7 +1623,7 @@ class AgentRegistry:
         if not self._agent_alive(f"agent:{key}"):
             reason = f" ({tm.error})" if tm.error else ""
             return f'agent "{key}" is dead{reason} — spawn a new one'
-        if not message.strip():
+        if not message.strip() and not images:  # 이미지만 든 말도 일감이다
             return "empty message"
         # Stamp the request's time BEFORE enqueuing. The worker runs on its own
         # thread and can dequeue + emit ``begin_agent_work`` (scope_start) the
@@ -1822,6 +1822,7 @@ class AgentRegistry:
                             "id": uid,
                             "author": author,
                             "text": self._model_text(item, bare=True),
+                            "images": item.get("images") or [],
                         }
                     }
                 )

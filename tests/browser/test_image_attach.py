@@ -364,3 +364,59 @@ def test_image_only_message_opens_a_run_and_the_worker_lives_on(stack, page, ws)
         stack.server.main_input.close()
         worker.join(timeout=5)
     assert not worker.is_alive()
+
+
+def test_image_only_message_in_an_agent_channel_opens_its_run(
+    stack, page, ws, monkeypatch, tmp_path
+):
+    """에이전트 채널에 📎 만 붙여 보낸다 — 실제 레지스트리가 받아 그 채널에 런이 열리고 썸네일이
+    보인다. 글이 빈 요청을 레지스트리가 "empty message" 로 거절하면(404) 런이 열리지 않는다."""
+    from types import SimpleNamespace
+
+    from agent_cli import render as render_mod
+    from agent_cli.subagent.agents_live import AgentRegistry
+
+    monkeypatch.setattr(render_mod, "_renderer", stack.renderer)
+    monkeypatch.setattr(render_mod, "get_renderer", lambda: stack.renderer)
+    seen: list = []
+
+    def runner(kind, start, ctx):
+        seen.append((start.query, [i["path"] for i in start.images]))
+        stack.renderer.final("looked", 1)
+        return SimpleNamespace(success=True, output="looked"), 0.01
+
+    reg = AgentRegistry(tmp_path / "agents", runtime={"model": "m"}, runner=runner)
+    stack.server.agent_registry = reg
+    try:
+        key, _ = reg.spawn(name="alpha")
+        assert _wait(lambda: reg.get(key).state == "idle")
+        stack.emit_ready()
+        page.goto(stack.url)
+        chip = page.locator(f'.ov-ch[data-key="{key}"]')
+        assert _wait(lambda: chip.count() == 1)
+        chip.locator(".ov-ch-lb").click()
+        assert _wait(lambda: "on" in (chip.get_attribute("class") or ""))
+        page.set_input_files(
+            "#attach-input",
+            {"name": "shot.png", "mimeType": "image/png", "buffer": _png_bytes()},
+        )
+        page.wait_for_selector(
+            "#attach-strip .attach-chip:not(.uploading)", timeout=8000
+        )
+        page.press("#input", "Enter")  # 글은 비어 있다
+        assert _wait(lambda: len(seen) == 1), (
+            "이미지만 든 말이 에이전트 런을 열지 않았다"
+        )
+        assert seen[0][0].startswith("[user:") and seen[0][0].endswith("]: ")
+        assert seen[0][1][0].startswith(".agent-cli/tmp/uploads/")
+        thumb = f'.card-run[data-ch="{key}"] .run-head .mini-thumbs img'
+        page.wait_for_selector(thumb, timeout=8000)
+        assert _wait(
+            lambda: page.evaluate(
+                "(sel) => { const i = document.querySelector(sel);"
+                " return !!i && i.complete && i.naturalWidth === 64; }",
+                thumb,
+            )
+        ), "에이전트 런 머리의 썸네일이 로드되지 않았다"
+    finally:
+        reg.shutdown_all()

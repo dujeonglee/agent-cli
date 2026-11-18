@@ -1429,7 +1429,8 @@ def create_app(server: WebServer) -> FastAPI:
         if not isinstance(content, str):
             raise HTTPException(status_code=400, detail="content must be a string")
         # ``images`` (v10.61.0): main 과 같은 모양(`image_refs`) — 새 일감에만
-        # 실린다(답은 글). 이미지만 있는 일감도 된다.
+        # 실린다(답은 글). 이미지만 있는 일감도 된다(v10.147.2 — 그 전엔 레지스트리가
+        # "empty message" 로 거절해 404 였다).
         images = server.image_refs(body.get("images") or [])
         if not content.strip() and not images:
             raise HTTPException(
