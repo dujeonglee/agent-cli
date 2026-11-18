@@ -144,6 +144,22 @@ Decide whether to continue another way or report back to the user.
 (`main stopped agt-3 …` · `stopped by main`). 런 도중 정지는 그 런의 정리(`ResidentLoop.finish` →
 `answer_debts_as_stopped`)가, 런 없이 남은 빚·대기 요청·하위 run 은 워커가 죽을 때(`_answer_after_stop`) 보낸다.
 
+**스스로 내려간 에이전트 (v10.146.1).** 에이전트가 어떤 이유로든 내려가면(더는 상자를 읽지 않으면) 그 상자에 줄 선
+요청을 모두 닫고 요청자마다 사실 한 통을 보낸다 — ✕ 의 removed 와 같은 길(`_answer_queued`)이다. 사람의 정지가 아니라
+원인(`stop_cause`)이 비어 있는 두 경우: 과제를 끝낸 run 에이전트(표지 `ended`)와 예외로 죽은 워커(표지 `died`). 표지에
+`by` 가 없고, 회신은 요청자를 깨운다. 세션 종료는 여기에 들지 않는다(재시작이 되넣는다). 집어 든(picked) 요청과 그 밖의
+빚은 이 규칙 밖이다 — 죽음이면 main 의 `died` 메일만 간다.
+
+```
+── reply [n-5] from agt-B re [r-9] · ended ──
+agt-B finished its task and is gone before it started your request [r-9] ("please do X"). Nothing was done for it.
+Decide whether to continue another way or report back to the user.
+
+── reply [n-6] from agt-B re [r-9] · died ──
+agt-B died before it started your request [r-9] ("please do X"). Nothing was done for it.
+Decide whether to continue another way or report back to the user.
+```
+
 **표면.**
 
 - 웹: 채널 머리(`#ov-chhead`)의 `■ Stop run` · `✕ Remove`(끝난 run 은 머리 없음). 입력창 옆 정지 버튼은 하나 — main 만 바쁘면

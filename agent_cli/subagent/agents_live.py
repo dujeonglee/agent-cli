@@ -46,6 +46,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -2450,10 +2451,11 @@ class AgentRegistry:
                 tm, d.to, d.id, text, mark, hop=d.hop, answers=d.answers, settles=True
             )
 
-    def _answer_queued_as_removed(self, tm: AgentInstance) -> None:
-        """시작 안 한 대기 요청(받은편지함 미러의 요청 항목)에 removed 회신을 보내고 미러를 비운다."""
-        by = tm.stop_by or "user"
-        mark = agent_stop.REMOVED_MARK.format(by=by)
+    def _answer_queued(
+        self, tm: AgentInstance, mark: str, reply_of: Callable[[str, str, str], str]
+    ) -> None:
+        """시작 안 한 대기 요청(받은편지함 미러의 요청 항목)마다 회신(본문 ``reply_of(key, rid, text)``, 머리
+        표지 ``mark``)을 보내고 미러를 비운다 — ✕ 의 removed 와 스스로 내려간 에이전트의 ended·died 가 같은 길."""
         with self._cv:
             queued = self._queued(tm)
             self._post.remove_queued(
@@ -2465,9 +2467,7 @@ class AgentRegistry:
                 continue  # 회신·통지 — 빚이 아니다
             if is_human_addr(author):
                 continue  # 사람의 창 입력 — 창이 곧 배달이다
-            text = agent_stop.removed_reply(
-                tm.key, str(it.get("id") or ""), str(it.get("text") or ""), by=by
-            )
+            text = reply_of(tm.key, str(it.get("id") or ""), str(it.get("text") or ""))
             self._send_stop_reply(
                 tm,
                 author,
@@ -2532,7 +2532,9 @@ class AgentRegistry:
         self.answer_debts_as_stopped(tm, activity=[], notes="")
         kept = 0
         if rule.answers_queued:
-            self._answer_queued_as_removed(tm)
+            by = tm.stop_by or "user"
+            mark = agent_stop.REMOVED_MARK.format(by=by)
+            self._answer_queued(tm, mark, partial(agent_stop.removed_reply, by=by))
         else:
             kept = len(self._queued(tm))
         if rule.stops_sub_runs:
@@ -2987,6 +2989,12 @@ class AgentRegistry:
                 # 사람·모델이 끝냈다(✕·run 의 ■) — 빚진 상대 모두에게 알리고 띄운 run 을 멈춘다
                 # (`agent_stop` 의 표). 런 도중이었으면 그 런의 정리가 지금 일의 빚을 이미 갚았다.
                 self._answer_after_stop(tm)
+            elif not tm.stop_event.is_set():
+                # 스스로 내려갔다(run 의 과제 끝·워커 죽음) — 더는 상자를 읽지 않으니 줄 선 요청에 알린다
+                mark = agent_stop.DIED_MARK if crash else agent_stop.ENDED_MARK
+                self._answer_queued(
+                    tm, mark, partial(agent_stop.gone_reply, died=bool(crash))
+                )
             if not tm.revivable:
                 # **영구 사망(kill·crash)일 때만** 질문을 정리한다 (§3.8).
                 # 세션 종료(shutdown_all)는 revivable 을 유지하므로 여기
