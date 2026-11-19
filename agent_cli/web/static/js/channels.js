@@ -20,8 +20,8 @@ import {
   noteOnAnswer,
   ovSubmitMainConfirm,
   ovSubmitMainPrompt,
-  sendOnce,
 } from "./input.js";
+import { sendOnce } from "./send.js";
 import {
   ovApplyChannelInput,
   ovCloseDoneMenu,
@@ -445,9 +445,22 @@ export function ovJump(key) {
     var key = chip.getAttribute("data-key");
     var ctl = e.target.closest(".ov-ch-ctl");
     if (ctl) {
+      // 칩의 조작은 죽은 상주의 ↻ 하나다. 상한 없이 — 늦게라도 닿으면 되살린다. 거절(한도·이미 살아 있음)이나
+      // 네트워크 오류면 입력창 아래에 사유 (v10.155.0; 종전엔 아무 표시 없이 끝났다)
       e.stopPropagation();
-      fetch("api/agent/" + encodeURIComponent(key) + "/" +
-        ctl.getAttribute("data-act"), { method: "POST" });
+      if (ctl.disabled) return;
+      ctl.disabled = true;
+      var path = "api/agent/" + encodeURIComponent(key) + "/" + ctl.getAttribute("data-act");
+      sendOnce(
+        { sending: false },
+        function (signal) { return fetch(path, { method: "POST", signal: signal }); },
+        function (failure) {
+          if (!failure) return; // 명단이 칩을 다시 그린다
+          ctl.disabled = false;
+          attachMessage("Not revived — " + failure);
+        },
+        { limit: false }
+      );
       return;
     }
     ovSetChannel(key);
@@ -473,15 +486,27 @@ export function ovJump(key) {
 })();
 
 // 정지 요청 하나 (v10.142.0) — ``/api/stop`` 의 범위: "main" · "agents" · "all". 결과는 SSE(worker_state·
-// 명단)가 그린다.
-export function postStop(scope) {
-  return fetch("api/stop", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scope: scope }),
-  }).catch(function () {
-    /* network blip — the run ends on its own anyway */
-  });
+// 명단)가 그린다. 상한이 없다 — 막힌 연결에서도 늦게라도 닿으면 멈춘다(사용자 결정 v10.155.0). 닿지 못했거나 서버가
+// 거절하면 ``failed(사유)`` 를 한 번 부르고 입력창 아래에 ``Not stopped — <사유>`` 를 세운다. ``stopped: false``
+// ("돌던 턴 없음")는 실패가 아니다.
+export function postStop(scope, failed) {
+  sendOnce(
+    { sending: false },
+    function (signal) {
+      return fetch("api/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: scope }),
+        signal: signal,
+      });
+    },
+    function (failure) {
+      if (!failure) return;
+      if (failed) failed(failure);
+      attachMessage("Not stopped — " + failure);
+    },
+    { limit: false }
+  );
 }
 
 /** Scroll the TIMELINE CONTAINER to a card — never scrollIntoView, which

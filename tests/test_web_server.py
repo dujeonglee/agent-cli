@@ -629,7 +629,8 @@ class TestStaticUI:
         # leaving-item lifecycle + injected/cancelled classification
         assert "qLeaving" in js
         assert "qOnUserMsg" in js  # user_message → injected 판정
-        assert "qCancelledByMe" in js  # 내가 ✕ → 즉시 취소 영수증
+        # 내가 ✕ → 서버가 뺐다고 답한 뒤에만 취소 영수증 (v10.155.0 — 종전엔 누르는 즉시 확정)
+        assert "qMyCancel" in js and "qCancelledByMe" not in js
         assert '"injected"' in js and '"cancelled"' in js
         # receipt styling present
         assert ".queue-item.q-injected" in css
@@ -1928,7 +1929,7 @@ class TestConfirmStallWarning:
         `mainAskAlreadyClosed(item)` 한 곳 — 그 항목의 물음이 지금의 것일 때만 접고 알린다."""
         js = js_text()
         confirm_body = js_fn_body(js, "ovSubmitMainConfirm")
-        assert "res.status === 409" in confirm_body
+        assert "status === 409" in confirm_body
         assert "mainAskAlreadyClosed(item)" in confirm_body
         prompt_body = js_fn_body(js, "ovSubmitMainPrompt")
         assert "status === 409" in prompt_body

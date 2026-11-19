@@ -14,6 +14,7 @@ import {
   attachRemove,
 } from "./attach.js";
 import { ovActiveChannel, ovRenderAskTray, postStop } from "./channels.js";
+import { sendOnce } from "./send.js";
 import { ovSyncChannels } from "./runs.js";
 
 // True when the Send button is acting as a Stop button: chat mode +
@@ -123,52 +124,8 @@ function postInput(body, signal) {
   );
 }
 
-// ── 보내기 한 번 (v10.147.3 입력창 → v10.147.4 트레이 답도) ─────────────
-// 규칙 하나: 쓴 글은 서버가 받았을 때만 비운다 — 거절(죽은 에이전트·사라진 첨부 등)·네트워크 오류·무응답이면
-// 사유를 알리고 글은 남긴다. 보내는 자리(입력창 하나, 트레이 항목마다 하나)마다 "보내는 중" 이 따로 서고,
-// 같은 자리의 두 번째 보내기는 알리고 받지 않는다(중복·순서 뒤바뀜 없음) — 다른 자리는 막지 않는다.
-// 응답이 ``SEND_LIMIT_MS`` 안에 오지 않으면(막힌 연결) 요청을 끊고 실패로 본다 — 끊긴 요청의 늦은 결과는
-// 화면을 건드리지 않는다. 요청 본문은 글·경로뿐이라 정상 응답은 로컬에서 수십 ms 다(큰 이미지 셋이 든
-// 요청도 서버의 검증·보관까지 70 ms) — 상한은 원격·프록시 너머의 지연까지 넉넉히 덮는다.
-const SEND_LIMIT_MS = 20000;
-
-// 거절 응답의 사유 — 서버의 ``detail`` 글, 없으면 ``HTTP <code>``. 읽기만 한다.
-function refusalReason(r) {
-  return r.json().then(
-    function (d) { return d && typeof d.detail === "string" ? d.detail : "HTTP " + r.status; },
-    function () { return "HTTP " + r.status; }
-  );
-}
-
-// 보내기 하나를 시작해 응답·오류·상한 중 먼저 온 것으로 한 번만 끝낸다. ``slot`` 은 그 자리의 상태
-// ``{sending}`` — 보내는 동안 true(호출자가 넘긴 것만 바꾼다). ``request(signal)`` 은 fetch 의 약속,
-// ``settled(failure, status)`` 는 끝에 한 번 불린다: ``failure`` 는 받았으면 "", 아니면 사유(서버의
-// detail · ``HTTP <code>`` · ``could not reach the server`` · ``no response from the server``).
-export function sendOnce(slot, request, settled) {
-  const ctl = new AbortController();
-  let done = false;
-  slot.sending = true;
-  function finish(failure, status) {
-    if (done) return;
-    done = true;
-    clearTimeout(timer);
-    slot.sending = false;
-    settled(failure, status);
-  }
-  const timer = setTimeout(function () {
-    if (done) return;
-    finish("no response from the server", 0);
-    ctl.abort();
-  }, SEND_LIMIT_MS);
-  request(ctl.signal)
-    .then(function (r) {
-      if (r.ok) return finish("", r.status);
-      return refusalReason(r).then(function (why) { finish(why, r.status); });
-    })
-    .catch(function () {
-      finish("could not reach the server", 0);
-    });
-}
+// ── 보내기 한 번 ─────────────────────────────
+// 규칙과 함수는 `send.js`(`sendOnce`) — 입력창·트레이 답·확인·글 없는 버튼이 같이 쓴다.
 
 // 트레이 항목 안 맨 아래의 알림 줄 하나(`.ask-failed`, `.confirm-stall` 과 같은 모양) — 있으면 글만 바꾼다.
 export function noteOnAnswer(item, text) {
@@ -313,18 +270,21 @@ export function ovSubmitMainConfirm(item, key, comment) {
       "unused tabs can help.";
     item.appendChild(warn);
   }, CONFIRM_STALL_MS);
-  postInput({ kind: "confirm", key: key, comment: comment || "" })
-    .then(function (res) {
+  // 상한 없는 보내기 — 누를 때마다 새 자리(여러 번 눌러도 막지 않는다, 종전과 같다)
+  sendOnce(
+    { sending: false },
+    function (signal) {
+      return postInput({ kind: "confirm", key: key, comment: comment || "" }, signal);
+    },
+    function (failure, status) {
+      if (status === 0) return; // 네트워크 오류 — 지연 경고가 보이는 사실이다(종전과 같다)
       clearConfirmStall(item); // 답이 왔다 — 지연 경고는 끝났다
-      if (res.ok) return;
-      if (res.status === 409) return mainAskAlreadyClosed(item);
-      return refusalReason(res).then(function (why) {
-        noteOnAnswer(item, "⚠ Not sent — " + why);
-      });
-    })
-    .catch(function () {
-      /* network error — the stall warning covers the visible feedback */
-    });
+      if (!failure) return;
+      if (status === 409) return mainAskAlreadyClosed(item);
+      noteOnAnswer(item, "⚠ Not sent — " + failure);
+    },
+    { limit: false }
+  );
 }
 
 // ── Input bindings ─────────────────────────
@@ -341,7 +301,12 @@ function requestStop(scope) {
     session.stopRequested = true;
     updateSendEnabled();
   }
-  postStop(scope);
+  // 닿지 못했으면 "Stopping…" 을 푼다 — 다시 누를 수 있게 (v10.155.0; 종전엔 그 런이 끝날 때까지 잠겼다)
+  postStop(scope, function () {
+    if (scope === "agents") return;
+    session.stopRequested = false;
+    updateSendEnabled();
+  });
 }
 
 function closeStopMenu() {

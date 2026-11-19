@@ -3,6 +3,8 @@
 
 import { el } from "./dom.js";
 import { session } from "./state.js";
+import { attachMessage } from "./attach.js";
+import { sendOnce } from "./send.js";
 import { revealAtBottom } from "./scroll.js";
 import { es } from "./sse.js";
 import { miniThumbs } from "./thumbs.js";
@@ -126,7 +128,9 @@ if ($renameBtn) {
 const $queueList = document.getElementById("queue-list");
 let qPrevById = {}; // 직전 pending: id → item
 const qLeaving = {}; // id → {item, state:'wait'|'injected'|'cancelled', _timer}
-const qCancelledByMe = {}; // id → true (내가 ✕)
+// 내 ✕ 의 결과 (v10.155.0) — "취소됨" 은 서버가 뺐다고 답한 뒤에만 그린다. 종전엔 누르는 즉시 확정해, 그 사이 워커가
+// 꺼내 처리한 말도 "Cancelled" 로 보였다(서버는 ``cancelled: false``). id → "asked"(답을 기다림) | "cancelled".
+const qMyCancel = {};
 let qPending = [];
 // main 앞 미배달 메일도 같은 대기열에 선다 (v10.51.0, `mail: true`) — 사용자
 // 요청이 바쁠 때 서는 그 자리, 같은 ⏳ → ✓ 주입됨. 다른 점 둘: 아무도 취소할
@@ -142,7 +146,7 @@ function qVisible(it) {
 function qScheduleRemove(id) {
   setTimeout(function () {
     delete qLeaving[id];
-    delete qCancelledByMe[id];
+    delete qMyCancel[id];
     qRender();
   }, 1800);
 }
@@ -165,13 +169,10 @@ function qRender() {
       x.type = "button";
       x.textContent = "✕";
       x.title = "Cancel this queued message";
+      x.disabled = !!qMyCancel[it.id]; // 답을 기다리는 동안 다시 누르지 않는다
       x.addEventListener("click", function () {
-        qCancelledByMe[it.id] = true; // 로컬 확정 — 다음 queue 이벤트서 취소 영수증
-        fetch("api/queue/cancel", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conn_id: session.connId, id: it.id }),
-        });
+        qAskCancel(it.id);
+        x.disabled = true;
       });
       row.appendChild(x);
     }
@@ -180,17 +181,21 @@ function qRender() {
   leaving.forEach(function (id) {
     const lv = qLeaving[id];
     const cancelled = lv.state === "cancelled";
+    const asking = lv.state === "asked"; // 대기열을 떠났는데 내 ✕ 의 답이 아직 — 판정 전
     const mine = lv.item.conn_id === session.connId;
     const row = el("div", ["queue-item", cancelled ? "q-cancelled" : "q-injected"]);
     if (lv.item.id) row.appendChild(el("span", ["oi-id"], lv.item.id));
     const txt = el("span", ["queue-text"]);
-    txt.textContent = (cancelled ? "✕" : "✓") + " [" + lv.item.nickname + "] " + lv.item.text;
+    txt.textContent =
+      (cancelled ? "✕" : asking ? "…" : "✓") + " [" + lv.item.nickname + "] " + lv.item.text;
     row.appendChild(txt);
     if (Array.isArray(lv.item.images) && lv.item.images.length) row.appendChild(miniThumbs(lv.item.images));
     const st = el("span", ["queue-state"]);
     st.textContent = cancelled
       ? "Cancelled"
-      : mine && !lv.item.mail
+      : asking
+        ? "Cancelling…"
+        : mine && !lv.item.mail
         ? "✓ My request applied"
         : "Injected · applies to the next answer";
     row.appendChild(st);
@@ -198,20 +203,90 @@ function qRender() {
   });
 }
 export function qOnUserMsg(d) {
-  // 큐를 떠나 대기 중인 항목이 user_message 로 재방출 → 주입 확정.
+  // 큐를 떠나 대기 중인 항목이 user_message 로 재방출 → 주입 확정. 내 ✕ 의 답을 기다리는 줄이면 본 것만 적어
+  // 둔다 — 답이 "못 뺐다" 면 그때 주입됨으로(`qCancelAnswered`).
   const c = d.content || "";
   Object.keys(qLeaving).forEach(function (id) {
     const lv = qLeaving[id];
-    if (
-      lv.state === "wait" &&
-      (c === lv.item.text || c.indexOf(lv.item.text) >= 0 || lv.item.text.indexOf(c) >= 0)
-    ) {
+    if (!(c === lv.item.text || c.indexOf(lv.item.text) >= 0 || lv.item.text.indexOf(c) >= 0)) return;
+    if (lv.state === "asked") {
+      lv.seen = true;
+      return;
+    }
+    if (lv.state === "wait") {
       if (lv._timer) clearTimeout(lv._timer);
       lv.state = "injected";
       qRender();
       qScheduleRemove(id);
     }
   });
+}
+
+// 내 ✕ — 서버에 빼 달라고 묻는다(상한 없음: 늦게라도 닿으면 적용). 답을 본 뒤에 영수증을 정한다.
+function qAskCancel(id) {
+  if (qMyCancel[id]) return;
+  qMyCancel[id] = "asked";
+  sendOnce(
+    { sending: false },
+    function (signal) {
+      return fetch("api/queue/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conn_id: session.connId, id: id }),
+        signal: signal,
+      });
+    },
+    function (failure, status, r) {
+      if (failure) return qCancelAnswered(id, false, "Not cancelled — " + failure);
+      r.json().then(
+        function (d) {
+          qCancelAnswered(id, !!(d && d.cancelled), "Not cancelled — it was already sent");
+        },
+        function () {
+          qCancelAnswered(id, false, "Not cancelled — HTTP " + status);
+        }
+      );
+    },
+    { limit: false }
+  );
+}
+
+// ✕ 의 답 — 뺐으면 취소 영수증(이미 대기열을 떠났으면 지금, 아니면 떠날 때). 못 뺐으면 입력창 아래에 사유를 알리고
+// 그 말은 평소 길로(대기열에 있으면 ✕ 를 다시 누를 수 있고, 떠났으면 말풍선이 오는 대로 "주입됨").
+function qCancelAnswered(id, cancelled, notice) {
+  const lv = qLeaving[id];
+  if (cancelled) {
+    qMyCancel[id] = "cancelled";
+    if (lv && lv.state === "asked") {
+      lv.state = "cancelled";
+      qRender();
+      qScheduleRemove(id);
+    }
+    return;
+  }
+  delete qMyCancel[id];
+  attachMessage(notice);
+  if (lv && lv.state === "asked") {
+    if (lv.seen) {
+      lv.state = "injected";
+      qScheduleRemove(id);
+    } else {
+      qAwaitInjection(id, lv.item);
+    }
+  }
+  qRender();
+}
+
+// 대기열을 떠난 남의 말·판정 전의 말 — 곧 말풍선(user_message)이 오면 주입됨, 오지 않으면 다른 뷰어가 취소한 것.
+function qAwaitInjection(id, item) {
+  qLeaving[id] = { item: item, state: "wait" };
+  qLeaving[id]._timer = setTimeout(function () {
+    if (qLeaving[id] && qLeaving[id].state === "wait") {
+      qLeaving[id].state = "cancelled";
+      qRender();
+      qScheduleRemove(id);
+    }
+  }, 1400);
 }
 es.addEventListener("queue", function (e) {
   if (!$queueList) return;
@@ -234,18 +309,13 @@ es.addEventListener("queue", function (e) {
       qScheduleRemove(id);
       return;
     }
-    if (qCancelledByMe[id]) {
+    if (qMyCancel[id] === "cancelled") {
       qLeaving[id] = { item: item, state: "cancelled" };
       qScheduleRemove(id);
+    } else if (qMyCancel[id] === "asked") {
+      qLeaving[id] = { item: item, state: "asked" }; // 답을 기다린다 — `qCancelAnswered` 가 정한다
     } else {
-      qLeaving[id] = { item: item, state: "wait" };
-      qLeaving[id]._timer = setTimeout(function () {
-        if (qLeaving[id] && qLeaving[id].state === "wait") {
-          qLeaving[id].state = "cancelled";
-          qRender();
-          qScheduleRemove(id);
-        }
-      }, 1400);
+      qAwaitInjection(id, item);
     }
   });
   qPending = pending;

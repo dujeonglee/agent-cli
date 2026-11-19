@@ -33,6 +33,8 @@ import {
 import { channelOf, finishCard, scopeChannel, stampCard } from "./timeline.js";
 import { miniThumbs, thumbStrip } from "./thumbs.js";
 import { makeRow, peerLabel } from "./cards.js";
+import { attachMessage } from "./attach.js";
+import { sendOnce } from "./send.js";
 
 // ── 런 블록 (v9.23.0, docs/chat-ui §12) ─────────────────────
 // 에이전트 채널의 단위는 **런**이다: 런이 시작될 때 블록이 열리고
@@ -494,8 +496,19 @@ function ovRenderChannelHead() {
     var b = e.target.closest ? e.target.closest(".chh-btn") : null;
     if (!b || b.disabled) return;
     b.disabled = true; // 눌렀다 — 명단(SSE)이 다시 그린다
-    fetch("api/agent/" + encodeURIComponent(head.getAttribute("data-key")) + "/" +
-      b.getAttribute("data-act"), { method: "POST" });
+    var act = b.getAttribute("data-act");
+    var path = "api/agent/" + encodeURIComponent(head.getAttribute("data-key")) + "/" + act;
+    // 상한 없이 — 늦게라도 닿으면 적용. 닿지 못했거나 거절이면 버튼을 풀고 사유 (v10.155.0; 종전엔 잠긴 채 남았다)
+    sendOnce(
+      { sending: false },
+      function (signal) { return fetch(path, { method: "POST", signal: signal }); },
+      function (failure) {
+        if (!failure) return;
+        b.disabled = false;
+        attachMessage((act === "kill" ? "Not removed — " : "Not stopped — ") + failure);
+      },
+      { limit: false }
+    );
   });
 })();
 // `labelHtml` 은 **이스케이프된 HTML** — 흐린 key 병기(`ovAgentLabelHtml`)를

@@ -170,6 +170,7 @@ v10.116.0 의 `test_app_markdown` 은 `js_text("main")` 을 `(function(){ … })
 | `sse.js` | [24] | 108 | `export const es`·연결 표시·`copyToClipboard` |
 | `copy.js` | [9] | 76 | 복사, 훅 `__cardMarkdown`·`__timelineMarkdown` |
 | `attach.js` | [23] | 147 | 이미지 첨부 |
+| `send.js` | — (v10.155.0 신규) | 54 | 보내기 한 번(`sendOnce`) — 입력창·트레이 답·확인·글 없는 버튼이 같이 쓴다. 순환 밖 잎, import 없음 |
 | `ledger.js` | — (v10.119.0 신규) | 122 | 📋 열린 항목 띠(`open_items` 스티키). 순환 밖 잎 — `dom`·`sse` 만 import, export 없음. 점프는 `agentcli:jump` 이벤트로 |
 | `stuck.js` | — (v10.120.0 신규) | 63 | 🔁 제자리 고리 띠(`stuck` 스티키, docs/stale-guard). 순환 밖 잎 — `dom`·`state`·`sse` 만 import, export 없음. Stop 은 `fetch` 로 직접(`/api/stop`, 묻는 중엔 confirm `s`) — input 의 `postInput` 을 import 하면 잎이 순환에 든다 |
 | `channels.js` | [28]+[30]+[31] | 471 | 채널·트레이 상태·필터·점프(v10.119.0: `agentcli:jump` {hidx} → 원문 카드). **순환 진입점** |

@@ -317,6 +317,7 @@ agent_cli/
             ├── sse.js           `EventSource` 하나(`es`)와 연결 상태, 클립보드 helper
             ├── copy.js          카드·타임라인 마크다운 복사
             ├── attach.js        📎 이미지 첨부(버튼·붙여넣기·끌어놓기)와 업로드 칩
+            ├── send.js          보내기 한 번(`sendOnce` — 응답·오류·상한, 사유 읽기)
             ├── ledger.js        📋 열린 항목 띠
             ├── stuck.js         🔁 제자리 고리 띠
             ├── jobs.js          🧵 백그라운드 작업 칩과 ■ 멈춤
