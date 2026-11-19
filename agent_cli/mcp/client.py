@@ -84,16 +84,6 @@ class McpToolInfo:
     input_schema: dict
 
 
-@dataclass
-class McpResourceInfo:
-    """Metadata for an MCP resource."""
-
-    server: str
-    uri: str
-    name: str
-    description: str
-
-
 def _leaf_error(e: BaseException) -> str:
     """예외를 사람이 읽을 원인 문장으로 (v9.1.0).
 
@@ -481,44 +471,6 @@ class McpClientManager:
         return await await_answer_or_give_up(
             session.call_tool(tool_name, arguments), limit_s=limit_s, stopped=stopped
         )
-
-    # ── Resource operations ──────────────────────────
-
-    def list_resources(self, server: str) -> list[McpResourceInfo]:
-        """List resources for a specific server."""
-        client = self._clients.get(server)
-        if client is None:
-            return []
-        try:
-            result = self._run_sync(client["session"].list_resources())
-            return [
-                McpResourceInfo(
-                    server=server,
-                    uri=str(r.uri),
-                    name=r.name or "",
-                    description=r.description or "",
-                )
-                for r in result.resources
-            ]
-        except Exception:
-            return []
-
-    def read_resource(self, server: str, uri: str) -> str:
-        """Read a resource by URI."""
-        return self._run_sync(self._read_resource_async(server, uri))
-
-    async def _read_resource_async(self, server: str, uri: str) -> str:
-        """Read a resource asynchronously."""
-        client = self._clients.get(server)
-        if client is None:
-            raise ConnectionError(f'MCP server "{server}" not connected')
-
-        session = client["session"]
-        result = await session.read_resource(uri)
-        # Extract text content
-        if result.contents:
-            return result.contents[0].text or ""
-        return ""
 
     # ── Status ───────────────────────────────────────
 
