@@ -246,4 +246,71 @@ class TestARunJustEndedIsVisible:
         assert f"`{key}` (aa) [idle]" in build_live_agents_section(
             reg, include_state=True
         )
+
+
+class TestARequesterThatIsGone:
+    """요청한 쪽이 사라지면(✕·사망·과제를 마친 run) 그가 기다리던 빚을 닫는다 — 빚진 쪽의 Open Items 에서 사라지고,
+    깨우지 않는 통지 한 통이 그 사실을 말한다. 그 뒤의 `reply` 는 "가지 못했다" 로 듣는다(그 런 끝까지 줄이 남는다)."""
+
+    def test_a_kill_closes_the_debt_owed_to_it_and_notices_the_debtor(self, tmp_path):
+        gate = threading.Event()
+        _calls, runner = _counting_runner(gate)
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        bb, bb_tm = _idle_agent(reg, "bb")
+        _, err = reg.message_handler(f"agent:{aa}")(bb, "slow job", True)
+        assert not err
+        assert wait_until(lambda: bb_tm.state == "busy")  # bb 가 집어 들고 문에서 멈춤
+        (debt,) = reg.reply_debts(f"agent:{bb}")
+        try:
+            assert reg.kill(aa) == ""
+            assert wait_until(lambda: not aa_tm.worker.is_alive())
+            assert reg.reply_debts(f"agent:{bb}") == []
+            (notice,) = reg._post.queued(f"agent:{bb}")
+            assert notice.wakes is False
+            assert notice.text == (
+                f'request [{debt.id}] ("slow job") is closed — {aa} (aa) is gone; '
+                "nothing is owed back."
+            )
+            rows = {r.rid: (r.state, r.how) for r in reg._post.rows()}
+            assert rows[debt.id] == ("closed", "unsent")  # 그 런 끝까지 남는다
+        finally:
+            gate.set()
+        assert wait_until(lambda: bb_tm.state == "idle")
+        assert debt.id not in {r.rid for r in reg._post.rows()}  # 런 끝에 버려진다
+        reg.shutdown_all()
+
+    def test_a_session_end_keeps_the_debt(self, tmp_path):
+        """세션 종료는 되살릴 에이전트다 — 빚을 닫지 않는다(재시작이 되살린다)."""
+        gate = threading.Event()
+        _calls, runner = _counting_runner(gate)
+        reg = make_registry(tmp_path, runner=runner)
+        aa, _ = _idle_agent(reg, "aa")
+        bb, bb_tm = _idle_agent(reg, "bb")
+        _, err = reg.message_handler(f"agent:{aa}")(bb, "slow job", True)
+        assert not err
+        assert wait_until(lambda: bb_tm.state == "busy")
+        closed = []
+        real = reg._post.forget_requests_of
+        reg._post.forget_requests_of = lambda *a, **k: closed.append(a) or real(*a, **k)
+        gate.set()
+        reg.shutdown_all()
+        assert closed == []
+
+    def test_main_as_the_debtor_gets_a_quiet_notice(self, tmp_path):
+        """main 이 그 요청을 흡수해(턴 경계) 빚을 졌는데 요청자가 사라진다 — main 의 빚이 닫히고, main 을 깨우지 않는
+        장부 밖 통지가 main 상자에 선다(다음 턴 경계·다음 런이 읽는다)."""
+        _calls, runner = _counting_runner()
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        _, err = reg.message_handler(f"agent:{aa}")("main", "which file?", True)
+        assert not err
+        assert [next(iter(i)) for i in reg.absorb_main()] == ["mail"]  # main 의 턴 경계
+        (debt,) = reg.reply_debts("main")
+        assert reg.kill(aa) == ""
+        assert wait_until(lambda: not aa_tm.worker.is_alive())
+        assert reg.reply_debts("main") == []
+        (mail,) = reg._post.mail("main")
+        assert mail.wakes is False
+        assert f"request [{debt.id}]" in mail.text and "is gone" in mail.text
         reg.shutdown_all()

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import enum
 import threading
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Literal
 
 from agent_cli.post.envelope import Envelope
@@ -373,6 +373,23 @@ class PostOffice:
             self._book.close(qid, "user_answered")
             self._deliver(answer_env)
             self.cv.notify_all()
+
+    def forget_requests_of(
+        self, requester: str, run_of: Callable[[str], str]
+    ) -> tuple[Row, ...]:
+        """요청한 쪽이 사라졌다 — 그가 기다리던 r 줄 중 **빚으로 적힌 것**(picked)을 닫는다: 회신이 갈 곳이 없는 갚음
+        (``unsent`` — `pay_unsent` 와 같다)으로, 빚진 쪽의 지금 런(``run_of(빚진 쪽)``) 끝까지 남겨 그 뒤의 `reply` 가
+        "가지 못했다" 로 듣게. 빚진 쪽의 Open Items 에서는 사라진다. 줄 선 것(아직 시작 안 한 요청)은 그대로다. 닫은
+        줄(닫기 전 값)을 돌려준다."""
+        with self.cv:
+            gone = tuple(
+                r for r in self._book.awaited_by(requester) if r.state == "picked"
+            )
+            for row in gone:
+                self._book.close(row.rid, "unsent", in_run=run_of(row.dst))
+            if gone:
+                self.cv.notify_all()
+            return gone
 
     def forget_questions_of(self, asker: str) -> tuple[str, ...]:
         """묻는 쪽이 사라졌다 — 그 질문 줄을 undeliverable 로 닫는다. 닫은 id 를 돌려준다."""

@@ -64,6 +64,10 @@ DIED_REPLY = (
 DIED_WORKING_REPLY = (
     '{agent} died while it was working on your request [{rid}] ("{quote}").'
 )
+#: 요청한 쪽이 사라졌다 — 빚진 쪽이 받는 통지(그 빚은 이미 닫혔다, 깨우지 않는다). ``agent`` 는 사라진 쪽의 이름표.
+REQUESTER_GONE = (
+    'request [{rid}] ("{quote}") is closed — {agent} is gone; nothing is owed back.'
+)
 LAST_ACTIVITY = "Last activity: {calls}"
 PARTIAL_NOTES = "Partial notes: {notes}"
 NEXT_STEP = "Decide whether to continue another way or report back to the user."
@@ -270,3 +274,50 @@ def answer_main_debts(registry, records: list[dict], *, by: str = "user") -> int
         )
         sent += 0 if err else 1
     return sent
+
+
+def requester_gone(agent: str, rid: str, request: str) -> str:
+    """요청한 쪽이 사라져 닫힌 빚의 통지 — 빚진 쪽이 다음 턴 경계에 읽는다."""
+    return REQUESTER_GONE.format(
+        rid=rid, quote=one_line(request, QUOTE_CHARS), agent=agent
+    )
+
+
+def close_debts_owed_to(registry, tm, label: str) -> None:
+    """사라진 에이전트(✕·사망·과제를 마친 run — 되살리지 않는 끝)가 기다리던 회신을 닫는다: 빚으로 적힌 줄을 회신이 갈
+    곳 없는 갚음으로(빚진 쪽의 지금 런 끝까지 남아 그 뒤의 `reply` 는 "가지 못했다" 로 듣는다 —
+    `PostOffice.forget_requests_of`), 빚진 쪽마다 깨우지 않는 통지 한 통(`requester_gone`) — 그 빚은 다음 꼬리부터
+    Open Items 에 없다. ``label`` 은 사라진 쪽의 이름표. 세션 종료(되살릴 에이전트)는 여기 오지 않는다."""
+    gone = registry._post.forget_requests_of(f"agent:{tm.key}", registry._run_of)
+    for row in gone:
+        text = requester_gone(label, row.rid, row.text)
+        if row.dst == "main":
+            registry._push_reply(
+                {
+                    "kind": "peer_message",
+                    "key": tm.key,
+                    "profile": tm.profile_name,
+                    "name": tm.instance_name,
+                    "success": True,
+                    "output": text,
+                    "expects_reply": False,
+                    "notice": True,
+                    "ledger": "none",
+                    "wakes_main": False,
+                }
+            )
+            continue
+        peer = registry.get(row.dst.removeprefix("agent:"))
+        if peer is not None and peer.state != "dead":
+            registry.request(
+                peer.key,
+                text,
+                author=f"agent:{tm.key}",
+                expects_reply=False,
+                kind="notice",
+                ledger="none",
+                opens_run=False,
+            )
+    if gone:
+        registry._save_state()
+        registry._notify_roster()

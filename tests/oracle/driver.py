@@ -1713,8 +1713,9 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
     - ``who="requested"`` (가) `[단계 4c 에서 바뀜 — 변화 5]`: 상주 aa 가 bb 에게 요청하고 `wait` → bb 사망. main
       은 died 통지를 받고, aa 는 bb 가 집어 든 그 요청의 died 회신(`· died` — "… died while it was working on your
       request …")을 받아 그 런에서 읽는다 `[v10.146.3 에서 바뀜 — 종전엔 aa 가 아무것도 받지 않았다]`.
-    - ``who="requester"`` (나) `[단계 4c 에서 바뀜 — 변화 10]`: aa 가 bb 에게 요청한 뒤 aa 사망. bb 는 죽은 쪽에
-      빚진 회신을 Open Items 에 든 채 일한다. 죽은 aa 가 main 에게 빚진 과제 요청에는 main 의 died 통지와 함께 died
+    - ``who="requester"`` (나): aa 가 bb 에게 요청한 뒤 aa 사망. aa 가 기다리던 bb 의 빚은 그 자리에서 닫히고(받을
+      이가 없다), bb 는 다음 턴 경계에 깨우지 않는 통지("request [r-…] … is closed — … is gone; nothing is owed back.")를
+      읽는다 `[vNEXT 에서 바뀜 — 종전엔 bb 가 죽은 쪽에 빚진 회신을 Open Items 에 든 채 일했다]`. 죽은 aa 가 main 에게 빚진 과제 요청에는 main 의 died 통지와 함께 died
       회신이 간다 `[v10.146.3 에서 바뀜]`.
       `[v10.145.2 에서 바뀜]` bb 의 `reply` 는 "not delivered — … was already gone" 을 실패로 듣고, 배달되지 않은 회신은
       발신 줄(conversation)에도 남지 않는다(종전엔 "delivered to whoever was waiting on it").

@@ -2973,6 +2973,7 @@ class AgentRegistry:
                     tm, mark, partial(agent_stop.gone_reply, died=bool(crash))
                 )
             if not tm.revivable:
+                agent_stop.close_debts_owed_to(self, tm, self._who(f"agent:{tm.key}"))
                 # **영구 사망(kill·crash)일 때만** 질문을 정리한다 (§3.8).
                 # 세션 종료(shutdown_all)는 revivable 을 유지하므로 여기
                 # 들어오지 않는다 — 들어오면 직후의 _save_state 가 빈 목록을
