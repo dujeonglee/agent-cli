@@ -197,16 +197,16 @@ function submitChatOrPrompt() {
     attachMessage("Still uploading");
     return;
   }
-  const channel = ovActiveChannel;
   sendOnce(
     chatSlot,
     function (signal) {
-      if (channel !== "main") {
+      // 바로 불린다(`sendOnce` 가 시작하며) — 지금의 채널로 간다
+      if (ovActiveChannel !== "main") {
         // 에이전트 채널도 이미지를 받는다 (v10.61.0): inbox 항목 → 그 런의 시작
         // user 레코드 `images`. 같은 업로드 경로, 같은 `images:[path]` 모양.
         const agentBody = { content: text, conn_id: session.connId };
         if (images.length) agentBody.images = images;
-        return fetch("api/agent/" + encodeURIComponent(channel) + "/input", {
+        return fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(agentBody),

@@ -287,7 +287,9 @@ function ovSubmitAsk(item) {
   }
   clearAnswerNote(item);
   var key = item.getAttribute("data-key");
-  var body = { content: text, conn_id: session.connId, answer_id: item.getAttribute("data-qid") };
+  var qid = item.getAttribute("data-qid");
+  var body = { content: text, conn_id: session.connId };
+  body.answer_id = qid;
   sendOnce(
     item.sendSlot,
     function (signal) {
