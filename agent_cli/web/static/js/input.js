@@ -127,11 +127,10 @@ function postInput(body, signal) {
 // /api/agent/<key>/input). main 의 prompt/confirm 답변은 글로벌 트레이가 담당.
 // 보낸 글·칩은 서버가 받았을 때만 비운다 — 거절(죽은 에이전트·사라진 첨부 등)이나 네트워크 오류면
 // 사유를 보이고 그대로 남긴다. 보내는 중의 두 번째 보내기는 알리고 받지 않는다(중복·순서 뒤바뀜 없음).
-// 응답이 ``SEND_LIMIT.ms`` 안에 오지 않으면(막힌 연결) 요청을 끊고 실패로 본다 — 끊긴 요청의 늦은
+// 응답이 ``SEND_LIMIT_MS`` 안에 오지 않으면(막힌 연결) 요청을 끊고 실패로 본다 — 끊긴 요청의 늦은
 // 결과는 화면을 건드리지 않는다. 요청 본문은 경로뿐이라 정상 응답은 로컬에서 수십 ms 다(큰 이미지
 // 셋이 든 요청도 서버의 검증·보관까지 70 ms) — 상한은 원격·프록시 너머의 지연까지 넉넉히 덮는다.
-// 객체인 것은 테스트가 페이지에서 줄이기 위해서다.
-export const SEND_LIMIT = { ms: 20000 };
+const SEND_LIMIT_MS = 20000;
 let sending = false;
 function submitChatOrPrompt() {
   const text = $input.value.trim();
@@ -176,7 +175,7 @@ function submitChatOrPrompt() {
   }
   const timer = setTimeout(function () {
     if (settle("no response from the server")) ctl.abort();
-  }, SEND_LIMIT.ms);
+  }, SEND_LIMIT_MS);
   req
     .then(function (r) {
       if (r.ok) {

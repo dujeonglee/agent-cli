@@ -119,15 +119,14 @@ def test_two_quick_enters_send_once(stack, page, ws):
 
 
 def test_no_response_times_out_keeps_text_and_frees_the_next_send(stack, page, ws):
-    """응답이 오지 않는 보내기 — 상한(테스트가 짧게 줄인 ``SEND_LIMIT.ms``)이 지나면 알림이 서고 글·칩이
+    """응답이 오지 않는 보내기 — 상한(20초 — 페이지 시계를 넘겨 지나게 한다)이 지나면 알림이 서고 글·칩이
     남으며 다음 보내기가 다시 된다. 끊긴 요청에 늦게 온 응답은 화면을 건드리지 않는다."""
+    page.clock.install()  # 페이지의 타이머를 테스트가 쥔다 — 상한은 시계를 넘겨 지나게 한다
     stack.emit_ready()
     page.goto(stack.url)
     page.wait_for_selector("#attach", timeout=8000)
     page.evaluate(
-        """async () => {
-            const m = await import(new URL('static/js/input.js', document.baseURI).href);
-            m.SEND_LIMIT.ms = 300;
+        """() => {
             window.__notices = [];
             new MutationObserver(() => {
               const n = document.querySelector('#attach-strip .attach-msg');
@@ -141,6 +140,11 @@ def test_no_response_times_out_keeps_text_and_frees_the_next_send(stack, page, w
     _attach(page)
     page.fill("#input", "anyone there?")
     page.press("#input", "Enter")
+    assert _wait(lambda: len(held) == 1)
+    assert (
+        page.locator("#attach-strip .attach-msg").count() == 0
+    )  # 상한 전엔 알림이 없다
+    page.clock.run_for(20_500)
     assert _notice(page) == "Not sent — no response from the server"
     assert page.input_value("#input") == "anyone there?"
     assert page.locator("#attach-strip .attach-chip").count() == 1
