@@ -328,7 +328,16 @@ def _call(m, server: str, tool: str, args: dict, ctx=None):
 
 
 def _fast(m, server: str, text: str) -> str:
-    return _call(m, server, "fast", {"text": text}).output
+    """빠른 도구 — 그 서버의 짧은 상한(``quick`` 0.5초) 안에 끝나기를 기대하지 않도록 이 호출 동안만
+    상한을 ``NO_HANG_S`` 로 둔다(상한은 호출마다 설정에서 읽는다). 느린 러너에서 0.5초 안에 답이
+    못 와 "did not answer" 로 깨지던 자리다."""
+    cfg = m.configs[server]
+    short = cfg.call_timeout_s
+    cfg.call_timeout_s = NO_HANG_S
+    try:
+        return _call(m, server, "fast", {"text": text}).output
+    finally:
+        cfg.call_timeout_s = short
 
 
 def test_real_server_limit_then_the_connection_still_answers(servers):

@@ -62,6 +62,16 @@ async def sleep(seconds: float, tag: str) -> str:
 
 
 @server.tool()
+async def wait_for_go(tag: str) -> str:
+    """``waiting-<tag>`` 를 남기고, 테스트가 ``go-<tag>`` 를 만들 때까지 기다렸다가 답한다 — 끝나는
+    때를 시간이 아니라 테스트가 정한다."""
+    (MARKS / f"waiting-{tag}").touch()
+    while not (MARKS / f"go-{tag}").exists():
+        await asyncio.sleep(0.02)
+    return f"went:{tag}"
+
+
+@server.tool()
 async def hang(tag: str) -> str:
     """Never answer."""
     (MARKS / f"hanging-{tag}").touch()

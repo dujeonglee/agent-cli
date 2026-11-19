@@ -146,20 +146,22 @@ def test_disconnect_one_server_ends_that_server_only(tmp_path):
 
 
 def test_two_threads_call_the_same_server_at_once(connected):
-    """종전엔 뒤의 호출이 ``This event loop is already running`` 이었다. 이제 둘 다 답을 받고, 빠른
-    호출이 느린 호출을 기다리지 않는다(끝난 순서로 본다 — 시간 단언 없음)."""
+    """종전엔 뒤의 호출이 ``This event loop is already running`` 이었다. 이제 둘 다 답을 받고, 먼저 간
+    호출이 도는 사이 뒤의 호출이 답을 받는다. 먼저 간 호출(``wait_for_go``)은 뒤의 호출이 끝난 다음
+    테스트가 ``go`` 표식을 만들어야 끝난다 — 순서를 시간이 아니라 표식이 정한다."""
     m, marks = connected
     finished: list[str] = []
 
     def slow():
-        r = McpTool(m, "s", "sleep", "", {}).run({"seconds": 1.0, "tag": "both"})
+        r = McpTool(m, "s", "wait_for_go", "", {}).run({"tag": "both"})
         finished.append("slow")
         return r
 
     def fast():
-        assert wait_until(lambda: (marks / "sleeping-both").exists())
+        assert wait_until(lambda: (marks / "waiting-both").exists())
         r = McpTool(m, "s", "fast", "", {}).run({"text": "meanwhile"})
         finished.append("fast")
+        (marks / "go-both").touch()
         return r
 
     ts, bs = _in_thread(slow)
@@ -167,7 +169,7 @@ def test_two_threads_call_the_same_server_at_once(connected):
     ts.join(NO_HANG_S)
     tf.join(NO_HANG_S)
     assert not ts.is_alive() and not tf.is_alive()
-    assert bs["r"].output == "slept:both"
+    assert bs["r"].output == "went:both"
     assert bf["r"].output == "fast:meanwhile"
     assert finished == ["fast", "slow"]
 
@@ -286,35 +288,52 @@ def test_keyboard_interrupt_while_waiting_cancels_the_coroutine(connected):
 
 
 def test_a_server_that_never_answers_initialize_fails_at_the_limit_and_ends(tmp_path):
-    """부팅이 끝없이 막히던 자리 — 상한에서 그 연결만 실패하고(마법사가 써 온 문장), 그 프로세스는
-    끝난다. 같은 부팅의 다른 서버는 붙고, 결과는 설정 순서다."""
-    mute, ok = tmp_path / "mute", tmp_path / "ok"
+    """부팅이 끝없이 막히던 자리 — 상한이 **지나면** 그 연결이 실패하고(마법사가 써 온 문장), 그
+    프로세스는 끝난다. 그 서버는 영영 답하지 않으니 상한이 짧아도 결과가 시간에 기대지 않는다."""
     m = McpClientManager(connect_timeout_s=0.5)
     mute_cfg = McpServerConfig(
-        name="mute", command=sys.executable, args=[str(SERVER), str(mute), "mute"]
+        name="mute", command=sys.executable, args=[str(SERVER), str(tmp_path), "mute"]
     )
+    try:
+        t, box = _in_thread(lambda: m.connect_all({"mute": mute_cfg}, warn=False))
+        t.join(NO_HANG_S)
+        assert not t.is_alive(), "답하지 않는 서버에 연결이 끝나지 않았다"
+        assert box["r"] == {
+            "mute": "error: no response within 0.5s — the server started but does "
+            "not answer initialize (check the package name and arguments)"
+        }
+        assert not m.is_connected("mute")
+        assert wait_until(lambda: not _alive(_pid(tmp_path))), (
+            "답하지 않던 서버가 남았다"
+        )
+    finally:
+        m.disconnect_all()
+        if (tmp_path / "server.pid").exists() and _alive(_pid(tmp_path)):
+            os.kill(_pid(tmp_path), signal.SIGTERM)
+
+
+def test_one_server_failing_does_not_stop_the_others_and_order_is_kept(tmp_path):
+    """같은 부팅에서 하나가 실패해도 다른 서버는 붙고, 결과는 설정 순서다. 실패하는 쪽은 **곧바로**
+    실패한다(없는 명령) — 기본 상한(45초)이라 정상 서버가 뜨는 데 걸리는 시간에 기대지 않는다."""
+    m = McpClientManager()
+    missing = McpServerConfig(name="missing", command=str(tmp_path / "no-such-command"))
     try:
         t, box = _in_thread(
             lambda: m.connect_all(
-                {"mute": mute_cfg, "ok": _config("ok", ok)}, warn=False
+                {"missing": missing, "ok": _config("ok", tmp_path)}, warn=False
             )
         )
         t.join(NO_HANG_S)
-        assert not t.is_alive(), "답하지 않는 서버에 연결이 끝나지 않았다"
+        assert not t.is_alive()
         status = box["r"]
-        assert list(status) == ["mute", "ok"]
-        assert status == {
-            "mute": "error: no response within 0.5s — the server started but does "
-            "not answer initialize (check the package name and arguments)",
-            "ok": "connected",
-        }
-        assert m.is_connected("ok") and not m.is_connected("mute")
-        assert wait_until(lambda: not _alive(_pid(mute))), "답하지 않던 서버가 남았다"
+        assert list(status) == ["missing", "ok"]
+        assert status["missing"].startswith("error:")
+        assert status["ok"] == "connected"
+        assert m.is_connected("ok") and not m.is_connected("missing")
     finally:
         m.disconnect_all()
-        for marks in (mute, ok):
-            if (marks / "server.pid").exists() and _alive(_pid(marks)):
-                os.kill(_pid(marks), signal.SIGTERM)
+        if (tmp_path / "server.pid").exists() and _alive(_pid(tmp_path)):
+            os.kill(_pid(tmp_path), signal.SIGTERM)
 
 
 def test_servers_connect_at_the_same_time():
