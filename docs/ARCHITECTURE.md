@@ -60,6 +60,7 @@ agent_cli/
 ├── runtime.py               run/web 세션 조립(`SessionSpec`→stores→owners→`wire_session`)·정리, `MainLoop`
 ├── wake.py                  한 주소를 무엇이 깨우나(`wake_sources` — 에이전트 몫은 장부·명단 사본 `WakeFacts` 의 순수 함수, 고리 찾기 `parked_view`)·체크인 알림·메일 → 레코드·`release_owner`, 루프의 우편 창구 `Mailbox`(포트 `mailbox`)
 ├── pump.py                  세션 펌프 — main 상자에서 런을 열 것(사람의 말 먼저, 없으면 깨우는 메일)을 꺼내 라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
+├── actor.py                 런을 여는 루프 하나 `run_actor` — 기다림·열기·런·끝 판정, main(`pump.MainActor`)과 에이전트 워커(`resident_loop.AgentActor`)가 같은 루프를 돈다
 ├── command_table.py         사용자 명령 표 하나 — 웹 `/help` 와 `run "/help"` 가 여기서 나온다
 ├── config.py                config.json 의 서버(endpoint) 표·고르는 순서·이 프로세스의 서버, 서버별 models.json 읽기·저장, 옛 모양 판정·`.v1` 이름 바꾸기, 방언 바인딩(`bind_user_dialect`)
 ├── setup.py                 첫 실행 설정 마법사 `SetupWizard` (Rich TUI — 프로바이더·연결·모델)
@@ -364,7 +365,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 | 5 | `main` · `recovery/` |
 | 4 | `context/` · `prompts/` · `providers/` (한 묶음) |
 | 3 | `dialects/` · `mcp/` · `web/` |
-| 2 | `tools/` · `render/` · `pump` · `setup` |
+| 2 | `tools/` · `render/` · `pump` · `actor` · `setup` |
 | 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `main_input` · `input_history` · `browser` · `web_sources` · `instance_file` · `wake` |
 | 0 | `post/` · `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `snapshot_nested` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `session_slots` · `terminate` · `agents/` |
 
