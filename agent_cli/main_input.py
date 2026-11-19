@@ -19,10 +19,16 @@ from agent_cli import item_ids
 from agent_cli.post.envelope import Envelope, is_human_words, words
 from agent_cli.post.office import CLOSED, OPEN_MAIL, PostOffice
 
-__all__ = ["CLOSED", "MAIN", "OPEN_MAIL", "MainInput", "intake_item"]
+__all__ = ["CLOSED", "MAIN", "OPEN_MAIL", "MainInput", "human_addr", "intake_item"]
 
 #: 사람의 입력을 받는 주소
 MAIN = "main"
+
+
+def human_addr(nickname: str | None) -> str:
+    """사람의 주소 — 별명이 있으면 ``user:<별명>``, 없으면(``run`` 의 argv 질의·터미널 줄) ``user``. main 앞 사람의
+    말·에이전트 채널 입력·main 입력창의 ``@agt-…`` 요청이 같은 규칙을 쓴다 (v10.149.4)."""
+    return f"user:{nickname}" if nickname else "user"
 
 
 class MainInput:
@@ -56,7 +62,7 @@ class MainInput:
         꼬리·`answers`·기록의 `request_id`·웹 취소까지 같다."""
         env = words(
             item_ids.next_id(item_ids.USER),
-            f"user:{nickname}" if nickname else "user",
+            human_addr(nickname),
             MAIN,
             text,
             payload={
