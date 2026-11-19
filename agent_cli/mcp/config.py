@@ -9,6 +9,7 @@ v9.0.0: ``.agent-cli/mcp.json`` (프로젝트) **한 곳** — docs/config-scope
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -27,6 +28,10 @@ _ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
 _STREAMABLE_ALIASES = frozenset({"streamable-http", "streamable_http", "http"})
 STREAMABLE_HTTP = "streamable-http"  # 우리가 파일에 쓰는 캐노니컬 이름
 
+#: 도구 호출 하나를 기다리는 시간의 기본 상한(초) — 서버 항목의 ``call_timeout_s`` 로 바꾼다.
+#: 다른 도구처럼 MCP 호출에도 끝이 있어야 한다: 답하지 않는 서버를 런이 끝없이 기다렸다.
+DEFAULT_CALL_TIMEOUT_S = 120
+
 
 @dataclass
 class McpServerConfig:
@@ -40,6 +45,9 @@ class McpServerConfig:
     # HTTP transports (sse | streamable-http)
     url: str = ""
     transport: str = "stdio"  # "stdio" | "sse" | "streamable-http"
+    #: 도구 호출 하나를 기다리는 상한(초). 파일의 값을 그대로 담는다 — 옳은지는 연결할 때
+    #: 본다(`call_timeout_problem`; 다른 잘못된 설정처럼 그 서버의 연결 실패가 된다).
+    call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S
 
     @property
     def is_stdio(self) -> bool:
@@ -62,6 +70,19 @@ class McpServerConfig:
     @property
     def is_remote(self) -> bool:
         return self.is_sse or self.is_streamable_http
+
+
+def call_timeout_problem(value: object) -> str | None:
+    """``call_timeout_s`` 값이 쓸 수 없으면 그 이유 한 문장, 쓸 수 있으면 None.
+    양의 유한한 수만 된다 — 0·음수·문자열·불리언(JSON ``true``)은 안 된다."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        return f"call_timeout_s must be a positive number of seconds, got {value!r}"
+    return None
 
 
 def _resolve_env_vars(value: str) -> str:
@@ -96,6 +117,7 @@ def _parse_server_config(name: str, data: dict) -> McpServerConfig:
         env=resolved_env,
         url=data.get("url", ""),
         transport=transport,
+        call_timeout_s=data.get("call_timeout_s", DEFAULT_CALL_TIMEOUT_S),
     )
 
 

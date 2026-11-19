@@ -250,7 +250,9 @@ class TestMcpAdapter:
 
         assert result.success
         assert "search result" in result.output
-        manager.call_tool.assert_called_once_with("github", "search", {"query": "test"})
+        manager.call_tool.assert_called_once_with(
+            "github", "search", {"query": "test"}, stopped=None
+        )
 
     def test_mcp_tool_run_failure(self):
         from unittest.mock import MagicMock
