@@ -120,3 +120,47 @@ class TestEndingAWorker:
         reg.shutdown_all()
         assert all(not tm.worker.is_alive() for tm in tms)
         assert calls == []
+
+
+class TestRevivalAfterTheEnd:
+    def test_a_killed_agent_revived_in_the_same_session_takes_requests_again(
+        self, tmp_path
+    ):
+        """끝내기가 닫은 상자는 같은 주소의 새 워커가 서면 다시 열린다 — 되살린 에이전트가 곧바로 끝나지 않는다."""
+        calls, runner = _counting_runner()
+        reg = make_registry(tmp_path, runner=runner)
+        key, tm = _idle_agent(reg)
+        assert reg.kill(key) == ""
+        assert wait_until(lambda: not tm.worker.is_alive())
+        assert reg.resume_teammate(key) == ""
+        fresh = reg.get(key)
+        assert wait_until(lambda: fresh.state == "idle")
+        assert reg.request(key, "again") == ""
+        assert wait_until(lambda: len(calls) == 1)
+        assert fresh.worker.is_alive()
+        reg.shutdown_all()
+
+
+def test_every_lifetime_stop_also_closes_the_box():
+    """평생 정지(``tm.stop_event``)를 세우는 자리는 `_stop_worker` 하나다 — 세우기만 하고 상자를 닫지 않으면 기다리는
+    워커가 깨지 않는다(꺼내기는 닫힘으로 끝난다)."""
+    import ast
+    import inspect
+
+    import agent_cli.subagent.agents_live as mod
+
+    tree = ast.parse(inspect.getsource(mod))
+    setters = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        for n in ast.walk(fn):
+            if (
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "set"
+                and isinstance(n.func.value, ast.Attribute)
+                and n.func.value.attr == "stop_event"
+            ):
+                setters.append(fn.name)
+    assert setters == ["_stop_worker"], setters

@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 from agent_cli import item_ids
 from agent_cli.post.envelope import Envelope, is_human_words, words
-from agent_cli.post.office import CLOSED, OPEN_MAIL, PostOffice
+from agent_cli.post.office import CLOSED, OPEN_MAIL, PostOffice, Take
 
 __all__ = ["CLOSED", "MAIN", "OPEN_MAIL", "MainInput", "human_addr", "intake_item"]
 
@@ -80,11 +80,13 @@ class MainInput:
     def wait_to_open(self, timeout: float | None):
         """펌프: 다음 런을 열 것 — 사람의 말 항목(꺼냄), `OPEN_MAIL`(깨우는 메일이 있다), `CLOSED`, 또는 None
         (``timeout``). 기다리는 동안 main 은 한가함(`idle`)이다."""
-        got = self.post.wait_to_open(MAIN, timeout=timeout)
-        if isinstance(got, Envelope):
-            self._changed()
-            return self.item_of(got)
-        return got
+        got = self.post.next_run(MAIN, Take.WORDS_FIRST, timeout=timeout)
+        if got is None or got is CLOSED:
+            return got
+        if not got:
+            return OPEN_MAIL
+        self._changed()
+        return self.item_of(got[0])
 
     def take_first_if(self, pred: Callable[[str], bool]) -> dict | None:
         """맨 앞의 사람의 말이 ``pred(text)`` 면 꺼내 돌려준다, 아니면 None — main 이 제자리에서 기다리는 동안 친

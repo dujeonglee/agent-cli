@@ -376,6 +376,11 @@ class PostOffice:
             self._closed.add(addr)
             self.cv.notify_all()
 
+    def reopen(self, addr: str) -> None:
+        """닫은 상자를 다시 연다 — 같은 주소에 새 주인이 선다(죽은 에이전트를 되살림). 멱등."""
+        with self.cv:
+            self._closed.discard(addr)
+
     def idle(self, addr: str) -> bool:
         """``addr`` 가 지금 런을 열 것을 기다리는 중인가(`wait_to_open` 안)."""
         with self.cv:
