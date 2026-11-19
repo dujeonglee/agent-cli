@@ -2260,7 +2260,12 @@ class TestMidRunAbsorption:
         assert reg.request(b, "리뷰해줘", author="user:dj") == ""
         (item,) = reg.absorb_pending(tm)
         assert item == {
-            "user_request": {"id": "u-2", "author": "user:dj", "text": "리뷰해줘"}
+            "user_request": {
+                "id": "u-2",
+                "author": "user:dj",
+                "text": "리뷰해줘",
+                "images": [],  # 사람 말의 이미지 자리 — 런 시작(`Start.images`)과 같다
+            }
         }
         assert reg.reply_debt(f"agent:{b}", "user:dj").human  # `reply` 거부 사유
         gate.set()

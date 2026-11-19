@@ -949,7 +949,12 @@ class AgentLoop:
             self._state.ledger.add_request(
                 ur["id"], ur.get("author") or "", ur["text"], turn=self.turn
             )
-            self._add_user_message(ur["text"], ur.get("author"), request_id=ur["id"])
+            self._add_user_message(
+                ur["text"],
+                ur.get("author"),
+                request_id=ur["id"],
+                images=ur.get("images") or None,
+            )
             return
         rec = it["record"]
         self.messages.append({"role": "user", "content": rec["content"]})
