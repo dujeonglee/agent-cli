@@ -3,6 +3,9 @@
 ``python slow_mcp_server.py <표식 디렉터리>`` 로 뜬다. 시작하면 ``<디렉터리>/server.pid`` 에
 자기 PID 를 적고(끝난 뒤 남지 않았는지 보려고), ``sleep`` 이 끝까지 자면 ``slept-<n>`` 을,
 취소되면 ``cancelled-<n>`` 을 남긴다(포기한 뒤 서버가 하던 일을 계속했는지 보려고).
+
+부모(테스트 프로세스)가 사라지면 스스로 끝난다 — ``hang`` 이 돌고 있으면 stdin 이 닫혀도 서버가
+끝나지 않아, 테스트가 정리 전에 죽으면(SIGKILL·시간 초과) 고아로 남았다.
 """
 
 from __future__ import annotations
@@ -10,6 +13,8 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -17,6 +22,16 @@ from mcp.server.fastmcp import FastMCP
 MARKS = Path(sys.argv[1])
 MARKS.mkdir(parents=True, exist_ok=True)
 (MARKS / "server.pid").write_text(str(os.getpid()))
+PARENT = os.getppid()
+
+
+def _exit_when_orphaned() -> None:
+    while os.getppid() == PARENT:
+        time.sleep(0.2)
+    os._exit(0)
+
+
+threading.Thread(target=_exit_when_orphaned, daemon=True).start()
 
 server = FastMCP("slow")
 

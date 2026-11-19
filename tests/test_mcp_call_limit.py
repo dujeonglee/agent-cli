@@ -291,14 +291,17 @@ def servers(tmp_path_factory):
     pids = [int((marks[n] / "server.pid").read_text()) for n in marks]
     baseline = len(asyncio.all_tasks(m._get_loop()))
     yield m, marks, baseline
-    m.disconnect_all()
-    # disconnect 가 서버 프로세스를 끝내지 못하는 경우가 있다(이 변경 전부터 — 보고에 적었다) —
-    # 이 테스트가 띄운 프로세스는 이 테스트가 거둔다.
-    for pid in pids:
-        if _alive(pid):
-            os.kill(pid, signal.SIGTERM)
-    for pid in pids:
-        assert wait_until(lambda p=pid: not _alive(p)), f"서버 {pid} 가 남았다"
+    try:
+        m.disconnect_all()
+    finally:
+        # disconnect 가 서버 프로세스를 끝내지 못하는 경우가 있다(이 변경 전부터) — 이 테스트가
+        # 띄운 프로세스는 이 테스트가 거둔다. disconnect 가 터져도(루프가 끝나지 않은 호출로 아직
+        # 도는 중이면 "Cannot close a running event loop") 거두도록 finally 다.
+        for pid in pids:
+            if _alive(pid):
+                os.kill(pid, signal.SIGTERM)
+        for pid in pids:
+            assert wait_until(lambda p=pid: not _alive(p)), f"서버 {pid} 가 남았다"
 
 
 def _call(m, server: str, tool: str, args: dict, ctx=None):
