@@ -173,19 +173,25 @@ class TestProbe:
         assert ok is False and needle in msg
         m.disconnect_all.assert_called_once()
 
-    def test_timeout_is_bounded(self):
-        """initialize() 에 타임아웃이 없어 응답 없는 서버가 마법사를 영원히
-        세운다 — 프로브가 상한을 건다."""
-        import threading
+    def test_the_probe_limit_is_the_managers_connect_limit(self):
+        """응답 없는 서버는 매니저의 연결 상한에서 실패한다(부팅과 같은 길·같은 문장 — 실서버는
+        test_mcp_manager_thread). 프로브는 상한을 매니저에 넘기고 그 status 를 문장으로 옮긴다."""
+        from agent_cli.mcp.client import CONNECT_TIMEOUT_S
 
-        m = MagicMock()
-        m.connect_all.side_effect = lambda c, **kw: (
-            threading.Event().wait()
-        )  # never returns
-        with patch("agent_cli.mcp.client.McpClientManager", return_value=m):
-            ok, msg, _, secs = W.probe_server("s", {"url": "http://h:1"}, timeout=0.2)
-        assert ok is False and "no response within" in msg
-        assert 0.15 <= secs < 2.0
+        status = (
+            "error: no response within 0.2s — the server started but does not "
+            "answer initialize (check the package name and arguments)"
+        )
+        m = self._fake_manager(status)
+        with patch("agent_cli.mcp.client.McpClientManager", return_value=m) as M:
+            ok, msg, _, _ = W.probe_server("s", {"url": "http://h:1"}, timeout=0.2)
+        M.assert_called_once_with(connect_timeout_s=0.2)
+        assert ok is False and msg == status.removeprefix("error: ")
+        m.disconnect_all.assert_called_once()
+        import inspect
+
+        default = inspect.signature(W.probe_server).parameters["timeout"].default
+        assert default == CONNECT_TIMEOUT_S == 45
 
 
 # ── 대화형 ──────────────────────────────────────────────

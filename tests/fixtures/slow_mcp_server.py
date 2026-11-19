@@ -1,7 +1,8 @@
 """테스트용 MCP 서버 (stdio) — 빠른 도구, N초 자는 도구, 영영 답하지 않는 도구.
 
-``python slow_mcp_server.py <표식 디렉터리>`` 로 뜬다. 시작하면 ``<디렉터리>/server.pid`` 에
-자기 PID 를 적고(끝난 뒤 남지 않았는지 보려고), ``sleep`` 이 끝까지 자면 ``slept-<n>`` 을,
+``python slow_mcp_server.py <표식 디렉터리> [mute]`` 로 뜬다(``mute`` 면 MCP 로 답하지 않는다). 시작하면 ``<디렉터리>/server.pid`` 에
+자기 PID 를 적고(끝난 뒤 남지 않았는지 보려고), ``sleep`` 은 자기 시작할 때 ``sleeping-<n>`` 을,
+끝까지 자면 ``slept-<n>`` 을,
 취소되면 ``cancelled-<n>`` 을 남긴다(포기한 뒤 서버가 하던 일을 계속했는지 보려고).
 
 부모(테스트 프로세스)가 사라지면 스스로 끝난다 — ``hang`` 이 돌고 있으면 stdin 이 닫혀도 서버가
@@ -50,6 +51,7 @@ def fast(text: str) -> str:
 @server.tool()
 async def sleep(seconds: float, tag: str) -> str:
     """Sleep, then answer."""
+    (MARKS / f"sleeping-{tag}").touch()
     try:
         await asyncio.sleep(seconds)
     except asyncio.CancelledError:
@@ -57,6 +59,16 @@ async def sleep(seconds: float, tag: str) -> str:
         raise
     (MARKS / f"slept-{tag}").touch()
     return f"slept:{tag}"
+
+
+@server.tool()
+async def wait_for_go(tag: str) -> str:
+    """``waiting-<tag>`` 를 남기고, 테스트가 ``go-<tag>`` 를 만들 때까지 기다렸다가 답한다 — 끝나는
+    때를 시간이 아니라 테스트가 정한다."""
+    (MARKS / f"waiting-{tag}").touch()
+    while not (MARKS / f"go-{tag}").exists():
+        await asyncio.sleep(0.02)
+    return f"went:{tag}"
 
 
 @server.tool()
@@ -68,4 +80,7 @@ async def hang(tag: str) -> str:
 
 
 if __name__ == "__main__":
+    if sys.argv[2:] == ["mute"]:
+        # 떠서 stdin 은 열어 두되 아무 말도 하지 않는다 — ``initialize`` 에 답하지 않는 서버
+        threading.Event().wait()
     server.run()

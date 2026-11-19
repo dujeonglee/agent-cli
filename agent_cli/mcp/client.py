@@ -1,15 +1,19 @@
 """MCP client manager — connects to MCP servers and executes tools.
 
-Uses the mcp Python SDK for stdio and SSE transports.
-Provides sync wrappers around async MCP client operations.
+Uses the mcp Python SDK for stdio, SSE and Streamable HTTP transports. The
+async SDK runs on the manager's own event-loop thread; the public methods are
+synchronous and safe to call from several threads (main and agents).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 import sys
+import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +25,26 @@ from agent_cli.mcp.config import (
 
 #: 도구 호출을 기다리며 런의 정지를 보는 간격(초) — 전경 `shell` 의 ``STOP_POLL_S`` 와 같은 값.
 STOP_POLL_S = 0.2
+
+#: 연결 하나(전송 열기·``initialize``·도구 목록)를 기다리는 상한(초). 마법사의 연결 테스트와 부팅이
+#: 같은 값이다 — 45초는 마법사가 느린 첫 실행(``npx`` 가 패키지를 내려받는 동안)을 위해 고른 값이다.
+#: 넘으면 그 연결을 취소하고(같은 태스크 안의 정리라 서버 프로세스도 끝난다) 실패로 적는다.
+CONNECT_TIMEOUT_S = 45
+
+#: 연결 하나를 닫을 때 그 태스크가 스스로 닫기를 기다리는 시간(초) — 넘으면 취소한다. 루프 스레드를
+#: 내릴 때 join 도 이만큼. stdio 전송은 닫을 때 서버에 2초를 주고 그 뒤 끝낸다(mcp 1.25).
+DISCONNECT_TIMEOUT_S = 5
+
+
+class McpConnectTimedOut(Exception):
+    """연결이 상한 안에 준비되지 않았다 — 문장은 마법사가 써 온 그대로다."""
+
+    def __init__(self, limit_s: float) -> None:
+        super().__init__(
+            f"no response within {limit_s:g}s — the server started but does not "
+            "answer initialize (check the package name and arguments)"
+        )
+        self.limit_s = limit_s
 
 
 class McpCallTimedOut(Exception):
@@ -82,16 +106,6 @@ class McpToolInfo:
     name: str
     description: str
     input_schema: dict
-
-
-@dataclass
-class McpResourceInfo:
-    """Metadata for an MCP resource."""
-
-    server: str
-    uri: str
-    name: str
-    description: str
 
 
 def _leaf_error(e: BaseException) -> str:
@@ -177,57 +191,87 @@ class McpClientManager:
     """Manages connections to MCP servers.
 
     Each server gets its own client session. Tools are accessed via
-    {server_name}.{tool_name} namespace.
+    ``mcp__{server}__{tool}`` (adapter).
+
+    **루프는 매니저의 스레드 하나**(v10.152.0). 처음 연결할 때 데몬 스레드 ``mcp-loop`` 가 이벤트 루프를
+    돌기 시작하고, 동기 API 는 전부 :meth:`_submit` 으로 그 루프에 코루틴을 보내고 답을 기다린다.
+    종전엔 부르는 스레드가 ``run_until_complete`` 를 돌려서 (1) main 과 에이전트가 겹쳐 부르면
+    ``This event loop is already running`` 이었고 (2) 연결을 연 태스크와 닫는 태스크가 달라 anyio 가
+    해제를 거절해 서버 프로세스가 끝나지 않았다(mcp 2.x 에서는 ``disconnect_all`` 이 돌아오지 않았다).
+
+    서버 하나의 연결은 **태스크 하나가 처음부터 끝까지 든다**(:meth:`_serve`) — 전송·세션을 열고,
+    도구 목록을 받고, 닫으라는 신호(``closing``)를 기다렸다가 같은 태스크에서 닫는다.
+
+    잠금이 없는 이유: ``_sessions``·``_closers``·``_tools``·``status``·``configs`` 는
+    ``connect_all``(부팅 한 번)과 ``disconnect``·``disconnect_all``(종료) 안에서만 쓰인다 — 루프
+    스레드가 쓴 것은 ``_submit`` 의 ``future.result()`` 가 돌아오기 전에 끝나 있으므로(완료가
+    happens-before) 그 뒤 어느 스레드가 읽어도 다 쓴 값을 본다. 런타임 중에 다시 연결하는 길은 없다
+    (웹 🔌 칩·훅·도구 호출은 읽기만). 스레드 시작도 ``connect_all`` 에서만이라 경합이 없다.
     """
 
-    def __init__(self):
-        self._clients: dict[str, Any] = {}  # server_name → (session, cleanup)
+    def __init__(self, *, connect_timeout_s: float = CONNECT_TIMEOUT_S):
+        self._connect_timeout_s = connect_timeout_s
+        self._sessions: dict[str, Any] = {}  # server_name → ClientSession
+        # server_name → (닫으라는 신호, 그 연결을 든 태스크) — 둘 다 루프 스레드의 것
+        self._closers: dict[str, tuple[asyncio.Event, asyncio.Task]] = {}
         self._tools: dict[str, list[McpToolInfo]] = {}  # server_name → tools
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
         # v9.2.0: 마지막 connect_all 의 서버별 결과("connected" | "error: …")와
         # 설정 — 웹 🔌 칩(GET /api/mcp)이 부팅 시점 상태를 보여주려면 실패한
         # 서버도 기억해야 한다(종전엔 stderr 한 줄로 흘려보내고 잊었다).
         self.status: dict[str, str] = {}
         self.configs: dict[str, McpServerConfig] = {}
 
-    def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """Get or create event loop for sync wrappers."""
-        if self._loop is None or self._loop.is_closed():
-            self._loop = asyncio.new_event_loop()
+    def _loop_running_in_its_thread(self) -> asyncio.AbstractEventLoop:
+        """매니저의 루프 — 없으면 만들고 데몬 스레드 ``mcp-loop`` 에서 돌리기 시작한다."""
+        if self._loop is None:
+            loop = asyncio.new_event_loop()
+            thread = threading.Thread(
+                target=loop.run_forever, name="mcp-loop", daemon=True
+            )
+            thread.start()
+            self._loop, self._thread = loop, thread
         return self._loop
 
-    def _run_sync(self, coro):
-        """Run async coroutine synchronously."""
-        loop = self._get_loop()
-        return loop.run_until_complete(coro)
+    def _submit(self, coro: Coroutine[Any, Any, Any]) -> Any:
+        """``coro`` 를 매니저의 루프에서 돌리고 그 결과를 돌려준다(예외는 그대로). 기다리던 스레드가
+        ``KeyboardInterrupt`` 등으로 빠지면 그 코루틴을 취소한다 — 루프에 떠 있게 두지 않는다.
+        루프 스레드 자신이 부르면 자기를 기다리게 되므로 거절한다."""
+        if self._thread is not None and threading.current_thread() is self._thread:
+            coro.close()
+            raise RuntimeError("the MCP loop thread cannot wait on itself")
+        future = asyncio.run_coroutine_threadsafe(
+            coro, self._loop_running_in_its_thread()
+        )
+        try:
+            return future.result()
+        except BaseException:
+            future.cancel()
+            raise
 
     # ── Connection management ────────────────────────
 
     def connect_all(
         self, configs: dict[str, McpServerConfig], *, warn: bool = True
     ) -> dict[str, str]:
-        """Connect to all configured servers.
+        """Connect to all configured servers — 동시에, 서버마다 ``CONNECT_TIMEOUT_S`` 까지.
 
         Returns dict of {server_name: status} where status is
-        "connected" or error message.
+        "connected" or error message — 설정 순서대로(부팅 줄·🔌 칩 순서가 그대로다).
 
         ``warn=False`` 면 실패를 stderr 에 찍지 않는다 (v9.3.0) — 마법사의
         전송 방식 자동 판별은 **실패를 전제로 두 번 시도**하므로, 예상된
         첫 실패에 [warn] 을 찍으면 성공한 등록에도 경고가 섞여 보인다.
         부팅 경로는 종전대로 찍는다(그때의 실패는 진짜 문제다)."""
+        self.configs.update(configs)
+        failures = self._submit(self._connect_each(configs)) if configs else {}
         results = {}
-        for name, config in configs.items():
-            self.configs[name] = config
-            try:
-                self._run_sync(self._connect_one(name, config))
+        for name in configs:
+            e = failures[name]
+            if e is None:
                 results[name] = "connected"
-            # CancelledError 는 BaseException 이라 ``except Exception`` 을
-            # 빠져나간다 (v9.3.0 실장에서 잡힘: streamable-http 로 구 SSE
-            # 엔드포인트를 치면 transport 의 anyio cancel scope 가 대기 중인
-            # initialize 를 취소해 그대로 터졌다). 여기서의 취소는 **이 연결
-            # 시도의 실패**이지 프로그램 중단이 아니다 — 사용자 Ctrl-C 는
-            # KeyboardInterrupt 로 오므로 여전히 전파된다.
-            except (Exception, asyncio.CancelledError) as e:
+            else:
                 msg = _leaf_error(e)
                 results[name] = f"error: {msg}"
                 if warn:
@@ -237,6 +281,31 @@ class McpClientManager:
                     )
             self.status[name] = results[name]
         return results
+
+    async def _connect_each(
+        self, configs: dict[str, McpServerConfig]
+    ) -> dict[str, BaseException | None]:
+        """서버들에 동시에 연결한다 → 서버별 실패(성공이면 None). 하나가 늦거나 실패해도 다른 서버는
+        그대로 붙는다. 연결의 취소(``CancelledError``)도 **그 연결 시도의 실패**로 받는다 (v9.3.0
+        실장에서 잡힘: streamable-http 로 구 SSE 엔드포인트를 치면 transport 의 anyio cancel scope 가
+        대기 중인 initialize 를 취소한다) — 사용자 Ctrl-C 는 기다리던 스레드의 ``KeyboardInterrupt``
+        로 오므로(`_submit`) 여전히 전파된다."""
+        names = list(configs)
+        outcomes = await asyncio.gather(
+            *(self._connect_within_limit(n, configs[n]) for n in names),
+            return_exceptions=True,
+        )
+        return dict(zip(names, outcomes))
+
+    async def _connect_within_limit(self, name: str, config: McpServerConfig) -> None:
+        """:meth:`_connect_one` 을 ``connect_timeout_s`` 까지 기다린다 — 넘으면 그 연결을 취소하고
+        :class:`McpConnectTimedOut`."""
+        try:
+            await asyncio.wait_for(
+                self._connect_one(name, config), self._connect_timeout_s
+            )
+        except asyncio.TimeoutError:
+            raise McpConnectTimedOut(self._connect_timeout_s) from None
 
     def summary(self) -> dict:
         """웹 🔌 칩용 스냅샷 (v9.2.0): 서버별 전송·상태·도구 수/이름·실패 이유
@@ -264,95 +333,20 @@ class McpClientManager:
         }
 
     async def _connect_one(self, name: str, config: McpServerConfig) -> None:
-        """Connect to a single MCP server."""
-        problem = call_timeout_problem(config.call_timeout_s)
-        if problem:
-            raise ValueError(f"Invalid config for '{name}': {problem}")
-        if config.is_stdio:
-            await self._connect_stdio(name, config)
-        elif config.is_streamable_http:
-            await self._connect_streamable_http(name, config)
-        elif config.is_sse:
-            await self._connect_sse(name, config)
-        else:
-            raise ValueError(
-                f"Invalid config for '{name}': need 'command' (stdio) or "
-                "'url' (sse / streamable-http)"
-            )
-
-    async def _connect_stdio(self, name: str, config: McpServerConfig) -> None:
-        """Connect via stdio transport."""
-        import os
-
-        # SDK import 는 **의도적으로 함수 안**이다 (v8.62.0 부터 필수 의존성이
-        # 됐어도 유지): ``import mcp`` 가 실측 ~235ms 라 최상위로 올리면 MCP 를
-        # 쓰지 않는 모든 CLI 실행에 그 비용이 붙는다. 계약은
-        # ``test_mcp.py::TestMcpSdkIsADeclaredDependency`` 가 고정한다.
-        from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
-
-        params = StdioServerParameters(
-            command=config.command,
-            args=config.args,
-            env={**dict(os.environ), **config.env} if config.env else None,
-        )
-
-        # Suppress MCP server stderr to prevent terminal state corruption
-        # Handle outlives this function (passed to stdio_client, closed in
-        # ``disconnect``), so no context manager; opening /dev/null never blocks.
-        devnull = open(os.devnull, "w")  # noqa: SIM115, ASYNC230
+        """서버 하나에 연결한다 — 연결을 들 태스크(:meth:`_serve`)를 띄우고, 세션과 도구 목록이
+        준비되면 기록한다. 준비 전에 실패하면 그 예외가 여기서 난다(태스크는 이미 끝났다)."""
+        _check_config(name, config)
+        ready: asyncio.Future = asyncio.get_running_loop().create_future()
+        closing = asyncio.Event()
+        task = asyncio.ensure_future(self._serve(config, ready, closing))
         try:
-            transport_cm = stdio_client(params, errlog=devnull)
-            read, write = await transport_cm.__aenter__()
-
-            session = ClientSession(read, write)
-            await session.__aenter__()
-            await session.initialize()
+            session, tools = await ready
         except BaseException:
-            # 연결 실패 시 방금 연 fd 를 닫는다 — 저장 전 예외 경로 누수 방지.
-            devnull.close()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
             raise
-
-        # Store session and cleanup info (errlog fd 는 disconnect 에서 닫는다 —
-        # 종전엔 저장하지 않아 서버당 fd 1개가 프로세스 수명 내내 누수됐다,
-        # 리뷰 §4.5)
-        self._clients[name] = {
-            "session": session,
-            "transport_cm": transport_cm,
-            "session_cm": session,
-            "errlog": devnull,
-        }
-        await self._load_tools(name, session)
-
-    async def _connect_streamable_http(
-        self, name: str, config: McpServerConfig
-    ) -> None:
-        """Streamable HTTP 전송 (MCP 2025-03-26, v9.3.0).
-
-        구 ``sse_client`` 로 이 서버에 붙으면 ``Accept`` 헤더가 모자라
-        -32600 "Not Acceptable" 로 거절당한다 — 사용자 제보로 드러난 공백.
-        SDK 가 ``streamablehttp_client`` 를 이미 제공하므로 배선만 하면 된다.
-        (세 값을 yield 하는 점만 sse 와 다르다 — 셋째는 session id getter.)"""
-        from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
-
-        transport_cm = streamablehttp_client(config.url)
-        read, write, _get_session_id = await transport_cm.__aenter__()
-
-        session = ClientSession(read, write)
-        await session.__aenter__()
-        await session.initialize()
-
-        self._clients[name] = {
-            "session": session,
-            "transport_cm": transport_cm,
-            "session_cm": session,
-        }
-        await self._load_tools(name, session)
-
-    async def _load_tools(self, name: str, session) -> None:
-        """도구 목록 적재 — 세 전송 공용 (v9.3.0; 종전 stdio/sse 에 복붙 2벌)."""
-        tools_result = await session.list_tools()
+        self._sessions[name] = session
+        self._closers[name] = (closing, task)
         self._tools[name] = [
             McpToolInfo(
                 server=name,
@@ -360,77 +354,91 @@ class McpClientManager:
                 description=t.description or "",
                 input_schema=t.inputSchema if hasattr(t, "inputSchema") else {},
             )
-            for t in tools_result.tools
+            for t in tools
         ]
 
-    async def _connect_sse(self, name: str, config: McpServerConfig) -> None:
-        """구 HTTP+SSE 전송 (MCP 초기 규격)."""
+    async def _serve(
+        self, config: McpServerConfig, ready: asyncio.Future, closing: asyncio.Event
+    ) -> None:
+        """연결 하나의 수명 — 이 태스크가 전송과 세션을 열고(``initialize``·``list_tools``), ``ready``
+        에 ``(세션, 도구 목록)`` 을 넣고, ``closing`` 이 설 때까지 기다렸다가 **같은 태스크에서** 닫는다
+        (anyio 는 연 태스크가 닫아야 해제한다 — 전송의 정리가 서버 프로세스를 끝낸다). 준비 전의
+        실패는 ``ready`` 로 건너간다. 준비 뒤의 실패(서버가 먼저 끊음·닫을 때의 오류)는 삼킨다 — 그
+        연결의 호출이 각자 실패로 알게 된다."""
         from mcp import ClientSession
-        from mcp.client.sse import sse_client
 
-        transport_cm = sse_client(config.url)
-        read, write = await transport_cm.__aenter__()
-
-        session = ClientSession(read, write)
-        await session.__aenter__()
-        await session.initialize()
-
-        self._clients[name] = {
-            "session": session,
-            "transport_cm": transport_cm,
-            "session_cm": session,
-        }
-        await self._load_tools(name, session)
+        try:
+            async with (
+                _open_transport(config) as (read, write),
+                ClientSession(read, write) as session,
+            ):
+                await session.initialize()
+                listed = await session.list_tools()
+                if not ready.done():
+                    ready.set_result((session, listed.tools))
+                await closing.wait()
+        except asyncio.CancelledError:
+            if not ready.done():
+                ready.cancel()
+            raise
+        except BaseException as e:  # 전송 오류는 anyio ExceptionGroup 으로도 온다
+            if not ready.done():
+                ready.set_exception(e)
 
     @staticmethod
-    def _drain(loop: asyncio.AbstractEventLoop) -> None:
-        """종료 후 남은 태스크 정리 (v9.3.0).
-
-        streamable-http 전송은 내부 task group 을 쓰므로 ``__aexit__`` 만으로는
-        취소가 전파될 틈이 없어, 루프가 GC 될 때 "Task was destroyed but it is
-        pending!" 이 **stderr 로 샌다** — 성공한 등록 출력에 섞여 사용자에겐
-        에러처럼 보인다(실장에서 잡힘). 취소 후 한 번 돌려 정리한다."""
-        pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
-        if not pending:
-            return
-        for t in pending:
-            t.cancel()
-        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-
-    def disconnect_all(self) -> None:
-        """Disconnect from all servers."""
-        for name in list(self._clients.keys()):
-            self.disconnect(name)
-        if self._loop and not self._loop.is_closed():
-            self._loop.close()
-            self._loop = None
+    async def _close(closing: asyncio.Event, task: asyncio.Task) -> None:
+        """연결 하나를 닫는다 — 닫으라는 신호를 세우고 그 태스크가 스스로 닫기를
+        ``DISCONNECT_TIMEOUT_S`` 까지 기다린다. 넘으면 취소한다(취소도 같은 태스크 안의 정리다)."""
+        closing.set()
+        done, _ = await asyncio.wait({task}, timeout=DISCONNECT_TIMEOUT_S)
+        if not done:
+            task.cancel()
+            await asyncio.wait({task}, timeout=DISCONNECT_TIMEOUT_S)
 
     def disconnect(self, name: str) -> None:
-        """Disconnect from a specific server."""
-        client = self._clients.pop(name, None)
-        if client is None:
-            return
+        """Disconnect from a specific server — 그 서버의 연결 태스크가 세션과 전송을 닫는다
+        (stdio 면 서버 프로세스가 끝난다)."""
+        entry = self._closers.pop(name, None)
+        self._sessions.pop(name, None)
         self._tools.pop(name, None)
-        try:
-            loop = self._get_loop()
-            session = client["session"]
-            transport_cm = client["transport_cm"]
-            loop.run_until_complete(session.__aexit__(None, None, None))
-            loop.run_until_complete(transport_cm.__aexit__(None, None, None))
-        except Exception:
-            pass
-        try:
-            self._drain(loop)
-        except Exception:
-            pass
-        finally:
-            # stdio 전송의 errlog fd (sse 는 키 없음 — no-op).
-            errlog = client.get("errlog")
-            if errlog is not None:
-                try:
-                    errlog.close()
-                except Exception:
-                    pass
+        if entry is not None:
+            self._submit(self._close(*entry))
+
+    def disconnect_all(self) -> None:
+        """모든 연결을 닫고 루프 스레드를 내린다 — 런타임 종료·마법사 끝에서 부른다.
+
+        순서: 연결 태스크마다 닫기(동시에) → 루프에 남은 태스크(그 사이 끝나지 않은 도구 호출)를
+        취소하고 끝나기를 기다림 — 그 호출을 기다리던 스레드는 예외로 풀린다 → 비동기 생성기 정리 →
+        루프 정지 → 스레드 join(``DISCONNECT_TIMEOUT_S``) → 루프 닫기. 스레드가 그 안에 안 끝나면
+        루프를 닫지 않고 둔다(데몬이라 프로세스 종료를 막지 않는다)."""
+        entries = list(self._closers.values())
+        self._closers.clear()
+        self._sessions.clear()
+        self._tools.clear()
+        loop, thread = self._loop, self._thread
+        if loop is None or thread is None:
+            return
+        self._submit(self._shut_down(entries))
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(DISCONNECT_TIMEOUT_S)
+        if not thread.is_alive():
+            loop.close()
+        self._loop, self._thread = None, None
+
+    async def _shut_down(
+        self, entries: list[tuple[asyncio.Event, asyncio.Task]]
+    ) -> None:
+        """``disconnect_all`` 의 루프 쪽 — 연결을 닫고, 남은 태스크를 취소하고, 비동기 생성기를 닫는다."""
+        await asyncio.gather(
+            *(self._close(closing, task) for closing, task in entries),
+            return_exceptions=True,
+        )
+        rest = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for t in rest:
+            t.cancel()
+        if rest:
+            await asyncio.wait(rest, timeout=DISCONNECT_TIMEOUT_S)
+        await asyncio.get_running_loop().shutdown_asyncgens()
 
     # ── Tool operations ──────────────────────────────
 
@@ -455,77 +463,83 @@ class McpClientManager:
 
         서버 설정의 ``call_timeout_s``(없으면 기본 120초) 안에 답이 없으면
         :class:`McpCallTimedOut`, ``stopped``(이 런의 정지 — `RunContext.stopped`)가 서면
-        :class:`McpCallStopped` — 둘 다 기다리던 요청을 취소한 뒤다(`await_answer_or_give_up`)."""
+        :class:`McpCallStopped` — 둘 다 기다리던 요청을 취소한 뒤다(`await_answer_or_give_up`).
+        여러 스레드가 동시에 불러도 된다 — 한 루프에서 함께 돈다. 기다리는 사이 연결이 닫히면
+        (``disconnect_all``) ``ConnectionError``."""
+        session = self._sessions.get(server)
+        if session is None:
+            raise ConnectionError(f'MCP server "{server}" not connected')
         config = self.configs.get(server)
         limit_s = config.call_timeout_s if config else DEFAULT_CALL_TIMEOUT_S
-        return self._run_sync(
-            self._call_tool_async(
-                server, tool_name, arguments, limit_s, stopped or (lambda: False)
-            )
-        )
-
-    async def _call_tool_async(
-        self,
-        server: str,
-        tool_name: str,
-        arguments: dict,
-        limit_s: float,
-        stopped: Callable[[], bool],
-    ) -> Any:
-        """Call an MCP tool asynchronously, bounded by ``limit_s`` and ``stopped``."""
-        client = self._clients.get(server)
-        if client is None:
-            raise ConnectionError(f'MCP server "{server}" not connected')
-
-        session = client["session"]
-        return await await_answer_or_give_up(
-            session.call_tool(tool_name, arguments), limit_s=limit_s, stopped=stopped
-        )
-
-    # ── Resource operations ──────────────────────────
-
-    def list_resources(self, server: str) -> list[McpResourceInfo]:
-        """List resources for a specific server."""
-        client = self._clients.get(server)
-        if client is None:
-            return []
         try:
-            result = self._run_sync(client["session"].list_resources())
-            return [
-                McpResourceInfo(
-                    server=server,
-                    uri=str(r.uri),
-                    name=r.name or "",
-                    description=r.description or "",
+            return self._submit(
+                await_answer_or_give_up(
+                    session.call_tool(tool_name, arguments),
+                    limit_s=limit_s,
+                    stopped=stopped or (lambda: False),
                 )
-                for r in result.resources
-            ]
-        except Exception:
-            return []
-
-    def read_resource(self, server: str, uri: str) -> str:
-        """Read a resource by URI."""
-        return self._run_sync(self._read_resource_async(server, uri))
-
-    async def _read_resource_async(self, server: str, uri: str) -> str:
-        """Read a resource asynchronously."""
-        client = self._clients.get(server)
-        if client is None:
-            raise ConnectionError(f'MCP server "{server}" not connected')
-
-        session = client["session"]
-        result = await session.read_resource(uri)
-        # Extract text content
-        if result.contents:
-            return result.contents[0].text or ""
-        return ""
+            )
+        except (McpCallTimedOut, McpCallStopped):
+            raise
+        except (Exception, asyncio.CancelledError) as e:
+            if server not in self._sessions:
+                raise ConnectionError(f'MCP server "{server}" was disconnected') from e
+            raise
 
     # ── Status ───────────────────────────────────────
 
     @property
     def connected_servers(self) -> list[str]:
         """List of currently connected server names."""
-        return list(self._clients.keys())
+        return list(self._sessions.keys())
 
     def is_connected(self, server: str) -> bool:
-        return server in self._clients
+        return server in self._sessions
+
+
+def _check_config(name: str, config: McpServerConfig) -> None:
+    """연결할 수 없는 설정이면 ``ValueError`` — 상한 값이 쓸 수 없거나 전송을 정할 수 없을 때."""
+    problem = call_timeout_problem(config.call_timeout_s)
+    if problem:
+        raise ValueError(f"Invalid config for '{name}': {problem}")
+    if not (config.is_stdio or config.is_streamable_http or config.is_sse):
+        raise ValueError(
+            f"Invalid config for '{name}': need 'command' (stdio) or "
+            "'url' (sse / streamable-http)"
+        )
+
+
+@contextlib.asynccontextmanager
+async def _open_transport(config: McpServerConfig):
+    """설정의 전송을 연다 → ``(read, write)`` 스트림. 닫힐 때 전송이 정리한다(stdio 는 서버
+    프로세스를 끝내고 errlog fd 를 닫는다).
+
+    SDK import 는 **의도적으로 함수 안**이다 (v8.62.0 부터 필수 의존성이 됐어도 유지): ``import mcp``
+    가 실측 ~235ms 라 최상위로 올리면 MCP 를 쓰지 않는 모든 CLI 실행에 그 비용이 붙는다. 계약은
+    ``test_mcp.py::TestMcpSdkIsADeclaredDependency`` 가 고정한다."""
+    if config.is_stdio:
+        from mcp import StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        params = StdioServerParameters(
+            command=config.command,
+            args=config.args,
+            env={**dict(os.environ), **config.env} if config.env else None,
+        )
+        # 서버 stderr 는 버린다 — 터미널 상태가 깨지지 않게. 여는 데 막히지 않는다.
+        with open(os.devnull, "w") as errlog:  # noqa: ASYNC230
+            async with stdio_client(params, errlog=errlog) as (read, write):
+                yield read, write
+    elif config.is_streamable_http:
+        # Streamable HTTP (MCP 2025-03-26, v9.3.0) — 구 sse_client 로 붙으면 Accept 헤더가 모자라
+        # -32600 "Not Acceptable" 로 거절당한다. 셋째 값은 session id getter.
+        from mcp.client.streamable_http import streamablehttp_client
+
+        async with streamablehttp_client(config.url) as (read, write, _session_id):
+            yield read, write
+    else:
+        # 구 HTTP+SSE 전송 (MCP 초기 규격)
+        from mcp.client.sse import sse_client
+
+        async with sse_client(config.url) as (read, write):
+            yield read, write
