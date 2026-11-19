@@ -30,6 +30,7 @@ from agent_cli.subagent.agent_mail import build_reply_record
 from agent_cli.subagent.agents_live import AgentRegistry, Question
 from agent_cli.subagent.question_port import QuestionPort
 from tests.loop_ports import make_ports, split_ports
+from tests.mail_support import absorbed_mail
 from tests.test_agents_live import (
     RecordingRenderer,
     _FakeLoopResult,
@@ -158,7 +159,7 @@ class TestRegisterAndDeliver:
             qid, err = reg.register_question(a, "배포해도 되나요?")
         assert not err and qid.startswith("q-")
         assert spy.calls == []
-        assert reg.drain_replies() == []  # main 의 메일박스로도 안 간다
+        assert absorbed_mail(reg) == []  # main 의 메일박스로도 안 간다
         assert [q.id for q in reg.open_human_questions()] == [qid]
         assert _question(reg, qid).target == "user"
 
@@ -262,7 +263,7 @@ class TestAnswer:
         (req,) = user_requests
         assert req["id"].startswith("u-") and "왼쪽" in req["text"]
         assert wait_run_done(reg, a)
-        assert reg.drain_replies() == []  # 사람 런 — main 에게 가는 것은 없다
+        assert absorbed_mail(reg) == []  # 사람 런 — main 에게 가는 것은 없다
 
 
 # ── G1: 사망 정리 ───────────────────────────────
@@ -463,7 +464,7 @@ class TestSurfaces:
         reg.request(b, "일감")
         assert wait_until(lambda: ran)
         assert wait_run_done(reg, b)
-        (rep,) = reg.drain_replies()
+        (rep,) = absorbed_mail(reg)
         assert rep["kind"] == "reply" and rep["output"].startswith(_NO_REPLY_LABEL)
         assert rep["re"] == "r-1"
         assert (tmp_path / "agents" / b / "replies" / "reply-r-1.md").is_file()
@@ -544,14 +545,14 @@ class TestWebAnswerEndpoint:
 
 
 class Replies:
-    """``drain_replies`` 는 비우므로 누적해서 본다."""
+    """main 의 흡수(`absorbed_mail`)는 비우므로 누적해서 본다."""
 
     def __init__(self, reg):
         self.reg = reg
         self.seen = []
 
     def all(self):
-        self.seen.extend(self.reg.drain_replies())
+        self.seen.extend(absorbed_mail(self.reg))
         return self.seen
 
     def kinds(self, kind="reply"):
@@ -1105,7 +1106,7 @@ class TestAskToUser:
         assert q.target == "user" and q.to_human
         assert [x.id for x in reg.open_human_questions()] == [qid], "트레이에 없다"
         # main 의 메일박스로는 **안 간다** — 그랬다면 main 이 또 대신 답한다.
-        assert reg.drain_replies() == []
+        assert absorbed_mail(reg) == []
 
     def test_any_human_answers_and_the_reply_reaches_the_asker(self, mkreg, renderer):
         reg = mkreg()
@@ -1513,7 +1514,7 @@ class TestCompleteIsLocal:
         b = spawn_idle(reg)
         reg.set_current_run_authors(["dj"])
         self._run(reg, b, "main", lambda: reg.question_port(b).reply("보고", id="r-1"))
-        mail = reg.drain_replies()
+        mail = absorbed_mail(reg)
         assert [m["output"] for m in mail] == ["보고"], f"에코가 섞였다: {mail}"
         assert mail[0].get("answers") == ["dj"]
 
@@ -1609,7 +1610,7 @@ class TestMainRunEnd:
         a = spawn_idle(reg)
         reg.message_to_main(a, "결정해 줘", expects_reply=True)
         reg.message_to_main(a, "보고", expects_reply=False)
-        recs = reg.drain_replies()
+        recs = absorbed_mail(reg)
         assert [r["expects_reply"] for r in recs] == [True, False]
         # 배달을 흉내 낸다 — core 의 `_inject_mail` 이 하는 일(빚의 id = 그 배달의 id)
         for r in recs:
@@ -1656,7 +1657,7 @@ class TestMainRunEnd:
         reg.message_to_main(a, "결정해 줘", expects_reply=True)
         reg.message_to_main(a, "보고", expects_reply=False, re="r-9")
         reg.message_to_main(a, "알림", notice=True)
-        m, r, n = reg.drain_replies()
+        m, r, n = absorbed_mail(reg)
         mc = build_reply_record(m, registry=reg)["content"]
         rid = m["item_id"]
         assert rid.startswith("r-")
@@ -1947,7 +1948,7 @@ class TestAskKeepsTheRequesterDebt:
         )
         # 런 끝: main 은 라벨 붙은 런 요약을 폴백으로 받는다 — 침묵이 아니다
         assert reg.end_run(me, "사용자 답을 기다립니다", run="r-1", success=True) == 1
-        (rec,) = [r for r in reg.drain_replies() if r.get("kind") == "reply"]
+        (rec,) = [r for r in absorbed_mail(reg) if r.get("kind") == "reply"]
         assert rec["output"].startswith(_NO_REPLY_LABEL) and rec["re"] == "r-1"
 
     def test_debt_left_by_a_waiting_run_carries_into_the_next_run(
@@ -1979,11 +1980,11 @@ class TestAskKeepsTheRequesterDebt:
         assert wait_until(lambda: seen == ["일감"])
         assert wait_run_done(reg, b)
         assert [d.id for d in reg.reply_debts(me)] == ["r-1"]  # wait — 빚은 그대로
-        assert reg.drain_replies() == []  # 폴백도 없다
+        assert absorbed_mail(reg) == []  # 폴백도 없다
         reg._deliver_peer_reply(b, a, "정책은 A", 0, re="r-9")
         assert wait_until(lambda: len(seen) == 2)
         assert wait_run_done(reg, b)
-        (mail,) = reg.drain_replies()
+        (mail,) = absorbed_mail(reg)
         assert mail["output"] == "최종 답" and mail["re"] == "r-1"
         assert reg.reply_debts(me) == []
 
@@ -2110,7 +2111,7 @@ class TestPerRequestDebts:
             assert port.reply("동료에게", id="5") == ""
         assert [c["key"] for c in spy.calls] == [a]
         assert port.reply("main 에게", id="3") == ""
-        (mail,) = reg.drain_replies()
+        (mail,) = absorbed_mail(reg)
         assert mail["output"] == "main 에게" and mail["re"] == "3"
         assert reg.reply_debts(me) == []
 
@@ -2383,7 +2384,7 @@ class TestMidRunAbsorption:
         recs = [r for r in _history(ctx) if r.get("source") == "agent_request"]
         assert len(recs) == 1 and recs[0]["tool"] == "agent"
         # 둘 다 main 에게 배달됐고 빚이 없다
-        mail = reg.drain_replies()
+        mail = absorbed_mail(reg)
         assert [m["output"] for m in mail] == ["추가 답", "원래 답"]
         assert reg.reply_debts(me) == []
 
@@ -2428,7 +2429,7 @@ class TestMidRunAbsorption:
         assert "was refused" not in third
         user_recs = [r for r in _history(ctx) if r.get("request_id") == "u-2"]
         assert user_recs and user_recs[0]["content"].startswith("[user:dj]: 사람 요청")
-        assert [m["output"] for m in reg.drain_replies()] == ["main 에게 답"]
+        assert [m["output"] for m in absorbed_mail(reg)] == ["main 에게 답"]
 
     def test_nothing_pending_changes_nothing(self, mkreg, renderer, tmp_path):
         reg, _a, b, gate = self._busy(mkreg)

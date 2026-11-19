@@ -16,6 +16,11 @@ from agent_cli.render.web import WebRenderer
 _WEB_HELP_TEXT = help_text(WEB)
 
 
+def is_web_command(message: str) -> bool:
+    """웹 전용 명령(``/help``·``/compact``·``/sh``)인가 — `handle_slash_command` 가 받는 글 그대로. 읽기만 한다."""
+    return message in ("/help", "/compact") or message.startswith(("/compact ", "/sh"))
+
+
 def handle_slash_command(message: str, renderer: WebRenderer, ctx=None) -> bool:
     """Intercept web-specific commands.
 

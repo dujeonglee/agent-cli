@@ -10,6 +10,9 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
+from agent_cli.command_table import command_kind
+from agent_cli.web.slash import is_web_command
+
 #: 이미지 딸린 메시지가 못 보는 모델에 갈 때의 알림 (v10.60.0) — run 은
 #: `_require_vision` 으로 즉시 끝내지만 웹은 런을 열어야 다음 메시지를 받는다.
 NO_VISION_NOTICE = (
@@ -40,12 +43,9 @@ class WebSurface:
         # 다음 dequeue 까지 바쁨 — 그 사이의 prompt_user/confirm 대기도 포함.
         self._renderer.worker_busy()
 
-    def echo(self, item: dict, *, wake: bool) -> None:
-        if wake:
-            # 깨우기 런은 그리지 않는다 (v10.51.0) — 그 런의 관찰 줄이 메일이고,
-            # 바빴다면 메일은 입력창 위 대기열에 서 있다가 주입됐다. 종전의
-            # 🤝 카드는 같은 사건을 세 번째로 알렸다.
-            return
+    def echo(self, item: dict) -> None:
+        # 메일이 연 런은 부르지 않는다 (v10.51.0) — 그 런의 관찰 줄이 메일이고, 바빴다면 메일은 입력창 위
+        # 대기열에 서 있다가 주입됐다.
         hidx = getattr(self._ctx, "next_ordinal", None)
         text = item.get("text") or ""
         nickname = item.get("nickname") or ""
@@ -60,25 +60,29 @@ class WebSurface:
         self._stop = event
         self._server.set_stop_handle(event)
 
-    def route(self, text: str) -> bool:
+    def is_command(self, text: str) -> bool:
+        """``text`` 를 `route` 가 명령으로 받는가 — 실행하지 않고 판정만."""
+        return is_web_command(text) or command_kind(text) is not None
+
+    def route(self, text: str, start=None) -> bool:
         from agent_cli.web.slash import handle_slash_command
 
         if handle_slash_command(text, self._renderer, ctx=self._ctx):
             return True
         return self._dispatch(text, self._stop)
 
-    def run_starting(self, req) -> None:
+    def run_starting(self, start) -> None:
         # 못 보는 모델에 이미지가 왔다 (v10.60.0): 런은 연다(자리표시 줄로 가고
         # 공급자가 사유를 적는다) — 다만 화면에 한 줄 알린다. 프로브 결과는
         # 기억되므로 다음 `/api/images/support` 부터 📎 가 숨는다.
-        if not req.images:
+        if not start.images:
             return
         from agent_cli.providers.capabilities import binding_sees_images
 
         if not binding_sees_images(self._binding):
             self._renderer.status("error", NO_VISION_NOTICE)
 
-    def run_ended(self, result, req) -> None:
+    def run_ended(self, result, start) -> None:
         pass  # 화면이 결과다
 
     def run_failed(self, exc: Exception) -> bool:

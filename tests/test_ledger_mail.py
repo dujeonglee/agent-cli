@@ -19,11 +19,11 @@ import pytest
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop.core import mail_item
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.pump import RunRequest
+from agent_cli.runtime import MainLoop
 from agent_cli.subagent.agents_live import AgentRegistry
-from tests.loop_ports import make_ports
+from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
-from tests.mail_support import to_main
+from tests.mail_support import absorbed_mail, to_main
 
 JOB = {
     "kind": "job",
@@ -57,7 +57,7 @@ def _loop(tmp_path, *, query="", items=(), mail=()):
         ctx=ctx,
         ports=make_ports(
             agent_registry=reg,
-            dequeue_user_message=lambda: q.pop(0) if q else None,
+            inbox=queue_inbox(lambda: q.pop(0) if q else None),
         ),
     )
     return loop, reg, ctx
@@ -141,31 +141,19 @@ class TestOutOfLedgerMailIsNotPersisted:
         to_main(reg, {"kind": "monitor", "ledger": "none", "output": "⏰ check-in"})
         reg2 = AgentRegistry(tmp_path / "reg")
         reg2.restore()
-        assert [r["kind"] for r in reg2.drain_replies()] == ["job"]
+        assert [r["kind"] for r in absorbed_mail(reg2)] == ["job"]
 
 
 class TestWakeRunHasNoStarter:
-    def test_loop_query_is_empty_for_a_wake(self):
+    def test_a_mail_run_has_no_starter_message(self):
         import threading
 
-        wake = RunRequest(
-            text="(mail)",
-            author="🤝 agent",
-            author_is_user=False,
-            request_id="",
-            stop_event=threading.Event(),
-            wake=True,
+        wake = MainLoop.start(None, threading.Event())
+        assert wake.query == "" and wake.author_is_user is False
+        user = MainLoop.start(
+            {"id": "u-3", "text": "hi", "nickname": "dj"}, threading.Event()
         )
-        assert wake.loop_query == ""
-        user = RunRequest(
-            text="hi",
-            author="dj",
-            author_is_user=True,
-            request_id="3",
-            stop_event=threading.Event(),
-            wake=False,
-        )
-        assert user.loop_query == "hi"
+        assert (user.query, user.author, user.request_id) == ("hi", "dj", "u-3")
 
     def test_first_input_is_the_mail_and_it_is_an_open_item(self, tmp_path):
         loop, _reg, ctx = _loop(tmp_path, mail=[JOB])

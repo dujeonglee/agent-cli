@@ -10,9 +10,13 @@ from __future__ import annotations
 import threading
 from unittest.mock import MagicMock
 
+import pytest
+
+from agent_cli.loop.kind import Start
 from agent_cli.main_input import MainInput
 from agent_cli.post import envelope as post_envelope
-from agent_cli.pump import ForeverPolicy, QuietPolicy, RunRequest
+from agent_cli.pump import ForeverPolicy, QuietPolicy
+from agent_cli.runtime import MainLoop
 from agent_cli.tools.result import ToolResult
 from tests.pump_support import (
     FakeRegistry,
@@ -20,6 +24,11 @@ from tests.pump_support import (
     make_pump,
     run_pump_in_thread,
 )
+
+
+def _opened(item: dict) -> Start:
+    """펌프가 그 사람의 말로 연 차례의 시작 — 표면의 `route` 가 argv 질의였는지를 읽는다."""
+    return MainLoop.start({"nickname": None, **item}, threading.Event())
 
 
 def _mail(mi: MainInput, *, wakes: bool = True) -> None:
@@ -76,15 +85,15 @@ class TestOneItem:
         ) in surface.calls  # 런 직전, 그 요청으로 (v10.130.6)
         assert surface.calls[1:4] == [
             ("busy",),
-            ("echo", "hi", False),
+            ("echo", "hi"),
             ("bind_stop", True),
         ]
         assert surface.calls[-1] == ("bind_stop", False)  # 런 뒤 해제
-        req = seen[0]
-        assert req.text == "hi" and req.author == "dj" and req.author_is_user
-        assert req.request_id and req.wake is False
-        assert isinstance(req.stop_event, threading.Event)
-        assert surface.stop_events[0] is req.stop_event  # 표면에 건 핸들 = 런의 핸들
+        start = seen[0]
+        assert start.query == "hi" and start.author == "dj" and start.author_is_user
+        assert start.request_id
+        assert isinstance(start.stop_event, threading.Event)
+        assert surface.stop_events[0] is start.stop_event  # 표면에 건 핸들 = 런의 핸들
         assert reg.authors == [["dj"]]
 
     def test_quiet_policy_ends_after_the_queue_drains(self):
@@ -122,7 +131,7 @@ class TestMailRun:
 
         def run_main(req):
             seen.append(req)
-            mi.post.absorb_mail("main")  # 그 런의 첫 턴 경계가 하는 일
+            mi.post.absorb("main", human_first=True)  # 그 런의 첫 턴 경계가 하는 일
             mi.close()
 
         make_pump(
@@ -132,12 +141,9 @@ class TestMailRun:
             registry=reg,
             policy=ForeverPolicy(),
         ).run()
-        from agent_cli.pump import WAKE_AUTHOR, WAKE_TEXT
-
-        assert seen[0].wake is True and seen[0].author == WAKE_AUTHOR
-        assert seen[0].author_is_user is False  # 레코드가 깨우기 카드로 재생된다
-        assert seen[0].request_id == "" and seen[0].loop_query == ""
-        assert ("echo", WAKE_TEXT, True) in surface.calls
+        assert seen[0].author is None and seen[0].author_is_user is False
+        assert seen[0].request_id == "" and seen[0].query == ""  # 시작 메시지 없음
+        assert not [c for c in surface.calls if c[0] == "echo"]  # 말풍선 없음
         assert reg.authors == [[]]
         # 메일 런의 글은 라우팅하지 않는다 (사람 명령이 아니다)
         assert not [c for c in surface.calls if c[0] == "route"]
@@ -149,8 +155,8 @@ class TestMailRun:
         seen = []
 
         def run_main(req):
-            seen.append(req.wake)
-            if req.wake:
+            seen.append(not req.author_is_user)
+            if not req.author_is_user:
                 mi.close()
 
         make_pump(main_input=mi, run_main=run_main, policy=ForeverPolicy()).run()
@@ -214,6 +220,32 @@ class TestFailurePolicy:
         assert "run_ended" not in kinds
         assert surface.calls[-1] == ("bind_stop", False)
 
+    def test_a_route_that_raises_goes_to_run_failed_and_the_pump_goes_on(self):
+        """명령 라우팅의 예외도 런의 예외처럼 ``run_failed`` 로 — web 은 화면에 알리고 다음 말을 받는다(워커가 죽으면
+        대기열만 쌓인다), 런은 열리지 않는다."""
+        q = MainInput()
+        q.enqueue(None, "/bad x")
+        q.enqueue(None, "good")
+        surface = FakeSurface(swallow_errors=True, fail_on_route={"/bad x"})
+        seen = []
+        make_pump(
+            main_input=q, run_main=lambda s: seen.append(s.query), surface=surface
+        ).run()
+        assert seen == ["good"]
+        kinds = [c[0] for c in surface.calls]
+        assert kinds.index("route") < kinds.index("run_failed")
+        assert "run_starting" in kinds[kinds.index("run_failed") :]
+        assert surface.calls.count(("bind_stop", False)) == 2  # 두 차례 다 해제
+
+    def test_a_route_that_raises_propagates_on_the_run_surface(self):
+        q = MainInput()
+        q.enqueue(None, "/bad x")
+        surface = FakeSurface(swallow_errors=False, fail_on_route={"/bad x"})
+        with pytest.raises(RuntimeError, match="route failed"):
+            make_pump(main_input=q, run_main=MagicMock(), surface=surface).run()
+        assert [c[0] for c in surface.calls].count("run_failed") == 1
+        assert surface.calls[-1] == ("bind_stop", False)
+
     def test_routed_command_does_not_announce_a_run(self):
         q = MainInput()
         q.enqueue(None, "/skill x")
@@ -229,9 +261,9 @@ class TestFailurePolicy:
         seen = []
 
         def run_main(req):
-            if req.text == "bad":
+            if req.query == "bad":
                 raise RuntimeError("x")
-            seen.append(req.text)
+            seen.append(req.query)
             return ToolResult(True, output="ok")
 
         make_pump(main_input=q, run_main=run_main, surface=surface).run()
@@ -321,15 +353,12 @@ class TestConsoleSurface:
         assert vars(s) == before and calls == [] and not out.exists()
 
     def _req(self, *, wake=False, author=None):
-        from agent_cli.pump import WAKE_AUTHOR
-
-        return RunRequest(
-            text="t",
-            author=WAKE_AUTHOR if wake else author,
+        """런의 시작 — ``wake`` 는 메일이 연 런(사람의 요청이 아니다), ``author`` 가 없으면 argv 질의."""
+        return Start(
+            query="" if wake else "t",
+            author=None if wake else author,
             author_is_user=not wake,
-            request_id="",
             stop_event=threading.Event(),
-            wake=wake,
         )
 
     def test_run_ended_writes_only_a_successful_query_run(self, tmp_path):
@@ -360,11 +389,9 @@ class TestConsoleSurface:
             return True
 
         s, out, _ = self._surface(tmp_path, dispatch=dispatch)
-        s.echo({"text": "/review fail"}, wake=False)
-        assert s.route("/review fail") is True
+        assert s.route("/review fail", _opened({"text": "/review fail"})) is True
         assert not out.exists() and s.exit_code == 1
-        s.echo({"text": "/review"}, wake=False)
-        s.route("/review")
+        s.route("/review", _opened({"text": "/review"}))
         assert out.read_text(encoding="utf-8") == "looks good"
         assert s.exit_code == 0
 
@@ -387,8 +414,7 @@ class TestConsoleSurface:
 
         s, out, _ = self._surface(tmp_path, dispatch=dispatch)
         for code, written in ((1, False), (0, False), (0, True)):
-            s.echo({"text": "@a t"}, wake=False)
-            s.route("@a t")
+            s.route("@a t", _opened({"text": "@a t"}))
             assert s.exit_code == code and out.exists() is written
         assert out.read_text(encoding="utf-8") == "the answer"
 
@@ -473,23 +499,20 @@ class TestConsoleExitCode:
             return True
 
         s, out = self._surface(tmp_path, dispatch=dispatch)
-        s.echo({"text": "/bad", "nickname": None}, wake=False)
-        s.route("/bad")
+        s.route("/bad", _opened({"text": "/bad", "nickname": None}))
         assert s.exit_code == 1
         s.route("/ok")  # 런 도중 주입(echo 없이) — 질의의 답이 아니다
         assert s.exit_code == 1 and not out.exists()
-        s.echo({"text": "/ok", "nickname": "⏰ nightly"}, wake=False)
-        s.route("/ok")  # 예약 발화
+        s.route("/ok", _opened({"text": "/ok", "nickname": "⏰ nightly"}))  # 예약 발화
         assert s.exit_code == 1 and not out.exists()
-        s.echo({"text": "/ok", "nickname": None}, wake=False)
-        s.route("/ok")
+        s.route("/ok", _opened({"text": "/ok", "nickname": None}))
         assert s.exit_code == 0 and out.read_text(encoding="utf-8") == "done"
 
     def test_plain_query_route_does_not_leak_the_query_flag_into_the_run(
         self, tmp_path
     ):
         """질의가 명령이 아니면(디스패치 False) 그 런 도중의 주입 명령이 질의 자리를
-        물려받지 않는다 — ``route`` 가 한 번 소비한다."""
+        물려받지 않는다 — 턴 경계의 ``route`` 에는 그 차례의 시작이 없다."""
         from agent_cli.main import _ConsoleDispatchOutput
 
         def dispatch(text, stop):
@@ -499,28 +522,9 @@ class TestConsoleExitCode:
             return True
 
         s, out = self._surface(tmp_path, dispatch=dispatch)
-        s.echo({"text": "plain", "nickname": None}, wake=False)
-        assert s.route("plain") is False
+        assert s.route("plain", _opened({"text": "plain", "nickname": None})) is False
         s.route("/x")  # 그 런 도중 주입
         assert s.exit_code == 1 and not out.exists()
-
-
-class TestRunRequest:
-    def test_is_frozen_and_keyword_only(self):
-        import dataclasses
-
-        import pytest
-
-        req = RunRequest(
-            text="t",
-            author=None,
-            author_is_user=True,
-            request_id="",
-            stop_event=threading.Event(),
-            wake=False,
-        )
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            req.text = "u"  # type: ignore[misc]
 
 
 class TestQuietPolicyWaitNotice:

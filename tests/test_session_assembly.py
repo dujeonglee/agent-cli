@@ -58,6 +58,9 @@ class _Schedules:
 class _Surface:
     graceful_interrupt = False
 
+    def is_command(self, text):
+        return False
+
 
 def _patch_parts(st: ExitStack, order: list, *, mainloop_boom=False):
     """조립 부품을 기록하는 대역으로 — 무엇이 어떤 순서로 불리는지."""
@@ -205,10 +208,11 @@ class TestOneQueue:
                 ("hint", "dj"),
             ]
 
-            first = q.take_next()
+            first = q.wait_to_open(0)
             assert (first["text"], first["nickname"]) == ("weekly", "⏰ Scheduler")
-            assert main_kind_ports.dequeue_user_message()["text"] == "hint"
-            assert q.take_next() is None
+            assert (
+                main_kind_ports.mailbox.has_inbox
+            )  # 턴 경계는 레지스트리의 main 상자 흡수
         finally:
             if stores is not None:
                 stores.monitors.stop()
@@ -426,6 +430,32 @@ class TestOnePostOfficeForReal:
         try:
             assert s.reg._post is s.main_input.post
             assert s.wired.pump.deps.main_input is s.main_input
+        finally:
+            s.close()
+            set_renderer(before)
+
+    @pytest.mark.parametrize("path", ["run", "web"])
+    def test_the_main_loops_turn_boundary_absorbs_the_main_box(
+        self, tmp_path, monkeypatch, path
+    ):
+        """펌프가 돌리는 main 종류의 턴 경계가 그 상자를 한 번에 흡수한다 — 사람의 말 먼저, 메일 뒤."""
+        from agent_cli.render import get_renderer, set_renderer
+        from tests.mail_support import to_main
+        from tests.oracle.driver import Provider, Session
+
+        before = get_renderer()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AGENT_CLI_SNAPSHOT", "0")
+        s = Session(tmp_path, Provider({"MAIN": []}), path=path)
+        try:
+            main = s.wired.pump.deps.main
+            to_main(s.reg, {"kind": "job", "output": "job done", "ledger": "none"})
+            s.main_input.enqueue(None, "later words")
+            got = main.intake()
+            assert [next(iter(it)) for it in got] == ["message", "mail"]
+            assert got[0]["message"]["text"] == "later words"
+            assert s.main_input.pending_count() == 0 and s.reg.arrived_for("main") == 0
         finally:
             s.close()
             set_renderer(before)

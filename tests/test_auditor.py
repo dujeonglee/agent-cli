@@ -23,10 +23,11 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.harness.auditor import SessionAuditor, build_auditor
 from agent_cli.harness.jobs import HarnessJobs, load_harness_profile
 from agent_cli.knobs import KNOB_BY_NAME, KnobSession
-from agent_cli.pump import WAKE_AUTHOR, RunRequest
+from agent_cli.loop.kind import Start
 from agent_cli.subagent.profiles import available_profiles, load_profile
 from agent_cli.tools.registry import extract_file_paths
 from agent_cli.tools.result import ToolResult
+from tests.mail_support import absorbed_mail
 from tests.test_agents_live import make_registry, make_runner, wait_until
 
 
@@ -34,14 +35,17 @@ def _ctx(tmp_path):
     return ContextManager(tmp_path / "s", max_context_tokens=10_000)
 
 
-def _req(*, wake: bool = False, author=None) -> RunRequest:
-    return RunRequest(
-        text="q",
-        author=WAKE_AUTHOR if wake else author,
+#: 메일 런의 레코드 작성자 — 옛 세션의 history 에 남은 모양(v10.55.0 전의 깨우기 시작 레코드)
+OLD_MAIL_RUN_AUTHOR = "🤝 agent"
+
+
+def _req(*, wake: bool = False, author=None) -> Start:
+    """감사자가 받는 런의 시작 — ``wake`` 는 메일이 연 런(사람의 요청이 아니다)."""
+    return Start(
+        query="" if wake else "q",
+        author=None if wake else author,
         author_is_user=not wake,
-        request_id="",
         stop_event=threading.Event(),
-        wake=wake,
     )
 
 
@@ -136,7 +140,7 @@ class TestRequestText:
         ctx.set_turn(1)
         ctx.add({"role": "user", "content": "q1"})
         _complete(ctx, "r1")
-        ctx.add({"role": "user", "content": "q2", "author": WAKE_AUTHOR})
+        ctx.add({"role": "user", "content": "q2", "author": OLD_MAIL_RUN_AUTHOR})
         res = tool_history(
             {"query": "SELECT seq, kind, author FROM history ORDER BY seq"},
             session_dir=ctx.history_path.parent,
@@ -145,7 +149,7 @@ class TestRequestText:
         assert res.success, res.error
         rows = res.output
         assert "seq=3 | kind=final" in rows, rows
-        assert f"seq=4 | kind=query | author={WAKE_AUTHOR}" in rows, rows
+        assert f"seq=4 | kind=query | author={OLD_MAIL_RUN_AUTHOR}" in rows, rows
         assert ctx.next_ordinal == 4
 
 
@@ -187,7 +191,7 @@ class TestRunEnded:
         레코드가 다음 사용자 런의 구간에 섞이지도 않는다."""
         ctx = _ctx(tmp_path)
         h, jobs = self._handle(ctx)
-        ctx.add({"role": "user", "content": "wake", "author": WAKE_AUTHOR})
+        ctx.add({"role": "user", "content": "wake", "author": OLD_MAIL_RUN_AUTHOR})
         _complete(ctx)
         assert h.run_ended(_req(wake=True), ok=True) == ""
         assert jobs.runs == []
@@ -273,8 +277,8 @@ class TestLiveDelivery:
         _complete(ctx)
         text = auditor.run_ended(_req(), ok=True)
         assert text
-        assert wait_until(reg.has_pending_replies)
-        (mail,) = reg.drain_replies()
+        assert wait_until(lambda: reg.arrived_for("main"))
+        (mail,) = absorbed_mail(reg)
         assert mail["kind"] == "harness" and mail["job"] == AUDITOR_NAME
         assert mail["success"] is True and mail["output"] == f"AUDIT pass:{text}"
         assert wait_until(lambda: auditor.in_flight == 0)
@@ -293,8 +297,8 @@ class TestLiveDelivery:
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
         assert auditor.run_ended(_req(), ok=True)
-        assert wait_until(reg.has_pending_replies)
-        (mail,) = reg.drain_replies()
+        assert wait_until(lambda: reg.arrived_for("main"))
+        (mail,) = absorbed_mail(reg)
         assert mail["success"] is False
         assert mail["output"] == "auditor did not complete: Max turns (16) reached"
 
@@ -304,10 +308,10 @@ class TestLiveDelivery:
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
         assert auditor.run_ended(_req(), ok=True)
-        assert auditor.in_flight == 1 and not reg.has_pending_replies()
+        assert auditor.in_flight == 1 and not reg.arrived_for("main")
         gate.set()
         assert wait_until(lambda: auditor.in_flight == 0)
-        assert reg.has_pending_replies()
+        assert reg.arrived_for("main")
         auditor.stop()
         assert not auditor.active and auditor.jobs.stopped
 

@@ -266,7 +266,7 @@ class Surface:
         self.stop: threading.Event | None = None
         #: 명령으로 받을 글 → 그때 할 일 — 런을 열지 않는 차례(`/`·`@` 명령)를 흉내 낸다
         self.commands: dict = {}
-        #: 런을 열기 직전(`run_starting` 을 적은 뒤) 부를 것 — ``(req)``. 펌프 스레드를 잡아 그 런의 첫 꼬리보다
+        #: 런을 열기 직전(`run_starting` 을 적은 뒤) 부를 것 — ``(start)``. 펌프 스레드를 잡아 그 런의 첫 꼬리보다
         #: 다른 배우의 사건을 앞세운다.
         self.before_run = None
 
@@ -280,13 +280,17 @@ class Surface:
     def busy(self):
         pass
 
-    def echo(self, item, *, wake):
-        self._note("echo", str(item.get("text") or ""), bool(wake))
+    def echo(self, item):
+        # 사람의 말로 연 차례만 불린다(메일 런은 부르지 않는다) — 셋째 값은 옛 기록과 같은 모양을 지키려는 False
+        self._note("echo", str(item.get("text") or ""), False)
 
     def bind_stop(self, event):
         self.stop = event
 
-    def route(self, text):
+    def is_command(self, text):
+        return text in self.commands
+
+    def route(self, text, start=None):
         fn = self.commands.get(text)
         if fn is None:
             return False
@@ -294,12 +298,14 @@ class Surface:
         fn()
         return True
 
-    def run_starting(self, req):
-        self._note("run_starting", req.text, req.wake, req.author_is_user)
+    def run_starting(self, start):
+        self._note(
+            "run_starting", start.query, not start.author_is_user, start.author_is_user
+        )
         if self.before_run is not None:
-            self.before_run(req)
+            self.before_run(start)
 
-    def run_ended(self, result, req):
+    def run_ended(self, result, start):
         self.results.append(result)
         self._note(
             "run_ended",
@@ -710,9 +716,9 @@ def _held_request_to(box, to: str, text: str, *, expects_reply: bool = True) -> 
 def _wake_runs_after_idle(s: Session, name: str) -> None:
     """메일이 연 main 의 런(``wake``)은 ``name`` 이 런을 끝낸(한가한) 뒤에 연다 — 그 상주의 폴백이 연 런의 첫 글이
     상주의 상태(바쁨↔한가함)를 보는 순서가 갈리지 않게(s17 과 같은 규칙, v10.145.1)."""
-    s.surface.before_run = lambda req: (
+    s.surface.before_run = lambda start: (
         until(lambda: s.agent_state(_agent_key(s, name)) == "idle", f"{name} done")
-        if req.wake
+        if not start.author_is_user
         else None
     )
 
@@ -1578,9 +1584,9 @@ def s17_mail_to_an_idle_main_on_the_run_path(root: Path) -> dict:
     )
     s = box["s"] = Session(root, p)
     # 통지가 연 메일 런의 꼬리는 통지를 보낸 상주가 런을 끝낸(한가한) 뒤의 것이다
-    s.surface.before_run = lambda req: (
+    s.surface.before_run = lambda start: (
         until(lambda: s.agent_state(_agent_key(s, "helper")) == "idle", "helper done")
-        if req.wake
+        if not start.author_is_user
         else None
     )
     s.say("MAIN go")
@@ -1954,12 +1960,12 @@ def s24_commands_while_waiting(root: Path) -> dict:
     s = box["s"] = Session(root, p, path="web")
     s.reg.checkin_timer_factory = _HeldTimer
     # ■ 뒤 회신이 연 메일 런의 꼬리는 회신한 run 이 내려온 뒤의 것이다
-    s.surface.before_run = lambda req: (
+    s.surface.before_run = lambda start: (
         until(
             lambda: all(s.agent_state(k) == "dead" for k in s.agent_keys()),
             "run came down",
         )
-        if req.wake
+        if not start.author_is_user
         else None
     )
     s.surface.commands["@helper note"] = lambda: None
@@ -2331,6 +2337,72 @@ def s31_schedule_fires_while_main_waits(root: Path) -> dict:
     return s.collect(facts)
 
 
+# ── 메일 런이 열리는 모양 (런을 봉투로 열기 전의 기준) ─────────────
+
+
+def s32_quiet_reply_then_waking_mail(root: Path) -> dict:
+    """ "Stop everything" 의 깨우지 않는 정지 회신이 한가한 main 앞에 먼저 서고, 그 뒤 작업 통지(깨움)가 온다 — 메일
+    런이 열리고 그 첫 턴 경계가 둘을 **도착 순서**로 읽는다 (web). s11 과 같은 정지, 다음 런을 사람 말 대신 메일이 연다."""
+    box: dict = {}
+    facts: dict = {}
+
+    def stop_everything(msgs):
+        s = box["s"]
+        assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        s.surface.stop.set()  # main 먼저 (서버·Ctrl+C 와 같은 순서)
+        box["stopped"] = s.reg.stop_all_runs(wakes_requesters=False)
+        return call("shell", command="true")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="run", task="TASK-T slow work"),
+                _after_runs_began(box, 1, call("wait")),
+                complete_all("read both"),
+            ],
+            "TASK-T": [stop_everything],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.reg.checkin_timer_factory = _HeldTimer  # 5분 체크인이 저절로 나가지 않게
+
+    def done(s):
+        until(lambda: runs_ended(s) >= 1)
+        key = s.agent_keys()[0]
+        until(lambda: s.agent_state(key) == "dead", "run came down")
+        until(lambda: len(s.reg.pending_mail()) == 1, "quiet reply")
+        facts["job"] = _job_mail(s, 1)
+        until(lambda: runs_ended(s) >= 2, "mail run")
+
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=done)
+    facts["stopped"] = len(box.get("stopped") or [])
+    return s.collect(facts)
+
+
+def s33_words_right_after_a_mail_run_opens(root: Path) -> dict:
+    """메일 런이 열린 직후(런을 열기 직전의 표면 알림에서), 그 런의 첫 턴 경계 전에 사람 말이 온다 — 지금은 그 경계가
+    사람 말 → 메일 순서로 넣는다 (web)."""
+    box: dict = {}
+    facts: dict = {}
+    p = Provider({"MAIN": [complete_all("first answer"), complete_all("saw both")]})
+    s = box["s"] = Session(root, p, path="web")
+    s.surface.before_run = lambda start: (
+        s.say("MAIN while it opens", nickname="dj")
+        if not start.author_is_user
+        else None
+    )
+
+    def done(s):
+        until(lambda: runs_ended(s) >= 1 and s.main_idle(), "main idle")
+        facts["job"] = _job_mail(s, 1)
+        until(lambda: runs_ended(s) >= 2, "mail run")
+
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
 SCENARIOS = {
     "s01_run": lambda root: s01_request_to_run_agent_explicit_reply(root, "run"),
     "s01_web": lambda root: s01_request_to_run_agent_explicit_reply(root, "web"),
@@ -2376,6 +2448,9 @@ SCENARIOS = {
     "s29_words_before_wait": s29_words_already_there_when_main_waits,
     "s30_slash_words_while_waiting": s30_slash_words_that_are_not_a_command_while_waiting,
     "s31_schedule_while_waiting": s31_schedule_fires_while_main_waits,
+    # 메일 런이 열리는 모양
+    "s32_quiet_reply_then_waking_mail": s32_quiet_reply_then_waking_mail,
+    "s33_words_right_after_mail_run_opens": s33_words_right_after_a_mail_run_opens,
 }
 
 

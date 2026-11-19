@@ -282,9 +282,7 @@ class TestAtAgent:
             agent_registry=reg,
         )
         assert ok and answer == "hello"  # 폴백 라벨은 답이 아니다
-        assert (
-            not reg.has_pending_replies()
-        )  # 명령의 답 — main 의 다음 턴 메일이 아니다
+        assert not reg.arrived_for("main")  # 명령의 답 — main 의 다음 턴 메일이 아니다
         (tm,) = reg._agents.values()
         assert tm.profile_name == "general" and tm.context_mode == "fork"
         assert _wait(lambda: tm.state == "dead")

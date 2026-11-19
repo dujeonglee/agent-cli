@@ -28,7 +28,7 @@ from agent_cli.render.minimal import MinimalRenderer
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
 from agent_cli.web.server import WebServer, create_app
-from tests.loop_ports import make_ports
+from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
 
 
@@ -282,7 +282,7 @@ def _loop(tmp_path, *, requests=(), main=True):
         ctx=ContextManager(Path(tmp_path) / "s", max_context_tokens=30_000),
         ports=make_ports(
             # 입력 큐가 있는 종류 = 사람 요청을 받는 main (`tracks_run_authors`)
-            dequeue_user_message=(lambda: q.pop(0) if q else None) if main else None
+            inbox=queue_inbox(lambda: q.pop(0) if q else None) if main else None
         ),
     )
 

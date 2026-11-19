@@ -16,14 +16,15 @@ import time
 import pytest
 
 from agent_cli.context.manager import ContextManager
+from agent_cli.loop.kind import Start
 from agent_cli.main_input import MainInput
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.pump import RunRequest
 from agent_cli.runtime import MainLoop
 from agent_cli.session_slots import set_agent_registry
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.binding_support import make_binding
+from tests.mail_support import absorbed_mail
 
 CAPS = ModelCapabilities(
     context_window=65536, max_output_tokens=4096, supports_thinking=False
@@ -134,7 +135,6 @@ def session(tmp_path):
             session=None,
             agent_registry=reg,
             mcp_manager=None,
-            dequeue_user_message=queue.take_next,
             enqueue_user_message=lambda text, nickname: queue.enqueue(None, text),
             route_message=lambda text: False,
             max_turns=30,
@@ -148,15 +148,13 @@ def session(tmp_path):
         built.update(reg=reg, ctx=ctx, queue=queue, main=main)
 
         def run(text="MAIN go", stop_event=None):
-            req = RunRequest(
-                text=text,
-                author=None,
+            start = Start(
+                query=text,
                 author_is_user=True,
                 request_id="u-0",
                 stop_event=stop_event or threading.Event(),
-                wake=False,
             )
-            return main.run(main.start(req))
+            return main.run(start)
 
         built["run"] = run
         return built
@@ -860,8 +858,8 @@ class TestResume:
             assert reg.restore() == 1
             tm = reg.get("agt-run1")
             assert tm.ends_after_task and tm.task_id != "r-7"  # 새 id 로 다시 들어갔다
-            assert wait_until(reg.has_pending_replies)
-            (mail,) = reg.drain_replies()
+            assert wait_until(lambda: reg.arrived_for("main"))
+            (mail,) = absorbed_mail(reg)
             assert "recounted" in mail["output"] and mail["re"] == tm.task_id
             assert wait_until(lambda: tm.state == "dead") and tm.revivable is False
         finally:
@@ -889,8 +887,8 @@ class TestResume:
         reg = AgentRegistry(sdir, runner=make_runner("orphan done"))
         try:
             assert reg.restore() == 1
-            assert wait_until(reg.has_pending_replies)
-            (mail,) = reg.drain_replies()
+            assert wait_until(lambda: reg.arrived_for("main"))
+            (mail,) = absorbed_mail(reg)
             assert "orphan done" in mail["output"] and mail["key"] == "agt-run2"
         finally:
             reg.shutdown_all()
@@ -977,15 +975,13 @@ class TestAuditCoversTheWaitedRun:
         jobs = _Jobs()
         auditor = SessionAuditor(jobs, s["ctx"], enabled=True)
         s["run"]()
-        req = RunRequest(
-            text="MAIN go",
-            author=None,
+        start = Start(
+            query="MAIN go",
             author_is_user=True,
             request_id="u-0",
             stop_event=threading.Event(),
-            wake=False,
         )
-        assert auditor.run_ended(req, ok=True)
+        assert auditor.run_ended(start, ok=True)
         a, b = (int(x) for x in jobs.runs[0].split("-"))
         lines = s["ctx"].history_path.read_text(encoding="utf-8").splitlines()
         seq = next(i + 1 for i, ln in enumerate(lines) if "M-REPLY-TEXT" in ln)

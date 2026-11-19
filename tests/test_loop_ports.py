@@ -34,7 +34,6 @@ BUILDERS = {
     "main": lambda: MainLoop.make_ports(
         agent_registry=_Reg(),
         mcp_manager=_S,
-        dequeue_user_message=_S,
         enqueue_user_message=_S,
         route_message=_S,
     ),
@@ -56,6 +55,9 @@ class _Reg:
 
     def question_port(self, key):
         return _S
+
+    def absorb_main(self):  # main 의 턴 경계 흡수
+        return []
 
     def message_handler(self, sender):  # main 의 `message` (v10.141.0)
         return _S

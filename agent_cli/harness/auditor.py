@@ -4,7 +4,7 @@
 적은 요청으로 하니스 작업 ``auditor`` 를 돌린다(`HarnessJobs.run`). 판정은
 모델의 일이고(프로파일 `agents/harness/auditor.md`), 결과 전달은 작업 실행기의
 일이다(`complete` 결과 → main 상자 → 한가한 펌프가 그것으로 런을 연다). 감사
-회신으로 깨어난 런(``req.wake``)은 감사하지 않는다 — 고리 상한은 코드다.
+회신으로 깨어난 런(메일이 연 런 — 사람의 요청이 아니다)은 감사하지 않는다 — 고리 상한은 코드다.
 """
 
 from __future__ import annotations
@@ -34,17 +34,17 @@ class SessionAuditor:
     def in_flight(self) -> int:
         return self.jobs.in_flight if self.jobs is not None else 0
 
-    def run_ended(self, req, *, ok: bool) -> str:
+    def run_ended(self, start, *, ok: bool) -> str:
         """main 의 런이 끝났다. 사용자 런이고 `complete` 로 끝났으면 그 런의
         구간을 감사 작업으로 돌린다. 커서는 **모든** 런이 앞당긴다 — 실패한
-        런·깨우기 런의 레코드가 다음 감사 구간에 섞이지 않게.
+        런·메일 런의 레코드가 다음 감사 구간에 섞이지 않게.
 
         돌려주는 값: 띄운 요청 본문(빈 문자열 = 안 띄웠다)."""
         a, b = self._cursor + 1, self.ctx.next_ordinal  # seq 는 1 기준 줄 번호
         self._cursor = b
         if not self.active or b < a:
             return ""
-        if not ok or req.wake or not req.author_is_user:
+        if not ok or not start.author_is_user:
             return ""
         text = AUDIT_REQUEST.format(
             a=a,

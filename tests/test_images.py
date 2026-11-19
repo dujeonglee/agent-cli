@@ -430,7 +430,7 @@ class TestLoopRecords:
 class TestQueueAndRequest:
     def test_enqueue_carries_images_into_the_run_request(self):
         from agent_cli.main_input import MainInput
-        from agent_cli.pump import RunRequest
+        from agent_cli.runtime import MainLoop
 
         q = MainInput()
         ref = ImageRef("a.png", "image/png", 10, 10, 1, "").to_dict()
@@ -439,16 +439,8 @@ class TestQueueAndRequest:
         assert q.enqueue(None, "plain")["images"] == []
         import threading
 
-        req = RunRequest(
-            text="look",
-            author=None,
-            author_is_user=True,
-            request_id="u-1",
-            stop_event=threading.Event(),
-            wake=False,
-            images=list(item["images"]),
-        )
-        assert req.images == [ref]
+        start = MainLoop.start(item, threading.Event())
+        assert start.images == [ref] and start.query == "look"
 
 
 class TestCliStaging:
@@ -524,7 +516,7 @@ class TestInjectedMessageImages:
         loop.task_log = []
         loop.route_message = None
         from tests.loop_kinds import make_kind
-        from tests.loop_ports import make_ports
+        from tests.loop_ports import make_ports, queue_inbox
 
         ref = ImageRef("cap.png", "image/png", 640, 480, 1, "").to_dict()
         items = [{"id": "u-1", "nickname": "dj", "text": "see", "images": [ref]}]
@@ -532,7 +524,7 @@ class TestInjectedMessageImages:
         loop._config = SimpleNamespace(
             kind=make_kind(
                 ports=make_ports(
-                    dequeue_user_message=lambda: items.pop(0) if items else None
+                    inbox=queue_inbox(lambda: items.pop(0) if items else None)
                 )
             ),
         )

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 
-from tests.mail_support import to_main
+from tests.mail_support import absorbed_mail, to_main
 
 
 def _wait(cond, timeout=8.0):
@@ -55,7 +55,7 @@ class TestMailInTheQueue:
         )
         assert row.locator(".queue-cancel").count() == 0  # 메일은 아무도 취소 못 한다
 
-        reg.drain_replies()  # 턴 경계 흡수
+        absorbed_mail(reg)  # 턴 경계 흡수
         assert _wait(
             lambda: (
                 "Injected · applies to the next answer"
@@ -79,7 +79,7 @@ class TestMailInTheQueue:
         )
         to_main(reg, dict(JOB))
         time.sleep(0.3)
-        reg.drain_replies()
+        absorbed_mail(reg)
         time.sleep(2.0)  # 유예가 지난 뒤에도
         assert page.evaluate("() => window.__qSeen") == 0
         assert page.locator("#queue-list").is_hidden()

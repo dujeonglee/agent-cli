@@ -15,6 +15,7 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
+from agent_cli.command_table import command_kind, looks_like_slash_command
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import (
@@ -477,6 +478,12 @@ class DispatchOutput:
         """``@agt-<key>``/``@<profile>-spawn`` 의 결과/에러 (기본: 무시)."""
 
 
+def _is_query(start) -> bool:
+    """run 의 argv 질의로 연 런인가 — 작성자가 없는 사람의 요청(예약은 이름이 있고, 메일 런은 사람의 요청이 아니다).
+    ``--result-file`` 은 이 런의 답만 받는다(v10.34.1)."""
+    return start.author is None and start.author_is_user
+
+
 class _ConsoleSurface:
     """``agent-cli run`` 의 펌프 표면 (``pump.PumpSurface``, v10.33.0).
 
@@ -502,10 +509,7 @@ class _ConsoleSurface:
         #: 사슬은 깨우기 런이 작업을 새로 띄우지도, 돌리고 있지도 않을 때 닫힌다.
         self._continuing = False
         self.exit_code = 1
-        #: 방금 꺼낸 아이템이 argv 질의인가 — 펌프는 꺼낸 직후 ``echo`` → ``route``
-        #: 순으로 부른다. ``route`` 가 한 번 소비한다: 그 뒤의 ``route`` 는 런 도중
-        #: 주입(``SessionPump.route``)이라 질의의 답이 아니다.
-        self._item_is_query = False
+        #: 지금 라우팅하는 명령이 argv 질의였는가 — `route` 가 그 호출 동안만 세운다(`routed` 가 읽는다)
         self._routing_query = False
         self._run_started = 0.0
         self._dispatch = dispatch  # (text, stop_event) -> bool
@@ -517,10 +521,8 @@ class _ConsoleSurface:
     def busy(self) -> None:
         self._run_started = time.time()  # 이 런이 띄운 작업을 가르는 기준
 
-    def echo(self, item: dict, *, wake: bool) -> None:
-        # 그리지 않는다 — 깨우기 런은 그 런의 관찰 줄이 말한다 (v10.51.0).
-        # 판정용으로 질의 여부만 기억한다(``RunRequest.is_query`` 와 같은 규칙).
-        self._item_is_query = not wake and not item.get("nickname")
+    def echo(self, item: dict) -> None:
+        pass  # 그리지 않는다 — 터미널에는 친 줄이 이미 있다
 
     def bind_stop(self, event: threading.Event | None) -> None:
         self._stop = event
@@ -529,10 +531,15 @@ class _ConsoleSurface:
         """지금 런의 stop Event(한가하면 None) — Ctrl+C 처리기가 본다. 읽기만 한다."""
         return self._stop
 
-    def route(self, text: str) -> bool:
+    def is_command(self, text: str) -> bool:
+        """``text`` 를 `route` 가 명령으로 받는가 — 실행하지 않고 판정만. ``/sh`` 는 run 에 없다(평범한 질의)."""
+        return not text.startswith("/sh") and command_kind(text) is not None
+
+    def route(self, text: str, start=None) -> bool:
         if text.startswith("/sh"):
             return False
-        self._routing_query, self._item_is_query = self._item_is_query, False
+        # 펌프가 연 차례(``start``)의 argv 질의만 판정·결과 파일이 된다 — 턴 경계·제자리 대기의 라우팅은 ``None``
+        self._routing_query = start is not None and _is_query(start)
         try:
             return self._dispatch(text, self._stop)
         finally:
@@ -549,7 +556,7 @@ class _ConsoleSurface:
         if ok:
             _write_result_file(self._result_file, answer)
 
-    def run_ended(self, result, req) -> None:
+    def run_ended(self, result, start) -> None:
         # 런이 끝난 자리에서 바로 쓴다 — 펌프는 살아 있는 모니터가 있으면 그
         # deadline(기본 2h)까지 돌므로, 펌프 뒤에 쓰면 `complete` 한 답이
         # 파일로는 안 나온다(v10.31.2). **argv 질의 런의 답만** 쓴다(v10.34.1):
@@ -564,7 +571,8 @@ class _ConsoleSurface:
         # 남고 진짜 요약은 깨우기 런에 있었다). 그래서 그 뒤 첫 깨우기 런의
         # 답까지 쓴다(덮어씀). 작업 없이 끝난 질의는 종전 규칙 그대로.
         # 종료 코드(v10.124.0)도 같은 분기 — 실패 런도 사슬 안이면 판정에 든다.
-        if not (req.is_query or req.wake and self._continuing):
+        mail_run = not start.author_is_user
+        if not (_is_query(start) or mail_run and self._continuing):
             return
         self.exit_code = 0 if result.success else 1
         if not result.success:
@@ -581,7 +589,7 @@ class _ConsoleSurface:
             return False
         return bool(self._jobs.running() or self._jobs.started_since(self._run_started))
 
-    def run_starting(self, req) -> None:
+    def run_starting(self, start) -> None:
         pass  # 못 보는 모델의 이미지는 부트가 막았다 (`_require_vision`)
 
     def run_failed(self, exc: Exception) -> bool:
@@ -807,37 +815,6 @@ def _collect_agents() -> list[tuple[str, str]]:
         ((name, res.meta.get("description", "")) for name, res in resources.items()),
         key=lambda x: x[0].lower(),
     )
-
-
-_SLASH_CMD_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
-
-
-def looks_like_slash_command(message: str) -> bool:
-    """``/...`` 메시지가 **명령**인지 — 경로/일반 텍스트 오인 방지 (v4.51.1).
-
-    이전엔 ``startswith("/")`` 만으로 skill dispatch 로 보내서
-    ``/Users/me/proj 분석해줘`` 같은 경로-선두 메시지가 SKILL_NOT_FOUND
-    로 먹혔다. 판별 규칙(보수적 — 명령이라고 확신할 때만 True):
-
-    1. 첫 토큰에 두 번째 ``/`` 가 있으면 경로 (``/tmp/a.py``) → False
-    2. 첫 토큰이 파일시스템에 실존하면 경로 (``/etc``, ``/Users``) → False
-    3. 이름이 명령 문법(영숫자·-_)이 아니면 → False
-    4. 그 외 → True — unknown 이름은 기존대로 not-found 안내(오타 안전망)
-
-    ``@agent`` 라우팅과 web 의 정확-매치 명령(/help·/sh·/compact)은 무관.
-    """
-    first = message.split(maxsplit=1)[0]
-    body = first[1:]
-    if "/" in body:  # 규칙 1
-        return False
-    if not _SLASH_CMD_NAME.match(body):  # 규칙 3 (빈 문자열 포함)
-        return False
-    try:
-        if Path(first).exists():  # 규칙 2 — /etc, /Users 등 한 단어 경로
-            return False
-    except OSError:
-        pass
-    return True
 
 
 def try_dispatch_agent_or_skill(
@@ -2103,10 +2080,8 @@ def run(
             surface=surface,
             policy=policy,
             on_mail_notice=_agent_mail_notice,
-            # 대기 중에 친 명령(`/stop` 등)은 그 자리에서 라우팅한다 — 펌프는 아래에서 선다(늦은 바인딩)
-            on_wait_input=_terminal_steer_input(
-                main_input, route=lambda text: wired.pump.route(text)
-            ),
+            # 대기 중에 친 명령(`/stop` 등)은 그 자리에서 라우팅한다
+            on_wait_input=_terminal_steer_input(main_input, surface),
         )
 
         agent_registry = owners.agent_registry
@@ -2336,34 +2311,40 @@ def _install_ctrl_c(surface, agent_registry):
     return signal.signal(signal.SIGINT, on_sigint)
 
 
-def _terminal_steer_input(main_input, route=None):
+def _terminal_steer_input(main_input, surface):
     """run: 제자리 대기를 깨울 사람 입력 (v10.141.0, docs/agent-engine/DESIGN.md §6) —
-    ``(timeout) -> bool``. main 앞에 이미 온 사람의 말(예약 발화 등)이 있으면 참, 터미널이면 그 사이
-    친 한 줄을 main 앞에 넣고 참(꺼내는 것은 다음 턴 경계의 흡수다). 터미널이 아니면 그것만 본다.
+    ``(timeout) -> bool``. main 앞에 이미 온 사람의 말(예약 발화 등)은 웹과 같은 규칙(`wait_for_human_words`)으로
+    보고, 터미널이면 그 사이 친 한 줄을 같은 판정으로: 명령이 아니면 main 앞에 넣고 참(꺼내는 것은 다음 턴 경계의
+    흡수다). 터미널이 아니면 줄 선 말만 본다.
 
     터미널 줄은 main 이 제자리에서 기다리는 동안에만 읽는다 — 그 밖의 시간엔 `ask`·확인
     프롬프트가 같은 표준입력을 쓴다.
 
-    ``route`` (v10.142.0): 명령(``/stop agt-3`` 등)이면 그 자리에서 처리하고 기다림을 깨우지 않는다 — 큐에
-    넣으면 main 이 "사용자가 썼다" 로 깨어 그 말이 없는 관찰을 읽는다(명령은 흡수 때 소비된다). 멈춘 에이전트의
-    회신이 따로 깨운다."""
+    명령(``surface.is_command``, ``/stop agt-3`` 등)은 줄 선 것이든 친 것이든 그 자리에서 ``surface.route`` 하고
+    기다림을 깨우지 않는다 — 깨우면 main 이 "사용자가 썼다" 로 깨어 그 말이 없는 관찰을 읽는다(명령은 흡수 때
+    소비된다). 멈춘 에이전트의 회신이 따로 깨운다 (v10.148.0: 줄 선 명령도 — 종전엔 친 줄만)."""
     import select
+
+    from agent_cli.runtime import wait_for_human_words
+
+    queued = wait_for_human_words(main_input, surface)
 
     def wait(timeout: float) -> bool:
         if not sys.stdin.isatty():
-            return main_input.wait_for_arrival(timeout)
-        if main_input.wait_for_arrival(0):
+            return queued(timeout)
+        if queued(0):
             return True
         try:
             ready, _, _ = select.select([sys.stdin], [], [], timeout)
         except (OSError, ValueError):
-            return main_input.wait_for_arrival(timeout)
+            return queued(timeout)
         if not ready:
             return False
         text = sys.stdin.readline().strip()
         if not text:
             return False
-        if route is not None and text[:1] in "/@" and route(text):
+        if surface.is_command(text):
+            surface.route(text)
             return False
         main_input.enqueue(None, text)
         return True

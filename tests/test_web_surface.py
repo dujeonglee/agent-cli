@@ -54,16 +54,10 @@ class TestSignals:
 class TestEcho:
     def test_user_message_is_a_bubble_with_its_nickname(self, parts):
         surface, renderer, *_ = parts
-        surface.echo({"text": "hello", "nickname": "dj"}, wake=False)
+        surface.echo({"text": "hello", "nickname": "dj"})
         renderer.push_user_message.assert_called_once_with(
             "[dj]: hello", author="dj", hidx=3, images=None
         )
-
-    def test_wake_draws_nothing(self, parts):
-        """그 런의 관찰 줄이 메일이다 (v10.51.0)."""
-        surface, renderer, *_ = parts
-        surface.echo({"text": "WAKE"}, wake=True)
-        assert renderer.method_calls == []
 
 
 class TestRoute:
@@ -152,7 +146,7 @@ class TestEchoImages:
         """v10.60.0: 큐 아이템의 ``images`` 가 에코 카드의 썸네일이 된다."""
         surface, renderer, *_ = parts
         ref = {"path": "a.png", "width": 1, "height": 1}
-        surface.echo({"text": "look", "nickname": "dj", "images": [ref]}, wake=False)
+        surface.echo({"text": "look", "nickname": "dj", "images": [ref]})
         renderer.push_user_message.assert_called_once_with(
             "[dj]: look", author="dj", hidx=3, images=[ref]
         )

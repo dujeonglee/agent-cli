@@ -18,7 +18,7 @@ import types
 from unittest.mock import MagicMock
 
 from agent_cli.providers.capabilities import ModelCapabilities
-from tests.loop_ports import make_ports
+from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
 
 HANGUL = re.compile(r"[가-힣]")
@@ -32,7 +32,9 @@ def _loop(dequeue=None, route=None, **kw):
             context_window=32768, max_output_tokens=4096, supports_thinking=False
         ),
         model="m",
-        ports=make_ports(dequeue_user_message=dequeue, route_message=route),
+        ports=make_ports(
+            inbox=queue_inbox(dequeue) if dequeue else None, route_message=route
+        ),
         **kw,
     )
 
@@ -435,7 +437,7 @@ class TestThroughRunLoop:
             dialect="json_fc",
             ports=make_ports(
                 owner="main",
-                dequeue_user_message=lambda: queue.pop(0) if queue else None,
+                inbox=queue_inbox(lambda: queue.pop(0) if queue else None),
             ),
             **kw,
         )
@@ -498,7 +500,7 @@ class TestThroughRunLoop:
             dialect="json_fc",
             ports=make_ports(
                 owner="main",
-                dequeue_user_message=lambda: queue.pop(0) if queue else None,
+                inbox=queue_inbox(lambda: queue.pop(0) if queue else None),
             ),
         )
         assert provider.call.call_count == 3
@@ -576,7 +578,7 @@ class TestThroughRunLoop:
                 dialect="json_fc",
                 ports=make_ports(
                     owner="main",
-                    dequeue_user_message=lambda: queue.pop(0) if queue else None,
+                    inbox=queue_inbox(lambda: queue.pop(0) if queue else None),
                 ),
             )
 
@@ -961,9 +963,8 @@ class TestAgentLoopsAreUntouched:
     """회계·되돌림·독촉·칩은 **웹 main 루프에만** 걸린다 (사용자 우려).
 
     장부(`state.ledger`)를 채우는 입구는 둘뿐이다 — 스타터의 `query_request_id`
-    와 드레인 포트 `dequeue_user_message`. 둘 다 `main.py` 의 웹 워커만
-    넘긴다. 상주·일회성·스킬 루프의 포트 빌더는 전부 `dequeue_user_message=
-    None` 이고 `query_request_id` 는 기본값 "" 이다. 그래서 그 루프들에선
+    와 main 상자 흡수(`Mailbox(take=…)` 의 사람의 말). 둘 다 main 만 넘긴다. 상주·일회성·스킬
+    루프는 main 상자를 흡수하지 않고 `query_request_id` 는 기본값 "" 이다. 그래서 그 루프들에선
     목록이 항상 비고, 새 기계가 전부 조용하다.
 
     여기서 **프로덕션 빌더**(`ResidentLoop.make_ports` / `PrivateLoop.make_ports`)

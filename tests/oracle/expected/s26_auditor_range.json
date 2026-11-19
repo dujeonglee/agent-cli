@@ -340,13 +340,8 @@
     false
    ],
    [
-    "echo",
-    "New agent mail has arrived. It is delivered as observation(s) at the start of this turn — review it and continue accordingly.",
-    true
-   ],
-   [
     "run_starting",
-    "New agent mail has arrived. It is delivered as observation(s) at the start of this turn — review it and continue accordingly.",
+    "",
     true,
     false
    ],

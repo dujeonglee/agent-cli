@@ -54,7 +54,6 @@ class LoopPorts:
     mcp_manager: Any
     hook_runner: Any
     route_message: Any
-    dequeue_user_message: Any
     #: main 전용 (v10.120.0): ``(text, nickname) -> item`` — 입력 큐에 사람 요청 하나를
     #: 넣는다. 사람이 입력창에 친 메시지와 같은 길(다음 턴 경계 흡수 → ``u-N`` 장부)로
     #: 가야 하는 하니스 쪽 입력이 쓴다: 제자리 고리 확인(StaleGuard)의 Hint.
@@ -92,11 +91,11 @@ class LoopPorts:
     _NON_RESOURCE = ("owner", "unwired")
 
     def wakeable(self) -> bool:
-        """이 루프를 **깨울 길이 있는가** (v10.65.0, `wait` 의 전제) — main 은 입력
-        큐(``dequeue_user_message``), 상주·private(one-shot·하니스) 는 받은편지함(``mailbox.has_inbox``). 스킬
-        루프는 둘 다 없다: 결과가 호출자에게 돌아가는 인라인 런이라 끝나면 그만이고,
+        """이 루프를 **깨울 길이 있는가** (v10.65.0, `wait` 의 전제) — 턴 경계에 흡수할 상자가 있는가
+        (``mailbox.has_inbox`` — main 은 main 상자, 상주·private(one-shot·하니스)는 받은편지함). 스킬
+        루프는 없다: 결과가 호출자에게 돌아가는 인라인 런이라 끝나면 그만이고,
         `wait` 로 끝낸 결과는 호출자에게 "기다리는 중" 으로 돌아가 버린다."""
-        return self.dequeue_user_message is not None or self.mailbox.has_inbox
+        return self.mailbox.has_inbox
 
     def handler_resources(self) -> dict[str, Any]:
         """``Tool.requires_handler`` 가 보는 뷰 — 손으로 안 적는다.
@@ -125,7 +124,7 @@ class LoopPorts:
 # 못 잡는다). 그래서 확인된 사실만 적고, 확인 못 한 것은 "종전 배선
 # 유지" 로 적어 둔다 — 지어낸 근거보다 낫다.
 
-_WEB_ONLY = "main 루프 전용 — 입력 큐가 있는 호스트(run·web)에만 있다"
+_WEB_ONLY = "main 루프 전용 — 사람의 말을 받는 호스트(run·web)에만 있다"
 _NO_HOOK_RUNNER = (
     "세션 부트스트랩(run/web 의 build_hook_runner)을 거치지 않은 직접 호출 경로"
 )

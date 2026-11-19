@@ -37,7 +37,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent_cli.providers.capabilities import ModelCapabilities
-from tests.loop_ports import make_ports
+from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "ledger_golden.json"
@@ -69,7 +69,7 @@ def _loop(items=(), *, debts=(), resident=False, user_run=None):
         ),
         model="m",
         ports=make_ports(
-            dequeue_user_message=lambda: q.pop(0) if q else None,
+            inbox=queue_inbox(lambda: q.pop(0) if q else None),
             questions=_Port(debts, resident=resident) if debts else None,
         ),
     )

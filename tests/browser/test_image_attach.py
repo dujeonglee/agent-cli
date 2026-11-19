@@ -54,7 +54,7 @@ def test_attach_then_send_queues_the_image(stack, page, ws):
     page.fill("#input", "what is this?")
     page.press("#input", "Enter")
     assert _wait(lambda: stack.server.main_input.pending_count() == 1)
-    item = stack.server.main_input.take_next()
+    item = stack.server.main_input.wait_to_open(0)
     assert item["text"] == "what is this?"
     assert len(item["images"]) == 1
     assert (item["images"][0]["width"], item["images"][0]["height"]) == (64, 32)
@@ -321,7 +321,7 @@ def test_image_only_message_opens_a_run_and_the_worker_lives_on(stack, page, ws)
     ran: list = []
 
     def run_main(req):
-        ran.append((req.text, [i["path"] for i in req.images]))
+        ran.append((req.query, [i["path"] for i in req.images]))
         return SimpleNamespace(output="", success=True, waiting=False)
 
     pump = make_pump(

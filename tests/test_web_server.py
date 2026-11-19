@@ -10,7 +10,7 @@ Coverage axes:
    a second connection does not end the first's stream.
 4. **POST /api/input** — chat / prompt / confirm routes wire through
    to the renderer (chat enqueues onto the pending message queue:
-   ``enqueue`` / ``main_input.wait_to_open`` / ``main_input.take_next`` / cancel).
+   ``enqueue`` / ``main_input.wait_to_open`` / cancel).
 5. **POST /api/abort** — releases a blocked ``prompt_user`` /
    ``confirm`` call.
 
@@ -1339,10 +1339,9 @@ class TestStaticUI:
         assert payload["item"] == "u-1" and payload["task_id"] == "agt-x#u-1"
         assert "index" not in payload
 
-    def test_wake_call_site_draws_nothing(self, server_and_client):
-        """깨우기 런은 화면에 아무것도 내지 않는다 (v10.51.0) — 그 런의 관찰
-        줄이 메일이다. 말풍선(v9.7.0 이전)으로도, 카드(v9.7.0~v10.50)로도
-        돌아가지 않게 호출부를 고정한다. 호출부는 ``WebSurface.echo``."""
+    def test_echo_draws_the_users_bubble(self, server_and_client):
+        """사람의 말로 연 차례는 말풍선 하나 — 메일이 연 런은 펌프가 ``echo`` 를 부르지 않는다(v10.51.0, 그 런의
+        관찰 줄이 메일이다; `tests/test_pump.py` 의 메일 런)."""
         from unittest.mock import MagicMock
 
         from agent_cli.web.surface import WebSurface
@@ -1356,9 +1355,7 @@ class TestStaticUI:
             binding=MagicMock(),
             dispatch=None,
         )
-        surface.echo({"text": "New agent mail has arrived."}, wake=True)
-        assert renderer.method_calls == []
-        surface.echo({"text": "hi", "nickname": "dj"}, wake=False)
+        surface.echo({"text": "hi", "nickname": "dj"})
         renderer.push_user_message.assert_called_once_with(
             "[dj]: hi", author="dj", hidx=7, images=None
         )
@@ -2001,7 +1998,7 @@ class TestWebResumeCli:
 
 
 class TestMessageQueue:
-    """``enqueue`` / ``main_input.wait_to_open`` / ``main_input.take_next`` / cancel +
+    """``enqueue`` / ``main_input.wait_to_open`` / cancel +
     the ``shutdown`` that wakes a blocked worker."""
 
     def test_shutdown_wakes_blocked_worker(self):
@@ -2035,13 +2032,13 @@ class TestMessageQueue:
         assert item["nickname"]  # a fun nickname was attached
         assert item["id"]
 
-    def test_take_next_fifo_then_none(self):
+    def test_opens_fifo_then_none(self):
         srv = WebServer(WebRenderer())
         srv.enqueue("a", "first")
         srv.enqueue("b", "second")
-        assert srv.main_input.take_next()["text"] == "first"
-        assert srv.main_input.take_next()["text"] == "second"
-        assert srv.main_input.take_next() is None  # empty → non-blocking None
+        assert srv.main_input.wait_to_open(0)["text"] == "first"
+        assert srv.main_input.wait_to_open(0)["text"] == "second"
+        assert srv.main_input.wait_to_open(0) is None  # empty → non-blocking None
 
     def test_cancel_only_by_owner_and_pending(self):
         srv = WebServer(WebRenderer())
@@ -3712,7 +3709,7 @@ class TestChatWithImages:
             json={"kind": "chat", "content": "what is this?", "images": [full]},
         )
         assert r.status_code == 200, r.text
-        item = server.main_input.take_next()
+        item = server.main_input.wait_to_open(0)
         assert item["text"] == "what is this?"
         assert len(item["images"]) == 1
         ref = item["images"][0]
@@ -3728,7 +3725,7 @@ class TestChatWithImages:
             json={"kind": "chat", "content": "", "images": [str(tmp_path / "a.png")]},
         )
         assert r.status_code == 200
-        assert server.main_input.take_next()["images"][0]["mime"] == "image/png"
+        assert server.main_input.wait_to_open(0)["images"][0]["mime"] == "image/png"
 
     def test_bad_images_are_400_and_nothing_is_queued(
         self, server_and_client, tmp_path
@@ -3749,7 +3746,7 @@ class TestChatWithImages:
                 json={"kind": "chat", "content": "hi", "images": images},
             )
             assert r.status_code == 400, images
-        assert server.main_input.take_next() is None
+        assert server.main_input.wait_to_open(0) is None
 
     def test_no_images_key_is_the_old_shape(self, server_and_client):
         server, _, client = server_and_client
@@ -3757,7 +3754,7 @@ class TestChatWithImages:
             "/api/input?token=testtoken", json={"kind": "chat", "content": "hi"}
         )
         assert r.status_code == 200
-        assert server.main_input.take_next()["images"] == []
+        assert server.main_input.wait_to_open(0)["images"] == []
 
 
 class TestImageSupportEndpoint:

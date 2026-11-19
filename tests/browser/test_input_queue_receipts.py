@@ -1,8 +1,8 @@
 """main 이 바쁠 때 보낸 사람의 입력 — 입력창 위 대기열의 줄과 떠날 때의 영수증 (실브라우저).
 
 영수증은 서버가 보내지 않는다. 프런트가 추론한다: 대기열에서 빠진 줄과 같은 글의 말풍선(`user_message`)이 곧
-오면 주입, 아니면 취소. 그래서 줄을 꺼내는 자리마다 말풍선을 내야 "주입" 으로 보인다 — 제자리 대기 중 명령으로
-꺼낸 줄은 말풍선이 없어 "Cancelled" 로 보인다(지금 동작).
+오면 주입, 아니면 취소. 그래서 줄을 꺼내는 자리마다 말풍선을 낸다 — 펌프가 연 차례, 턴 경계, 제자리 대기 중
+명령으로 꺼낸 줄(v10.148.0 — 종전엔 말풍선이 없어 "Cancelled" 로 보였다).
 """
 
 from __future__ import annotations
@@ -32,14 +32,25 @@ def _send(page, text: str) -> None:
     page.click("#send")
 
 
-def _take_next(stack) -> dict:
+def _open_next(stack) -> dict:
     """턴 경계가 하듯 맨 앞 줄을 꺼낸다(말풍선은 호출자가 낸다)."""
-    return stack.server.main_input.take_next()
+    return stack.server.main_input.wait_to_open(0)
 
 
-def _take_first_command(stack) -> dict:
-    """제자리 대기가 하듯 맨 앞 줄을 명령으로 꺼낸다 — 말풍선 없이."""
-    return stack.server.main_input.take_first_if(lambda text: True)
+def _wait_in_place(stack, routed: list):
+    """main 의 제자리 대기를 깨울 사람 입력 — 웹 표면(실제 `WebSurface`)과 같은 길(`runtime.wait_for_human_words`).
+    라우팅은 대역: 받은 글을 적고 처리했다고 답한다."""
+    from agent_cli.runtime import wait_for_human_words
+    from agent_cli.web.surface import WebSurface
+
+    surface = WebSurface(
+        renderer=stack.renderer,
+        server=stack.server,
+        ctx=None,
+        binding=None,
+        dispatch=lambda text, stop: routed.append(text) or True,
+    )
+    return wait_for_human_words(stack.server.main_input, surface)
 
 
 def _busy_page(stack, page):
@@ -57,7 +68,7 @@ class TestReceipts:
         row = _items(page).first
         assert row.locator(".queue-text").inner_text().endswith("please also check y")
         assert row.locator(".queue-cancel").count() == 1  # 내 줄 — 취소할 수 있다
-        item = _take_next(stack)
+        item = _open_next(stack)
         stack.renderer.push_user_message(
             f"[{item['nickname']}]: {item['text']}", author=item["nickname"]
         )
@@ -78,11 +89,13 @@ class TestReceipts:
         assert _wait(lambda: _items(page).count() == 1)
         assert _items(page).first.locator(".queue-cancel").count() == 0
 
-    def test_a_command_taken_while_main_waits_reads_cancelled(self, stack, page):
-        """제자리 대기의 명령은 말풍선 없이 꺼내 라우팅한다 — 프런트는 그 줄을 취소로 그린다."""
+    def test_a_command_taken_while_main_waits_reads_applied(self, stack, page):
+        """제자리 대기의 명령은 말풍선을 내고 꺼내 라우팅한다 — 프런트는 그 줄을 주입으로 그린다."""
         _busy_page(stack, page)
         _send(page, "/noop now")
         assert _wait(lambda: _items(page).count() == 1)
-        assert _take_first_command(stack)["text"] == "/noop now"
-        assert _wait(lambda: "Cancelled" in _queue_text(page))
-        assert "My request applied" not in _queue_text(page)
+        routed: list = []
+        assert _wait_in_place(stack, routed)(0) is False  # 명령은 깨우지 않는다
+        assert routed == ["/noop now"]
+        assert _wait(lambda: "✓ My request applied" in _queue_text(page))
+        assert "Cancelled" not in _queue_text(page)

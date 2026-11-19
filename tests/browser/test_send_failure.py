@@ -115,7 +115,7 @@ def test_two_quick_enters_send_once(stack, page, ws):
     page.press("#input", "Enter")
     assert _wait(lambda: page.input_value("#input") == "")
     assert stack.server.main_input.pending_count() == 1
-    assert stack.server.main_input.take_next()["text"] == "once"
+    assert [i["text"] for i in stack.server.main_input.snapshot()] == ["once"]
 
 
 def test_no_response_times_out_keeps_text_and_frees_the_next_send(stack, page, ws):
@@ -160,4 +160,4 @@ def test_no_response_times_out_keeps_text_and_frees_the_next_send(stack, page, w
     assert _wait(lambda: page.input_value("#input") == "")
     assert _wait(lambda: page.locator("#attach-strip .attach-chip").count() == 0)
     assert "Not sent — late" not in page.evaluate("() => window.__notices")
-    assert stack.server.main_input.take_next()["text"] == "anyone there?"
+    assert [i["text"] for i in stack.server.main_input.snapshot()] == ["anyone there?"]

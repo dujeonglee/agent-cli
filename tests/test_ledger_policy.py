@@ -28,7 +28,7 @@ from agent_cli.loop.ledger import (
 from agent_cli.main_input import MainInput
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.subagent.agents_live import AgentRegistry
-from tests.loop_ports import make_ports
+from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
 from tests.mail_support import to_main
 
@@ -71,7 +71,7 @@ def _loop(tmp_path, *, requests=(), debts=(), ctx=False):
         if ctx
         else None,
         ports=make_ports(
-            dequeue_user_message=lambda: q.pop(0) if q else None,
+            inbox=queue_inbox(lambda: q.pop(0) if q else None),
             questions=_Port(debts) if debts else None,
         ),
     )

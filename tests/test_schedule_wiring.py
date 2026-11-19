@@ -57,7 +57,7 @@ class TestRunPump:
         return run_pump_in_thread(
             make_pump(
                 main_input=q,
-                run_main=lambda req: calls.append(req.text),
+                run_main=lambda req: calls.append(req.query),
                 schedules=reg,
                 on_wait=lambda kind: waits.append(kind),
                 poll_secs=0.02,

@@ -26,6 +26,7 @@ from agent_cli.monitor.registry import (
 from agent_cli.session_slots import set_monitor_registry
 from agent_cli.tools import RunContext
 from agent_cli.tools.monitor_tool import NEEDS_SHELL, MonitorTool
+from tests.mail_support import absorbed_mail
 from tests.monitor_delivery import RecordingDelivery
 
 
@@ -235,7 +236,6 @@ class TestOwnerIsDecidedByTheKind:
                 mcp_manager=None,
                 hook_runner=None,
                 route_message=None,
-                dequeue_user_message=None,
             )
 
 
@@ -516,7 +516,7 @@ class TestEndToEnd:
             assert wait_until(lambda: seen), "에이전트가 안 깨어났다"
             assert "빌드 끝" in seen[0], seen
             # main 메일박스는 비어 있어야 한다 — 종전의 가로채기 회귀 방지.
-            assert not agents.has_pending_replies(), "main 이 가로챘다"
+            assert not agents.arrived_for("main"), "main 이 가로챘다"
         finally:
             agents.shutdown_all()
 
@@ -535,8 +535,8 @@ class TestEndToEnd:
             log.write_text("X main 것\n")
             reg.tick(time.time())
 
-            assert wait_until(agents.has_pending_replies)
-            (item,) = [r for r in agents.drain_replies() if r.get("kind") == "monitor"]
+            assert wait_until(lambda: agents.arrived_for("main"))
+            (item,) = [r for r in absorbed_mail(agents) if r.get("kind") == "monitor"]
             assert "main 것" in item["output"]
             assert agents.queued_for(f"agent:{key}") == (), "에이전트가 가로챘다"
         finally:

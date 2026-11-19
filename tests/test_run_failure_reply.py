@@ -22,6 +22,7 @@ from agent_cli.subagent.agent_mail import build_reply_record
 from agent_cli.subagent.agents_live import AgentRegistry
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
+from tests.mail_support import absorbed_mail
 
 CAPS = ModelCapabilities(
     context_window=65536, max_output_tokens=4096, supports_thinking=False
@@ -112,8 +113,8 @@ def _ask(reg, author: str, *, run: bool) -> str:
 
 
 def _main_reply(reg) -> str:
-    assert _until(reg.has_pending_replies)
-    (mail,) = reg.drain_replies()
+    assert _until(lambda: reg.arrived_for("main"))
+    (mail,) = absorbed_mail(reg)
     return build_reply_record(mail, registry=reg)["content"]
 
 
@@ -151,8 +152,8 @@ class TestMainRequester:
         reg = make("reply")
         key = _ask(reg, "main", run=True)
         assert _until(lambda: reg.get(key).state == "dead")
-        assert _until(reg.has_pending_replies)
-        (mail,) = reg.drain_replies()
+        assert _until(lambda: reg.arrived_for("main"))
+        (mail,) = absorbed_mail(reg)
         assert mail["success"] is True and "error" not in mail
         assert "run ended with an error" not in build_reply_record(mail)["content"]
 

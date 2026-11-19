@@ -28,6 +28,7 @@ from agent_cli.session_slots import (
 )
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.binding_support import make_binding
+from tests.mail_support import absorbed_mail
 from tests.monitor_delivery import RecordingDelivery
 from tests.test_engine_p2 import (
     CAPS,
@@ -382,14 +383,14 @@ class TestResidentRefuses:
         )
         assert "You do not need `wait` to receive messages" in text
         reg, key = resident["reg"], resident["key"]
-        replies = [m.get("output") for m in reg.drain_replies()]
+        replies = [m.get("output") for m in absorbed_mail(reg)]
         assert replies == [
             "first done"
         ]  # `complete` 의 result 는 아무에게도 가지 않는다
         assert reg.request(key, "SECOND ask") == ""
         assert wait_until(lambda: _ended(renderer, key) >= 2)
         assert wait_until(lambda: reg.get(key).state == "idle")
-        assert [m.get("output") for m in reg.drain_replies()] == ["second done"]
+        assert [m.get("output") for m in absorbed_mail(reg)] == ["second done"]
         (msgs,) = seen
         body = "\n".join(str(m.get("content") or "") for m in msgs)
         # 앞 런(과제·회신·거절)이 그대로 있고 그 뒤에 새 메시지

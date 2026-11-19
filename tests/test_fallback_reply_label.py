@@ -12,6 +12,7 @@ import threading
 import pytest
 
 from agent_cli.subagent.agent_mail import build_reply_record
+from tests.mail_support import absorbed_mail
 from tests.test_agents_live import _FakeLoopResult, make_registry
 from tests.test_engine_p2 import wait_until
 
@@ -37,7 +38,7 @@ def helper(tmp_path):
 def _heads(reg) -> list[str]:
     return [
         build_reply_record(m, registry=reg)["content"].splitlines()[0]
-        for m in reg.drain_replies()
+        for m in absorbed_mail(reg)
     ]
 
 

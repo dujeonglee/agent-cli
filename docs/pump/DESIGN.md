@@ -24,6 +24,17 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 그 창구를 받는다(`build_agent_registry(post=…)`). 아래 §3 의 그림과 §3.4 의 깨우기 이야기는 그 전의 기록이다 — 지금의
 루프는 `agent_cli/pump.py` 의 `SessionPump.run` 이다.
 
+**v10.148.0 — 런은 상자가 연다, 표면은 `Start` 를 받는다.** 펌프 고유의 요청 타입(`RunRequest`)과 깨우기 문장·작성자
+(`WAKE_TEXT`·`WAKE_AUTHOR`)가 없어졌다. 펌프는 꺼낸 사람의 말(또는 깨우는 메일)을 `MainLoop.start(item, stop_event)`
+에 넘겨 엔진의 `Start` 를 짓는다 — 사람의 말이면 그 말이 시작(``author_is_user=True``, 작성자는 별명, 없으면 argv
+질의), 메일이면 빈 시작(``author_is_user=False`` — 첫 입력은 첫 턴 경계가 배달하는 메일). 표면은 그 `Start` 를
+받는다: `echo(item)`(사람의 말로 연 때만), `route(text, start)`(턴 경계·제자리 대기의 라우팅은 ``start`` 없음),
+`run_starting(start)`, `run_ended(result, start)`. "명령인가" 는 실행과 뗀 판정 하나(`surface.is_command` —
+`command_table.command_kind` 위에 웹은 `/help`·`/compact`·`/sh`, CLI 는 `/sh` 제외)이고, 제자리 대기는 첫 말이
+명령일 때만 꺼내 라우팅한다(명령이 아닌 말은 꺼내지 않는다). 턴 경계는 main 상자를 한 번에 흡수한다
+(`AgentRegistry.absorb_main` — 사람의 말 먼저, 메일 뒤, 루프 포트 `Mailbox(take=…)`); 루프 포트의
+`dequeue_user_message` 는 없다.
+
 ## 1. 왜
 
 `agent-cli run` 과 `agent-cli web` 은 이미 같은 부품을 쓴다 — `InputQueue`,
@@ -99,7 +110,7 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 class PumpDeps:          # 세션 수명 객체 — 한 번 조립
     main_input: MainInput          # v10.147.0 — 종전 queue: InputQueue + waker: MailWaker
     agent_registry: AgentRegistry
-    run_main: Callable[[RunRequest], ToolResult]   # run_loop 바인딩 (아래 3.4)
+    main: MainLoop                 # v10.148.0 — 종전 run_main: Callable[[RunRequest], ToolResult]
     surface: PumpSurface
     policy: LifetimePolicy
 
@@ -108,9 +119,8 @@ class SessionPump:
     def run(self) -> None:   # 위 그림. KeyboardInterrupt 는 잡지 않는다 (호출자 정책)
 ```
 
-`RunRequest` = `{text, author, author_is_user, request_id, stop_event, wake}` —
-run_loop 의 query_* 인자를 한 덩어리로. run 은 author `""`·request_id `""`
-로 보내며 `run_loop` 은 이미 둘 다 기본값으로 받는다(`loop/run.py:41-43`).
+런의 시작은 엔진의 `Start`(`loop/kind.py`) — `MainLoop.start(item, stop_event)` 가 짓는다(v10.148.0, 종전
+`RunRequest`).
 
 ### 3.2 `LifetimePolicy` — "왜 살아 있는가" 한 곳
 
@@ -137,14 +147,16 @@ web 의 `web_instance_is_active = 뷰어 ∨ busy ∨ has_live_work(...)` 로 �
 class PumpSurface(Protocol):
     def idle(self) -> None                       # web: renderer.worker_idle(); run: no-op
     def busy(self) -> None                       # web: renderer.worker_busy(); run: no-op
-    def echo(self, item: dict, *, wake: bool)    # web: push_user_message 말풍선
-                                                 # wake 는 둘 다 그리지 않는다 (v10.51.0)
+    def echo(self, item: dict)                   # web: push_user_message 말풍선; run: no-op
+                                                 # 메일이 연 런엔 부르지 않는다 (v10.51.0)
     def bind_stop(self, ev: Event | None)        # web: server.set_stop_handle; run: no-op
-    def route(self, text: str) -> bool           # web: handle_slash_command → try_dispatch…(web_output)
+    def is_command(self, text: str) -> bool      # route 가 명령으로 받는가 — 실행 없이 판정만 (v10.148.0)
+    def route(self, text: str, start=None) -> bool   # web: handle_slash_command → try_dispatch…(web_output)
                                                  # run: /sh 제외 가드 + try_dispatch…(console)
-    def run_starting(self, req: RunRequest)      # run_main 바로 앞, 같은 try (v10.130.6)
+                                                 # start = 그 말로 연 차례(run 의 argv 질의 판정), 턴 경계는 None
+    def run_starting(self, start: Start)         # 런 바로 앞, 같은 try (v10.130.6)
                                                  # web: 못 보는 모델에 이미지 → status("error"); run: no-op
-    def run_ended(self, res: ToolResult)         # run: --result-file (성공 시); web: no-op
+    def run_ended(self, res: ToolResult, start: Start)   # run: --result-file (argv 질의 성공 시); web: no-op
     def run_failed(self, exc) -> bool            # web: renderer.error → True(계속); run: False(전파)
     def announce(self, *, revived, auto, stale, monitor_notice)   # 부트 알림
     graceful_interrupt: bool                     # web True / run False (run_loop 인자)

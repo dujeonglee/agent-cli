@@ -20,7 +20,7 @@ from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.pump import ForeverPolicy
 from agent_cli.web.surface import WebSurface
 from tests.binding_support import make_binding
-from tests.loop_ports import make_ports
+from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import run_loop
 from tests.pump_support import make_pump
 
@@ -78,7 +78,7 @@ def test_image_only_message_opens_a_run_on_the_web_pump():
     ran = []
     pump = make_pump(
         main_input=mi,
-        run_main=lambda req: ran.append((req.text, req.images)),
+        run_main=lambda start: ran.append((start.query, start.images)),
         surface=_web_surface(),
         policy=ForeverPolicy(),
     )
@@ -105,7 +105,7 @@ def test_image_only_message_injected_mid_run_reaches_the_model(tmp_path):
         query="do Y",
         query_author="dj",
         ports=make_ports(
-            dequeue_user_message=lambda: pending.pop(0) if pending else None,
+            inbox=queue_inbox(lambda: pending.pop(0) if pending else None),
             route_message=surface.route,
         ),
         provider=provider,

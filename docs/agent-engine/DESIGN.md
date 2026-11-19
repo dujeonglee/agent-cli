@@ -75,7 +75,7 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
 - **제자리 대기.** `MainLoop.wait_policy` 는 기다리는 회신이 있으면 `WAIT_BLOCK` — `dispatch._wait_in_place` 가
   `Mailbox.wait` → `AgentRegistry.wait_mail` 로 메일(회신·작업 통지·체크인 — `arrived_for`, main 상자의 메일만) 또는 사람 입력
   (`wait_input`: 웹은 `runtime.wait_for_human_words`, run 은 터미널 줄을 main 앞 사람의 말(`MainInput`)로 넣는 `main._terminal_steer_input` — 둘 다 대기 중
-  친 `/`·`@` 명령(`/stop agt-3` 등)은 그 자리에서 라우팅하고 깨우지 않는다)이 올 때까지
+  친 명령(`/stop agt-3` 등 — 판정은 표면의 `is_command`)은 그 자리에서 라우팅하고 깨우지 않는다)이 올 때까지
   막고, 깨면 같은 런의 다음 턴 경계 흡수(`MainLoop.intake`)가 읽는다. 사람 입력에 깨면 관찰
   "the wait was interrupted — the user wrote to you; … still awaited, so `wait` again when you are done" 를 남긴다.
   같은 런이라 감사(auditor)의 구간이 회신까지 덮는다. 기다리는 회신 없이 작업·모니터만 기다리면 지금처럼 런을 끝낸다.
