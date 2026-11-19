@@ -67,10 +67,15 @@ class _NeverAnswers:
             raise
 
 
+#: 테스트가 끝나지 않는 대신 실패하게 하는 바깥 한도(초) — 시간 단언이 아니다(구현이 상한·정지를
+#: 잃으면 여기서 걸린다).
+NO_HANG_S = 30
+
+
 def _run(coro):
     loop = asyncio.new_event_loop()
     try:
-        result = loop.run_until_complete(coro)
+        result = loop.run_until_complete(asyncio.wait_for(coro, NO_HANG_S))
         leftover = [t for t in asyncio.all_tasks(loop) if not t.done()]
         assert leftover == [], f"떠 있는 태스크: {leftover}"
         return result
@@ -296,13 +301,28 @@ def servers(tmp_path_factory):
         assert wait_until(lambda p=pid: not _alive(p)), f"서버 {pid} 가 남았다"
 
 
+def _call(m, server: str, tool: str, args: dict, ctx=None):
+    """도구 호출 하나를 스레드에서 — ``NO_HANG_S`` 안에 끝나지 않으면 실패한다(기다림이 끝없이
+    걸리면 테스트도 걸리는 대신)."""
+    box: dict = {}
+
+    def go():
+        box["r"] = McpTool(m, server, tool, "", {}).run(args, ctx=ctx)
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    t.join(NO_HANG_S)
+    assert not t.is_alive(), f"{server}.{tool} 호출이 끝나지 않았다"
+    return box["r"]
+
+
 def _fast(m, server: str, text: str) -> str:
-    return McpTool(m, server, "fast", "", {}).run({"text": text}).output
+    return _call(m, server, "fast", {"text": text}).output
 
 
 def test_real_server_limit_then_the_connection_still_answers(servers):
     m, marks, baseline = servers
-    r = McpTool(m, "quick", "hang", "", {}).run({"tag": "limit"})
+    r = _call(m, "quick", "hang", {"tag": "limit"})
     assert r.error == (
         "MCP mcp__quick__hang did not answer within 0.5s, so the call was given up. "
         "The server may still be working on it."
@@ -314,7 +334,7 @@ def test_real_server_limit_then_the_connection_still_answers(servers):
 
 def test_real_server_a_late_answer_does_not_become_the_next_result(servers):
     m, marks, baseline = servers
-    r = McpTool(m, "quick", "sleep", "", {}).run({"seconds": 1.0, "tag": "late"})
+    r = _call(m, "quick", "sleep", {"seconds": 1.0, "tag": "late"})
     assert "did not answer within 0.5s" in r.error
     # 서버는 하던 일을 끝내고 답을 보냈다 — 그 답이 다음 호출의 결과로 섞이지 않는다
     assert wait_until(lambda: (marks["quick"] / "slept-late").exists())
@@ -333,8 +353,8 @@ def test_real_server_run_stop_gives_up_then_the_connection_still_answers(servers
 
     t = threading.Thread(target=stop_when_hanging, daemon=True)
     t.start()
-    r = McpTool(m, "patient", "hang", "", {}).run(
-        {"tag": "stop"}, ctx=RunContext(stopped=stop.is_set)
+    r = _call(
+        m, "patient", "hang", {"tag": "stop"}, ctx=RunContext(stopped=stop.is_set)
     )
     t.join()
     assert r.error is not None
