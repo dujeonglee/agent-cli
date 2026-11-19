@@ -31,7 +31,7 @@ Outcome = Literal["done", "stopped", "wait", "session_end"]
 
 
 class _Mark:
-    """`wait_to_open` 의 표지 — 이름만 든다(identity 로 비교한다)."""
+    """`next_run` 의 표지 — 이름만 든다(identity 로 비교한다)."""
 
     def __init__(self, name: str) -> None:
         self._name = name
@@ -40,10 +40,7 @@ class _Mark:
         return self._name
 
 
-#: `wait_to_open` — 사람의 말은 없고 깨우는 메일이 있다. 메일은 꺼내지 않는다: 그 런의 첫 턴 경계가 상자를 흡수한다(사람의
-#: 말 먼저, 메일 뒤). 열기와 첫 경계 사이에 저장이 있어도 메일은 디스크에 남아, 재시작이 잃지 않는다.
-OPEN_MAIL = _Mark("OPEN_MAIL")
-#: `wait_to_open` — 상자가 닫혔고 줄 선 사람의 말이 없다
+#: `next_run` — 상자가 닫혔다(`Take.WORDS_FIRST` 는 줄 선 사람의 말을 다 꺼낸 뒤)
 CLOSED = _Mark("CLOSED")
 
 
@@ -70,7 +67,7 @@ class PostOffice:
         self.cv = cv if cv is not None else threading.Condition()
         self._boxes: dict[str, Postbox] = {}
         self._book = RequestBook()
-        #: 런을 열 것을 기다리는 주소(`wait_to_open` 안) — 타임아웃에도 내리지 않고, 꺼낼 때 내린다
+        #: 런을 열 것을 기다리는 주소(`next_run` 안) — 타임아웃에도 내리지 않고, 꺼낼 때 내린다
         self._idle: set[str] = set()
         self._closed: set[str] = set()
 
@@ -84,14 +81,6 @@ class PostOffice:
             self.cv.notify_all()
 
     # ── 런 ───────────────────────────────────────────
-
-    def start_run(self, addr: str) -> tuple[Envelope, ...]:
-        """런 하나를 열 봉투를 꺼낸다(사람의 말은 묶음) — 그 줄은 picked. 없으면 빈 튜플. 런 id 는 닫을 때
-        (`pay`·`complete`·`end_run`) 받는다 — 집을 때는 필요 없다."""
-        with self.cv:
-            envs = self._box(addr).take_next()
-            self._picked(envs)
-            return envs
 
     def absorb(self, addr: str, *, human_first: bool = False) -> tuple[Envelope, ...]:
         """턴 경계 — 줄 선 것 전부를 지금 런으로(``human_first`` 면 사람의 말 먼저). 그 줄은 picked."""
@@ -344,32 +333,6 @@ class PostOffice:
                 return ()
             return None
 
-    def wait_to_open(self, addr: str, *, timeout: float | None):
-        """``addr`` 의 다음 런을 열 것 — 줄 선 사람의 말이 있으면 첫 하나를 꺼내 돌려준다, 없고 닫혔으면 `CLOSED`, 깨우는
-        메일이 있으면 `OPEN_MAIL`(꺼내지 않는다), ``timeout`` 이 지나면 None. 기다리는 동안 ``addr`` 는 한가함(`idle`)
-        이고, 사람의 말이나 `OPEN_MAIL` 을 돌려줄 때 내린다 — 판정과 내림이 한 락 구간이다."""
-        with self.cv:
-            box = self._box(addr)
-            self._idle.add(addr)
-
-            def ready() -> bool:
-                return (
-                    bool(box.words())
-                    or addr in self._closed
-                    or any(e.wakes for e in box.mail())
-                )
-
-            self.cv.wait_for(ready, timeout)
-            if box.words():
-                self._idle.discard(addr)
-                return self._take_first_words(box)
-            if addr in self._closed:
-                return CLOSED
-            if any(e.wakes for e in box.mail()):
-                self._idle.discard(addr)
-                return OPEN_MAIL
-            return None
-
     def close(self, addr: str) -> None:
         """``addr`` 의 상자를 닫는다 — 기다리는 이를 깨울 뿐, 줄 선 것은 그대로다(남은 사람의 말은 먼저 꺼내진다). 멱등."""
         with self.cv:
@@ -382,7 +345,7 @@ class PostOffice:
             self._closed.discard(addr)
 
     def idle(self, addr: str) -> bool:
-        """``addr`` 가 지금 런을 열 것을 기다리는 중인가(`wait_to_open` 안)."""
+        """``addr`` 가 지금 런을 열 것을 기다리는 중인가(`next_run` 안)."""
         with self.cv:
             return addr in self._idle
 
@@ -601,7 +564,7 @@ class PostOffice:
         self._box(env.dst).put(env)
 
     def _picked(self, envs: tuple[Envelope, ...]) -> None:
-        """꺼낸 봉투들의 줄을 picked 로 — 꺼낸 것이 있을 때만 기다리는 이를 깨운다. 빈손의 `start_run` 이 깨우면
+        """꺼낸 봉투들의 줄을 picked 로 — 꺼낸 것이 있을 때만 기다리는 이를 깨운다. 빈손의 꺼내기가 깨우면
         같은 조건변수를 기다리는 다른 한가한 워커가 깨어 다시 빈손으로 깨우고, 그렇게 서로를 영원히 깨운다
         (v10.145.0 1b' 부터 있던 바쁜 회전 — 한가한 에이전트 둘이면 CPU 한 코어)."""
         if not envs:

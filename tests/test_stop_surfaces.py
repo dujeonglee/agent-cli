@@ -397,9 +397,7 @@ class TestStopEverythingDoesNotWakeMain:
         (tm,) = s["reg"]._agents.values()
         assert wait_until(lambda: tm.state == "busy")
         assert s["reg"].stop_all_runs() == [tm.key]
-        from agent_cli.main_input import OPEN_MAIL
-
-        assert wait_until(lambda: main_input.wait_to_open(0) is OPEN_MAIL)
+        assert wait_until(lambda: main_input.wait_to_open(0) == ())
         assert s["reg"].has_mail_that_wakes_main()
 
 

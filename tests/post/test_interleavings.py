@@ -13,6 +13,7 @@ import threading
 import pytest
 
 from agent_cli.post import envelope as E
+from agent_cli.post.office import Take
 from tests.post.twin import Twin
 
 A = "agent:a"
@@ -47,7 +48,7 @@ def run(setup, a, b, check):
 
 
 REQ = E.request("r-1", "main", A, "do it")
-STARTED = [("deliver", {"e": REQ}), ("start_run", {"addr": A})]
+STARTED = [("deliver", {"e": REQ}), ("next_run", {"addr": A})]
 
 
 class TestOrders:
@@ -112,10 +113,10 @@ class TestOrders:
                 },
             )
         ]
-        worker = [("start_run", {"addr": A})]
+        worker = [("next_run", {"addr": A})]
 
         def check(twin, order, _):
-            took = order.index(("B", "start_run")) < order.index(("A", "remove_queued"))
+            took = order.index(("B", "next_run")) < order.index(("A", "remove_queued"))
             rows = [(r.rid, r.state) for r in twin.office.rows()]
             assert rows == ([("r-1", "picked")] if took else [])
             assert [e.id for e in twin.office.queued("main")] == (
@@ -234,7 +235,7 @@ class TestThreads:
         twin = Twin(ADDRS)
         o = twin.office
         o.deliver(REQ)
-        o.start_run(A)
+        o.next_run(A, Take.ARRIVAL, timeout=0)
         ready = threading.Event()
         seen = []
 
@@ -275,7 +276,7 @@ class TestThreads:
             return o.remove_queued(A, {"r-1": reply} if "r-1" in queued else {})
 
         def take():
-            return o.start_run(A)
+            return o.next_run(A, Take.ARRIVAL, timeout=0)
 
         first, second = (take, remove) if taker_first else (remove, take)
         _in_thread(first)
@@ -286,7 +287,7 @@ class TestThreads:
     def test_take_reply_waiter_and_a_dying_agent(self):
         o = Twin(ADDRS).office
         o.deliver(REQ)
-        o.start_run(A)
+        o.next_run(A, Take.ARRIVAL, timeout=0)
         ready = threading.Event()
         got = []
 
@@ -314,7 +315,7 @@ class TestThreads:
     def test_quiet_reply_from_another_thread_does_not_wake(self):
         o = Twin(ADDRS).office
         o.deliver(REQ)
-        o.start_run(A)
+        o.next_run(A, Take.ARRIVAL, timeout=0)
         quiet = E.reply("n-2", A, "main", "stopped", re="r-1", wakes=False)
         _in_thread(
             lambda: o.end_run(

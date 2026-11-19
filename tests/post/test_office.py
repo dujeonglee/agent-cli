@@ -10,7 +10,7 @@ import threading
 import pytest
 
 from agent_cli.post import envelope as E
-from agent_cli.post.office import ConsistencyError, PostOffice
+from agent_cli.post.office import ConsistencyError, PostOffice, Take
 from agent_cli.post.postbox import BoxError
 from agent_cli.post.request_book import RowError
 
@@ -58,26 +58,26 @@ class TestDeliver:
 
 
 class TestRuns:
-    def test_start_run_picks_and_absorb_takes_the_rest(self, office):
+    def test_next_run_picks_and_absorb_takes_the_rest(self, office):
         office.deliver(E.request("r-1", "main", A, "one"))
         office.deliver(E.request("r-2", "main", A, "two"))
-        envs = office.start_run(A)
+        envs = office.next_run(A, Take.ARRIVAL, timeout=0)
         assert [e.id for e in envs] == ["r-1"]
         assert _rows(office) == [("r-1", "picked", None), ("r-2", "queued", None)]
         envs = office.absorb(A)
         assert [e.id for e in envs] == ["r-2"]
         assert [e.id for e in office.taken(A)] == ["r-1", "r-2"]
 
-    def test_start_run_returns_a_tuple_of_people(self, office):
+    def test_next_run_returns_a_tuple_of_people(self, office):
         office.deliver(E.human("u-1", "user:dj", A, "a"))
         office.deliver(E.human("u-2", "user:dj", A, "b"))
-        envs = office.start_run(A)
+        envs = office.next_run(A, Take.ARRIVAL, timeout=0)
         assert [e.id for e in envs] == ["u-1", "u-2"]
-        assert office.start_run(A) == ()
+        assert office.next_run(A, Take.ARRIVAL, timeout=0) is None  # 열 것이 없다
 
     def test_pay_closes_and_delivers(self, office):
         office.deliver(E.request("r-1", "main", A, "do"))
-        office.start_run(A)
+        office.next_run(A, Take.ARRIVAL, timeout=0)
         office.pay(A, "r-1", E.reply("n-2", A, "main", "done", re="r-1"), run_id="r-1")
         assert [e.id for e in office.queued("main")] == ["n-2"]
         assert _rows(office) == [("r-1", "closed", "reply")]  # 그 런 끝까지 남는다
@@ -86,7 +86,7 @@ class TestRuns:
     def test_pay_unsent_closes_and_keeps_the_row_without_delivering(self, office):
         """갚았는데 회신이 가지 못했다(요청자가 사라짐) — 닫힌 채 그 런 끝까지 남는다("이미 회신했다"), 배달 없음."""
         office.deliver(E.request("r-1", "agent:b", A, "do"))
-        office.start_run(A)
+        office.next_run(A, Take.ARRIVAL, timeout=0)
         office.pay_unsent(A, "r-1", run_id="r-1")
         assert _rows(office) == [("r-1", "closed", "unsent")]
         assert office.queued("agent:b") == () and office.owed_by(A) == ()
@@ -95,7 +95,7 @@ class TestRuns:
 
     def test_pay_refuses_a_reply_that_answers_something_else(self, office):
         office.deliver(E.request("r-1", "main", A, "do"))
-        office.start_run(A)
+        office.next_run(A, Take.ARRIVAL, timeout=0)
         with pytest.raises(RowError):
             office.pay(A, "r-1", E.reply("n-2", A, "main", "x", re="r-9"), run_id="r-1")
         with pytest.raises(RowError):
@@ -108,7 +108,7 @@ class TestRuns:
 
     def test_complete_closes_open_u_and_n(self, office):
         office.deliver(E.human("u-1", "user:dj", A, "hi"))
-        office.start_run(A)
+        office.next_run(A, Take.ARRIVAL, timeout=0)
         assert office.complete(A, ["u-1", "u-9"], run_id="u-1") == ("u-1",)
         assert office.open_requests(A) == ()
 
@@ -162,7 +162,7 @@ class TestEndRun:
         "이 런에서 이미 회신했다" 는 거짓 사유를 받지 않게. 열린 빚(잠든 빚)은 남는다."""
         office.deliver(E.request("r-1", "main", A, "do"))
         office.deliver(E.request("r-2", "main", A, "and this"))
-        office.start_run(A)
+        office.next_run(A, Take.ARRIVAL, timeout=0)
         office.absorb(A)
         office.pay(A, "r-1", E.reply("n-3", A, "main", "ok", re="r-1"), run_id="r-1")
         office.end_run(A, run_id="r-1", outcome="wait")
@@ -254,7 +254,7 @@ class TestUnusedReplies:
     def test_remove_queued_refuses_a_reply_for_a_row_not_queued(self, office):
         office.deliver(E.request("r-1", "main", A, "one"))
         office.deliver(E.request("r-2", "main", A, "two"))
-        office.start_run(A)  # r-1 은 집혔다 — 줄에 없다
+        office.next_run(A, Take.ARRIVAL, timeout=0)  # r-1 은 집혔다 — 줄에 없다
         with pytest.raises(RowError):
             office.remove_queued(A, {"r-1": E.reply("n-3", A, "main", "rm", re="r-1")})
         assert [e.id for e in office.queued(A)] == ["r-2"]
@@ -320,7 +320,7 @@ class TestConsistency:
         self, office
     ):
         office.deliver(E.human("u-1", "user:dj", A, "hi"))
-        office.start_run(A)
+        office.next_run(A, Take.ARRIVAL, timeout=0)
         office.complete(A, ["u-1"], run_id="u-1")
         office.check_consistency()  # 봉투는 런이 아직 들고 있고, 줄은 그 런 안에서 닫혔다
 
@@ -330,7 +330,7 @@ class TestOneLockSection:
         """버그 5 의 구조 수준 짝 — 닫기와 배달이 한 락 구간이라, 회신이 보이는 첫 순간 빚은 이미 갚혔다."""
         o = PostOffice()
         o.deliver(E.request("r-1", "main", A, "do"))
-        o.start_run(A)
+        o.next_run(A, Take.ARRIVAL, timeout=0)
         seen = []
         ready = threading.Event()
 

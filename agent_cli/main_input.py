@@ -3,7 +3,7 @@
 
 웹 채팅·`run` 의 argv 질의·제자리 대기 중 친 터미널 줄·예약 발화·StaleGuard 의 Hint 가 모두 여기로 들어온다.
 메일과 **같은 상자·같은 조건변수**라, 펌프는 "사람의 말 또는 깨우는 메일" 을 한 자리에서 기다린다
-(`PostOffice.wait_to_open`). 사람의 말은 줄(장부) 없이 선다 — 꺼내기 전에는 취소되거나 명령으로 빠질 수 있다.
+(`PostOffice.next_run`). 사람의 말은 줄(장부) 없이 선다 — 꺼내기 전에는 취소되거나 명령으로 빠질 수 있다.
 저장하지 않는다.
 
 화면·펌프에 내주는 항목 모양은 ``{id, conn_id, nickname, text, images}`` 하나다 — 대기열 표시·취소 소유권·
@@ -17,9 +17,9 @@ from collections.abc import Callable
 
 from agent_cli import item_ids
 from agent_cli.post.envelope import Envelope, is_human_words, words
-from agent_cli.post.office import CLOSED, OPEN_MAIL, PostOffice, Take
+from agent_cli.post.office import CLOSED, PostOffice, Take
 
-__all__ = ["CLOSED", "MAIN", "OPEN_MAIL", "MainInput", "human_addr", "intake_item"]
+__all__ = ["CLOSED", "MAIN", "MainInput", "human_addr", "intake_item"]
 
 #: 사람의 입력을 받는 주소
 MAIN = "main"
@@ -78,13 +78,11 @@ class MainInput:
     # ── 꺼내기 ───────────────────────────────────────
 
     def wait_to_open(self, timeout: float | None):
-        """펌프: 다음 런을 열 것 — 사람의 말 항목(꺼냄), `OPEN_MAIL`(깨우는 메일이 있다), `CLOSED`, 또는 None
-        (``timeout``). 기다리는 동안 main 은 한가함(`idle`)이다."""
+        """펌프: 다음 런을 열 것 — 사람의 말 항목(꺼냄), 빈 묶음 ``()``(깨우는 메일이 있다 — 메일이 연 런, 메일은
+        꺼내지 않는다), `CLOSED`, 또는 None(``timeout``). 기다리는 동안 main 은 한가함(`idle`)이다."""
         got = self.post.next_run(MAIN, Take.WORDS_FIRST, timeout=timeout)
-        if got is None or got is CLOSED:
+        if got is None or got is CLOSED or not got:
             return got
-        if not got:
-            return OPEN_MAIL
         self._changed()
         return self.item_of(got[0])
 

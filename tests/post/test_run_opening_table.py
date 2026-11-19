@@ -9,24 +9,22 @@ from __future__ import annotations
 import pytest
 
 from agent_cli.post import envelope as E
-from agent_cli.post.office import CLOSED, OPEN_MAIL, PostOffice
+from agent_cli.post.office import CLOSED, PostOffice, Take
 
 A = "agent:a"
 
 
 def _open(po: PostOffice, addr: str) -> tuple:
     """그 주소의 다음 런을 열 것 — 기다리지 않는다."""
-    if addr == "main":
-        got = po.wait_to_open("main", timeout=0)
-        if got is None:
-            return ("nothing",)
-        if got is OPEN_MAIL:
-            return ("mail_run",)
-        if got is CLOSED:
-            return ("closed",)
-        return ("took", [got.id])
-    envs = po.start_run(addr)
-    return ("took", [e.id for e in envs]) if envs else ("nothing",)
+    take = Take.WORDS_FIRST if addr == "main" else Take.ARRIVAL
+    got = po.next_run(addr, take, timeout=0)
+    if got is None:
+        return ("nothing",)
+    if got is CLOSED:
+        return ("closed",)
+    if got == ():
+        return ("mail_run",)
+    return ("took", [e.id for e in got])
 
 
 def _state(po: PostOffice, addr: str) -> tuple:

@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from agent_cli.main_input import CLOSED, OPEN_MAIL, MainInput
+from agent_cli.main_input import CLOSED, MainInput
 
 
 class LifetimePolicy(Protocol):
@@ -185,9 +185,8 @@ class SessionPump:
                 return
             if got is None:
                 continue  # timeout — 정지 조건을 다시 판정(한가함은 그대로 — 끄면 그 사이 온 메일이 "바쁨" 으로 보인다)
-            item = (
-                None if got is OPEN_MAIL else got
-            )  # None = 메일이 연 런(메일은 그 첫 턴 경계가 배달한다)
+            # 빈 묶음 = 메일이 연 런(메일은 꺼내지 않았다 — 그 첫 턴 경계가 흡수한다)
+            item = got if got else None
             d.surface.busy()
             if item is not None:
                 d.surface.echo(item)

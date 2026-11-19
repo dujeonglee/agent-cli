@@ -14,7 +14,7 @@ import threading
 
 import pytest
 
-from agent_cli.post.office import PostOffice
+from agent_cli.post.office import PostOffice, Take
 from agent_cli.runtime import wire_agent_mail
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.test_agents_live import _FakeLoopResult
@@ -75,14 +75,13 @@ def wired(tmp_path):
 
 def _main_goes_idle(post) -> None:
     """펌프가 런을 열 것을 기다리기 시작했다 — 빈손으로 돌아와도 한가함은 남는다."""
-    assert post.wait_to_open("main", timeout=0) is None
+    assert post.next_run("main", Take.WORDS_FIRST, timeout=0) is None
 
 
 def _main_opens_a_run(post) -> None:
     """펌프가 든 메일로 런을 연다 — 한가함이 내려간다."""
-    from agent_cli.post.office import OPEN_MAIL
 
-    assert post.wait_to_open("main", timeout=0) is OPEN_MAIL
+    assert post.next_run("main", Take.WORDS_FIRST, timeout=0) == ()  # 메일이 연 런
 
 
 def _once_mail_lands(reg, cv, action):
