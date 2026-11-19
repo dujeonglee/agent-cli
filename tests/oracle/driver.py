@@ -335,12 +335,16 @@ class Session:
         path: str = "run",
         resume: bool = False,
         query: str | None = None,
+        holds=(),
     ):
+        """``holds``: 조립 **전에** 거는 `Recorder.hold` 들 — 되살린 워커처럼 조립 도중에 시작하는 것을 잡는다."""
         self.root = root
         _LIVE.append(self)
         self.provider = provider
         self.path = path
         self.recorder = Recorder(threading.current_thread())
+        for h in holds:
+            self.recorder.hold(*h)
         set_renderer(self.recorder)
         self.binding = make_binding(provider=provider, capabilities=CAPS, model="m")
         self.sdir = root / "s"
@@ -1479,15 +1483,29 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
             ],
         }
     )
+    # 재시작 직후에는 main 과 되살린 에이전트가 아직 ctx 를 여는 에이전트를 `[starting]` 으로 볼 수 있다 — 사실이고
+    # (`tests/test_agent_worker_end.py` 의 `TestStartingIsVisible`), 이 시나리오는 되살림이 가라앉은 뒤를 고정한다:
+    # 되살린 worker 는 조립 도중에 끊긴 런을 다시 집어 곧바로 모델을 부르므로 그 런의 시작을 asker 가 idle 이 될 때까지
+    # 잡고(`holds` — 조립 전에 건다), 사실은 asker 도 idle 이 된 뒤 뜬다(펌프는 그 뒤에 돈다).
     s2 = box2["s"] = Session(
         root,
         p2,
         path="run" if query else "web",
         resume=True,
         query="MAIN resumed query" if query else None,
+        holds=[
+            (
+                "begin_agent_work",
+                worker,
+                lambda: "s" in box2 and box2["s"].agent_state(asker) == "idle",
+            )
+        ],
     )
     # 되살린 worker 는 끊긴 런을 다시 집어 대본에서 main 의 대기를 기다린다 — 그 상태에서 사실을 뜬다
-    until(lambda: s2.agent_state(worker) == "busy", "worker resumed")
+    until(
+        lambda: s2.agent_state(worker) == "busy" and s2.agent_state(asker) == "idle",
+        "worker resumed, asker settled",
+    )
     facts["after_restore"] = {
         "revived": s2.wired.revived,
         "roster": [

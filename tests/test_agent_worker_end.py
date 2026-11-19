@@ -164,3 +164,49 @@ def test_every_lifetime_stop_also_closes_the_box():
             ):
                 setters.append(fn.name)
     assert setters == ["_stop_worker"], setters
+
+
+class TestStartingIsVisible:
+    """ctx 를 여는 동안의 에이전트는 `starting` 이다 — 그 사이 main·동료가 모델을 부르면 꼬리의 로스터와 회신 끝의 상태
+    줄이 그것을 말한다(재시작 직후 되살리는 에이전트가 그렇다). 우연이 아니라 알려진 동작이다."""
+
+    def test_an_agent_opening_its_context_reads_as_starting(
+        self, tmp_path, monkeypatch
+    ):
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+        from agent_cli.subagent.agent_mail import build_reply_record
+        from agent_cli.subagent.resident_loop import ResidentLoop
+
+        door, entered = threading.Event(), threading.Event()
+        real_open = ResidentLoop.open
+
+        def held_open(self, parent_ctx):
+            entered.set()
+            assert door.wait(10)
+            return real_open(self, parent_ctx)
+
+        monkeypatch.setattr(ResidentLoop, "open", held_open)
+        _calls, runner = _counting_runner()
+        reg = make_registry(tmp_path, runner=runner)
+        key, err = reg.spawn(name="slow")
+        assert not err
+        try:
+            assert entered.wait(5)
+            assert reg.get(key).state == "starting"
+            assert f"`{key}` (slow) [starting]" in build_live_agents_section(
+                reg, include_state=True
+            )
+            reply = {
+                "kind": "reply",
+                "key": key,
+                "item_id": "n-1",
+                "re": "r-1",
+                "success": True,
+                "output": "earlier answer",
+            }
+            content = build_reply_record(reply, registry=reg)["content"]
+            assert "(agent status: starting · 0 queued" in content
+        finally:
+            door.set()
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        reg.shutdown_all()
