@@ -98,7 +98,15 @@ def test_scheduled_at_agent_goes_as_user_scheduler_name(tmp_path, renderer):  # 
         assert (
             schedules.run_now(s.id) is True
         )  # 스케줄러의 발화 길 — main 상자에 사람의 말로
-        main_input.close()
+        real_route = surface.route
+
+        def route_then_close(text, start=None, *, item=None):
+            try:
+                return real_route(text, start, item=item)
+            finally:
+                main_input.close()  # 그 한 차례 뒤에 끝낸다(닫힘은 줄 선 말을 이긴다)
+
+        surface.route = route_then_close
         pump.run()  # 그 말을 꺼내 라우팅(명령) — main 런은 열리지 않는다
         assert main_runs == []
         assert wait_until(lambda: seen)

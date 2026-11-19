@@ -29,12 +29,12 @@ class TestMainInput:
     def test_timeout_returns_none(self):
         assert MainInput().wait_to_open(0.05) is None
 
-    def test_close_drains_words_first(self):
+    def test_close_wins_over_queued_words(self):
         q = MainInput()
         q.enqueue(None, "queued-before-close")
         q.close()
-        assert q.wait_to_open(1)["text"] == "queued-before-close"
-        assert q.wait_to_open(1) is CLOSED
+        assert q.wait_to_open(1) is CLOSED  # 줄 선 말로 런을 열지 않는다
+        assert q.pending_count() == 1
         q.close()
         assert q.wait_to_open(1) is CLOSED  # 멱등
 

@@ -90,13 +90,14 @@ class TestWaitToOpen:
         po.deliver(_mail(1, wakes=False))
         assert po.next_run("main", Take.WORDS_FIRST, timeout=0) is None
 
-    def test_closed_after_the_words_are_out(self):
+    def test_closed_wins_over_queued_words(self):
+        """닫히면 줄 선 사람의 말이 있어도 끝 — 그 말로 런을 열지 않는다(끄는 중이다). 줄은 그대로다."""
         po = PostOffice()
         po.deliver(_words(1))
         po.deliver(_mail(2))
         po.close("main")
-        assert po.next_run("main", Take.WORDS_FIRST, timeout=0)[0].id == "u-1"
         assert po.next_run("main", Take.WORDS_FIRST, timeout=0) is CLOSED
+        assert [e.id for e in po.queued("main")] == ["u-1", "n-2"]
         assert not po.wait_words("main", 0)
 
     def test_idle_stays_through_a_timeout_and_goes_off_when_something_opens(self):

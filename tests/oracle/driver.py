@@ -505,7 +505,7 @@ class Session:
         return rows[0]["state"] if rows else ""
 
     def stop_pump(self) -> None:
-        """펌프를 끝낸다(웹 서버 종료와 같은 길) — 줄 선 사람의 입력은 먼저 꺼낸다. 세션은 닫지 않는다."""
+        """펌프를 끝낸다(웹 서버 종료와 같은 길) — 줄 선 사람의 입력은 런을 열지 않는다. 세션은 닫지 않는다."""
         self.main_input.close()
 
     def close(self) -> None:
@@ -1962,6 +1962,31 @@ def s34_parent_dies_with_its_run_agent(root: Path) -> dict:
     return s.collect(facts)
 
 
+def s35_shutdown_with_queued_words_web(root: Path) -> dict:
+    """웹 종료(펌프 닫기) 때 줄 선 사람의 말은 런을 열지 않는다: main 이 일하는 동안 사람의 말 한 줄이 줄을 서고, 그
+    사이 웹이 꺼진다(`stop_pump` — 서버의 `shutdown` 과 같은 길). 지금 런은 끝까지 가고, 펌프는 그 말로 새 런을 열지
+    않고 끝난다(말은 저장하지 않으므로 그대로 사라진다). 순서: 말이 줄을 서고 펌프가 닫힌 뒤에 main 의 첫 응답이 돌아온다."""
+    box: dict = {}
+    facts: dict = {}
+
+    def main_works(msgs):
+        s = box["s"]
+        s.say("MAIN later words", nickname="dj")
+        s.stop_pump()
+        return complete_all("first answer")(msgs)
+
+    p = Provider({"MAIN": [main_works, complete_all("must not run")]})
+    s = box["s"] = Session(root, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    t = s.pump_in_thread()
+    t.join(_PATIENCE_S)
+    facts["pump_ended"] = not t.is_alive()
+    facts["queued_words"] = [i["text"] for i in s.main_input.snapshot()]
+    facts["main_calls"] = len(p.calls.get("MAIN", []))
+    s.close()
+    return s.collect(facts)
+
+
 class _HeldTimer:
     """체크인 타이머 대역 — 걸리기만 하고 스스로 발화하지 않는다. 대본이 `fire_checkin` 을 직접 부른다
     (`threading.Timer` 는 가짜 시계로 돌릴 수 없다 — 레지스트리의 `checkin_timer_factory` 자리)."""
@@ -2576,6 +2601,7 @@ SCENARIOS = {
     "s33_words_right_after_mail_run_opens": s33_words_right_after_a_mail_run_opens,
     # 끝내기 규칙
     "s34_parent_dies_with_its_run_agent": s34_parent_dies_with_its_run_agent,
+    "s35_shutdown_with_queued_words_web": s35_shutdown_with_queued_words_web,
 }
 
 

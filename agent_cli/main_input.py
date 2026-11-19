@@ -128,7 +128,7 @@ class MainInput:
         return self.post.idle(MAIN)
 
     def close(self) -> None:
-        """기다리는 펌프를 깨워 끝나게 한다 — 줄 선 사람의 말은 먼저 꺼내진다. 멱등."""
+        """기다리는 펌프를 깨워 끝나게 한다 — 줄 선 사람의 말은 런을 열지 않는다(닫힘이 이긴다). 멱등."""
         self.post.close(MAIN)
 
     @staticmethod

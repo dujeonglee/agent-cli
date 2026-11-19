@@ -373,7 +373,7 @@ class WebServer:
         self.renderer.queue_state(self.queue_snapshot())
 
     def shutdown(self) -> None:
-        """펌프를 깨워 끝나게 한다 — main 상자를 닫는다(줄 선 사람의 말은 먼저 꺼내진다). 멱등."""
+        """펌프를 깨워 끝나게 한다 — main 상자를 닫는다(줄 선 사람의 말은 런을 열지 않는다 — 끄는 중이다). 멱등."""
         self.main_input.close()
 
     # ─── Auth helper ──────────────────────────────────────────
