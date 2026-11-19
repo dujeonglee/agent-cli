@@ -1,4 +1,4 @@
-"""MCP 매니저의 루프 스레드 (vNEXT).
+"""MCP 매니저의 루프 스레드 (v10.150.0).
 
 종전엔 부르는 스레드가 매니저의 루프를 ``run_until_complete`` 로 돌렸다:
 - main 과 에이전트가 겹쳐 부르면 뒤의 것이 ``This event loop is already running``.
