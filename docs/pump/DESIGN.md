@@ -35,7 +35,7 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 (`AgentRegistry.absorb_main` — 사람의 말 먼저, 메일 뒤, 루프 포트 `Mailbox(take=…)`); 루프 포트의
 `dequeue_user_message` 는 없다.
 
-**vNEXT — 런을 열 봉투를 꺼내는 창구 함수가 하나다.** `PostOffice.next_run(addr, take, timeout)` 이 main
+**v10.150.0 — 런을 열 봉투를 꺼내는 창구 함수가 하나다.** `PostOffice.next_run(addr, take, timeout)` 이 main
 (`Take.WORDS_FIRST` — 사람의 말 먼저 하나, 깨우는 메일만 있으면 꺼내지 않고 빈 묶음 ``()`` = 메일이 연 런, 닫혀도
 사람의 말 먼저)과 에이전트 워커(`Take.ARRIVAL` — 첫 깨우는 봉투·사람의 말 묶음, 닫히면 끝)의 꺼내기를 함께 든다. 옛
 `wait_to_open`(창구)·`start_run`·`OPEN_MAIL` 은 없다. 에이전트의 평생 정지는 상자를 닫는 것이다(`_stop_worker` —
