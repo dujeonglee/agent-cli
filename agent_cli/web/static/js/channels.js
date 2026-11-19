@@ -445,9 +445,22 @@ export function ovJump(key) {
     var key = chip.getAttribute("data-key");
     var ctl = e.target.closest(".ov-ch-ctl");
     if (ctl) {
+      // 칩의 조작은 죽은 상주의 ↻ 하나다. 상한 없이 — 늦게라도 닿으면 되살린다. 거절(한도·이미 살아 있음)이나
+      // 네트워크 오류면 입력창 아래에 사유 (vNEXT; 종전엔 아무 표시 없이 끝났다)
       e.stopPropagation();
-      fetch("api/agent/" + encodeURIComponent(key) + "/" +
-        ctl.getAttribute("data-act"), { method: "POST" });
+      if (ctl.disabled) return;
+      ctl.disabled = true;
+      var path = "api/agent/" + encodeURIComponent(key) + "/" + ctl.getAttribute("data-act");
+      sendOnce(
+        { sending: false },
+        function (signal) { return fetch(path, { method: "POST", signal: signal }); },
+        function (failure) {
+          if (!failure) return; // 명단이 칩을 다시 그린다
+          ctl.disabled = false;
+          attachMessage("Not revived — " + failure);
+        },
+        { limit: false }
+      );
       return;
     }
     ovSetChannel(key);
