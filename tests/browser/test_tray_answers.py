@@ -554,3 +554,60 @@ class TestItemLeftWhileSending:
         held[0].abort()
         assert _bar_notice(page) == CLOSED
         assert results == ["Rust"]
+
+
+@pytest.fixture
+def busy_agent(stack, monkeypatch, tmp_path):
+    """일하는 중인 에이전트 하나(런이 붙잡혀 있다)와 그가 건 질문 — 실제 레지스트리, 명단은 이 화면으로."""
+    import threading
+
+    from agent_cli import render as render_mod
+    from agent_cli.subagent.agents_live import AgentRegistry
+
+    monkeypatch.setattr(render_mod, "_renderer", stack.renderer)
+    monkeypatch.setattr(render_mod, "get_renderer", lambda: stack.renderer)
+    gate, inside = threading.Event(), threading.Event()
+
+    def runner(kind, start, ctx):
+        inside.set()
+        gate.wait(20)
+        return SimpleNamespace(success=True, output="ok"), 0.01
+
+    reg = AgentRegistry(tmp_path / "busy", runtime={"model": "m"}, runner=runner)
+    stack.server.agent_registry = reg
+    key, _ = reg.spawn(name="alpha")
+    assert _wait(lambda: reg.get(key).state == "idle")
+    assert reg.request(key, "work", author="user:dj") == ""
+    assert inside.wait(5)
+    yield reg, key
+    gate.set()
+    reg.shutdown_all()
+
+
+class TestKillClosesQuestions:
+    def test_kill_while_working_removes_the_item(self, stack, page, busy_agent):
+        reg, key = busy_agent
+        qid, sel = _open_question(stack, page, reg, key)
+        page.fill(sel, "half")
+        r = page.request.post(f"{stack.base}/api/agent/{key}/kill?token={stack.token}")
+        assert r.ok
+        assert reg.get(key).state == "busy"  # 워커는 아직 런 안
+        assert _wait(lambda: _item(page, qid).count() == 0)
+
+    def test_answer_that_reaches_after_the_kill_is_refused_with_a_notice(
+        self, stack, page, busy_agent
+    ):
+        reg, key = busy_agent
+        qid, sel = _open_question(stack, page, reg, key)
+        held: list = []
+        page.route("**/api/agent/*/input", lambda route: held.append(route))
+        page.fill(sel, "src/main.py")
+        page.press(sel, "Enter")
+        assert _wait(lambda: len(held) == 1)
+        reg.kill(key)  # 답이 서버에 닿기 전에 ✕
+        assert _wait(lambda: _item(page, qid).count() == 0)
+        with page.expect_response(lambda r: "/input" in r.url) as info:
+            held[0].continue_()
+        assert info.value.status == 409
+        assert _bar_notice(page) == CLOSED
+        assert reg.queued_for(f"agent:{key}") == ()
