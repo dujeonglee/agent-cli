@@ -1207,6 +1207,9 @@ def s11_stop_everything(root: Path) -> dict:
     def stop_everything(msgs):
         s = box["s"]
         assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        s.reg.main_stop_wakes = (
+            False  # 서버의 Stop everything 과 같이 — main 의 정지 회신도 깨우지 않는다
+        )
         s.surface.stop.set()  # main 먼저 (서버·Ctrl+C 와 같은 순서)
         box["stopped"] = s.reg.stop_all_runs(wakes_requesters=False)
         return call("shell", command="true")
@@ -1632,9 +1635,10 @@ def _roster(s: Session) -> list[dict]:
 
 
 def s21_main_stop_owes_agent(root: Path) -> dict:
-    """1단계 ① main 정지 회신 `[단계 4c 에서 바뀜 — 결정 2]`: 상주가 main 에게 회신 기대 `message` → main 이 그
-    메일로 깬 런에서 사람이 ■ — 지금은 펌프의 런 끝(`main_run_ended`)이 stopped 를 넘기지 않아 빚진 상대(상주)에게
-    라벨 붙은 런 요약 폴백이 간다. 상주는 그것을 회신으로 읽고 새 런을 연다. `[v10.145.1 에서 재기록 — 그 `message` 는
+    """1단계 ① main 정지 회신: 상주가 main 에게 회신 기대 `message` → main 이 그 메일로 깬 런에서 사람이 ■ — 빚진
+    상대(상주)에게 에이전트의 ■ 와 같은 정지 회신(``· stopped by user``, 그 런의 마지막 호출)이 간다. 상주는 그것을
+    회신으로 읽고 새 런을 연다. `[vNEXT 에서 바뀜 — 종전엔 펌프의 런 끝이 stopped 를 넘기지 않아 라벨 붙은 빈 런 요약
+    폴백이 갔다]` `[v10.145.1 에서 재기록 — 그 `message` 는
     상주의 과제 빚(TASK-S1)을 갚지 않는다: 깬 런의 `complete` 가 되묻기 예산을 다 쓰고 런 끝 폴백이 main 의 새 런을 연다]`"""
     box: dict = {}
 
@@ -2376,6 +2380,9 @@ def s32_quiet_reply_then_waking_mail(root: Path) -> dict:
     def stop_everything(msgs):
         s = box["s"]
         assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        s.reg.main_stop_wakes = (
+            False  # 서버의 Stop everything 과 같이 — main 의 정지 회신도 깨우지 않는다
+        )
         s.surface.stop.set()  # main 먼저 (서버·Ctrl+C 와 같은 순서)
         box["stopped"] = s.reg.stop_all_runs(wakes_requesters=False)
         return call("shell", command="true")

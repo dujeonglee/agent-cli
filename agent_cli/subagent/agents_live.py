@@ -440,6 +440,7 @@ class AgentRegistry:
         #: 배선 안 된 레지스트리(테스트 픽스처 다수)는 `None` 이라 모든
         #: 소비 지점이 가드한다.
         self.monitors = None
+        self.main_stop_wakes = True  # 거짓 = Stop everything (`agent_stop`)
         #: 백그라운드 작업 레지스트리 (v10.47.0) — `wire_job_delivery` 가 꽂는다;
         #: 워커 종료가 `_drop_monitors` 와 같은 자리에서 그 에이전트의 작업을 죽인다
         self.jobs = None
@@ -2427,6 +2428,9 @@ class AgentRegistry:
             agent_stop.STOPPED_MARK.format(by=by),
             partial(agent_stop.stopped_reply, activity=activity, notes=notes, by=by),
         )
+
+    def answer_main_debts_as_stopped(self, records: list[dict]) -> int:
+        return agent_stop.answer_main_debts(self, records)
 
     def _answer_debts(
         self, tm: AgentInstance, mark: str, reply_of: Callable[[str, str, str], str]

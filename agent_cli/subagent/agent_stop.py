@@ -245,3 +245,28 @@ def died_working_reply(agent: str, rid: str, request: str) -> str:
             NEXT_STEP,
         ]
     )
+
+
+def answer_main_debts(registry, records: list[dict], *, by: str = "user") -> int:
+    """멈춘 main 의 갚지 않은 빚 모두에 stopped 회신을 보내고 그 배달로 갚는다 — 에이전트의 ■ 와 같은 문장·표지
+    (`stopped_reply`, ``stopped by user``). ``records`` 는 그 런이 기록한 레코드(마지막 호출·생각, `run_activity`·
+    `partial_notes`). "Stop everything" 이면 받는 쪽의 런을 열지 않는다 — 레지스트리의 ``main_stop_wakes``: 서버가 main 을
+    멈추기 **앞에** 내리고 main 의 런이 열릴 때 다시 세운다(`pump.MainActor.open`). 보낸 수를 돌려준다."""
+    activity, notes = run_activity(records), partial_notes(records)
+    mark = STOPPED_MARK.format(by=by)
+    sent = 0
+    for d in registry.reply_debts("main"):
+        if not d.to.startswith("agent:"):
+            continue
+        err = registry._deliver_peer_reply(
+            d.to.split(":", 1)[1],
+            "main",
+            stopped_reply("main", d.id, d.text, activity, notes, by=by),
+            d.hop,
+            re=d.id,
+            mark=mark,
+            opens_run=registry.main_stop_wakes,
+            settles=d.id,
+        )
+        sent += 0 if err else 1
+    return sent

@@ -1645,6 +1645,10 @@ def create_app(server: WebServer) -> FastAPI:
         registry = server.agent_registry
         # main 을 먼저 — "all"(Stop everything)의 정지 회신은 main 을 깨우지 않는다(사용자 결정): 쌓였다가
         # 사람의 다음 입력 런에 함께 배달된다. "agents" 의 회신은 계속 도는 main 을 깨운다.
+        if scope == "all" and registry is not None:
+            registry.main_stop_wakes = (
+                False  # main 의 정지 회신도 깨우지 않는다 — 멈추기 앞에
+            )
         stopped = server.trigger_stop() if scope != "agents" else False
         if scope != "main" and registry is not None:
             loop = asyncio.get_running_loop()
