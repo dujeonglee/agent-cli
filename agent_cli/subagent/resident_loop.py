@@ -29,6 +29,7 @@ from agent_cli.loop.kind import (
     PromptProfile,
     Start,
 )
+from agent_cli.main_input import CLOSED
 from agent_cli.session_slots import get_agent_registry
 from agent_cli.subagent import agent_stop
 from agent_cli.tools.result import ToolResult
@@ -411,3 +412,68 @@ class ResidentLoop(LoopKind):
             0.0,
             "",
         )
+
+
+class AgentActor:
+    """에이전트 워커의 액터 (`actor.run_actor`) — 자기 받은편지함에서 런을 열 것(첫 깨우는 봉투, 사람의 말은 묶음)을
+    시한 없이 기다려 그 종류(`ResidentLoop`)로 돌린다. 수명: 상주는 끝내기(✕·세션 종료 — 상자가 닫힌다)까지, run
+    에이전트(``ends_after_task``)는 과제 하나 — `wait` 로 끝난 런 말고는 그 런 뒤 내려온다.
+
+    런의 예외는 종류가 회신으로 바꾼다(`ResidentLoop.crashed`) — 워커의 사망·정지 뒤처리는 레지스트리의 `_worker` 가
+    든다."""
+
+    poll_secs = None
+
+    def __init__(self, registry, tm, kind: ResidentLoop) -> None:
+        self.registry = registry
+        self.tm = tm
+        self.kind = kind
+
+    def should_stop(self) -> bool:
+        return False  # 시한이 없다 — 닫힘이 끝낸다
+
+    def idle(self) -> None:
+        """한가함은 꺼낼 때 창구가 세우고, 로스터의 ``idle`` 은 런 끝 정리가 세운다 — 따로 할 일이 없다."""
+
+    def take(self, timeout):
+        if self.tm.stop_event.is_set():
+            return CLOSED  # 평생 정지 — 정지가 선 뒤 상자가 닫히기 전에 와도 새 런을 열지 않는다
+        items = self.registry._next_run_items(self.tm)
+        return items if items else CLOSED
+
+    def open(self, items: list[dict]) -> Start:
+        self.registry._begin_items(self.tm, items)
+        return self.kind.start(items)
+
+    def run_start(self, start: Start):
+        return self.kind.run(start)
+
+    def ended(self, start: Start, finished) -> bool:
+        if self.tm.ends_after_task and not self.ended_by_wait(finished):
+            self._come_down(finished)
+            return True
+        return False
+
+    @staticmethod
+    def ended_by_wait(finished) -> bool:
+        """그 런이 `wait` 로 끝났는가 — run 에이전트가 내려오지 않는 유일한 끝이다(깨어 계속한다).
+        그 밖의 끝(`complete`, 턴 상한·오류)은 run 에이전트의 수명 끝이다 (사용자 결정 2026-11-15:
+        회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도 남으면 런 끝
+        폴백이 런 요약으로 회신한다). 런 중간의 `reply` 는 끝이 아니다."""
+        result = finished[0] if isinstance(finished, tuple) else finished
+        return bool(getattr(result, "waiting", False))
+
+    def _come_down(self, finished) -> None:
+        """run 에이전트가 과제를 마쳤다 — 되살릴 대상이 아니고(채널은 회색으로 남는다),
+        부른 쪽이 건 ``on_task_end``(OnAgentEnd 훅)를 마지막 런의 결과로 한 번 부른다.
+        상태(dead)·저장·로스터는 워커의 정리(`finally`)가 한다."""
+        tm = self.tm
+        tm.revivable = False
+        tm.handled = max(tm.handled, 1)
+        hook, tm.on_task_end = tm.on_task_end, None
+        if hook is not None:
+            result = finished[0] if isinstance(finished, tuple) else finished
+            try:
+                hook(result)
+            except Exception:
+                pass  # 훅은 best-effort — 내려오는 길을 막지 않는다
