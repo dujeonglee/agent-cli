@@ -70,8 +70,6 @@ class _NeverAnswers:
 #: 테스트가 끝나지 않는 대신 실패하게 하는 바깥 한도(초) — 시간 단언이 아니다(구현이 상한·정지를
 #: 잃으면 여기서 걸린다).
 NO_HANG_S = 30
-#: 정리 단계에서 disconnect 를 기다리는 한도(초) — 아래 `servers` 의 주석.
-DISCONNECT_WAIT_S = 5
 
 
 def _run(coro):
@@ -260,6 +258,15 @@ def _alive(pid: int) -> bool:
     return bool(state) and not state.startswith("Z")
 
 
+def loop_tasks(m: McpClientManager) -> int:
+    """매니저 루프에 떠 있는 태스크 수 — 세는 코루틴 자신은 뺀다(루프 스레드에서 센다)."""
+
+    async def count() -> int:
+        return len(asyncio.all_tasks()) - 1
+
+    return m._submit(count())
+
+
 def wait_until(pred, timeout: float = 20.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -291,23 +298,18 @@ def servers(tmp_path_factory):
     status = m.connect_all(configs, warn=False)
     assert status == {"quick": "connected", "patient": "connected"}, status
     pids = [int((marks[n] / "server.pid").read_text()) for n in marks]
-    baseline = len(asyncio.all_tasks(m._get_loop()))
+    baseline = loop_tasks(m)
     yield m, marks, baseline
+    survivors: list[int] = []
     try:
-        # disconnect 는 이 변경 전부터 믿을 수 없다 — 1.x 에서는 서버를 끝내지 못하고, mcp 2.x 에서는
-        # 돌아오지 않는다(호출이 없어도, 2b0e3bde 에서도 실측). 그래서 스레드에서 부르고 한도까지만
-        # 기다린다. 걸린 스레드는 데몬이라 프로세스 종료를 막지 않는다.
-        t = threading.Thread(target=m.disconnect_all, daemon=True)
-        t.start()
-        t.join(DISCONNECT_WAIT_S)
+        m.disconnect_all()  # 서버 프로세스를 끝낸다 — hang 이 걸린 서버도
+        survivors = [p for p in pids if not wait_until(lambda p=p: not _alive(p))]
     finally:
-        # 이 테스트가 띄운 프로세스는 이 테스트가 거둔다 — disconnect 가 터지거나 걸려도
-        # (루프가 끝나지 않은 호출로 아직 도는 중이면 "Cannot close a running event loop").
+        # disconnect 가 터지거나(변이) 서버를 못 끝냈으면 이 테스트가 띄운 것은 이 테스트가 거둔다
         for pid in pids:
             if _alive(pid):
                 os.kill(pid, signal.SIGTERM)
-        for pid in pids:
-            assert wait_until(lambda p=pid: not _alive(p)), f"서버 {pid} 가 남았다"
+    assert survivors == [], f"disconnect_all 뒤에도 서버 {survivors} 가 살아 있었다"
 
 
 def _call(m, server: str, tool: str, args: dict, ctx=None):
@@ -338,7 +340,7 @@ def test_real_server_limit_then_the_connection_still_answers(servers):
     )
     assert (marks["quick"] / "hanging-limit").exists()
     assert _fast(m, "quick", "after-limit") == "fast:after-limit"
-    assert len(asyncio.all_tasks(m._get_loop())) == baseline
+    assert loop_tasks(m) == baseline
 
 
 def test_real_server_a_late_answer_does_not_become_the_next_result(servers):
@@ -356,7 +358,7 @@ def test_real_server_a_late_answer_does_not_become_the_next_result(servers):
     )
     assert _fast(m, "quick", "after-late") == "fast:after-late"
     assert _fast(m, "quick", "again") == "fast:again"
-    assert len(asyncio.all_tasks(m._get_loop())) == baseline
+    assert loop_tasks(m) == baseline
 
 
 def test_real_server_run_stop_gives_up_then_the_connection_still_answers(servers):
@@ -379,4 +381,4 @@ def test_real_server_run_stop_gives_up_then_the_connection_still_answers(servers
     )
     assert r.error.endswith("s.")
     assert _fast(m, "patient", "after-stop") == "fast:after-stop"
-    assert len(asyncio.all_tasks(m._get_loop())) == baseline
+    assert loop_tasks(m) == baseline

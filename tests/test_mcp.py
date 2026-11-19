@@ -16,66 +16,74 @@ from agent_cli.mcp.config import (
 
 
 class TestDisconnectClosesErrlog:
-    """stdio 전송의 errlog(/dev/null) fd 는 disconnect 에서 닫힌다 — 종전엔
-    저장조차 안 해 서버당 fd 1개가 프로세스 수명 내내 누수(리뷰 §4.5 수리)."""
+    """stdio 전송의 errlog(/dev/null) fd 는 연결이 닫힐 때 닫힌다 — 종전엔
+    저장조차 안 해 서버당 fd 1개가 프로세스 수명 내내 누수(리뷰 §4.5 수리). vNEXT 부터
+    errlog 는 ``_open_transport`` 의 ``with`` 가 연결 태스크의 수명 동안 든다."""
 
-    def _manager_with_fake_client(self, errlog):
-        import asyncio
-        from unittest.mock import MagicMock
+    def _connect_fake_stdio(self, monkeypatch, *, exit_raises: bool = False):
+        import contextlib
+        from types import SimpleNamespace
 
+        import mcp.client.stdio as sdk_stdio
+
+        from agent_cli.mcp import client as client_mod
+        from agent_cli.mcp.client import McpClientManager
+
+        seen: dict = {}
+
+        @contextlib.asynccontextmanager
+        async def fake_stdio_client(params, errlog):
+            seen["errlog"] = errlog
+            yield object(), object()
+            if exit_raises:
+                raise RuntimeError("teardown failed")
+
+        class FakeSession:
+            def __init__(self, read, write):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def initialize(self):
+                return None
+
+            async def list_tools(self):
+                return SimpleNamespace(tools=[])
+
+        monkeypatch.setattr(sdk_stdio, "stdio_client", fake_stdio_client)
+        import mcp
+
+        monkeypatch.setattr(mcp, "ClientSession", FakeSession)
+        mgr = McpClientManager()
+        cfg = client_mod.McpServerConfig(name="srv", command="x")
+        assert mgr.connect_all({"srv": cfg}, warn=False) == {"srv": "connected"}
+        return mgr, seen
+
+    def test_errlog_closed_on_disconnect(self, monkeypatch):
+        mgr, seen = self._connect_fake_stdio(monkeypatch)
+        assert not seen["errlog"].closed
+        mgr.disconnect("srv")
+        assert seen["errlog"].closed
+        assert not mgr.is_connected("srv")
+        mgr.disconnect_all()
+
+    def test_errlog_closed_even_when_the_transport_fails_to_close(self, monkeypatch):
+        mgr, seen = self._connect_fake_stdio(monkeypatch, exit_raises=True)
+        mgr.disconnect("srv")  # 닫을 때의 오류는 연결 태스크가 삼킨다
+        assert seen["errlog"].closed
+        mgr.disconnect_all()
+
+    def test_disconnect_of_an_unknown_server_is_noop(self):
         from agent_cli.mcp.client import McpClientManager
 
         mgr = McpClientManager()
-
-        async def _noop(*a, **k):
-            return None
-
-        session = MagicMock()
-        session.__aexit__ = _noop
-        transport = MagicMock()
-        transport.__aexit__ = _noop
-        client = {"session": session, "transport_cm": transport}
-        if errlog is not None:
-            client["errlog"] = errlog
-        mgr._clients["srv"] = client
-        mgr._loop = asyncio.new_event_loop()
-        return mgr
-
-    def test_errlog_closed_on_disconnect(self, tmp_path):
-        errlog = open(tmp_path / "null", "w")  # noqa: SIM115 — close 검증 대상
-        mgr = self._manager_with_fake_client(errlog)
-        try:
-            mgr.disconnect("srv")
-            assert errlog.closed
-            assert "srv" not in mgr._clients
-        finally:
-            if not errlog.closed:
-                errlog.close()
-            mgr._loop.close()
-
-    def test_errlog_closed_even_when_aexit_raises(self, tmp_path):
-        errlog = open(tmp_path / "null", "w")  # noqa: SIM115 — close 검증 대상
-        mgr = self._manager_with_fake_client(errlog)
-
-        async def _boom(*a, **k):
-            raise RuntimeError("teardown failed")
-
-        mgr._clients["srv"]["session"].__aexit__ = _boom
-        try:
-            mgr.disconnect("srv")  # 예외는 삼켜지고 fd 는 finally 에서 닫힌다
-            assert errlog.closed
-        finally:
-            if not errlog.closed:
-                errlog.close()
-            mgr._loop.close()
-
-    def test_sse_client_without_errlog_is_noop(self):
-        mgr = self._manager_with_fake_client(None)
-        try:
-            mgr.disconnect("srv")  # errlog 키 없음(SSE) — 조용히 통과
-            assert "srv" not in mgr._clients
-        finally:
-            mgr._loop.close()
+        mgr.disconnect("srv")
+        mgr.disconnect_all()
+        assert mgr._thread is None  # 연결한 적이 없으면 루프 스레드도 없다
 
 
 class TestMcpServerConfig:
@@ -469,7 +477,7 @@ class TestMcpSdkIsADeclaredDependency:
 
     def test_stdio_client_accepts_errlog(self):
         """하한 1.6 의 근거. ``errlog`` 는 1.6.0 에 들어왔고 1.4.0 엔 없다 —
-        없는 SDK 로는 ``_connect_stdio`` 가 TypeError 로 깨진다. SDK 를
+        없는 SDK 로는 ``_open_transport`` 가 TypeError 로 깨진다. SDK 를
         올리다 이 인자가 사라지면 여기서 먼저 잡힌다."""
         import inspect
 
@@ -548,7 +556,7 @@ class TestLeafError:
         # 버려져 "never awaited" 경고가 난다.
         with (
             patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
-            patch.object(m, "_run_sync", side_effect=eg),
+            patch.object(m, "_submit", side_effect=eg),
         ):
             r = m.connect_all(
                 {"s": McpServerConfig(name="s", url="http://h", transport="sse")}
@@ -588,7 +596,7 @@ class TestManagerSummary:
 
         with (
             patch.object(m, "_connect_one", new=MagicMock(side_effect=fake_connect)),
-            patch.object(m, "_run_sync", new=lambda x: x),
+            patch.object(m, "_submit", new=lambda x: x),
         ):
             m.connect_all(cfgs)
         return m
@@ -682,7 +690,7 @@ class TestHumanizeError:
                 "_connect_one",
                 new=MagicMock(side_effect=OSError("All connection attempts failed")),
             ),
-            patch.object(m, "_run_sync", new=lambda x: x),
+            patch.object(m, "_submit", new=lambda x: x),
         ):
             m.connect_all(
                 {"b": McpServerConfig(name="b", url="http://h:1", transport="sse")}
@@ -747,47 +755,59 @@ class TestStreamableHttpTransport:
         c = McpServerConfig(name="n", transport="streamable-http")
         assert not c.is_streamable_http and not c.is_remote
 
-    @pytest.mark.asyncio
-    async def test_connect_one_dispatches_to_streamable_http(self):
-        from unittest.mock import AsyncMock, patch
+    @staticmethod
+    def _which_transport(monkeypatch, cfg) -> str:
+        """``_open_transport`` 가 고른 SDK 함수의 이름 — 두 원격 전송 모듈을 가짜로 바꿔 본다
+        (SDK 세대마다 모듈·이름이 달라 진짜 모듈에 덧대지 않는다: 1.6 에는 streamable_http 가 없다)."""
+        import asyncio
+        import contextlib
+        import sys
+        import types
 
-        from agent_cli.mcp.client import McpClientManager
+        from agent_cli.mcp.client import _open_transport
+
+        picked: list[str] = []
+
+        def fake_module(modname, attr, label, n):
+            @contextlib.asynccontextmanager
+            async def cm(*a, **k):
+                picked.append(label)
+                yield (object(),) * n
+
+            mod = types.ModuleType(modname)
+            setattr(mod, attr, cm)
+            monkeypatch.setitem(sys.modules, modname, mod)
+
+        fake_module(
+            "mcp.client.streamable_http", "streamablehttp_client", "streamable", 3
+        )
+        fake_module("mcp.client.sse", "sse_client", "sse", 2)
+
+        async def go():
+            async with _open_transport(cfg):
+                pass
+
+        asyncio.run(go())
+        return picked[0]
+
+    def test_streamable_http_config_opens_streamable_http(self, monkeypatch):
         from agent_cli.mcp.config import McpServerConfig
 
-        m = McpClientManager()
         cfg = McpServerConfig(name="s", url="http://h/mcp", transport="streamable-http")
-        with (
-            patch.object(m, "_connect_streamable_http", new=AsyncMock()) as sh,
-            patch.object(m, "_connect_sse", new=AsyncMock()) as sse,
-        ):
-            await m._connect_one("s", cfg)
-        sh.assert_awaited_once()
-        sse.assert_not_awaited()
+        assert self._which_transport(monkeypatch, cfg) == "streamable"
 
-    @pytest.mark.asyncio
-    async def test_connect_one_still_dispatches_sse(self):
-        from unittest.mock import AsyncMock, patch
-
-        from agent_cli.mcp.client import McpClientManager
+    def test_sse_config_still_opens_sse(self, monkeypatch):
         from agent_cli.mcp.config import McpServerConfig
 
-        m = McpClientManager()
         cfg = McpServerConfig(name="s", url="http://h/sse", transport="sse")
-        with (
-            patch.object(m, "_connect_streamable_http", new=AsyncMock()) as sh,
-            patch.object(m, "_connect_sse", new=AsyncMock()) as sse,
-        ):
-            await m._connect_one("s", cfg)
-        sse.assert_awaited_once()
-        sh.assert_not_awaited()
+        assert self._which_transport(monkeypatch, cfg) == "sse"
 
-    @pytest.mark.asyncio
-    async def test_invalid_config_names_both_remote_options(self):
-        from agent_cli.mcp.client import McpClientManager
+    def test_invalid_config_names_both_remote_options(self):
+        from agent_cli.mcp.client import _check_config
         from agent_cli.mcp.config import McpServerConfig
 
         with pytest.raises(ValueError, match="streamable-http"):
-            await McpClientManager()._connect_one("s", McpServerConfig(name="s"))
+            _check_config("s", McpServerConfig(name="s"))
 
 
 class TestCancelledErrorIsCaught:
@@ -808,7 +828,7 @@ class TestCancelledErrorIsCaught:
             patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
             patch.object(
                 m,
-                "_run_sync",
+                "_submit",
                 side_effect=asyncio.CancelledError("Cancelled via cancel scope 0x1"),
             ),
         ):
@@ -832,7 +852,7 @@ class TestCancelledErrorIsCaught:
         m = McpClientManager()
         with (
             patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
-            patch.object(m, "_run_sync", side_effect=KeyboardInterrupt),
+            patch.object(m, "_submit", side_effect=KeyboardInterrupt),
             pytest.raises(KeyboardInterrupt),
         ):
             m.connect_all({"s": McpServerConfig(name="s", command="x")}, warn=False)
@@ -849,7 +869,7 @@ class TestCancelledErrorIsCaught:
         cfg = {"s": McpServerConfig(name="s", command="x")}
         with (
             patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
-            patch.object(m, "_run_sync", side_effect=OSError("boom")),
+            patch.object(m, "_submit", side_effect=OSError("boom")),
         ):
             m.connect_all(cfg, warn=False)
             assert "[warn]" not in capsys.readouterr().err

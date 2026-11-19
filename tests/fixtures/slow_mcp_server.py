@@ -1,7 +1,8 @@
 """테스트용 MCP 서버 (stdio) — 빠른 도구, N초 자는 도구, 영영 답하지 않는 도구.
 
 ``python slow_mcp_server.py <표식 디렉터리>`` 로 뜬다. 시작하면 ``<디렉터리>/server.pid`` 에
-자기 PID 를 적고(끝난 뒤 남지 않았는지 보려고), ``sleep`` 이 끝까지 자면 ``slept-<n>`` 을,
+자기 PID 를 적고(끝난 뒤 남지 않았는지 보려고), ``sleep`` 은 자기 시작할 때 ``sleeping-<n>`` 을,
+끝까지 자면 ``slept-<n>`` 을,
 취소되면 ``cancelled-<n>`` 을 남긴다(포기한 뒤 서버가 하던 일을 계속했는지 보려고).
 
 부모(테스트 프로세스)가 사라지면 스스로 끝난다 — ``hang`` 이 돌고 있으면 stdin 이 닫혀도 서버가
@@ -50,6 +51,7 @@ def fast(text: str) -> str:
 @server.tool()
 async def sleep(seconds: float, tag: str) -> str:
     """Sleep, then answer."""
+    (MARKS / f"sleeping-{tag}").touch()
     try:
         await asyncio.sleep(seconds)
     except asyncio.CancelledError:
