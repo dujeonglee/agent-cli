@@ -6,6 +6,7 @@
 // 새 노브는 표에 선언 한 줄이면 칩이 생긴다. 종전 칩별 IIFE 일곱(🗜️ 👥 ⏳ 🧠
 // 📐 🔎 ⚡)을 대체. id 는 규칙적이다: 칩 `knob-<chip>-{wrap,chip,pop,badge,note}`
 // (chip = 묶음 이름 또는 노브 이름), 컨트롤 `knob-<노브 이름>`.
+import { attachMessage } from "./attach.js";
 import { KNOBS } from "./knobs_client.js";
 
 const $chips = document.getElementById("knobs");
@@ -39,8 +40,18 @@ if ($chips && $header) {
   }
   function post(d, value) {
     KNOBS.set(d.name, value).then((r) => {
-      // 거부(미등록 모델 등)·실패면 마지막 상태로 되돌린다 — 서버는 아무것도 안 바꿨다.
-      if (!r) apply(states[d.name], true);
+      // 거부(미등록 모델 등)·실패면 마지막 상태로 되돌리고 사유를 그 칩의 설명 줄에 (vNEXT — 종전엔 말없이
+      // 되돌렸다). 설명 줄이 없는 머리 토글은 입력창 아래 줄에. 다음 상태가 오면 설명 줄은 제 글로 돌아간다.
+      if (r.ok) return;
+      apply(states[d.name], true);
+      const chip = chips[d.ui && d.ui.placement === "header" ? d.name : chipNameOf(d)];
+      const text = "Not changed — " + r.error;
+      if (chip && chip.note) {
+        chip.note.textContent = text;
+        chip.note.hidden = false;
+      } else {
+        attachMessage(text);
+      }
     });
   }
   // 조작 중인 입력은 서버 상태로 덮지 않는다 — 한 노브를 바꾸면 서버가 열 장을
