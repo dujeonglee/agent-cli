@@ -1052,3 +1052,31 @@ class TestLoadHooksMergesBothScopes:
         from agent_cli.paths import project_dir
 
         assert hooks_shell._HOOKS_PATHS == [project_dir() / "hooks.json"]
+
+
+def test_a_skill_with_an_empty_prompt_does_not_call_the_model(tmp_path, monkeypatch):
+    """인자 없이 부른 `$ARGUMENTS` 만의 스킬 — 시작 메시지가 비고 흡수할 것도 없다. 엔진은 LLM 을 부르지 않고 빈 결과로
+    끝내고, 스킬은 그것을 "결과 없음" 으로 돌려준다(시작 메시지 없는 런의 규칙 — `loop/core.py` 의 첫 경계)."""
+    from unittest.mock import MagicMock
+
+    from agent_cli.providers.capabilities import ModelCapabilities
+    from agent_cli.skills.executor import SkillLoop
+    from agent_cli.skills.models import Skill
+
+    monkeypatch.chdir(tmp_path)
+    provider = MagicMock()
+    provider.chat.side_effect = AssertionError("LLM called")
+    caps = ModelCapabilities(
+        context_window=32768, max_output_tokens=4096, supports_thinking=False
+    )
+    loop = SkillLoop(
+        Skill(name="t", description="d", prompt_template="$ARGUMENTS"),
+        "",
+        make_caller(
+            binding=make_binding(provider=provider, capabilities=caps, model="m")
+        ),
+    )
+    assert loop.start().query == ""
+    res = loop.run()
+    assert res.success is False and res.error == "Skill returned no result"
+    assert provider.method_calls == []
