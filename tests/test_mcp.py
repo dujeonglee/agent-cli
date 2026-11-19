@@ -17,7 +17,7 @@ from agent_cli.mcp.config import (
 
 class TestDisconnectClosesErrlog:
     """stdio 전송의 errlog(/dev/null) fd 는 연결이 닫힐 때 닫힌다 — 종전엔
-    저장조차 안 해 서버당 fd 1개가 프로세스 수명 내내 누수(리뷰 §4.5 수리). v10.150.0 부터
+    저장조차 안 해 서버당 fd 1개가 프로세스 수명 내내 누수(리뷰 §4.5 수리). v10.152.0 부터
     errlog 는 ``_open_transport`` 의 ``with`` 가 연결 태스크의 수명 동안 든다."""
 
     def _connect_fake_stdio(self, monkeypatch, *, exit_raises: bool = False):

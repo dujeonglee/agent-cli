@@ -193,7 +193,7 @@ class McpClientManager:
     Each server gets its own client session. Tools are accessed via
     ``mcp__{server}__{tool}`` (adapter).
 
-    **루프는 매니저의 스레드 하나**(v10.150.0). 처음 연결할 때 데몬 스레드 ``mcp-loop`` 가 이벤트 루프를
+    **루프는 매니저의 스레드 하나**(v10.152.0). 처음 연결할 때 데몬 스레드 ``mcp-loop`` 가 이벤트 루프를
     돌기 시작하고, 동기 API 는 전부 :meth:`_submit` 으로 그 루프에 코루틴을 보내고 답을 기다린다.
     종전엔 부르는 스레드가 ``run_until_complete`` 를 돌려서 (1) main 과 에이전트가 겹쳐 부르면
     ``This event loop is already running`` 이었고 (2) 연결을 연 태스크와 닫는 태스크가 달라 anyio 가
