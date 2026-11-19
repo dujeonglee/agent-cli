@@ -11,6 +11,7 @@ hop 상한·요청자 부재·사람 주소 같은 판정은 호출자의 몫이
 
 from __future__ import annotations
 
+import enum
 import threading
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
@@ -44,6 +45,16 @@ class _Mark:
 OPEN_MAIL = _Mark("OPEN_MAIL")
 #: `wait_to_open` — 상자가 닫혔고 줄 선 사람의 말이 없다
 CLOSED = _Mark("CLOSED")
+
+
+class Take(enum.Enum):
+    """`next_run` 이 런을 열 봉투를 꺼내는 법 — 주소의 주인이 정한다."""
+
+    #: main — 사람의 말 먼저 하나. 깨우는 메일만 있으면 꺼내지 않고 빈 묶음(메일이 연 런 — 그 첫 턴 경계가 흡수한다).
+    #: 닫혀도 줄 선 사람의 말은 먼저 꺼낸다
+    WORDS_FIRST = "words_first"
+    #: 에이전트 — 첫 깨우는 봉투(사람의 말이면 이어진 사람의 말까지 한 묶음)를 집는다. 닫히면 줄 선 것이 있어도 끝
+    ARRIVAL = "arrival"
 
 
 class ConsistencyError(AssertionError):
@@ -292,6 +303,46 @@ class PostOffice:
                 )
                 and addr not in self._closed
             )
+
+    def next_run(self, addr: str, take: Take, *, timeout: float | None):
+        """``addr`` 의 다음 런을 열 봉투 — 꺼낸 봉투 묶음(튜플), 닫혔으면 `CLOSED`, ``timeout`` 이 지나면 None.
+        꺼내는 법은 ``take`` (`Take`). `Take.WORDS_FIRST` 의 빈 묶음은 메일이 연 런이다(메일은 꺼내지 않는다 — 열기와
+        첫 경계 사이에 저장이 있어도 메일은 디스크에 남아, 재시작이 잃지 않는다). 기다리는 동안 ``addr`` 는
+        한가함(`idle`)이고, 열 것을 돌려줄 때 내린다 — 판정과 내림이 한 락 구간이다. 꺼낸 봉투의 줄은 picked."""
+        with self.cv:
+            box = self._box(addr)
+            self._idle.add(addr)
+            if take is Take.ARRIVAL:
+                self.cv.wait_for(
+                    lambda: addr in self._closed or any(e.wakes for e in box.queued()),
+                    timeout,
+                )
+                if addr in self._closed:
+                    return CLOSED
+                envs = box.take_next()
+                if not envs:
+                    return None
+                self._idle.discard(addr)
+                self._picked(envs)
+                return envs
+
+            def ready() -> bool:
+                return (
+                    bool(box.words())
+                    or addr in self._closed
+                    or any(e.wakes for e in box.mail())
+                )
+
+            self.cv.wait_for(ready, timeout)
+            if box.words():
+                self._idle.discard(addr)
+                return (self._take_first_words(box),)
+            if addr in self._closed:
+                return CLOSED
+            if any(e.wakes for e in box.mail()):
+                self._idle.discard(addr)
+                return ()
+            return None
 
     def wait_to_open(self, addr: str, *, timeout: float | None):
         """``addr`` 의 다음 런을 열 것 — 줄 선 사람의 말이 있으면 첫 하나를 꺼내 돌려준다, 없고 닫혔으면 `CLOSED`, 깨우는
