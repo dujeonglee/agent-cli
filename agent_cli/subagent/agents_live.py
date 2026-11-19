@@ -935,7 +935,7 @@ class AgentRegistry:
             refused = self._deliver_answer(q, text)
         except RowError:
             return unknown  # 다른 답변자가 먼저 답했다 — 줄이 이미 닫혔다
-        if refused:  # 묻는 쪽이 멈췄거나 사라져 받지 못한다 — 그 질문들을 닫고 명단에 알린다 (v10.147.5)
+        if refused:  # 묻는 쪽이 멈췄거나 사라져 받지 못한다 — 그 질문들을 닫고 명단에 알린다 (v10.149.1)
             self._purge_questions_for(q.asker)
             return f'the agent that asked "{qid}" has stopped — the question is closed'
         self._save_state()
@@ -2345,7 +2345,7 @@ class AgentRegistry:
         ≤2s 기다림 — ✕ 는 창을 비우기 전에 기다린다, ■ 는 기다리지 않는다). 빚 알림은 워커의 정리
         (`_answer_after_stop`)가 원인(``stop_cause``)을 보고 한다."""
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
-        # 건 질문은 지금 닫는다 (v10.147.5) — 워커의 정리(다음 턴 경계)까지 미루면 그 사이 트레이에 남아 답이 갈 곳이 없다
+        # 건 질문은 지금 닫는다 (v10.149.1) — 워커의 정리(다음 턴 경계)까지 미루면 그 사이 트레이에 남아 답이 갈 곳이 없다
         self._purge_questions_for(tm.key)
         self._cancel_checkins(f"agent:{tm.key}")  # 죽은 에이전트에게 알림이 가지 않게
         # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
