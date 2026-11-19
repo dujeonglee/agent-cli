@@ -26,9 +26,25 @@ from agent_cli.mcp.config import (
 #: 도구 호출을 기다리며 런의 정지를 보는 간격(초) — 전경 `shell` 의 ``STOP_POLL_S`` 와 같은 값.
 STOP_POLL_S = 0.2
 
+#: 연결 하나(전송 열기·``initialize``·도구 목록)를 기다리는 상한(초). 마법사의 연결 테스트와 부팅이
+#: 같은 값이다 — 45초는 마법사가 느린 첫 실행(``npx`` 가 패키지를 내려받는 동안)을 위해 고른 값이다.
+#: 넘으면 그 연결을 취소하고(같은 태스크 안의 정리라 서버 프로세스도 끝난다) 실패로 적는다.
+CONNECT_TIMEOUT_S = 45
+
 #: 연결 하나를 닫을 때 그 태스크가 스스로 닫기를 기다리는 시간(초) — 넘으면 취소한다. 루프 스레드를
 #: 내릴 때 join 도 이만큼. stdio 전송은 닫을 때 서버에 2초를 주고 그 뒤 끝낸다(mcp 1.25).
 DISCONNECT_TIMEOUT_S = 5
+
+
+class McpConnectTimedOut(Exception):
+    """연결이 상한 안에 준비되지 않았다 — 문장은 마법사가 써 온 그대로다."""
+
+    def __init__(self, limit_s: float) -> None:
+        super().__init__(
+            f"no response within {limit_s:g}s — the server started but does not "
+            "answer initialize (check the package name and arguments)"
+        )
+        self.limit_s = limit_s
 
 
 class McpCallTimedOut(Exception):
@@ -193,7 +209,8 @@ class McpClientManager:
     (웹 🔌 칩·훅·도구 호출은 읽기만). 스레드 시작도 ``connect_all`` 에서만이라 경합이 없다.
     """
 
-    def __init__(self):
+    def __init__(self, *, connect_timeout_s: float = CONNECT_TIMEOUT_S):
+        self._connect_timeout_s = connect_timeout_s
         self._sessions: dict[str, Any] = {}  # server_name → ClientSession
         # server_name → (닫으라는 신호, 그 연결을 든 태스크) — 둘 다 루프 스레드의 것
         self._closers: dict[str, tuple[asyncio.Event, asyncio.Task]] = {}
@@ -238,28 +255,23 @@ class McpClientManager:
     def connect_all(
         self, configs: dict[str, McpServerConfig], *, warn: bool = True
     ) -> dict[str, str]:
-        """Connect to all configured servers.
+        """Connect to all configured servers — 동시에, 서버마다 ``CONNECT_TIMEOUT_S`` 까지.
 
         Returns dict of {server_name: status} where status is
-        "connected" or error message.
+        "connected" or error message — 설정 순서대로(부팅 줄·🔌 칩 순서가 그대로다).
 
         ``warn=False`` 면 실패를 stderr 에 찍지 않는다 (v9.3.0) — 마법사의
         전송 방식 자동 판별은 **실패를 전제로 두 번 시도**하므로, 예상된
         첫 실패에 [warn] 을 찍으면 성공한 등록에도 경고가 섞여 보인다.
         부팅 경로는 종전대로 찍는다(그때의 실패는 진짜 문제다)."""
+        self.configs.update(configs)
+        failures = self._submit(self._connect_each(configs)) if configs else {}
         results = {}
-        for name, config in configs.items():
-            self.configs[name] = config
-            try:
-                self._submit(self._connect_one(name, config))
+        for name in configs:
+            e = failures[name]
+            if e is None:
                 results[name] = "connected"
-            # CancelledError 는 BaseException 이라 ``except Exception`` 을
-            # 빠져나간다 (v9.3.0 실장에서 잡힘: streamable-http 로 구 SSE
-            # 엔드포인트를 치면 transport 의 anyio cancel scope 가 대기 중인
-            # initialize 를 취소해 그대로 터졌다). 여기서의 취소는 **이 연결
-            # 시도의 실패**이지 프로그램 중단이 아니다 — 사용자 Ctrl-C 는
-            # KeyboardInterrupt 로 오므로 여전히 전파된다.
-            except (Exception, asyncio.CancelledError) as e:
+            else:
                 msg = _leaf_error(e)
                 results[name] = f"error: {msg}"
                 if warn:
@@ -269,6 +281,31 @@ class McpClientManager:
                     )
             self.status[name] = results[name]
         return results
+
+    async def _connect_each(
+        self, configs: dict[str, McpServerConfig]
+    ) -> dict[str, BaseException | None]:
+        """서버들에 동시에 연결한다 → 서버별 실패(성공이면 None). 하나가 늦거나 실패해도 다른 서버는
+        그대로 붙는다. 연결의 취소(``CancelledError``)도 **그 연결 시도의 실패**로 받는다 (v9.3.0
+        실장에서 잡힘: streamable-http 로 구 SSE 엔드포인트를 치면 transport 의 anyio cancel scope 가
+        대기 중인 initialize 를 취소한다) — 사용자 Ctrl-C 는 기다리던 스레드의 ``KeyboardInterrupt``
+        로 오므로(`_submit`) 여전히 전파된다."""
+        names = list(configs)
+        outcomes = await asyncio.gather(
+            *(self._connect_within_limit(n, configs[n]) for n in names),
+            return_exceptions=True,
+        )
+        return dict(zip(names, outcomes))
+
+    async def _connect_within_limit(self, name: str, config: McpServerConfig) -> None:
+        """:meth:`_connect_one` 을 ``connect_timeout_s`` 까지 기다린다 — 넘으면 그 연결을 취소하고
+        :class:`McpConnectTimedOut`."""
+        try:
+            await asyncio.wait_for(
+                self._connect_one(name, config), self._connect_timeout_s
+            )
+        except asyncio.TimeoutError:
+            raise McpConnectTimedOut(self._connect_timeout_s) from None
 
     def summary(self) -> dict:
         """웹 🔌 칩용 스냅샷 (v9.2.0): 서버별 전송·상태·도구 수/이름·실패 이유

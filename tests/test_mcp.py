@@ -543,7 +543,7 @@ class TestLeafError:
 
     def test_connect_all_reports_leaf(self):
         """실제 경로: connect_all 의 status 문자열과 [warn] 줄에 잎이 실린다."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import AsyncMock, patch
 
         from agent_cli.mcp.client import McpClientManager
         from agent_cli.mcp.config import McpServerConfig
@@ -552,15 +552,11 @@ class TestLeafError:
         eg = self._group(
             "unhandled errors in a TaskGroup", [OSError("Connection refused")]
         )
-        # _connect_one 도 패치 — 안 그러면 인자로 만들어진 코루틴이 await 없이
-        # 버려져 "never awaited" 경고가 난다.
-        with (
-            patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
-            patch.object(m, "_submit", side_effect=eg),
-        ):
+        with patch.object(m, "_connect_one", new=AsyncMock(side_effect=eg)):
             r = m.connect_all(
                 {"s": McpServerConfig(name="s", url="http://h", transport="sse")}
             )
+        m.disconnect_all()
         assert r["s"] == "error: Connection refused"
 
 
@@ -568,10 +564,18 @@ class TestManagerSummary:
     """v9.2.0: 웹 🔌 칩용 스냅샷. connect_all 이 실패한 서버도 기억해야 한다 —
     종전엔 stderr 한 줄로 흘려보내고 잊었다."""
 
+    @pytest.fixture(autouse=True)
+    def _threads_down(self):
+        """연결이 루프 스레드를 띄운다 — 테스트가 끝나면 내린다."""
+        self._made: list = []
+        yield
+        for m in self._made:
+            m.disconnect_all()
+
     def _manager(
         self, statuses: dict[str, str], tools: dict[str, list[str]] | None = None
     ):
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import AsyncMock, patch
 
         from agent_cli.mcp.client import McpClientManager, McpToolInfo
         from agent_cli.mcp.config import McpServerConfig
@@ -584,7 +588,7 @@ class TestManagerSummary:
             for n in statuses
         }
 
-        # _connect_one 을 동기 MagicMock 으로: 이름별 성공/실패를 흉내
+        # _connect_one 을 AsyncMock 으로: 이름별 성공/실패를 흉내(루프 스레드에서 돈다)
         def fake_connect(name, cfg):
             st = statuses[name]
             if st != "connected":
@@ -594,11 +598,9 @@ class TestManagerSummary:
                 for t in (tools or {}).get(name, [])
             ]
 
-        with (
-            patch.object(m, "_connect_one", new=MagicMock(side_effect=fake_connect)),
-            patch.object(m, "_submit", new=lambda x: x),
-        ):
+        with patch.object(m, "_connect_one", new=AsyncMock(side_effect=fake_connect)):
             m.connect_all(cfgs)
+        self._made.append(m)
         return m
 
     def test_records_status_and_config_for_every_server(self):
@@ -678,23 +680,21 @@ class TestHumanizeError:
 
     def test_summary_uses_it(self):
         """칩이 httpx 원문 대신 번역을 받는다 — 마법사 list 와 동일 문구."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import AsyncMock, patch
 
         from agent_cli.mcp.client import McpClientManager
         from agent_cli.mcp.config import McpServerConfig
 
         m = McpClientManager()
-        with (
-            patch.object(
-                m,
-                "_connect_one",
-                new=MagicMock(side_effect=OSError("All connection attempts failed")),
-            ),
-            patch.object(m, "_submit", new=lambda x: x),
+        with patch.object(
+            m,
+            "_connect_one",
+            new=AsyncMock(side_effect=OSError("All connection attempts failed")),
         ):
             m.connect_all(
                 {"b": McpServerConfig(name="b", url="http://h:1", transport="sse")}
             )
+        m.disconnect_all()
         assert (
             m.summary()["servers"][0]["error"]
             == "connection refused — no server at http://h:1"
@@ -818,24 +818,24 @@ class TestCancelledErrorIsCaught:
 
     def test_cancelled_error_becomes_a_status_not_a_crash(self):
         import asyncio
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import AsyncMock, patch
 
         from agent_cli.mcp.client import McpClientManager
         from agent_cli.mcp.config import McpServerConfig
 
         m = McpClientManager()
-        with (
-            patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
-            patch.object(
-                m,
-                "_submit",
-                side_effect=asyncio.CancelledError("Cancelled via cancel scope 0x1"),
+        with patch.object(
+            m,
+            "_connect_one",
+            new=AsyncMock(
+                side_effect=asyncio.CancelledError("Cancelled via cancel scope 0x1")
             ),
         ):
             r = m.connect_all(
                 {"s": McpServerConfig(name="s", url="u", transport="streamable-http")},
                 warn=False,
             )
+        m.disconnect_all()
         assert r["s"].startswith("error:")
         assert (
             m.summary()["servers"][0]["error"]
@@ -843,7 +843,8 @@ class TestCancelledErrorIsCaught:
         )
 
     def test_keyboard_interrupt_still_propagates(self):
-        """사용자 Ctrl-C 는 삼키면 안 된다 — CancelledError 와 다른 부류."""
+        """사용자 Ctrl-C 는 삼키면 안 된다 — CancelledError 와 다른 부류. Ctrl-C 는 기다리던 스레드에
+        온다(`_submit`)."""
         from unittest.mock import MagicMock, patch
 
         from agent_cli.mcp.client import McpClientManager
@@ -851,7 +852,7 @@ class TestCancelledErrorIsCaught:
 
         m = McpClientManager()
         with (
-            patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
+            patch.object(m, "_connect_each", new=MagicMock(return_value=None)),
             patch.object(m, "_submit", side_effect=KeyboardInterrupt),
             pytest.raises(KeyboardInterrupt),
         ):
@@ -860,21 +861,21 @@ class TestCancelledErrorIsCaught:
     def test_warn_switch_silences_stderr(self, capsys):
         """판별은 실패를 전제로 두 번 시도한다 — 예상된 첫 실패에 [warn] 을
         찍으면 성공한 등록 출력에 경고가 섞인다."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import AsyncMock, patch
 
         from agent_cli.mcp.client import McpClientManager
         from agent_cli.mcp.config import McpServerConfig
 
         m = McpClientManager()
         cfg = {"s": McpServerConfig(name="s", command="x")}
-        with (
-            patch.object(m, "_connect_one", new=MagicMock(return_value=None)),
-            patch.object(m, "_submit", side_effect=OSError("boom")),
+        with patch.object(
+            m, "_connect_one", new=AsyncMock(side_effect=OSError("boom"))
         ):
             m.connect_all(cfg, warn=False)
             assert "[warn]" not in capsys.readouterr().err
             m.connect_all(cfg)  # 기본 True — 부팅 경로는 종전대로
             assert "[warn]" in capsys.readouterr().err
+        m.disconnect_all()
 
 
 class TestWrongTransportDiagnosis:

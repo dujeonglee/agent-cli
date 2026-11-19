@@ -280,3 +280,64 @@ def test_keyboard_interrupt_while_waiting_cancels_the_coroutine(connected):
     finally:
         signal.signal(signal.SIGINT, previous)
     assert wait_until(lambda: loop_tasks(m) == baseline)
+
+
+# ── 연결의 상한과 동시 연결 ─────────────────────────────
+
+
+def test_a_server_that_never_answers_initialize_fails_at_the_limit_and_ends(tmp_path):
+    """부팅이 끝없이 막히던 자리 — 상한에서 그 연결만 실패하고(마법사가 써 온 문장), 그 프로세스는
+    끝난다. 같은 부팅의 다른 서버는 붙고, 결과는 설정 순서다."""
+    mute, ok = tmp_path / "mute", tmp_path / "ok"
+    m = McpClientManager(connect_timeout_s=0.5)
+    mute_cfg = McpServerConfig(
+        name="mute", command=sys.executable, args=[str(SERVER), str(mute), "mute"]
+    )
+    try:
+        t, box = _in_thread(
+            lambda: m.connect_all(
+                {"mute": mute_cfg, "ok": _config("ok", ok)}, warn=False
+            )
+        )
+        t.join(NO_HANG_S)
+        assert not t.is_alive(), "답하지 않는 서버에 연결이 끝나지 않았다"
+        status = box["r"]
+        assert list(status) == ["mute", "ok"]
+        assert status == {
+            "mute": "error: no response within 0.5s — the server started but does "
+            "not answer initialize (check the package name and arguments)",
+            "ok": "connected",
+        }
+        assert m.is_connected("ok") and not m.is_connected("mute")
+        assert wait_until(lambda: not _alive(_pid(mute))), "답하지 않던 서버가 남았다"
+    finally:
+        m.disconnect_all()
+        for marks in (mute, ok):
+            if (marks / "server.pid").exists() and _alive(_pid(marks)):
+                os.kill(_pid(marks), signal.SIGTERM)
+
+
+def test_servers_connect_at_the_same_time():
+    """``a`` 의 연결은 ``b`` 의 연결이 시작돼야 끝난다 — 차례로 연결하면 ``a`` 가 상한에 걸린다."""
+    from unittest.mock import AsyncMock, patch
+
+    b_started = asyncio.Event()
+
+    async def fake_connect(name, config):
+        if name == "a":
+            await b_started.wait()
+        else:
+            b_started.set()
+
+    m = McpClientManager(connect_timeout_s=5)
+    cfgs = {n: McpServerConfig(name=n, command="x") for n in ("a", "b")}
+    try:
+        with patch.object(m, "_connect_one", new=AsyncMock(side_effect=fake_connect)):
+            t, box = _in_thread(lambda: m.connect_all(cfgs, warn=False))
+            t.join(NO_HANG_S)
+            assert box["r"] == {
+                "a": "connected",
+                "b": "connected",
+            }
+    finally:
+        m.disconnect_all()
