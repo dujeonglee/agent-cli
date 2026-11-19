@@ -258,7 +258,7 @@ class TestKindsStateTheirPolicy:
             agent_registry=None,
             mcp_manager=None,
             enqueue_user_message=lambda text, nickname: {},
-            route_message=lambda t: False,
+            route_message=lambda t, i: False,
             max_turns=0,
             max_depth=2,
             verbose=False,

@@ -15,7 +15,12 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
-from agent_cli.command_table import command_kind, looks_like_slash_command
+from agent_cli.command_table import (
+    IMAGES_NOT_TAKEN,
+    command_kind,
+    command_takes_images,
+    looks_like_slash_command,
+)
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import (
@@ -535,15 +540,20 @@ class _ConsoleSurface:
         """``text`` 를 `route` 가 명령으로 받는가 — 실행하지 않고 판정만. ``/sh`` 는 run 에 없다(평범한 질의)."""
         return not text.startswith("/sh") and command_kind(text) is not None
 
-    def route(self, text: str, start=None) -> bool:
+    def route(self, text: str, start=None, *, item: dict | None = None) -> bool:
         if text.startswith("/sh"):
             return False
         # 펌프가 연 차례(``start``)의 argv 질의만 판정·결과 파일이 된다 — 턴 경계·제자리 대기의 라우팅은 ``None``
         self._routing_query = start is not None and _is_query(start)
         try:
-            return self._dispatch(text, self._stop)
+            handled = self._dispatch(text, self._stop, item)
         finally:
             self._routing_query = False
+        if handled and (item or {}).get("images") and not command_takes_images(text):
+            console.print(
+                IMAGES_NOT_TAKEN, style=C["error"], markup=False
+            )  # 판정·결과 파일에는 들지 않는다
+        return handled
 
     def routed(self, answer, ok: bool) -> None:
         """라우팅 명령의 결과 — ``_ConsoleDispatchOutput`` 이 알린다 (v10.124.0).
@@ -615,7 +625,7 @@ def _parse_at_profile(name: str) -> tuple[str, str]:
 
 
 def _try_dispatch_agent_command(
-    message: str, output: DispatchOutput, agent_registry
+    message: str, output: DispatchOutput, agent_registry, images=()
 ) -> bool:
     """상주 에이전트 방향의 ``@`` 명령 — LLM 을 거치지 않는 직접 표면.
 
@@ -628,6 +638,8 @@ def _try_dispatch_agent_command(
 
     ``@<profile>[-run] <task>`` (일회성 run)는 여기서 처리하지 않고
     False 로 폴스루 — ``_dispatch_agent`` 가 run 엔진으로 실행한다.
+
+    ``images``: 그 말에 딸린 이미지 — 말이 요청으로 가는 갈래(메시지·초기 task)에 함께 실린다 (v10.149.3).
     """
     if not message.startswith("@"):
         return False
@@ -647,7 +659,9 @@ def _try_dispatch_agent_command(
             # 메시지 없음 → 그 인스턴스의 상태
             output.agent_dispatch_result(agent_registry.format_status(name), True)
             return True
-        error = agent_registry.request(name, parts[1], author="user")
+        error = agent_registry.request(
+            name, parts[1], author="user", images=list(images) or None
+        )
         if error:
             output.agent_dispatch_result(f"@{name}: {error}", False)
         else:
@@ -671,7 +685,9 @@ def _try_dispatch_agent_command(
             return True
         task = parts[1] if len(parts) > 1 else ""
         if task:
-            send_error = agent_registry.request(key, task, author="user")
+            send_error = agent_registry.request(
+                key, task, author="user", images=list(images) or None
+            )
             if send_error:
                 output.agent_dispatch_result(f"@{key}: {send_error}", False)
                 return True
@@ -830,8 +846,12 @@ def try_dispatch_agent_or_skill(
     graceful_interrupt: bool = True,
     stop_event=None,
     agent_registry=None,
+    images=(),
 ) -> bool:
     """Detect and run ``@<name> <task>`` / ``/<skill> <args>`` invocations.
+
+    ``images`` (v10.149.3): 그 말에 딸린 이미지 — 말이 가는 곳(에이전트 요청·run 과제·스킬 런의 시작 메시지)으로
+    함께 간다. 받지 않는 명령의 알림은 표면이 낸다(`command_table.command_takes_images`).
 
     ``stop_event`` is threaded into BOTH paths so the web Stop button can
     halt either at a turn boundary, same as a plain conversation turn:
@@ -856,7 +876,7 @@ def try_dispatch_agent_or_skill(
     if message.startswith("@"):
         # 상주 방향 명령이 먼저 — ``@agents`` 통합 목록 / ``@agt-<key>``
         # 직접 조작 / ``@<profile>-spawn`` (run 은 폴스루).
-        if _try_dispatch_agent_command(message, output, agent_registry):
+        if _try_dispatch_agent_command(message, output, agent_registry, images):
             return True
         parts = message.split(maxsplit=1)
         name = parts[0][1:]
@@ -878,6 +898,7 @@ def try_dispatch_agent_or_skill(
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
             agent_registry=agent_registry,
+            images=images,
         )
         if result is _AGENT_NOT_FOUND:
             output.agent_not_found(name)
@@ -914,6 +935,7 @@ def try_dispatch_agent_or_skill(
             session=session,
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
+            images=images,
         )
         if result is _SKILL_NOT_FOUND:
             output.skill_not_found(cmd_name)
@@ -960,7 +982,7 @@ def _command_dispatch(spec, owners, output, *, graceful_interrupt: bool):
     잇는 새 `_ConsoleDispatchOutput`, web 은 렌더러의 `WebDispatchOutput` 하나)과 중단
     방식(``graceful_interrupt`` — 표면의 것)뿐이다."""
 
-    def dispatch(text: str, stop_event) -> bool:
+    def dispatch(text: str, stop_event, item: dict | None = None) -> bool:
         return try_dispatch_agent_or_skill(
             text,
             output(),
@@ -973,6 +995,7 @@ def _command_dispatch(spec, owners, output, *, graceful_interrupt: bool):
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
             agent_registry=owners.agent_registry,
+            images=(item or {}).get("images") or (),
         )
 
     return dispatch
@@ -995,6 +1018,7 @@ def _dispatch_agent(
     graceful_interrupt: bool = False,
     stop_event=None,
     agent_registry=None,
+    images=(),
 ):
     """Dispatch @agent-name query → ``(answer, success)``.
 
@@ -1052,6 +1076,7 @@ def _dispatch_agent(
             {"task": task, "profile": agent_name, "context": "fork"},
             caller=caller,
             runtime=runtime,
+            images=images,
         )
         if agent_registry is not None
         else None
@@ -1108,6 +1133,7 @@ def _dispatch_skill(
     session=None,
     graceful_interrupt: bool = False,
     stop_event=None,
+    images=(),
 ):
     """Dispatch a /skill-name command → ``(answer, success)``.
 
@@ -1162,6 +1188,7 @@ def _dispatch_skill(
             verbose=verbose,
             agent_registry=get_agent_registry(),
         ),
+        images=images,
     ).run()
 
     answer = skill_result.output if skill_result.success else skill_result.error

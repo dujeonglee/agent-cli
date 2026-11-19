@@ -442,7 +442,7 @@ class TestCommandsTypedDuringTheWait:
             def echo(self, item):
                 routed.append(("echo", item["text"]))
 
-            def route(self, text, start=None):
+            def route(self, text, start=None, *, item=None):
                 routed.append(text)
                 return text in handled
 

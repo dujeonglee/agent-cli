@@ -130,9 +130,11 @@ class PumpSurface(Protocol):
     def is_command(self, text: str) -> bool:
         """``text`` 가 이 표면의 명령인가 — 실행하지 않고 판정만(`route` 가 받는 글 그대로)."""
 
-    def route(self, text: str, start: Any = None) -> bool:
+    def route(self, text: str, start: Any = None, *, item: dict | None = None) -> bool:
         """명령이면 처리하고 True — 런을 열지 않는다. ``start`` 는 펌프가 이 차례를 열 때의 시작(`Start`)이고, 턴
-        경계·제자리 대기의 라우팅은 None 이다(run 은 argv 질의였던 명령만 결과 파일·종료 코드에 쓴다)."""
+        경계·제자리 대기의 라우팅은 None 이다(run 은 argv 질의였던 명령만 결과 파일·종료 코드에 쓴다). ``item`` 은 그
+        글을 실어 온 사람의 말 항목(``{text, nickname, images, …}``, 없으면 None — 터미널 줄) — 그 말에 딸린 것(이미지)은
+        그 말이 가는 곳으로 간다 (v10.149.3)."""
 
     def run_starting(self, start: Any) -> None:
         """런을 열기 직전 — 런 바로 앞, 같은 try 안이라 예외는 ``run_failed`` 로 간다. web 은 못 보는 모델에 이미지가
@@ -165,9 +167,9 @@ class SessionPump:
     def __init__(self, deps: PumpDeps):
         self.deps = deps
 
-    def route(self, text: str) -> bool:
+    def route(self, text: str, item: dict | None = None) -> bool:
         """런 **도중** 주입된 아이템의 라우팅(``LoopPorts.route_message``) — 표면의 명령 라우팅 그대로."""
-        return self.deps.surface.route(text)
+        return self.deps.surface.route(text, item=item)
 
     def run(self) -> None:
         """``KeyboardInterrupt`` 는 잡지 않는다 — 호출자 정책(run 은 중단 안내,
@@ -200,7 +202,9 @@ class SessionPump:
             try:
                 try:
                     # 명령의 라우팅도 런과 같은 보호 안 — 그 예외도 `run_failed` 로 간다(web 은 알리고 계속)
-                    if item is not None and d.surface.route(start.query, start):
+                    if item is not None and d.surface.route(
+                        start.query, start, item=item
+                    ):
                         continue
                     d.surface.run_starting(start)
                     result = d.main.run(start)

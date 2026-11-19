@@ -290,7 +290,7 @@ class Surface:
     def is_command(self, text):
         return text in self.commands
 
-    def route(self, text, start=None):
+    def route(self, text, start=None, *, item=None):
         fn = self.commands.get(text)
         if fn is None:
             return False

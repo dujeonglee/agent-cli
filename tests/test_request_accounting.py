@@ -119,7 +119,7 @@ class TestRequestsReachTheRun:
         """라우팅 명령은 **이미 처리된 것**이다 — 미답으로 남으면 안 된다."""
         loop = _drain(
             [{"id": "r1", "nickname": "Bob", "text": "/skill x"}],
-            route=lambda text: True,
+            route=lambda text, item: True,
         )
         assert _ids(loop) == []
 
@@ -924,7 +924,7 @@ class TestRequestIdOnUserRecords:
         """라우팅 명령은 요청이 아니다 — 회계와 같은 문."""
         loop = _drain(
             [{"id": "7", "nickname": "Bob", "text": "/sh ls"}],
-            route=lambda _t: True,
+            route=lambda _t, _i: True,
         )
         assert _ids(loop) == []
 

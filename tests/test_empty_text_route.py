@@ -106,7 +106,7 @@ def test_image_only_message_injected_mid_run_reaches_the_model(tmp_path):
         query_author="dj",
         ports=make_ports(
             inbox=queue_inbox(lambda: pending.pop(0) if pending else None),
-            route_message=surface.route,
+            route_message=lambda text, item: surface.route(text, item=item),
         ),
         provider=provider,
         capabilities=ModelCapabilities(32768, 4096, False),

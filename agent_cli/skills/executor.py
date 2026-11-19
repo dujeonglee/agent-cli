@@ -158,6 +158,7 @@ class SkillLoop(LoopKind):
         scope_id: str = "",
         session_subdir: str = "",
         tool_input: dict | None = None,
+        images=(),
     ) -> None:
         import uuid as _uuid
 
@@ -167,6 +168,8 @@ class SkillLoop(LoopKind):
 
         self.skill = skill
         self.arguments = arguments
+        #: 사람이 `/skill` 명령에 붙인 이미지 (v10.149.3) — 스킬 런의 시작 메시지에 실린다
+        self.images = list(images)
         self.caller = caller
         name = skill.name or "skill"
         self.owner = caller.owner
@@ -283,7 +286,8 @@ class SkillLoop(LoopKind):
                 self.arguments,
                 skill_dir=skill_dir,
                 session_id="",
-            )
+            ),
+            images=list(self.images),
         )
 
     # ── ⑤·⑬ 도구 범위와 ctx ──

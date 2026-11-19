@@ -10,8 +10,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
-from agent_cli.command_table import command_kind
-from agent_cli.web.slash import is_web_command
+from agent_cli.command_table import command_kind, is_web_command
 
 #: 이미지 딸린 메시지가 못 보는 모델에 갈 때의 알림 (v10.60.0) — run 은
 #: `_require_vision` 으로 즉시 끝내지만 웹은 런을 열어야 다음 메시지를 받는다.
@@ -64,12 +63,18 @@ class WebSurface:
         """``text`` 를 `route` 가 명령으로 받는가 — 실행하지 않고 판정만."""
         return is_web_command(text) or command_kind(text) is not None
 
-    def route(self, text: str, start=None) -> bool:
-        from agent_cli.web.slash import handle_slash_command
+    def route(self, text: str, start=None, *, item: dict | None = None) -> bool:
+        from agent_cli.command_table import IMAGES_NOT_TAKEN, command_takes_images
+        from agent_cli.web.slash import WebDispatchOutput, handle_slash_command
 
-        if handle_slash_command(text, self._renderer, ctx=self._ctx):
-            return True
-        return self._dispatch(text, self._stop)
+        handled = handle_slash_command(
+            text, self._renderer, ctx=self._ctx
+        ) or self._dispatch(text, self._stop, item)
+        if handled and (item or {}).get("images") and not command_takes_images(text):
+            WebDispatchOutput(self._renderer).agent_dispatch_result(
+                IMAGES_NOT_TAKEN, False
+            )
+        return handled
 
     def run_starting(self, start) -> None:
         # 못 보는 모델에 이미지가 왔다 (v10.60.0): 런은 연다(자리표시 줄로 가고

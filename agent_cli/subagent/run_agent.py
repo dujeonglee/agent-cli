@@ -43,7 +43,7 @@ class RunLaunch(NamedTuple):
     error: str
 
 
-def launch_run(registry, args: dict, *, caller, runtime) -> RunLaunch:
+def launch_run(registry, args: dict, *, caller, runtime, images=()) -> RunLaunch:
     """거부 판정 → `spawn(ends_after_task=True)` → 과제 요청. 회신을 기다리지 않는다.
 
     ``caller`` 는 부른 루프(`loop.kind.Caller`), ``runtime`` 은 그 실행 배선(`AgentRuntime`
@@ -103,7 +103,10 @@ def launch_run(registry, args: dict, *, caller, runtime) -> RunLaunch:
             )
 
         tm.on_task_end = on_task_end
-    qerr = registry.request(key, task, author=caller.owner, item_id=rid)
+    # ``images`` (v10.149.3): 사람이 main 입력창에서 `@<profile> 과제` 에 붙인 이미지 — 과제와 함께 간다
+    qerr = registry.request(
+        key, task, author=caller.owner, item_id=rid, images=list(images) or None
+    )
     if qerr:
         registry.kill(key, by="")  # 과제 없는 run 은 남길 이유가 없다 — 알릴 빚도 없다
         return RunLaunch("", "", f"Delegation rejected: {qerr}")
