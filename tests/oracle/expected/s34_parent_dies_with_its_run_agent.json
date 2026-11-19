@@ -463,7 +463,7 @@
    }
   ],
   "run": {
-   "stop_by": "harness:agt-A",
+   "stop_by": "harness:agt-A:died",
    "stop_cause": "stopped"
   }
  },

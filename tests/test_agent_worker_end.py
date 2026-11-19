@@ -346,7 +346,7 @@ class TestAParentThatDies:
         assert wait_until(lambda: not aa_tm.worker.is_alive())
         assert aa_tm.error.startswith("MemoryError")
         assert kid_tm.stop_cause == agent_stop.STOPPED
-        assert kid_tm.stop_by == agent_stop.harness_by(aa)
+        assert kid_tm.stop_by == agent_stop.harness_by(aa, agent_stop.PARENT_DIED)
         assert reg.reply_debts(f"agent:{kid}") == []  # 부모에게 진 빚은 닫혔다
         gate.set()
         assert wait_until(lambda: not kid_tm.worker.is_alive())
@@ -382,7 +382,7 @@ class TestAParentThatDies:
         try:
             assert reg.request(aa, "go") == ""
             assert wait_until(lambda: not aa_tm.worker.is_alive())
-            assert kid_tm.stop_by == agent_stop.harness_by(aa)
+            assert kid_tm.stop_by == agent_stop.harness_by(aa, agent_stop.PARENT_DIED)
         finally:
             gate.set()  # 정지 회신은 그 런이 내려올 때 간다
 
@@ -428,24 +428,104 @@ class TestAParentThatDies:
 
 def test_the_harness_stop_reply_is_one_constant():
     """하니스가 멈춘 run 의 회신 첫 줄은 정지 이유 상수 한 자리(`agent_stop.HARNESS_CAUSE`)에 일하던 중·시작 전이
-    붙는다 — 표지는 ``stopped by harness``."""
+    붙는다 — 부모가 어떻게 끝났는지(죽음·정지)만 갈린다. 표지는 ``stopped by harness``."""
     from agent_cli.subagent import agent_stop
 
-    by = agent_stop.harness_by("agt-X")
-    working = agent_stop.stopped_reply("agt-Y", "r-3", "child work", [], "", by=by)
-    queued = agent_stop.unstarted_reply(
-        "agt-Y", "r-4", "later", by=by, cause=agent_stop.STOPPED
-    )
-    cause = "agt-Y was stopped because agt-X (the agent that started it) died"
-    assert agent_stop.HARNESS_CAUSE.format(agent="agt-Y", parent="agt-X") == cause
-    assert working.splitlines()[0] == (
-        f'{cause}, while it was working on your request [r-3] ("child work").'
-    )
-    assert queued.splitlines()[0] == (
-        f'{cause}, before it started your request [r-4] ("later"). '
-        "Nothing was done for it."
-    )
-    assert agent_stop.stop_mark(agent_stop.STOPPED, by) == "stopped by harness"
+    for how, ended in (
+        (agent_stop.PARENT_DIED, "died"),
+        (agent_stop.PARENT_STOPPED, "was stopped"),
+    ):
+        by = agent_stop.harness_by("agt-X", how)
+        working = agent_stop.stopped_reply("agt-Y", "r-3", "child work", [], "", by=by)
+        queued = agent_stop.unstarted_reply(
+            "agt-Y", "r-4", "later", by=by, cause=agent_stop.STOPPED
+        )
+        cause = f"agt-Y was stopped because agt-X (the agent that started it) {ended}"
+        assert (
+            agent_stop.HARNESS_CAUSE.format(
+                agent="agt-Y", parent="agt-X", parent_ended=ended
+            )
+            == cause
+        )
+        assert working.splitlines()[0] == (
+            f'{cause}, while it was working on your request [r-3] ("child work").'
+        )
+        assert queued.splitlines()[0] == (
+            f'{cause}, before it started your request [r-4] ("later"). '
+            "Nothing was done for it."
+        )
+        assert agent_stop.stop_mark(agent_stop.STOPPED, by) == "stopped by harness"
+
+
+class TestAChainOfRuns:
+    """부모가 죽으면 하니스가 그 run 을 멈추고, 그 run 이 내려오면서 자기가 띄운 run 을 멈춘다 — 각 단의 회신은 바로 위
+    부모가 어떻게 끝났는지를 말한다: 죽은 부모의 자식은 "died", 멈춘 부모의 자식은 "was stopped"."""
+
+    def test_three_levels(self, tmp_path, monkeypatch):
+        from agent_cli.subagent import agent_stop
+        from agent_cli.subagent.resident_loop import ResidentLoop
+
+        gates = {"kid work": threading.Event(), "gc work": threading.Event()}
+
+        def runner(kind, start, ctx):
+            for word, gate in gates.items():
+                if word in start.query:
+                    assert gate.wait(10)
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        kid, err = reg.spawn(name="kid", ends_after_task=True, parent=f"agent:{aa}")
+        assert not err
+        gc, err = reg.spawn(name="gc", ends_after_task=True, parent=f"agent:{kid}")
+        assert not err
+        kid_tm, gc_tm = reg.get(kid), reg.get(gc)
+        assert wait_until(lambda: kid_tm.state == "idle" and gc_tm.state == "idle")
+        assert reg.message_handler("main")(kid, "kid work", True)[1] == ""
+        assert reg.message_handler("main")(gc, "gc work", True)[1] == ""
+        assert wait_until(lambda: kid_tm.state == "busy" and gc_tm.state == "busy")
+        (kid_debt,) = reg.reply_debts(f"agent:{kid}")
+        (gc_debt,) = reg.reply_debts(f"agent:{gc}")
+        real_open = ResidentLoop.open_scope
+
+        def crashing(self, start):
+            if self.tm.key == aa:
+                raise MemoryError("worker machinery")
+            return real_open(self, start)
+
+        monkeypatch.setattr(ResidentLoop, "open_scope", crashing)
+        try:
+            assert reg.request(aa, "go") == ""
+            assert wait_until(lambda: not aa_tm.worker.is_alive())
+            assert kid_tm.stop_by == agent_stop.harness_by(aa, agent_stop.PARENT_DIED)
+            assert gc_tm.stop_by == ""  # 손자는 kid 가 내려올 때 멈춘다
+            gates["kid work"].set()
+            assert wait_until(lambda: not kid_tm.worker.is_alive())
+            assert gc_tm.stop_by == agent_stop.harness_by(
+                kid, agent_stop.PARENT_STOPPED
+            )
+        finally:
+            for gate in gates.values():
+                gate.set()
+        assert wait_until(lambda: not gc_tm.worker.is_alive())
+
+        def reply_to(debt):
+            return [m for m in reg._post.mail("main") if m.re == debt.id]
+
+        assert wait_until(lambda: reply_to(kid_debt) and reply_to(gc_debt))
+        (kid_mail,), (gc_mail,) = reply_to(kid_debt), reply_to(gc_debt)
+        assert kid_mail.mark == gc_mail.mark == "stopped by harness"
+        assert kid_mail.text == (
+            f"{kid} was stopped because {aa} (the agent that started it) died, "
+            f'while it was working on your request [{kid_debt.id}] ("kid work").\n'
+            "Decide whether to continue another way or report back to the user."
+        )
+        assert gc_mail.text == (
+            f"{gc} was stopped because {kid} (the agent that started it) was stopped, "
+            f'while it was working on your request [{gc_debt.id}] ("gc work").\n'
+            "Decide whether to continue another way or report back to the user."
+        )
+        reg.shutdown_all()
 
 
 class TestTwoEndsAtOnce:
