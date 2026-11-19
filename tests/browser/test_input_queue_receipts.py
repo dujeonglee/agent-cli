@@ -48,7 +48,7 @@ def _wait_in_place(stack, routed: list):
         server=stack.server,
         ctx=None,
         binding=None,
-        dispatch=lambda text, stop: routed.append(text) or True,
+        dispatch=lambda text, stop, item=None: routed.append(text) or True,
     )
     return wait_for_human_words(stack.server.main_input, surface)
 

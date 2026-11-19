@@ -136,7 +136,7 @@ def session(tmp_path):
             agent_registry=reg,
             mcp_manager=None,
             enqueue_user_message=lambda text, nickname: queue.enqueue(None, text),
-            route_message=lambda text: False,
+            route_message=lambda text, item: False,
             max_turns=30,
             max_depth=max_depth,
             verbose=False,

@@ -329,7 +329,7 @@ class TestConsoleSurface:
         out = tmp_path / "r.txt"
         calls = []
 
-        def _dispatch(text, stop):
+        def _dispatch(text, stop, item=None):
             calls.append((text, stop))
             return text.startswith(("/", "@"))
 
@@ -379,7 +379,7 @@ class TestConsoleSurface:
         표면이 쓴다(종료 코드와 같은 자리). 실패한 스킬의 오류문은 쓰지 않는다."""
         from agent_cli.main import _ConsoleDispatchOutput
 
-        def dispatch(text, stop):
+        def dispatch(text, stop, item=None):
             o = _ConsoleDispatchOutput(report=s.routed)
             o.skill_result(
                 "review",
@@ -407,7 +407,7 @@ class TestConsoleSurface:
 
         results = iter([("failed body", False), (None, True), ("the answer", True)])
 
-        def dispatch(text, stop):
+        def dispatch(text, stop, item=None):
             body, ok = next(results)
             _ConsoleDispatchOutput(report=s.routed).agent_result(body, ok=ok)
             return True
@@ -491,7 +491,7 @@ class TestConsoleExitCode:
 
         verdicts = {"/ok": ("done", True), "/bad": (None, False)}
 
-        def dispatch(text, stop):
+        def dispatch(text, stop, item=None):
             answer, ok = verdicts[text]
             _ConsoleDispatchOutput(report=s.routed).skill_result(
                 text[1:], answer, ok=ok
@@ -515,7 +515,7 @@ class TestConsoleExitCode:
         물려받지 않는다 — 턴 경계의 ``route`` 에는 그 차례의 시작이 없다."""
         from agent_cli.main import _ConsoleDispatchOutput
 
-        def dispatch(text, stop):
+        def dispatch(text, stop, item=None):
             if not text.startswith("/"):
                 return False
             _ConsoleDispatchOutput(report=s.routed).skill_result("x", "done")

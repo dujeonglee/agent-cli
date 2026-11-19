@@ -4414,7 +4414,7 @@ class TestMessageInjection:
 
         routed = []
 
-        def route(text):
+        def route(text, item=None):
             routed.append(text)
             return text.startswith(("/", "@"))  # command → handled here
 
@@ -4451,7 +4451,9 @@ class TestMessageInjection:
         run_loop(
             query="do Y",
             query_author="Pen",
-            ports=make_ports(inbox=queue_inbox(dq), route_message=lambda _text: False),
+            ports=make_ports(
+                inbox=queue_inbox(dq), route_message=lambda _text, _item: False
+            ),
             # never a command
             provider=provider,
             capabilities=caps,
@@ -4489,7 +4491,9 @@ class TestMessageInjection:
         run_loop(
             query="starter",
             query_author="Pen",
-            ports=make_ports(inbox=queue_inbox(dq), route_message=lambda _text: False),
+            ports=make_ports(
+                inbox=queue_inbox(dq), route_message=lambda _text, _item: False
+            ),
             # all plain chat
             provider=provider,
             capabilities=caps,
@@ -4528,7 +4532,7 @@ class TestMessageInjection:
 
         routed = []
 
-        def route(text):
+        def route(text, item=None):
             routed.append(text)
             return text.startswith(("/", "@"))
 
@@ -4950,7 +4954,7 @@ class TestRunAuthors:
             loop = self._loop(
                 caps,
                 inbox=queue_inbox(lambda: items.pop() if items else None),
-                route_message=lambda text: True,
+                route_message=lambda text, item: True,
             )
             loop._intake()
             assert loop.run_authors == []

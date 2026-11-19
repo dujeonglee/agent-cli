@@ -718,8 +718,10 @@ class _ItemsPump:
     def after_item(self, res):
         pass
 
-    def route(self, text):  # run_main 의 ports 가 참조한다 (런 도중 주입 라우팅)
-        return self.deps.surface.route(text)
+    def route(
+        self, text, item=None
+    ):  # run_main 의 ports 가 참조한다 (런 도중 주입 라우팅)
+        return self.deps.surface.route(text, item=item)
 
 
 @pytest.fixture

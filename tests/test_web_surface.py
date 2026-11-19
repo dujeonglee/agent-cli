@@ -43,7 +43,7 @@ class TestSignals:
         surface.bind_stop(ev)
         server.set_stop_handle.assert_called_with(ev)
         surface.route("@worker do x")
-        dispatch.assert_called_once_with("@worker do x", ev)
+        dispatch.assert_called_once_with("@worker do x", ev, None)
         surface.bind_stop(None)
         server.set_stop_handle.assert_called_with(None)
 

@@ -260,7 +260,7 @@ def wait_for_human_words(main_input, surface):
         if item is None:
             return True
         surface.echo(item)
-        surface.route(str(item.get("text") or ""))
+        surface.route(str(item.get("text") or ""), item=item)
         return False  # 명령은 처리했다 — 기다림은 계속(멈춘 에이전트의 회신이 깨운다)
 
     return wait
@@ -606,7 +606,7 @@ def wire_session(
         enqueue_user_message=lambda text, nickname: main_input.enqueue(
             None, text, nickname=nickname
         ),
-        route_message=lambda text: pump.route(text),
+        route_message=lambda text, item: pump.route(text, item),
         wait_for_user_input=on_wait_input or wait_for_human_words(main_input, surface),
         max_turns=spec.max_turns,
         max_depth=spec.max_depth,

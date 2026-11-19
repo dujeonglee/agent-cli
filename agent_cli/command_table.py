@@ -112,3 +112,28 @@ def command_kind(message: str) -> str | None:
     if message.startswith("/") and looks_like_slash_command(message):
         return "skill"
     return None
+
+
+#: 이미지를 받지 않는 명령에 이미지가 딸려 왔을 때의 한 줄 (v10.149.3) — 명령은 그대로 실행된다.
+IMAGES_NOT_TAKEN = "This command does not take images — the attachment was not sent"
+
+
+def is_web_command(message: str) -> bool:
+    """웹 전용 명령(``/help``·``/compact``·``/sh``)인가 — 웹 표면이 공용 디스패치보다 먼저 받는 글 그대로. 읽기만 한다."""
+    return message in ("/help", "/compact") or message.startswith(("/compact ", "/sh"))
+
+
+def command_takes_images(message: str) -> bool:
+    """명령이 사람의 말에 딸린 이미지를 그 말과 함께 보내는가 — 말이 에이전트·스킬 런의 시작 메시지가 되는 갈래
+    (``@agt-<key> 글``·``@<profile>-spawn 과제``·``@<profile> 과제``·``/<skill> …``)만 True. 목록·상태·``/stop``·웹
+    전용 명령은 말이 갈 곳이 없어 False. 명령인 글에만 묻는다. 읽기만 한다."""
+    if is_web_command(message):
+        return False
+    kind = command_kind(message)
+    parts = message.split(maxsplit=1)
+    if kind == "skill":
+        return parts[0] != "/skills"
+    if kind == "agent":
+        name = parts[0][1:]
+        return bool(name) and name != "agents" and len(parts) > 1
+    return False

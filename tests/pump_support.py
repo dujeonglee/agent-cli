@@ -40,7 +40,7 @@ class FakeSurface:
     def is_command(self, text):
         return text in self.routed
 
-    def route(self, text, start=None):
+    def route(self, text, start=None, *, item=None):
         self.calls.append(("route", text))
         if text in self.fail_on_route:
             raise RuntimeError(f"route failed: {text}")
