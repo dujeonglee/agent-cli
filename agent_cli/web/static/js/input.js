@@ -238,12 +238,16 @@ function ovFoldMainAsk() {
   setAbortVisible(false);
 }
 
-// main 의 답이 409 — 다른 뷰어가 먼저 답했거나 묻기가 끝났다(서버 `no pending <kind> — already answered
-// or aborted`, 둘을 가르지 않는다). 항목을 접고 입력창 아래 줄에 알린다. 쓴 글은 버린다(물음이 없다).
-// 그 사이 새 물음이 떴으면(``item.askOf`` 가 지금의 것이 아니면) 새 물음은 접지 않는다.
+// 답할 물음이 이미 닫혔다는 알림 — 트레이 답의 409(다른 뷰어가 먼저 답함·묻기가 끝남), 그리고 보내는 사이
+// 항목이 트레이에서 빠진 뒤의 실패. 입력창 아래 줄에 선다. 409 는 상태 코드로만 읽는다 — 웹에서 나오는
+// 트레이 답의 409 는 "닫힌 물음" 뿐이고, 서버 문구(모델도 읽는 글)에 화면을 묶지 않는다.
+export const ALREADY_CLOSED_NOTICE = "Not sent — already answered or closed";
+
+// main 의 답이 409 — 항목을 접고 알린다. 쓴 글은 버린다(물음이 없다). 그 사이 새 물음이 떴으면
+// (``item.askOf`` 가 지금의 것이 아니면) 새 물음은 접지 않는다.
 function mainAskAlreadyClosed(item) {
   if (session.mainAsk === item.askOf) ovFoldMainAsk();
-  attachMessage("Not sent — already answered or aborted");
+  attachMessage(ALREADY_CLOSED_NOTICE);
 }
 
 // ── Confirm stall visibility ───────────────
@@ -255,12 +259,13 @@ function mainAskAlreadyClosed(item) {
 const CONFIRM_STALL_MS = 3000;
 let confirmStallTimer = null;
 
-function clearConfirmStall() {
+// stall 타이머를 멈추고, ``item`` 을 주면 그 항목의 경고 줄도 지운다(항목이 접힐 때는 항목째 사라진다).
+function clearConfirmStall(item) {
   if (confirmStallTimer) {
     clearTimeout(confirmStallTimer);
     confirmStallTimer = null;
   }
-  const w = document.getElementById("confirm-stall");
+  const w = item && item.querySelector(":scope > .confirm-stall");
   if (w) w.remove();
 }
 
@@ -284,6 +289,8 @@ export function ovSubmitMainPrompt(item, input) {
         return;
       }
       if (status === 409) return mainAskAlreadyClosed(item);
+      // 보내는 사이 항목이 빠졌다(물음이 풀렸다) — 보이지 않는 곳에 사유를 세우지 않는다
+      if (!item.isConnected) return attachMessage(ALREADY_CLOSED_NOTICE);
       noteOnAnswer(item, "⚠ Not sent — " + failure);
     }
   );
@@ -293,7 +300,7 @@ export function ovSubmitMainPrompt(item, input) {
 // 끊기도 없이 둔다 — 늦게라도 닿은 확인 클릭은 적용되는 것이 맞다(3초 stall 경고가 보인다). 서버가
 // 거절하면(409 밖) 항목 안에 사유가 서고 코멘트는 남는다.
 export function ovSubmitMainConfirm(item, key, comment) {
-  clearConfirmStall();
+  clearConfirmStall(item);
   clearAnswerNote(item);
   confirmStallTimer = setTimeout(function () {
     if (!session.mainAsk || session.mainAsk.kind !== "confirm" || !item.isConnected) return;
@@ -308,6 +315,7 @@ export function ovSubmitMainConfirm(item, key, comment) {
   }, CONFIRM_STALL_MS);
   postInput({ kind: "confirm", key: key, comment: comment || "" })
     .then(function (res) {
+      clearConfirmStall(item); // 답이 왔다 — 지연 경고는 끝났다
       if (res.ok) return;
       if (res.status === 409) return mainAskAlreadyClosed(item);
       return refusalReason(res).then(function (why) {
@@ -409,6 +417,9 @@ $abort.addEventListener("click", function () {
 
 es.addEventListener("input_required", function (e) {
   const d = JSON.parse(e.data);
+  // 같은 물음이 다시 왔다(재접속 스냅샷의 재생) — 항목을 그대로 둔다(쓰던 답·지연 경고가 산다). 물음마다
+  // 서버가 새 ``ask_id`` 를 싣는다(v10.147.4).
+  if (session.mainAsk && session.mainAsk.data.ask_id === d.ask_id) return;
   // 3b: main 의 prompt/confirm 을 글로벌 ask 트레이 항목으로(입력창은 chat 유지).
   clearConfirmStall();
   session.mainAsk = { kind: d.kind, data: d };

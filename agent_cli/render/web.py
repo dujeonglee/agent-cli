@@ -39,6 +39,7 @@ replayed — they are runtime UX, not state.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import threading
 import time
@@ -52,6 +53,12 @@ from agent_cli.instance_file import write_status_file
 from agent_cli.render.base import ConfirmOption, Renderer
 from agent_cli.render.web_hub import EventHub, _JsonReady
 from agent_cli.token_estimator import estimate_tokens
+
+#: 사람에게 묻는 물음 하나마다 새 id (v10.147.4) — ``input_required``·``input_resolved`` 에만 실린다.
+#: 재접속 스냅샷은 스티키의 날 payload 를 재생하고 라이브 송출은 ``ts`` 를 덧붙여, 둘의 모양이 다르다 —
+#: 프런트는 이 id 로 "같은 물음" 을 안다(쓰던 답이 재접속에 지워지지 않게). 장부 id(`item_ids`)와는
+#: 번호 공간이 다르다 — 모델이 읽는 id 의 번호를 밀지 않는다.
+_ASK_IDS = itertools.count(1)
 
 # 모델 시점(v10.6.0): history 레코드 하나를 그리는 이벤트 — ``note_record`` 의
 # ``hidx`` 가 이들에만 붙는다.
@@ -2446,18 +2453,21 @@ class WebRenderer(Renderer):
             # 띄우기 전에 큐에 있던 것은 정의상 옛 질문의 답 — 이 질문에 자동으로
             # 답하면 안 된다 (``_drain_stale_input``).
             self._drain_stale_input()
+            ask_id = f"ask-{next(_ASK_IDS)}"
             # Sticky (not bare emit): a pending prompt must replay into a
             # late/reconnecting client's snapshot, else the worker waits for an
             # answer the UI never offered (the prompt is invisible). Cleared on
             # resolve so a fresh connection doesn't see the stale question.
             self.set_sticky(
-                "input_required", "input_required", {"kind": kind, **fields}
+                "input_required",
+                "input_required",
+                {"kind": kind, "ask_id": ask_id, **fields},
             )
             try:
                 return self._wait_for_input()
             finally:
                 self.clear_sticky("input_required")
-                self._emit("input_resolved", {}, persistent=False)
+                self._emit("input_resolved", {"ask_id": ask_id}, persistent=False)
 
         return self._guarded_read(_do)
 

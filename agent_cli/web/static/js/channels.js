@@ -13,6 +13,7 @@ import { scopeAncestors, taskGroups } from "./timeline.js";
 import { ctxReveal, frameShowChannel } from "./frames.js";
 import { attachMessage } from "./attach.js";
 import {
+  ALREADY_CLOSED_NOTICE,
   buildPromptMetaEl,
   clearAnswerNote,
   highlightDangerHtml,
@@ -275,7 +276,7 @@ export function ovRenderAskTray() {
 }
 // 에이전트 질문의 답 — 그 asker 로 고정(드롭박스 채널과 무관). ``answer_id`` 로 **그 질문의 답**으로 짝짓는다.
 // 입력창과 같은 규칙: 받았을 때만 비우고(항목은 명단이 닫는다), 실패면 항목 안에 사유·글 남김. 409 는
-// 이미 답했거나 닫힌 질문(``unknown or already-answered question``) — 글을 버리고 입력창 아래 줄에 알리며,
+// 이미 답했거나 닫힌 질문(상태 코드로만 읽는다) — 글을 버리고 입력창 아래 줄에 알리며,
 // 명단이 항목을 거둘 때까지 그 항목의 입력을 닫아 둔다.
 function ovSubmitAsk(item) {
   var inp = item.querySelector(".ask-answer");
@@ -305,13 +306,15 @@ function ovSubmitAsk(item) {
         if (inp.value === text) inp.value = "";
         return;
       }
-      if (status === 409 && failure.indexOf("unknown or already-answered question") === 0) {
+      if (status === 409) {
         inp.value = "";
         inp.disabled = true;
         item.querySelector(".ask-send").disabled = true;
-        attachMessage("Not sent — already answered or closed");
+        attachMessage(ALREADY_CLOSED_NOTICE);
         return;
       }
+      // 보내는 사이 항목이 빠졌다(명단이 질문을 닫았다) — 보이지 않는 곳에 사유를 세우지 않는다
+      if (!item.isConnected) return attachMessage(ALREADY_CLOSED_NOTICE);
       noteOnAnswer(item, "⚠ Not sent — " + failure);
     }
   );

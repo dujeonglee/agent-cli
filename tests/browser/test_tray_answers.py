@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+CLOSED = "Not sent — already answered or closed"  # 409·떨어져 나간 항목의 알림
 AGT = "agt-0000aaaa"
 PEER = "agt-0000bbbb"
 
@@ -290,7 +291,7 @@ class TestAgentAnswer:
         assert reg.answer_question(qid, "other", by="user:other") == ""
         page.fill(sel, "mine")
         page.press(sel, "Enter")
-        assert _bar_notice(page) == "Not sent — already answered or closed"
+        assert _bar_notice(page) == CLOSED
         assert page.input_value(sel) == ""
         assert page.is_disabled(sel)
         assert page.is_disabled(f'#ask-tray .ask-item[data-qid="{qid}"] .ask-send')
@@ -372,7 +373,7 @@ class TestMainAnswer:
         page.route("**/api/input", other_viewer_first)
         page.fill(sel, "Python")
         page.press(sel, "Enter")
-        assert _bar_notice(page) == "Not sent — already answered or aborted"
+        assert _bar_notice(page) == CLOSED
         assert _wait(lambda: page.locator(".ask-main").count() == 0)
         assert results == ["Rust"]
 
@@ -429,7 +430,115 @@ class TestMainAnswer:
 
         page.route("**/api/input", other_viewer_first)
         page.click(".ask-main .confirm-btn >> nth=0")
-        assert _bar_notice(page) == "Not sent — already answered or aborted"
+        assert _bar_notice(page) == CLOSED
         assert _wait(lambda: page.locator(".ask-main").count() == 0)
         assert results == [("n", "")]
         t.join(5)
+
+
+def _reconnect(stack, page):
+    """SSE 를 서버 쪽에서 끊는다 — EventSource 가 다시 붙고 스냅샷(스티키 포함)을 다시 받는다. 새 연결의
+    identity 가 오면 돌아온다."""
+    before = page.evaluate("() => window.AGENTCLI_CONN_ID")
+    hub = stack.renderer.hub
+    for c in list(hub._connections):
+        hub.unregister(c)
+    assert _wait(
+        lambda: page.evaluate("() => window.AGENTCLI_CONN_ID") not in (None, before),
+        timeout=15,
+    )
+    page.wait_for_function("() => !!document.querySelector('.ask-main')")
+
+
+class TestSameAskAcrossReconnect:
+    def test_typing_survives_a_reconnect_replay_of_the_same_ask(self, stack, page):
+        results: list = []
+        stack.start_ask(results)
+        stack.emit_ready()
+        page.goto(stack.url)
+        sel = ".ask-main .ask-answer"
+        page.wait_for_selector(sel, timeout=8000)
+        page.click(sel)
+        page.keyboard.type("Pyth")
+        _reconnect(stack, page)
+        assert _typing_state(page, sel) == {
+            "value": "Pyth",
+            "focused": True,
+            "caret": 4,
+        }
+
+
+class TestConfirmStall:
+    def test_click_again_clears_the_stall_and_a_refusal_leaves_only_the_reason(
+        self, stack, page
+    ):
+        results: list = []
+        page.clock.install()
+        stack.start_confirm_loop(results)
+        stack.emit_ready()
+        page.goto(stack.url)
+        page.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
+        held: list = []
+        page.route("**/api/input", lambda route: held.append(route))
+        stall = page.locator(".ask-main > .confirm-stall")
+        page.click(".ask-main .confirm-btn >> nth=0")
+        assert _wait(lambda: len(held) == 1)
+        page.clock.run_for(3_100)
+        assert _wait(lambda: stall.count() == 1)
+        page.click(".ask-main .confirm-btn >> nth=0")  # 다시 누른다 — 경고는 지워진다
+        assert _wait(lambda: len(held) == 2)
+        assert stall.count() == 0
+        page.clock.run_for(3_100)  # 다시 3초 뒤에만 선다
+        assert _wait(lambda: stall.count() == 1)
+        for r in held:
+            r.fulfill(status=500, body="Internal Server Error")
+        assert _note(page, "#ask-tray .ask-main") == "⚠ Not sent — HTTP 500"
+        assert stall.count() == 0
+        page.clock.run_for(3_100)
+        assert stall.count() == 0  # 답이 왔다 — 경고가 다시 서지 않는다
+        assert results == []
+
+
+class TestItemLeftWhileSending:
+    def test_agent_answer_failure_after_the_item_left_notices_below_the_input(
+        self, stack, page, live_registry
+    ):
+        reg, key = live_registry
+        qid, sel = _open_question(stack, page, reg, key)
+        held: list = []
+        page.route("**/api/agent/*/input", lambda route: held.append(route))
+        page.fill(sel, "mine")
+        page.press(sel, "Enter")
+        assert _wait(lambda: len(held) == 1)
+        assert (
+            reg.answer_question(qid, "other", by="user:other") == ""
+        )  # 명단이 항목을 닫는다
+        assert _wait(lambda: _item(page, qid).count() == 0)
+        held[0].abort()
+        assert _bar_notice(page) == CLOSED
+
+    def test_main_prompt_failure_after_the_item_left_notices_below_the_input(
+        self, stack, page
+    ):
+        import requests
+
+        results: list = []
+        stack.start_ask(results)
+        stack.emit_ready()
+        page.goto(stack.url)
+        sel = ".ask-main .ask-answer"
+        page.wait_for_selector(sel, timeout=8000)
+        held: list = []
+        page.route("**/api/input", lambda route: held.append(route))
+        page.fill(sel, "Python")
+        page.press(sel, "Enter")
+        assert _wait(lambda: len(held) == 1)
+        r = requests.post(
+            f"{stack.base}/api/input?token={stack.token}",
+            json={"kind": "prompt", "content": "Rust"},
+        )
+        assert r.status_code == 200
+        assert _wait(lambda: page.locator(".ask-main").count() == 0)
+        held[0].abort()
+        assert _bar_notice(page) == CLOSED
+        assert results == ["Rust"]
