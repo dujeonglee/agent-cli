@@ -26,6 +26,7 @@ from tests.test_mcp_call_limit import (
     NO_HANG_S,
     SERVER,
     _alive,
+    _fast,
     loop_tasks,
     server_env,
     wait_until,
@@ -92,7 +93,8 @@ def test_connect_call_give_up_and_disconnect(http_server):
     m = _connect(transport, url)
     try:
         assert {t.name for t in m.list_tools("h")} >= {"fast", "sleep", "hang"}
-        assert McpTool(m, "h", "fast", "", {}).run({"text": "x"}).output == "fast:x"
+        # 빠른 호출은 짧은 상한(0.5초) 안에 끝나기를 기대하지 않는다 — `_fast` 가 그 호출만 넉넉히
+        assert _fast(m, "h", "x") == "fast:x"
         r = McpTool(m, "h", "hang", "", {}).run({"tag": "http"})
         assert r.error == (
             "MCP mcp__h__hang did not answer within 0.5s, so the call was given up. "
@@ -102,7 +104,7 @@ def test_connect_call_give_up_and_disconnect(http_server):
         # 포기한 뒤 같은 연결이 그대로 답한다, 떠 있는 태스크도 늘지 않는다 — HTTP 전송은 요청마다
         # 제 태스크를 잠깐 띄웠다 거두므로(SDK 안) 가라앉기를 기다려 센다
         baseline = loop_tasks(m)
-        assert McpTool(m, "h", "fast", "", {}).run({"text": "y"}).output == "fast:y"
+        assert _fast(m, "h", "y") == "fast:y"
         assert wait_until(lambda: loop_tasks(m) <= baseline)
     finally:
         _disconnect_within_bound(m)
@@ -115,16 +117,16 @@ def test_two_threads_call_the_http_server_at_once(http_server):
     finished: list[str] = []
     out: dict = {}
 
+    # 순서는 시간이 아니라 표식이 정한다 — 먼저 간 호출은 뒤의 호출이 끝난 다음 `go` 표식이 생겨야 끝난다
     def slow():
-        out["slow"] = McpTool(m, "h", "sleep", "", {}).run(
-            {"seconds": 1.0, "tag": "both"}
-        )
+        out["slow"] = McpTool(m, "h", "wait_for_go", "", {}).run({"tag": "both"})
         finished.append("slow")
 
     def fast():
-        assert wait_until(lambda: (marks / "sleeping-both").exists())
+        assert wait_until(lambda: (marks / "waiting-both").exists())
         out["fast"] = McpTool(m, "h", "fast", "", {}).run({"text": "meanwhile"})
         finished.append("fast")
+        (marks / "go-both").touch()
 
     try:
         ts = [threading.Thread(target=f, daemon=True) for f in (slow, fast)]
@@ -132,7 +134,7 @@ def test_two_threads_call_the_http_server_at_once(http_server):
             t.start()
         for t in ts:
             t.join(NO_HANG_S)
-        assert out["slow"].output == "slept:both"
+        assert out["slow"].output == "went:both"
         assert out["fast"].output == "fast:meanwhile"
         assert finished == ["fast", "slow"]
     finally:
