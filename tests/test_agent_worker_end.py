@@ -210,3 +210,40 @@ class TestStartingIsVisible:
             door.set()
         assert wait_until(lambda: reg.get(key).state == "idle")
         reg.shutdown_all()
+
+
+class TestARunJustEndedIsVisible:
+    """에이전트의 회신은 그 런 **도중에** 배달된다 — 받은 쪽(main)이 곧바로 모델을 부르면 꼬리의 로스터는 보낸 에이전트를
+    `[busy]` 로 보인다(아직 런을 끝내지 않았다). 런이 끝나면 `[idle]`. 우연이 아니라 알려진 동작이다."""
+
+    def test_a_peer_that_just_messaged_reads_busy_until_its_run_ends(self, tmp_path):
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        gate, sent = threading.Event(), threading.Event()
+        box: dict = {}
+
+        def runner(kind, start, ctx):
+            box["reg"].message_handler(f"agent:{box['key']}")(
+                "main", "done here", False
+            )
+            sent.set()
+            assert gate.wait(10)
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg = box["reg"] = make_registry(tmp_path, runner=runner)
+        key, tm = _idle_agent(reg, "aa")
+        box["key"] = key
+        assert reg.request(key, "work") == ""
+        try:
+            assert sent.wait(10)  # 메일은 main 상자에 섰다 — 보낸 쪽은 아직 런 안이다
+            assert reg._post.mail("main")
+            assert f"`{key}` (aa) [busy]" in build_live_agents_section(
+                reg, include_state=True
+            )
+        finally:
+            gate.set()
+        assert wait_until(lambda: tm.state == "idle")
+        assert f"`{key}` (aa) [idle]" in build_live_agents_section(
+            reg, include_state=True
+        )
+        reg.shutdown_all()

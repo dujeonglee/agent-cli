@@ -1807,6 +1807,15 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
     p = Provider(scripts)
     s = box["s"] = Session(root, p, path="web")
     s.say("MAIN go", nickname="dj")
+    if who == "requested":
+        # aa 의 회신이 연 main 의 메일 런 — 그 첫 꼬리는 회신한 aa 가 런을 끝낸(한가한) 뒤의 것이다. 회신은 aa 의 런
+        # 도중에 배달되므로 그 직후 main 이 꼬리를 지으면 aa 는 아직 `[busy]` 다(런 끝 → idle 이 늦은 러너, 750회 중
+        # 1회) — 그것도 사실이지만 이 시나리오는 가라앉은 뒤를 고정한다(`TestARunJustEndedIsVisible`)
+        s.surface.before_run = lambda start: (
+            until(lambda: s.agent_state(_agent_key(s, "aa")) == "idle", "aa done")
+            if not start.author_is_user
+            else None
+        )
     if who == "main_waits":
 
         def die_as_main_waits(args, kwargs):
