@@ -92,3 +92,33 @@ def test_the_loop_does_not_catch_a_runs_exception():
     with pytest.raises(RuntimeError, match="run died"):
         run_actor(a)
     assert ("ended", "start:boom", None) not in a.calls and a.calls[-1][0] == "run"
+
+
+class TestRunEnd:
+    """런 끝의 사실 한 모양 — 종류의 반환에서 짓는다."""
+
+    def _r(self, **kw):
+        from agent_cli.tools.result import ToolResult
+
+        return ToolResult(kw.pop("success", True), output=kw.pop("output", "o"), **kw)
+
+    def test_outcomes(self):
+        from agent_cli.actor import RunEnd
+
+        assert RunEnd.of(self._r()).outcome == "done"
+        assert RunEnd.of(self._r(success=False)).outcome == "failed"
+        assert RunEnd.of(self._r(), stopped=True).outcome == "stopped"
+        assert (
+            RunEnd.of(self._r(waiting=True), stopped=True).outcome == "wait"
+        )  # wait 가 먼저
+        assert RunEnd.of((self._r(), 0.1)).outcome == "done"  # 에이전트의 (결과, 초)
+        boom = RuntimeError("x")
+        end = RunEnd.crashed(boom)
+        assert end.outcome == "crashed" and end.error is boom and not end.ok
+
+    def test_output_and_result_are_kept(self):
+        from agent_cli.actor import RunEnd
+
+        r = self._r(output="answer")
+        end = RunEnd.of((r, 0.2))
+        assert end.output == "answer" and end.result == (r, 0.2) and end.ok

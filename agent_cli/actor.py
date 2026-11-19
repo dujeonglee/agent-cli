@@ -10,9 +10,53 @@ main(`pump.MainActor`)과 에이전트 워커(`subagent.resident_loop.AgentActor
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from dataclasses import dataclass
+from typing import Any, Literal, Protocol
 
 from agent_cli.main_input import CLOSED
+
+#: 런이 어떻게 끝났나 — 끝 정리가 읽는 사실. ``session_end`` 는 자리만 있다(세션 종료의 런 끝 — 다음 단계의 것)
+Outcome = Literal["done", "failed", "stopped", "wait", "crashed", "session_end"]
+
+
+@dataclass(frozen=True)
+class RunEnd:
+    """런 끝의 사실 한 모양 — `Actor.run_start` 가 돌려주고 `Actor.ended` 가 읽는다.
+
+    ``result`` 는 종류의 반환 그대로(main 은 엔진의 `ToolResult`, 에이전트는 ``(ToolResult, secs)``), ``error`` 는
+    예외로 끝났으면 그 예외."""
+
+    outcome: Outcome
+    output: str = ""
+    result: Any = None
+    error: BaseException | None = None
+
+    @property
+    def waiting(self) -> bool:
+        return self.outcome == "wait"
+
+    @property
+    def ok(self) -> bool:
+        """정상으로 끝났나 — ``done`` 과 ``wait``(종전의 ``success``)."""
+        return self.outcome in ("done", "wait")
+
+    @classmethod
+    def of(cls, finished: Any, *, stopped: bool = False) -> RunEnd:
+        """종류의 반환에서 — `wait` 로 끝났으면 ``wait``, 정지가 섰으면 ``stopped``, 실패면 ``failed``, 아니면 ``done``."""
+        result = finished[0] if isinstance(finished, tuple) else finished
+        if bool(getattr(result, "waiting", False)):
+            outcome: Outcome = "wait"
+        elif stopped:
+            outcome = "stopped"
+        elif not bool(getattr(result, "success", False)):
+            outcome = "failed"
+        else:
+            outcome = "done"
+        return cls(outcome, getattr(result, "output", "") or "", finished)
+
+    @classmethod
+    def crashed(cls, exc: BaseException) -> RunEnd:
+        return cls("crashed", error=exc)
 
 
 class Actor(Protocol):
@@ -31,11 +75,11 @@ class Actor(Protocol):
     def open(self, got: Any) -> Any:
         """꺼낸 것으로 런의 시작(`Start`)을 짓는다 — None 이면 런을 열지 않은 차례(main 의 명령)."""
 
-    def run_start(self, start: Any) -> Any:
-        """그 시작으로 런을 돌린다 — 끝난 것(종류의 반환)."""
+    def run_start(self, start: Any) -> RunEnd:
+        """그 시작으로 런을 돌린다 — 그 런이 어떻게 끝났나(`RunEnd`)."""
 
-    def ended(self, start: Any, finished: Any) -> bool:
-        """런이 끝났다 — 참이면 액터의 수명이 끝났다(루프를 끝낸다)."""
+    def ended(self, start: Any, end: RunEnd) -> bool:
+        """런 끝 — 그 런의 끝 정리를 하는 한 자리. 참이면 액터의 수명이 끝났다(루프를 끝낸다)."""
 
 
 def run_actor(actor: Actor) -> None:

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agent_cli.actor import RunEnd
 from agent_cli.loop.kind import (
     WAIT_END_RUN,
     WAIT_NEXT_KEEP_WORKING,
@@ -445,23 +446,21 @@ class AgentActor:
         self.registry._begin_items(self.tm, items)
         return self.kind.start(items)
 
-    def run_start(self, start: Start):
-        return self.kind.run(start)
+    def run_start(self, start: Start) -> RunEnd:
+        """종류가 런을 돌리고 그 끝 정리(`ResidentLoop.finish` — 빚 정리·`_close_run`)까지 한다: 런 카드를 닫기
+        전이어야 화면의 순서가 같다. 여기서는 그 사실만 짓는다."""
+        finished = self.kind.run(start)
+        stop = self.kind._run_stop
+        return RunEnd.of(finished, stopped=bool(stop is not None and stop.is_set()))
 
-    def ended(self, start: Start, finished) -> bool:
-        if self.tm.ends_after_task and not self.ended_by_wait(finished):
-            self._come_down(finished)
+    def ended(self, start: Start, end: RunEnd) -> bool:
+        """`wait` 로 끝난 런은 run 에이전트가 내려오지 않는 유일한 끝이다(깨어 계속한다). 그 밖의 끝(`complete`,
+        턴 상한·오류)은 run 에이전트의 수명 끝이다(사용자 결정 2026-11-15: 회신은 장부가 보장한다 — 갚을 빚이 남으면
+        `complete` 가 되돌아오고, 그래도 남으면 런 끝 폴백이 런 요약으로 회신한다). 런 중간의 `reply` 는 끝이 아니다."""
+        if self.tm.ends_after_task and not end.waiting:
+            self._come_down(end.result)
             return True
         return False
-
-    @staticmethod
-    def ended_by_wait(finished) -> bool:
-        """그 런이 `wait` 로 끝났는가 — run 에이전트가 내려오지 않는 유일한 끝이다(깨어 계속한다).
-        그 밖의 끝(`complete`, 턴 상한·오류)은 run 에이전트의 수명 끝이다 (사용자 결정 2026-11-15:
-        회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도 남으면 런 끝
-        폴백이 런 요약으로 회신한다). 런 중간의 `reply` 는 끝이 아니다."""
-        result = finished[0] if isinstance(finished, tuple) else finished
-        return bool(getattr(result, "waiting", False))
 
     def _come_down(self, finished) -> None:
         """run 에이전트가 과제를 마쳤다 — 되살릴 대상이 아니고(채널은 회색으로 남는다),
