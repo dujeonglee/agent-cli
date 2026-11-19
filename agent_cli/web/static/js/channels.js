@@ -20,8 +20,8 @@ import {
   noteOnAnswer,
   ovSubmitMainConfirm,
   ovSubmitMainPrompt,
-  sendOnce,
 } from "./input.js";
+import { sendOnce } from "./send.js";
 import {
   ovApplyChannelInput,
   ovCloseDoneMenu,

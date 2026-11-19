@@ -1928,7 +1928,7 @@ class TestConfirmStallWarning:
         `mainAskAlreadyClosed(item)` 한 곳 — 그 항목의 물음이 지금의 것일 때만 접고 알린다."""
         js = js_text()
         confirm_body = js_fn_body(js, "ovSubmitMainConfirm")
-        assert "res.status === 409" in confirm_body
+        assert "status === 409" in confirm_body
         assert "mainAskAlreadyClosed(item)" in confirm_body
         prompt_body = js_fn_body(js, "ovSubmitMainPrompt")
         assert "status === 409" in prompt_body
