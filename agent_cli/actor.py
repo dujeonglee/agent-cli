@@ -1,6 +1,6 @@
 """런을 여는 루프 하나 — main 과 에이전트가 같은 루프를 돈다 (`run_actor`).
 
-액터는 주소 하나의 주인이다: 런을 열 것을 기다리고(`take`), 열고(`open`), 돌리고(`run`), 끝을 판정한다(`ended`).
+액터는 주소 하나의 주인이다: 런을 열 것을 기다리고(`take`), 열고(`open`), 돌리고(`run_start`), 끝을 판정한다(`ended`).
 main(`pump.MainActor`)과 에이전트 워커(`subagent.resident_loop.AgentActor`)가 다른 것은 그 메서드들뿐이다 —
 꺼내는 법(창구의 `Take`), 수명(세션 내내 / 과제 하나), 표면·명령·런 끝 정리.
 
@@ -31,8 +31,8 @@ class Actor(Protocol):
     def open(self, got: Any) -> Any:
         """꺼낸 것으로 런의 시작(`Start`)을 짓는다 — None 이면 런을 열지 않은 차례(main 의 명령)."""
 
-    def run(self, start: Any) -> Any:
-        """런을 돌린다 — 끝난 것(종류의 반환)."""
+    def run_start(self, start: Any) -> Any:
+        """그 시작으로 런을 돌린다 — 끝난 것(종류의 반환)."""
 
     def ended(self, start: Any, finished: Any) -> bool:
         """런이 끝났다 — 참이면 액터의 수명이 끝났다(루프를 끝낸다)."""
@@ -52,5 +52,5 @@ def run_actor(actor: Actor) -> None:
         start = actor.open(got)
         if start is None:
             continue
-        if actor.ended(start, actor.run(start)):
+        if actor.ended(start, actor.run_start(start)):
             return

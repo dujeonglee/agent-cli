@@ -33,7 +33,7 @@ class _Actor:
         self.calls.append(("open", got))
         return None if got == "command" else f"start:{got}"
 
-    def run(self, start):
+    def run_start(self, start):
         self.calls.append(("run", start))
         if start == "start:boom":
             raise RuntimeError("run died")

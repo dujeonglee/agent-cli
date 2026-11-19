@@ -1027,7 +1027,7 @@ hypothesis 는 예제 DB 를 끄고 홈을 수트 임시 디렉터리로 옮긴�
 
 ### 11.1 `run` — 단발 실행
 
-`run` 과 `web` 은 같은 세션 조립(`runtime.py`: `SessionSpec` → stores → owners → `wire_session`)과 같은 펌프(`pump.SessionPump`)를 쓴다.
+`run` 과 `web` 은 같은 세션 조립(`runtime.py`: `SessionSpec` → stores → owners → `wire_session`)과 같은 펌프(`pump.MainActor` — 에이전트 워커와 같은 루프 `actor.run_actor`)를 쓴다.
 다른 것은 펌프 표면과 수명 정책뿐이다 — `run` 은 큐·에이전트·모니터·예약이 전부 조용하면 끝나고(`QuietPolicy`), `web` 은 종료 요청까지 산다(`ForeverPolicy`).
 세션은 `web --resume <id>` 로 이어 갈 수 있다.
 
