@@ -65,7 +65,7 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
         if k <= 3:
             ops.append(("deliver", {"e": envelope()}))
         elif k == 4:
-            ops.append(("start_run", {"addr": addr}))
+            ops.append(("next_run", {"addr": addr}))
         elif k == 5:
             ops.append(("absorb", {"addr": addr, "human_first": rnd.random() < 0.5}))
         elif k == 6 and rnd.random() < 0.5:
@@ -284,7 +284,7 @@ def test_the_generator_reaches_every_operation_and_both_verdicts():
             refused += impl_refused
             accepted += not impl_refused
     assert seen == {
-        "deliver", "start_run", "absorb", "pay", "complete", "end_run",
+        "deliver", "next_run", "absorb", "pay", "complete", "end_run",
         "remove_queued", "take_reply", "ask", "answer", "forget_questions_of",
         "owe", "take",
     }  # fmt: skip

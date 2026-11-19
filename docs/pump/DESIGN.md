@@ -35,6 +35,12 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 (`AgentRegistry.absorb_main` — 사람의 말 먼저, 메일 뒤, 루프 포트 `Mailbox(take=…)`); 루프 포트의
 `dequeue_user_message` 는 없다.
 
+**v10.150.0 — 런을 열 봉투를 꺼내는 창구 함수가 하나다.** `PostOffice.next_run(addr, take, timeout)` 이 main
+(`Take.WORDS_FIRST` — 사람의 말 먼저 하나, 깨우는 메일만 있으면 꺼내지 않고 빈 묶음 ``()`` = 메일이 연 런, 닫혀도
+사람의 말 먼저)과 에이전트 워커(`Take.ARRIVAL` — 첫 깨우는 봉투·사람의 말 묶음, 닫히면 끝)의 꺼내기를 함께 든다. 옛
+`wait_to_open`(창구)·`start_run`·`OPEN_MAIL` 은 없다. 에이전트의 평생 정지는 상자를 닫는 것이다(`_stop_worker` —
+정지 세우기 → 닫기); 기다리는 워커는 닫힘으로 깨어 나오고, 같은 세션에서 되살리면 상자를 다시 연다(`reopen`).
+
 ## 1. 왜
 
 `agent-cli run` 과 `agent-cli web` 은 이미 같은 부품을 쓴다 — `InputQueue`,
@@ -85,7 +91,7 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
   (사람의 말:    │  surface.idle()                                │
    run argv,     │  got = main_input.wait_to_open(poll)           │
    web HTTP,     │  CLOSED → return · None(timeout) → continue    │
-   예약 / 메일)  │  wake = got is OPEN_MAIL (메일은 꺼내지 않는다)│
+   예약 / 메일)  │  wake = got == () (메일은 꺼내지 않는다)       │
                  │  surface.busy() · surface.echo(item, wake)     │
                  │  registry.set_current_run_authors(...)         │
                  │  stop = Event(); surface.bind_stop(stop)       │

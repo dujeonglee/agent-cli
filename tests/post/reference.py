@@ -125,7 +125,7 @@ class Model:
     def deliver(self, e):
         self._put(e)
 
-    def start_run(self, addr):
+    def next_run(self, addr):
         q = self._q(addr)
         first = next((i for i, e in enumerate(q) if e["wakes"]), None)
         if first is None:

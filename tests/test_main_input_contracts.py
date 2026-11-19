@@ -105,12 +105,10 @@ class TestTheMailThatOpensARunSurvivesARestart:
         return [m.get("kind") for m in doc["pending"]]
 
     def test_until_the_first_turn_boundary_takes_it(self, tmp_path):
-        from agent_cli.main_input import OPEN_MAIL
-
         q = MainInput()
         reg = AgentRegistry(tmp_path, runtime={"model": "m", "timeout": 5}, post=q.post)
         _job_mail(reg)
-        assert q.wait_to_open(0) is OPEN_MAIL  # 메일 런이 열린다
+        assert q.wait_to_open(0) == ()  # 메일 런이 열린다
         assert self._pending(tmp_path) == ["job"]
         reg._save_state()  # 그 사이 다른 저장(에이전트의 상태 변화 등)
         assert self._pending(tmp_path) == ["job"]

@@ -7,7 +7,7 @@ import threading
 import pytest
 
 from agent_cli.post import envelope as E
-from agent_cli.post.office import CLOSED, OPEN_MAIL, PostOffice
+from agent_cli.post.office import CLOSED, PostOffice, Take
 from agent_cli.post.request_book import RowError
 
 
@@ -81,35 +81,35 @@ class TestWaitToOpen:
         po = PostOffice()
         po.deliver(_mail(1))
         po.deliver(_words(2))
-        assert po.wait_to_open("main", timeout=0).id == "u-2"
-        assert po.wait_to_open("main", timeout=0) is OPEN_MAIL
+        assert po.next_run("main", Take.WORDS_FIRST, timeout=0)[0].id == "u-2"
+        assert po.next_run("main", Take.WORDS_FIRST, timeout=0) == ()
         assert [e.id for e in po.queued("main")] == ["n-1"]  # 메일은 꺼내지 않는다
 
     def test_mail_that_does_not_wake_opens_nothing(self):
         po = PostOffice()
         po.deliver(_mail(1, wakes=False))
-        assert po.wait_to_open("main", timeout=0) is None
+        assert po.next_run("main", Take.WORDS_FIRST, timeout=0) is None
 
     def test_closed_after_the_words_are_out(self):
         po = PostOffice()
         po.deliver(_words(1))
         po.deliver(_mail(2))
         po.close("main")
-        assert po.wait_to_open("main", timeout=0).id == "u-1"
-        assert po.wait_to_open("main", timeout=0) is CLOSED
+        assert po.next_run("main", Take.WORDS_FIRST, timeout=0)[0].id == "u-1"
+        assert po.next_run("main", Take.WORDS_FIRST, timeout=0) is CLOSED
         assert not po.wait_words("main", 0)
 
     def test_idle_stays_through_a_timeout_and_goes_off_when_something_opens(self):
         po = PostOffice()
         assert not po.idle("main")
-        assert po.wait_to_open("main", timeout=0) is None
+        assert po.next_run("main", Take.WORDS_FIRST, timeout=0) is None
         assert po.idle("main")
         po.deliver(_words(1))
-        po.wait_to_open("main", timeout=0)
+        po.next_run("main", Take.WORDS_FIRST, timeout=0)
         assert not po.idle("main")
-        po.wait_to_open("main", timeout=0)
+        po.next_run("main", Take.WORDS_FIRST, timeout=0)
         po.deliver(_mail(2))
-        assert po.wait_to_open("main", timeout=0) is OPEN_MAIL
+        assert po.next_run("main", Take.WORDS_FIRST, timeout=0) == ()
         assert not po.idle("main")
 
     def test_a_delivery_wakes_the_waiter(self):
@@ -119,7 +119,7 @@ class TestWaitToOpen:
 
         def waiter():
             entered.set()
-            got.append(po.wait_to_open("main", timeout=None))
+            got.append(po.next_run("main", Take.WORDS_FIRST, timeout=None))
 
         t = threading.Thread(target=waiter)
         t.start()
@@ -127,4 +127,4 @@ class TestWaitToOpen:
         # 기다림에 든 뒤 배달한다 — 판정과 대기가 한 락이라 먼저 와도 놓치지 않는다
         po.deliver(_words(1))
         t.join(5)
-        assert not t.is_alive() and got[0].id == "u-1"
+        assert not t.is_alive() and got[0][0].id == "u-1"

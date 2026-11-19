@@ -1,7 +1,7 @@
 """창구는 바뀐 것이 있을 때만 깨운다 (v10.145.0 고침).
 
-빈손의 `start_run` 이 `notify_all` 을 부르면, 같은 조건변수에서 기다리는 다른 한가한 워커가 깨어 다시 빈손의
-`start_run` 으로 깨우고 — 한가한 에이전트 둘이면 서로를 영원히 깨운다(바쁜 회전, CI 수트 270→1282초). 조건변수를
+빈손의 꺼내기(그때 `start_run`, 지금 `next_run`)가 `notify_all` 을 부르면, 같은 조건변수에서 기다리는 다른 한가한
+워커가 깨어 다시 빈손의 꺼내기로 깨우고 — 한가한 에이전트 둘이면 서로를 영원히 깨운다(바쁜 회전, CI 수트 270→1282초). 조건변수를
 감싼 스파이로 `notify_all` 호출 수를 센다(시간을 재지 않는다).
 """
 
@@ -12,7 +12,7 @@ import threading
 import pytest
 
 from agent_cli.post import envelope as E
-from agent_cli.post.office import PostOffice
+from agent_cli.post.office import PostOffice, Take
 
 A = "agent:a"
 
@@ -44,7 +44,7 @@ def _notifies(office, call) -> int:
 
 #: 아무것도 바꾸지 않는 호출 — 빈 상자·없는 줄.
 NOTHING_CHANGES = {
-    "start_run": lambda o: o.start_run(A),
+    "next_run": lambda o: o.next_run(A, Take.ARRIVAL, timeout=0),
     "absorb": lambda o: o.absorb(A),
     "absorb_human_first": lambda o: o.absorb(A, human_first=True),
     "take": lambda o: o.take(A),
@@ -70,7 +70,7 @@ def test_a_call_that_changes_something_wakes(office):
         _notifies(office, lambda: office.deliver(E.request("r-1", "main", A, "a"))) >= 1
     )
     office.deliver(E.request("r-2", "main", A, "b"))
-    assert _notifies(office, lambda: office.start_run(A)) >= 1
+    assert _notifies(office, lambda: office.next_run(A, Take.ARRIVAL, timeout=0)) >= 1
     assert _notifies(office, lambda: office.absorb(A)) >= 1
     assert (
         _notifies(office, lambda: office.end_run(A, run_id="r-1", outcome="done")) >= 1
@@ -80,7 +80,7 @@ def test_a_call_that_changes_something_wakes(office):
     office.deliver(E.reply("n-4", A, "main", "ans", re="r-7"))
     assert _notifies(office, lambda: office.take_reply("main", "r-7")) >= 1
     office.deliver(E.human("u-5", "user:dj", A, "hi"))
-    office.start_run(A)
+    office.next_run(A, Take.ARRIVAL, timeout=0)
     assert _notifies(office, lambda: office.complete(A, ["u-5"], run_id="u-5")) >= 1
     assert (
         _notifies(office, lambda: office.end_run(A, run_id="u-5", outcome="wait")) >= 1

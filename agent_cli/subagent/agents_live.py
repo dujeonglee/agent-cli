@@ -58,7 +58,7 @@ from agent_cli.constants import (
 )
 from agent_cli.loop.kind import LoopKindError
 from agent_cli.main_input import intake_item
-from agent_cli.post.office import PostOffice
+from agent_cli.post.office import CLOSED, PostOffice, Take
 from agent_cli.post.request_book import RowError
 from agent_cli.session.store import AGENTS_DIR
 from agent_cli.session_slots import get_job_registry
@@ -2353,8 +2353,7 @@ class AgentRegistry:
         # 워커가 다시 꺼내지 않아 영영 안 읽힌다. 그 턴에서 새로 건 감시는
         # 워커의 `finally` 가 잡는다 — 죽음이 확정되는 유일한 지점이다.
         self._drop_monitors(tm.key)
-        tm.stop_event.set()
-        self._wake_worker()
+        self._stop_worker(tm)
         if (
             join
             and tm.worker is not None
@@ -2558,8 +2557,7 @@ class AgentRegistry:
         self._cancel_checkins()  # main 포함 — 끝나는 세션에 알림이 쌓이지 않게
         for tm in list(self._agents.values()):
             self._drop_monitors(tm.key)
-            tm.stop_event.set()
-        self._wake_worker()
+            self._stop_worker(tm)
         for tm in list(self._agents.values()):
             if tm.worker is not None:
                 tm.worker.join(timeout=wait_left(deadline, 5.0))
@@ -2609,6 +2607,7 @@ class AgentRegistry:
         fresh.created_at = tm.created_at
         fresh.revive = True  # worker 가 ctx 를 resume 모드로 (이력 이어받기)
         self._agents[key] = fresh
+        self._post.reopen(f"agent:{key}")  # 끝낼 때 닫은 상자 — 새 워커가 기다린다
         fresh.worker = threading.Thread(
             target=self._worker,
             args=(fresh, parent_ctx),
@@ -2992,27 +2991,24 @@ class AgentRegistry:
             self._notify_roster()
 
     def _next_run_items(self, tm: AgentInstance) -> list[dict]:
-        """다음 런을 열 항목 — 우편의 `start_run`(첫 **깨우는** 봉투, 사람의 말이면 이어진 사람의 말까지 묶음 — 깨우지
-        않는 봉투는 줄에 남아 그 런의 첫 흡수가 읽는다). 올 때까지 시한 없이 기다린다: 배달이 깨우고, ``stop_event`` 를
-        세우는 둘(`_end_agent`·`shutdown_all`)이 세운 뒤 깨운다(`_wake_worker`). 정지가 서면 빈 목록.
+        """다음 런을 열 항목 — 창구의 `next_run`(`Take.ARRIVAL`: 첫 **깨우는** 봉투, 사람의 말이면 이어진 사람의
+        말까지 묶음 — 깨우지 않는 봉투는 줄에 남아 그 런의 첫 흡수가 읽는다). 올 때까지 시한 없이 기다린다: 배달이
+        깨우고, 끝내기(`_stop_worker`)가 상자를 닫아 깨운다. 닫혔으면 빈 목록.
 
         집는 순간 ``busy`` 다(P0-9b) — 그 사이 idle-reap 의 `any_activity`(상태·쌓인 일)가 "활동 없음" 으로 보지
-        않게 같은 락 구간에서."""
-        addr = f"agent:{tm.key}"
+        않게 같은 락 구간에서(창구 조건변수는 이 레지스트리의 것 — 기다리는 동안 모든 깊이가 풀린다)."""
         with self._cv:
-            while True:
-                if tm.stop_event.is_set():
-                    return []
-                envs = self._post.start_run(addr)
-                if envs:
-                    tm.state = "busy"
-                    return [dict(e.payload) for e in envs]
-                self._cv.wait()
+            envs = self._post.next_run(f"agent:{tm.key}", Take.ARRIVAL, timeout=None)
+            if envs is CLOSED or not envs:
+                return []
+            tm.state = "busy"
+            return [dict(e.payload) for e in envs]
 
-    def _wake_worker(self) -> None:
-        """정지를 세운 뒤 기다리는 워커를 깨운다 — 그 워커가 ``stop_event`` 를 보고 나온다."""
-        with self._cv:
-            self._cv.notify_all()
+    def _stop_worker(self, tm: AgentInstance) -> None:
+        """평생 정지 — ``stop_event`` 를 세우고(엔진·흡수가 본다) 그 상자를 닫는다(기다리는 워커가 깨어 나온다; 줄 선
+        것이 있어도 런을 열지 않는다). 순서: 정지 먼저 — 깬 워커가 런 도중이면 다음 흡수가 정지를 본다."""
+        tm.stop_event.set()
+        self._post.close(f"agent:{tm.key}")
 
     @staticmethod
     def _run_ended_by_wait(finished) -> bool:
