@@ -289,12 +289,24 @@ class TestAgentAnswer:
         # 다른 뷰어가 먼저 답했다 — 명단은 아직 이 화면에 오지 않았다
         reg._notify_roster = lambda: None  # 인스턴스에만 — 아래에서 지운다
         assert reg.answer_question(qid, "other", by="user:other") == ""
+        look = """(q) => { const b = document.querySelector(q + ' .ask-send');
+                     const i = document.querySelector(q + ' .ask-answer');
+                     return { send: parseFloat(getComputedStyle(b).opacity),
+                              bg: getComputedStyle(i).backgroundColor,
+                              ph: i.placeholder }; }"""
+        q = f'#ask-tray .ask-item[data-qid="{qid}"]'
+        open_look = page.evaluate(look, q)
         page.fill(sel, "mine")
         page.press(sel, "Enter")
         assert _bar_notice(page) == CLOSED
         assert page.input_value(sel) == ""
         assert page.is_disabled(sel)
-        assert page.is_disabled(f'#ask-tray .ask-item[data-qid="{qid}"] .ask-send')
+        assert page.is_disabled(f"{q} .ask-send")
+        # 꺼져 보인다 — Send 는 disabled 의 흐림(전환이 끝난 값), 입력은 꺼진 입력의 바탕·안내
+        assert _wait(lambda: page.evaluate(look, q)["send"] < 1)
+        closed = page.evaluate(look, q)
+        assert closed["bg"] != open_look["bg"]
+        assert closed["ph"] == "Already answered or closed"
         del reg._notify_roster  # 클래스의 것으로 돌아온다
         reg._notify_roster()
         assert _wait(lambda: _item(page, qid).count() == 0)

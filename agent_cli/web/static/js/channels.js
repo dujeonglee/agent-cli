@@ -308,6 +308,7 @@ function ovSubmitAsk(item) {
       }
       if (status === 409) {
         inp.value = "";
+        inp.placeholder = "Already answered or closed";
         inp.disabled = true;
         item.querySelector(".ask-send").disabled = true;
         attachMessage(ALREADY_CLOSED_NOTICE);

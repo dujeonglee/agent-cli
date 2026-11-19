@@ -923,7 +923,9 @@ footer {
   background: var(--surface);
 }
 #input:focus { outline: 2px solid var(--user-time); outline-offset: 0; border-color: var(--focus-ring); }
-#input:disabled { background: var(--surface-2); color: var(--muted); }
+/* 꺼진 입력 — 입력창과 트레이 답(409 로 닫힌 질문, v10.147.4)이 같은 모양 */
+#input:disabled,
+.ask-answer:disabled { background: var(--surface-2); color: var(--muted); }
 
 /* 채팅 입력줄 — primary/danger 클래스에 크기만 가산 */
 #send, #abort, #chat-stop { padding: 8px 16px; font-size: 14px; }
