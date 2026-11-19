@@ -1122,7 +1122,9 @@ footer {
 .confirm-btn.default:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 /* 클릭 후 일정 시간 무응답(연결 정체 등) 시 버튼 줄 아래에 나타나는 경고 —
    조용한 실패를 보이는 실패로 (v7.2.0 ⓔ) */
-.confirm-stall {
+/* 항목 안 맨 아래의 알림 줄 — 확인 지연 경고(`.confirm-stall`)와 보내지 못한 답의 사유(`.ask-failed`, v10.147.4) */
+.confirm-stall,
+.ask-failed {
   flex-basis: 100%;
   font-size: 12px;
   color: var(--warn-soft-fg);

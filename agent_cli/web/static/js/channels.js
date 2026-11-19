@@ -11,11 +11,15 @@ import { escapeHtml } from "./markdown.js";
 import { pin, setScrollTop, unpin } from "./scroll.js";
 import { scopeAncestors, taskGroups } from "./timeline.js";
 import { ctxReveal, frameShowChannel } from "./frames.js";
+import { attachMessage } from "./attach.js";
 import {
   buildPromptMetaEl,
+  clearAnswerNote,
   highlightDangerHtml,
+  noteOnAnswer,
   ovSubmitMainConfirm,
   ovSubmitMainPrompt,
+  sendOnce,
 } from "./input.js";
 import {
   ovApplyChannelInput,
@@ -119,6 +123,10 @@ function ovBuildMainAskEl() {
   var kind = session.mainAsk.kind;
   var data = session.mainAsk.data || {};
   var item = el("div", ["ask-item", "ask-main"]);
+  // 이 항목이 맡은 물음 — 서버는 물음에 id 를 주지 않아 ``input_required`` 한 번이 만든 객체가 곧
+  // 그 물음이다(같은 물음인 동안 다시 만들지 않는다). 보내는 중 상태는 항목마다 하나.
+  item.askOf = session.mainAsk;
+  item.sendSlot = { sending: false };
   var head = el("div", ["ask-q"]);
   head.textContent =
     kind === "confirm" ? "⚠ main — confirmation needed" : "❓ main asked";
@@ -150,14 +158,14 @@ function ovBuildMainAskEl() {
       if (opt.key === data.default_key) b.classList.add("default");
       b.textContent = opt.key + " — " + opt.label;
       b.addEventListener("click", function () {
-        ovSubmitMainConfirm(opt.key, cmt.value.trim());
+        ovSubmitMainConfirm(item, opt.key, cmt.value.trim());
       });
       btns.appendChild(b);
     });
     cmt.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.isComposing) {
         e.preventDefault();
-        ovSubmitMainConfirm(data.default_key, cmt.value.trim());
+        ovSubmitMainConfirm(item, data.default_key, cmt.value.trim());
       }
     });
     item.appendChild(btns);
@@ -177,14 +185,12 @@ function ovBuildMainAskEl() {
     var send = el("button", ["ask-send", "btn-primary"]);
     send.textContent = "Send";
     send.addEventListener("click", function () {
-      ovSubmitMainPrompt(ans.value);
-      ans.value = "";
+      ovSubmitMainPrompt(item, ans);
     });
     ans.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.isComposing) {
         e.preventDefault();
-        ovSubmitMainPrompt(ans.value);
-        ans.value = "";
+        ovSubmitMainPrompt(item, ans);
       }
     });
     var iw = el("div", ["ask-in"]);
@@ -194,6 +200,41 @@ function ovBuildMainAskEl() {
   }
   return item;
 }
+// 에이전트 질문 항목 하나 — 질문은 id 로 불변이라 한 번 만든다. 이름표만 명단을 따라 바뀐다
+// (`ovLabelQuestionEl`). 보내는 중 상태는 항목마다 하나.
+function ovBuildQuestionEl(key, q) {
+  var item = el("div", ["ask-item"]);
+  item.setAttribute("data-key", key);
+  item.setAttribute("data-qid", q.id);
+  item.sendSlot = { sending: false };
+  var head = el("div", ["ask-q"]);
+  head.appendChild(document.createTextNode("❓ "));
+  head.appendChild(el("b"));
+  head.appendChild(document.createTextNode(" asked"));
+  item.appendChild(head);
+  item.appendChild(el("div", ["ask-qt"], q.text || ""));
+  var iw = el("div", ["ask-in"]);
+  var inp = el("input", ["ask-answer"]);
+  inp.type = "text";
+  inp.placeholder = "Answer…";
+  inp.setAttribute("aria-label", "Answer");
+  var send = el("button", ["ask-send", "btn-primary"], "Send");
+  send.type = "button";
+  iw.appendChild(inp);
+  iw.appendChild(send);
+  item.appendChild(iw);
+  return item;
+}
+// 질문 항목의 이름표를 지금 명단의 이름으로 — 바뀐 때만 쓴다(입력은 건드리지 않는다).
+function ovLabelQuestionEl(item, key) {
+  var b = item.querySelector(".ask-q > b");
+  var html = ovAgentLabelHtml(key);
+  if (b.innerHTML !== html) b.innerHTML = html;
+}
+// 트레이를 **항목 단위로** 맞춘다 (v10.147.4): 여전히 열린 질문의 항목은 그대로 두고(쓰던 답·포커스·
+// 커서·사유 줄이 산다), 닫힌 질문의 항목은 빼고, 새 질문만 만든다. 순서는 main 의 물음이 맨 위, 그 뒤
+// 명단 순서. 자리가 맞는 항목은 옮기지 않는다(옮기면 포커스가 풀린다). 종전엔 명단이 올 때마다
+// innerHTML 로 통째로 다시 그려 쓰던 답이 지워졌다.
 export function ovRenderAskTray() {
   var tray = document.getElementById("ask-tray");
   if (!tray) return;
@@ -207,63 +248,90 @@ export function ovRenderAskTray() {
       open.push({ key: t.key, q: q });
     });
   });
-  if (!session.mainAsk && !open.length) {
-    tray.hidden = true;
-    tray.innerHTML = "";
+  var have = {};
+  var mainEl = null;
+  Array.prototype.forEach.call(tray.children, function (c) {
+    if (c.classList.contains("ask-main")) mainEl = c;
+    else if (c.hasAttribute("data-qid")) have[c.getAttribute("data-qid")] = c;
+  });
+  // main ask 항목(DOM)은 맨 위에 — 검증된 confirm/prompt 조각 재사용.
+  var want = [];
+  if (session.mainAsk) {
+    if (!mainEl || mainEl.askOf !== session.mainAsk) mainEl = ovBuildMainAskEl();
+    want.push(mainEl);
+  }
+  open.forEach(function (it) {
+    var item = have[it.q.id] || ovBuildQuestionEl(it.key, it.q);
+    ovLabelQuestionEl(item, it.key);
+    want.push(item);
+  });
+  Array.prototype.slice.call(tray.children).forEach(function (c) {
+    if (want.indexOf(c) < 0) c.remove();
+  });
+  want.forEach(function (item, i) {
+    if (tray.children[i] !== item) tray.insertBefore(item, tray.children[i] || null);
+  });
+  tray.hidden = !want.length;
+}
+// 에이전트 질문의 답 — 그 asker 로 고정(드롭박스 채널과 무관). ``answer_id`` 로 **그 질문의 답**으로 짝짓는다.
+// 입력창과 같은 규칙: 받았을 때만 비우고(항목은 명단이 닫는다), 실패면 항목 안에 사유·글 남김. 409 는
+// 이미 답했거나 닫힌 질문(``unknown or already-answered question``) — 글을 버리고 입력창 아래 줄에 알리며,
+// 명단이 항목을 거둘 때까지 그 항목의 입력을 닫아 둔다.
+function ovSubmitAsk(item) {
+  var inp = item.querySelector(".ask-answer");
+  var text = inp.value;
+  if (!text.trim()) return;
+  if (item.sendSlot.sending) {
+    noteOnAnswer(item, "Still sending the previous answer");
     return;
   }
-  var html = "";
-  open.forEach(function (it) {
-    html +=
-      '<div class="ask-item" data-key="' + escapeHtml(it.key) +
-      '" data-qid="' + escapeHtml(it.q.id) + '">' +
-      '<div class="ask-q">❓ <b>' + ovAgentLabelHtml(it.key) +
-      "</b> asked</div>" +
-      '<div class="ask-qt">' + escapeHtml(it.q.text || "") + "</div>" +
-      '<div class="ask-in"><input class="ask-answer" type="text" ' +
-      'placeholder="Answer…" aria-label="Answer"><button type="button" ' +
-      'class="ask-send btn-primary">Send</button></div></div>';
-  });
-  tray.innerHTML = html;
-  // main ask 항목(DOM)은 맨 위에 — 검증된 confirm/prompt 조각 재사용.
-  if (session.mainAsk) tray.insertBefore(ovBuildMainAskEl(), tray.firstChild);
-  tray.hidden = false;
-}
-// 트레이 답변 전송(그 asker 로 고정 — 드롭박스 채널과 무관).
-function ovSubmitAsk(key, text, qid) {
-  if (!key || !text.trim()) return;
-  // `answer_id` 가 있으면 새 일감이 아니라 **그 질문의 답**으로 짝짓는다
-  // — 없으면 서버가 종전대로 inbox 로 넣는다(블로킹 경로).
-  var body = { content: text, conn_id: session.connId };
-  if (qid) body.answer_id = qid;
-  fetch("api/agent/" + encodeURIComponent(key) + "/input", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  clearAnswerNote(item);
+  var key = item.getAttribute("data-key");
+  var body = { content: text, conn_id: session.connId, answer_id: item.getAttribute("data-qid") };
+  sendOnce(
+    item.sendSlot,
+    function (signal) {
+      return fetch("api/agent/" + encodeURIComponent(key) + "/input", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: signal,
+      });
+    },
+    function (failure, status) {
+      if (!failure) {
+        if (inp.value === text) inp.value = "";
+        return;
+      }
+      if (status === 409 && failure.indexOf("unknown or already-answered question") === 0) {
+        inp.value = "";
+        inp.disabled = true;
+        item.querySelector(".ask-send").disabled = true;
+        attachMessage("Not sent — already answered or closed");
+        return;
+      }
+      noteOnAnswer(item, "⚠ Not sent — " + failure);
+    }
+  );
 }
 (function () {
   var tray = document.getElementById("ask-tray");
   if (!tray) return;
-  function submitFrom(el) {
-    var item = el.closest(".ask-item");
-    if (!item) return;
-    var inp = item.querySelector(".ask-answer");
-    ovSubmitAsk(
-      item.getAttribute("data-key"),
-      inp ? inp.value : "",
-      item.getAttribute("data-qid")
-    );
-    if (inp) inp.value = ""; // 낙관적 클리어 — roster 갱신이 항목 제거
+  // 에이전트 질문 항목만(``data-qid``) — main 의 물음 항목은 자기 입력에 듣는다.
+  function questionItemOf(target) {
+    var item = target.closest(".ask-item");
+    return item && item.hasAttribute("data-qid") ? item : null;
   }
   tray.addEventListener("click", function (e) {
-    if (e.target.classList.contains("ask-send")) submitFrom(e.target);
+    var item = e.target.classList.contains("ask-send") && questionItemOf(e.target);
+    if (item) ovSubmitAsk(item);
   });
   tray.addEventListener("keydown", function (e) {
-    if (e.key === "Enter" && !e.isComposing && e.target.classList.contains("ask-answer")) {
-      e.preventDefault();
-      submitFrom(e.target);
-    }
+    if (e.key !== "Enter" || e.isComposing || !e.target.classList.contains("ask-answer")) return;
+    var item = questionItemOf(e.target);
+    if (!item) return;
+    e.preventDefault();
+    ovSubmitAsk(item);
   });
 })();
 // ── 채널 = 타임라인 필터 (v9.4.0 ⑥) ──────────────────────
