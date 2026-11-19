@@ -415,7 +415,7 @@ $abort.addEventListener("click", function () {
   });
 });
 
-// 재접속 스냅샷 안에 main 의 물음이 있었나 (v10.147.6). 스냅샷은 늘 ``identity`` 로 시작해
+// 재접속 스냅샷 안에 main 의 물음이 있었나 (v10.149.2). 스냅샷은 늘 ``identity`` 로 시작해
 // ``snapshot_end`` 로 끝나고(서버 `EventHub.register`, 라이브 이벤트는 그 뒤), 떠 있는 물음은 스티키라 반드시
 // 그 사이에 온다. 끊긴 사이 물음이 풀렸으면 ``input_resolved`` 는 아무에게도 가지 않았다 — 스냅샷에 물음이
 // 없으면 남은 항목을 접는다(라이브 ``input_resolved`` 와 같게, 알림 없음).
