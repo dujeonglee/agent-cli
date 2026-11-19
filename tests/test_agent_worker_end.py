@@ -246,4 +246,242 @@ class TestARunJustEndedIsVisible:
         assert f"`{key}` (aa) [idle]" in build_live_agents_section(
             reg, include_state=True
         )
+
+
+class TestARequesterThatIsGone:
+    """요청한 쪽이 사라지면(✕·사망·과제를 마친 run) 그가 기다리던 빚을 닫는다 — 빚진 쪽의 Open Items 에서 사라지고,
+    깨우지 않는 통지 한 통이 그 사실을 말한다. 그 뒤의 `reply` 는 "가지 못했다" 로 듣는다(그 런 끝까지 줄이 남는다)."""
+
+    def test_a_kill_closes_the_debt_owed_to_it_and_notices_the_debtor(self, tmp_path):
+        gate = threading.Event()
+        _calls, runner = _counting_runner(gate)
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        bb, bb_tm = _idle_agent(reg, "bb")
+        _, err = reg.message_handler(f"agent:{aa}")(bb, "slow job", True)
+        assert not err
+        assert wait_until(lambda: bb_tm.state == "busy")  # bb 가 집어 들고 문에서 멈춤
+        (debt,) = reg.reply_debts(f"agent:{bb}")
+        try:
+            assert reg.kill(aa) == ""
+            assert wait_until(lambda: not aa_tm.worker.is_alive())
+            assert reg.reply_debts(f"agent:{bb}") == []
+            (notice,) = reg._post.queued(f"agent:{bb}")
+            assert notice.wakes is False
+            assert notice.text == (
+                f'request [{debt.id}] ("slow job") is closed — {aa} (aa) is gone; '
+                "nothing is owed back."
+            )
+            rows = {r.rid: (r.state, r.how) for r in reg._post.rows()}
+            assert rows[debt.id] == ("closed", "unsent")  # 그 런 끝까지 남는다
+        finally:
+            gate.set()
+        assert wait_until(lambda: bb_tm.state == "idle")
+        assert debt.id not in {r.rid for r in reg._post.rows()}  # 런 끝에 버려진다
+        reg.shutdown_all()
+
+    def test_a_session_end_keeps_the_debt(self, tmp_path):
+        """세션 종료는 되살릴 에이전트다 — 빚을 닫지 않는다(재시작이 되살린다)."""
+        gate = threading.Event()
+        _calls, runner = _counting_runner(gate)
+        reg = make_registry(tmp_path, runner=runner)
+        aa, _ = _idle_agent(reg, "aa")
+        bb, bb_tm = _idle_agent(reg, "bb")
+        _, err = reg.message_handler(f"agent:{aa}")(bb, "slow job", True)
+        assert not err
+        assert wait_until(lambda: bb_tm.state == "busy")
+        closed = []
+        real = reg._post.forget_requests_of
+        reg._post.forget_requests_of = lambda *a, **k: closed.append(a) or real(*a, **k)
+        gate.set()
+        reg.shutdown_all()
+        assert closed == []
+
+    def test_main_as_the_debtor_gets_a_quiet_notice(self, tmp_path):
+        """main 이 그 요청을 흡수해(턴 경계) 빚을 졌는데 요청자가 사라진다 — main 의 빚이 닫히고, main 을 깨우지 않는
+        장부 밖 통지가 main 상자에 선다(다음 턴 경계·다음 런이 읽는다)."""
+        _calls, runner = _counting_runner()
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        _, err = reg.message_handler(f"agent:{aa}")("main", "which file?", True)
+        assert not err
+        assert [next(iter(i)) for i in reg.absorb_main()] == ["mail"]  # main 의 턴 경계
+        (debt,) = reg.reply_debts("main")
+        assert reg.kill(aa) == ""
+        assert wait_until(lambda: not aa_tm.worker.is_alive())
+        assert reg.reply_debts("main") == []
+        (mail,) = reg._post.mail("main")
+        assert mail.wakes is False
+        assert f"request [{debt.id}]" in mail.text and "is gone" in mail.text
+        reg.shutdown_all()
+
+
+class TestAParentThatDies:
+    def test_its_run_agent_is_stopped_with_it(self, tmp_path, monkeypatch):
+        """부모 에이전트의 워커가 오류로 죽으면 그가 띄운 run 에이전트도 멈춘다(✕ 와 같이 — 결과를 받을 부모가 없다).
+        멈춘 쪽은 하니스다(``stopped by harness``). 그 run 이 부모에게 진 빚은 부모가 사라질 때 먼저 닫혔다."""
+        from agent_cli.subagent import agent_stop
+        from agent_cli.subagent.resident_loop import ResidentLoop
+
+        gate = threading.Event()
+        _calls, runner = _counting_runner(gate)
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        kid, err = reg.spawn(name="kid", ends_after_task=True, parent=f"agent:{aa}")
+        assert not err
+        kid_tm = reg.get(kid)
+        assert wait_until(lambda: kid_tm.state == "idle")
+        _, err = reg.message_handler(f"agent:{aa}")(kid, "child work", True)
+        assert not err
+        assert wait_until(lambda: kid_tm.state == "busy")  # 문에서 멈춘 채 일한다
+        real_open = ResidentLoop.open_scope
+
+        def crashing(self, start):
+            if self.tm.key == aa:
+                raise MemoryError("worker machinery")
+            return real_open(self, start)
+
+        monkeypatch.setattr(ResidentLoop, "open_scope", crashing)
+        assert reg.request(aa, "go") == ""
+        assert wait_until(lambda: not aa_tm.worker.is_alive())
+        assert aa_tm.error.startswith("MemoryError")
+        assert kid_tm.stop_cause == agent_stop.STOPPED
+        assert kid_tm.stop_by == agent_stop.harness_by(aa)
+        assert reg.reply_debts(f"agent:{kid}") == []  # 부모에게 진 빚은 닫혔다
+        gate.set()
+        assert wait_until(lambda: not kid_tm.worker.is_alive())
+        assert kid_tm.state == "dead"
+        reg.shutdown_all()
+
+    def test_its_other_requester_hears_why(self, tmp_path, monkeypatch):
+        """그 run 이 다른 쪽(main)의 요청을 일하던 중이면 main 은 하니스의 정지 회신을 듣는다 — 왜 멈췄는지(띄운 부모가
+        죽었다)를 한 문장으로, 표지는 ``stopped by harness``."""
+        from agent_cli.subagent import agent_stop
+        from agent_cli.subagent.resident_loop import ResidentLoop
+
+        gate = threading.Event()
+        _calls, runner = _counting_runner(gate)
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        kid, err = reg.spawn(name="kid", ends_after_task=True, parent=f"agent:{aa}")
+        assert not err
+        kid_tm = reg.get(kid)
+        assert wait_until(lambda: kid_tm.state == "idle")
+        _, err = reg.message_handler("main")(kid, "main work", True)
+        assert not err
+        assert wait_until(lambda: kid_tm.state == "busy")
+        (debt,) = reg.reply_debts(f"agent:{kid}")
+        real_open = ResidentLoop.open_scope
+
+        def crashing(self, start):
+            if self.tm.key == aa:
+                raise MemoryError("worker machinery")
+            return real_open(self, start)
+
+        monkeypatch.setattr(ResidentLoop, "open_scope", crashing)
+        try:
+            assert reg.request(aa, "go") == ""
+            assert wait_until(lambda: not aa_tm.worker.is_alive())
+            assert kid_tm.stop_by == agent_stop.harness_by(aa)
+        finally:
+            gate.set()  # 정지 회신은 그 런이 내려올 때 간다
+
+        def replies():
+            return [m for m in reg._post.mail("main") if f"[{debt.id}]" in m.text]
+
+        assert wait_until(replies)
+        (mail,) = replies()
+        assert mail.mark == "stopped by harness"
+        assert mail.text.splitlines()[0] == (
+            f"{kid} was stopped because {aa} (the agent that started it) died, "
+            f'while it was working on your request [{debt.id}] ("main work").'
+        )
+        assert wait_until(lambda: not kid_tm.worker.is_alive())
+        reg.shutdown_all()
+
+    def test_a_resident_child_is_left_alone(self, tmp_path, monkeypatch):
+        """상주(``ends_after_task`` 아님)는 부모와 수명을 같이하지 않는다 — ✕ 와 같은 규칙."""
+        from agent_cli.subagent.resident_loop import ResidentLoop
+
+        _calls, runner = _counting_runner()
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        res, err = reg.spawn(name="res", parent=f"agent:{aa}")
+        assert not err
+        res_tm = reg.get(res)
+        assert wait_until(lambda: res_tm.state == "idle")
+        real_open = ResidentLoop.open_scope
+        monkeypatch.setattr(
+            ResidentLoop,
+            "open_scope",
+            lambda self, start: (
+                (_ for _ in ()).throw(MemoryError("x"))
+                if self.tm.key == aa
+                else real_open(self, start)
+            ),
+        )
+        assert reg.request(aa, "go") == ""
+        assert wait_until(lambda: not aa_tm.worker.is_alive())
+        assert res_tm.stop_cause == "" and res_tm.worker.is_alive()
+        reg.shutdown_all()
+
+
+def test_the_harness_stop_reply_is_one_constant():
+    """하니스가 멈춘 run 의 회신 첫 줄은 정지 이유 상수 한 자리(`agent_stop.HARNESS_CAUSE`)에 일하던 중·시작 전이
+    붙는다 — 표지는 ``stopped by harness``."""
+    from agent_cli.subagent import agent_stop
+
+    by = agent_stop.harness_by("agt-X")
+    working = agent_stop.stopped_reply("agt-Y", "r-3", "child work", [], "", by=by)
+    queued = agent_stop.unstarted_reply(
+        "agt-Y", "r-4", "later", by=by, cause=agent_stop.STOPPED
+    )
+    cause = "agt-Y was stopped because agt-X (the agent that started it) died"
+    assert agent_stop.HARNESS_CAUSE.format(agent="agt-Y", parent="agt-X") == cause
+    assert working.splitlines()[0] == (
+        f'{cause}, while it was working on your request [r-3] ("child work").'
+    )
+    assert queued.splitlines()[0] == (
+        f'{cause}, before it started your request [r-4] ("later"). '
+        "Nothing was done for it."
+    )
+    assert agent_stop.stop_mark(agent_stop.STOPPED, by) == "stopped by harness"
+
+
+class TestTwoEndsAtOnce:
+    def test_two_agents_that_wait_on_each_other_die_together(
+        self, tmp_path, monkeypatch
+    ):
+        """aa 와 bb 가 서로에게 회신을 기다리는 채로 둘이 함께 죽는다 — 각자의 정리가 상대의 빚을 닫는 순서가 어느 쪽이든
+        장부는 비고(열린 줄 없음) 불변식이 지켜지며, 정리는 예외 없이 끝난다(둘 다 dead)."""
+        from agent_cli.subagent.resident_loop import ResidentLoop
+
+        gate = threading.Event()
+        _calls, runner = _counting_runner(gate)
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        bb, bb_tm = _idle_agent(reg, "bb")
+        assert not reg.message_handler(f"agent:{aa}")(bb, "for bb", True)[1]
+        assert not reg.message_handler(f"agent:{bb}")(aa, "for aa", True)[1]
+        assert wait_until(lambda: aa_tm.state == "busy" and bb_tm.state == "busy")
+        real_open = ResidentLoop.open_scope
+        monkeypatch.setattr(
+            ResidentLoop,
+            "open_scope",
+            lambda self, start: (
+                (_ for _ in ()).throw(MemoryError("x"))
+                if self.tm.key in (aa, bb)
+                else real_open(self, start)
+            ),
+        )
+        # 지금 런을 끝내면 다음 런 시작(각자에게 온 통지)에서 둘이 함께 죽는다
+        assert reg.request(aa, "fyi", author="main", expects_reply=False) == ""
+        assert reg.request(bb, "fyi", author="main", expects_reply=False) == ""
+        gate.set()
+        assert wait_until(
+            lambda: not aa_tm.worker.is_alive() and not bb_tm.worker.is_alive()
+        )
+        assert aa_tm.state == bb_tm.state == "dead"
+        assert [r.rid for r in reg._post.rows() if r.state != "closed"] == []
+        reg._post.check_consistency()
         reg.shutdown_all()

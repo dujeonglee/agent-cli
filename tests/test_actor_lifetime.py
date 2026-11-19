@@ -83,9 +83,9 @@ class TestResidentAgent:
 
 
 class TestMainRunEnd:
-    def test_a_web_main_run_that_raises_skips_the_run_end_cleanup(self):
-        """지금 동작을 고정한다 — 런이 예외로 끝나면(web 은 삼킨다) 그 런의 끝 정리(빚 정리 `run_ended`)를 부르지 않는다.
-        끝내기 규칙을 한 자리로 모으는 단계가 이것을 뒤집는다."""
+    def test_a_web_main_run_that_raises_is_cleaned_up_like_a_failed_run(self):
+        """런이 예외로 끝나면(web 은 삼킨다) 그 런도 끝 정리를 한다 — 실패한 런처럼(빚 정리 `run_ended`, 표면의 런 끝),
+        `run_failed` 뒤에. 종전엔 정리를 건너뛰어 그 빚이 다음 런으로 넘어갔다."""
         q = MainInput()
         q.enqueue(None, "boom")
         q.enqueue(None, "fine")
@@ -113,8 +113,18 @@ class TestMainRunEnd:
         t.start()
         assert done.wait(10)
         assert seen == ["boom", "fine"]
-        assert reg.ended == [("main", "ok", False)]  # 예외로 끝난 런의 정리는 없다
-        assert [c[0] for c in surface.calls].count("run_failed") == 1
+        assert reg.ended == [("main", "", False), ("main", "ok", False)]
+        kinds = [c[0] for c in surface.calls]
+        assert kinds.count("run_failed") == 1
+        first_end = kinds.index("run_ended")
+        assert (
+            kinds.index("run_failed") < first_end < kinds.index("bind_stop", first_end)
+        )
+        crashed = next(c[1] for c in surface.calls if c[0] == "run_ended")
+        assert (
+            crashed.success is False
+            and crashed.error == "internal error: RuntimeError: run died"
+        )
 
 
 class TestMainRunEndOrder:

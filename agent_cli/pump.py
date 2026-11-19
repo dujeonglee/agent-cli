@@ -24,6 +24,7 @@ from typing import Any, Protocol
 
 from agent_cli.actor import RunEnd, run_actor
 from agent_cli.main_input import MainInput
+from agent_cli.tools.result import ToolResult
 
 
 class LifetimePolicy(Protocol):
@@ -215,6 +216,9 @@ class MainActor:
         author = (item or {}).get("nickname") or None
         d.agent_registry.set_current_run_authors([author] if author else [])
         stop_event = threading.Event()
+        # "Stop everything" 의 조용함은 그 정지 하나의 것 — 새 런은 깨우는 정지 회신으로 시작한다
+        if d.agent_registry is not None:
+            d.agent_registry.main_stop_wakes = True
         d.surface.bind_stop(stop_event)
         start = d.main.start(item, stop_event)
         if item is None:
@@ -235,43 +239,80 @@ class MainActor:
         return start
 
     def run_start(self, start) -> RunEnd:
-        """런 하나 — 그 끝의 사실(`RunEnd`). 런의 예외는 표면이 정한다(`run_failed`: web 은 삼켜 ``crashed`` 로,
-        run 은 전파). 예외 길은 여기서 중단 핸들을 푼다 — 정상 길은 끝 정리(`ended`) 뒤에 푼다."""
+        """런 하나 — 그 끝의 사실(`RunEnd`). 런의 예외는 표면이 정한다(`run_failed`): web 은 삼켜 ``crashed`` 로
+        돌려주고(끝 정리는 `ended` 가 한다), run 은 전파한다 — 전파하는 길은 여기서 중단 핸들을 푼다(프로세스가 끝난다,
+        정리 없이 — 세션 종료 길)."""
         d = self.deps
+        ctx = getattr(d.main, "ctx", None)
+        self._run_from = ctx.next_ordinal if ctx is not None else 0
         try:
             d.surface.run_starting(start)
             result = d.main.run(start)
         except Exception as exc:
+            swallowed = False
             try:
-                if not d.surface.run_failed(exc):
+                swallowed = bool(d.surface.run_failed(exc))
+                if not swallowed:
                     raise
             finally:
-                d.surface.bind_stop(None)
+                if not swallowed:
+                    d.surface.bind_stop(None)
             return RunEnd.crashed(exc)
         stop = getattr(start, "stop_event", None)
         return RunEnd.of(result, stopped=bool(stop is not None and stop.is_set()))
+
+    def _answer_stopped(self) -> None:
+        """멈춘 런의 빚에 정지 회신 — 그 런이 기록한 레코드에서 마지막 호출·생각을 뜬다(레지스트리가)."""
+        ctx = getattr(self.deps.main, "ctx", None)
+        records = (
+            ctx.records_since(getattr(self, "_run_from", 0)) if ctx is not None else []
+        )
+        self.deps.agent_registry.answer_main_debts_as_stopped(records)
 
     def ended(self, start, end: RunEnd) -> bool:
         """런 끝 정리 — 빚 정리·감사·표면의 런 끝, 같은 보호 안(예외는 `run_failed`). 끝나면 중단 핸들을 푼다.
         main 의 수명은 세션이다 — 런 하나로 끝나지 않는다.
 
-        예외로 끝난 런(``crashed``)은 정리하지 않는다 — 지금 동작(`tests/test_actor_lifetime.py`), 끝내기 규칙을
-        모으는 단계가 바꾼다. main 의 정리는 아직 ``stopped``·``failed`` 를 가르지 않는다(보통의 끝으로 — 같은
-        단계가 바꾼다)."""
-        if end.outcome == "crashed":
-            return False
+        사람이 멈춘 런(``stopped`` — ■·Stop everything)은 에이전트의 ■ 처럼 빚진 상대 모두에게 정지 회신을 보낸다(그
+        런의 마지막 호출·생각을 실어). 실패한 런과 예외로 끝난 런(``crashed`` — 표면이 삼킨 것)은 원인 한 줄을 단
+        폴백으로 정리한다 — 에이전트의 `crashed` 처럼, 빚을 다음 런으로 떠넘기지 않는다."""
         d = self.deps
+        result = end.result
+        if end.outcome == "crashed":
+            exc = end.error
+            result = ToolResult(
+                False, error=f"internal error: {type(exc).__name__}: {exc}"
+            )
         try:
             try:
                 from agent_cli.runtime import main_run_ended
 
+                stopped = end.outcome == "stopped"
+                if stopped and d.agent_registry is not None:
+                    self._answer_stopped()
                 # `wait` 로 끝난 런의 판정은 레지스트리 한 곳(`run_ended`, v10.77.0)
-                main_run_ended(d.agent_registry, end.output, waiting=end.waiting)
+                # 실패한 런(턴 상한·LLM 오류)은 그 사유를 — 폴백 머리에 원인 한 줄
+                failed = (
+                    {
+                        "success": False,
+                        "error": str(getattr(result, "error", "") or ""),
+                    }
+                    if end.outcome in ("failed", "crashed")
+                    else {}
+                )
+                main_run_ended(
+                    d.agent_registry,
+                    end.output,
+                    waiting=end.waiting,
+                    stopped=stopped,
+                    **failed,
+                )
                 if d.auditor is not None:
+                    # 감사 커서는 모든 런이 앞당긴다 — 예외 런의 레코드가 다음 감사 구간에 섞이지 않게
                     d.auditor.run_ended(
-                        start, ok=bool(getattr(end.result, "success", False))
+                        start, ok=bool(getattr(result, "success", False))
                     )
-                d.surface.run_ended(end.result, start)
+                d.surface.run_ended(result, start)
             except Exception as exc:
                 if not d.surface.run_failed(exc):
                     raise

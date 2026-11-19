@@ -37,6 +37,18 @@ REMOVED = "removed"
 STOPPED_MARK = "stopped by {by}"
 REMOVED_MARK = "removed by {by}"
 _MARKS = {STOPPED: STOPPED_MARK, REMOVED: REMOVED_MARK}
+#: 사람도 모델도 아닌 하니스가 멈춘 쪽 — 부모가 죽어 그가 띄운 run 을 함께 멈출 때의 ``by`` 는
+#: ``harness:<부모 키>`` (`harness_by`), 표지는 ``stopped by harness``. 그 run 이 빚진 상대가 받는 회신의 첫 줄은
+#: 정지 이유 `HARNESS_CAUSE` 한 자리에 일하던 중(`HARNESS_STOPPED_REPLY`)·시작 전(`HARNESS_UNSTARTED_REPLY`)이 붙는다.
+HARNESS = "harness"
+HARNESS_CAUSE = "{agent} was stopped because {parent} (the agent that started it) died"
+HARNESS_STOPPED_REPLY = (
+    HARNESS_CAUSE + ', while it was working on your request [{rid}] ("{quote}").'
+)
+HARNESS_UNSTARTED_REPLY = (
+    HARNESS_CAUSE
+    + ', before it started your request [{rid}] ("{quote}"). Nothing was done for it.'
+)
 #: 사람이 한 일이 아닌 내려감의 표지 — ``by`` 가 없다. 정상 종료한 run 에이전트와 죽은 워커.
 ENDED_MARK = "ended"
 DIED_MARK = "died"
@@ -63,6 +75,10 @@ DIED_REPLY = (
 #: 죽은 워커가 집어 든(지금 일·흡수한) 요청의 회신 — 죽은 런의 활동·생각은 싣지 않는다(믿을 수 없다).
 DIED_WORKING_REPLY = (
     '{agent} died while it was working on your request [{rid}] ("{quote}").'
+)
+#: 요청한 쪽이 사라졌다 — 빚진 쪽이 받는 통지(그 빚은 이미 닫혔다, 깨우지 않는다). ``agent`` 는 사라진 쪽의 이름표.
+REQUESTER_GONE = (
+    'request [{rid}] ("{quote}") is closed — {agent} is gone; nothing is owed back.'
 )
 LAST_ACTIVITY = "Last activity: {calls}"
 PARTIAL_NOTES = "Partial notes: {notes}"
@@ -177,6 +193,17 @@ def partial_notes(records: list[dict]) -> str:
     return ""
 
 
+def harness_by(parent_key: str) -> str:
+    """부모(``parent_key``)가 죽어 하니스가 멈춘 쪽의 ``by``."""
+    return f"{HARNESS}:{parent_key}"
+
+
+def _dead_parent(by: str) -> str:
+    """``harness:<부모 키>`` → 부모 키 (하니스가 멈춘 게 아니면 빈 문자열)."""
+    head, _, parent = by.partition(":")
+    return parent if head == HARNESS else ""
+
+
 def stop_actor(by: str) -> str:
     """멈춘 쪽(``"user"``·``"main"``·키) → 회신 문장의 주어."""
     return "The user" if not by or by == "user" else by
@@ -186,13 +213,11 @@ def stopped_reply(
     agent: str, rid: str, request: str, activity: list[str], notes: str, *, by: str
 ) -> str:
     """일하던(또는 빚진) 요청에 대한 stopped 회신의 본문 — 봉투 안쪽."""
+    parent, quote = _dead_parent(by), one_line(request, QUOTE_CHARS)
     lines = [
-        STOPPED_REPLY.format(
-            who=stop_actor(by),
-            agent=agent,
-            rid=rid,
-            quote=one_line(request, QUOTE_CHARS),
-        )
+        HARNESS_STOPPED_REPLY.format(agent=agent, parent=parent, rid=rid, quote=quote)
+        if parent
+        else STOPPED_REPLY.format(who=stop_actor(by), agent=agent, rid=rid, quote=quote)
     ]
     if activity:
         lines.append(LAST_ACTIVITY.format(calls=" · ".join(activity)))
@@ -204,23 +229,20 @@ def stopped_reply(
 
 def stop_mark(cause: str, by: str) -> str:
     """정지 원인(``STOPPED``·``REMOVED``)과 멈춘 쪽 → 봉투 머리 표지·화면 한 줄의 ``stopped by user``·``removed by main``."""
-    return _MARKS[cause].format(by=by)
+    return _MARKS[cause].format(by=HARNESS if _dead_parent(by) else by)
 
 
 def unstarted_reply(agent: str, rid: str, request: str, *, by: str, cause: str) -> str:
     """시작 전에 멈춘(``cause``) 요청에 대한 회신의 본문."""
-    return "\n".join(
-        [
-            UNSTARTED_REPLY.format(
-                who=stop_actor(by),
-                cause=cause,
-                agent=agent,
-                rid=rid,
-                quote=one_line(request, QUOTE_CHARS),
-            ),
-            NEXT_STEP,
-        ]
+    parent, quote = _dead_parent(by), one_line(request, QUOTE_CHARS)
+    first = (
+        HARNESS_UNSTARTED_REPLY.format(agent=agent, parent=parent, rid=rid, quote=quote)
+        if parent
+        else UNSTARTED_REPLY.format(
+            who=stop_actor(by), cause=cause, agent=agent, rid=rid, quote=quote
+        )
     )
+    return f"{first}\n{NEXT_STEP}"
 
 
 def gone_reply(agent: str, rid: str, request: str, *, died: bool) -> str:
@@ -245,3 +267,92 @@ def died_working_reply(agent: str, rid: str, request: str) -> str:
             NEXT_STEP,
         ]
     )
+
+
+def answer_main_debts(registry, records: list[dict], *, by: str = "user") -> int:
+    """멈춘 main 의 갚지 않은 빚 모두에 stopped 회신을 보내고 그 배달로 갚는다 — 에이전트의 ■ 와 같은 문장·표지
+    (`stopped_reply`, ``stopped by user``). ``records`` 는 그 런이 기록한 레코드(마지막 호출·생각, `run_activity`·
+    `partial_notes`). "Stop everything" 이면 받는 쪽의 런을 열지 않는다 — 레지스트리의 ``main_stop_wakes``: 서버가 main 을
+    멈추기 **앞에** 내리고 main 의 런이 열릴 때 다시 세운다(`pump.MainActor.open`). 보낸 수를 돌려준다."""
+    activity, notes = run_activity(records), partial_notes(records)
+    mark = stop_mark(STOPPED, by)
+    sent = 0
+    for d in registry.reply_debts("main"):
+        if not d.to.startswith("agent:"):
+            continue
+        err = registry._deliver_peer_reply(
+            d.to.split(":", 1)[1],
+            "main",
+            stopped_reply("main", d.id, d.text, activity, notes, by=by),
+            d.hop,
+            re=d.id,
+            mark=mark,
+            opens_run=registry.main_stop_wakes,
+            settles=d.id,
+        )
+        sent += 0 if err else 1
+    return sent
+
+
+def requester_gone(agent: str, rid: str, request: str) -> str:
+    """요청한 쪽이 사라져 닫힌 빚의 통지 — 빚진 쪽이 다음 턴 경계에 읽는다."""
+    return REQUESTER_GONE.format(
+        rid=rid, quote=one_line(request, QUOTE_CHARS), agent=agent
+    )
+
+
+def close_debts_owed_to(registry, tm, label: str) -> None:
+    """사라진 에이전트(✕·사망·과제를 마친 run — 되살리지 않는 끝)가 기다리던 회신을 닫는다: 빚으로 적힌 줄을 회신이 갈
+    곳 없는 갚음으로(빚진 쪽의 지금 런 끝까지 남아 그 뒤의 `reply` 는 "가지 못했다" 로 듣는다 —
+    `PostOffice.forget_requests_of`), 빚진 쪽마다 깨우지 않는 통지 한 통(`requester_gone`) — 그 빚은 다음 꼬리부터
+    Open Items 에 없다. ``label`` 은 사라진 쪽의 이름표. 세션 종료(되살릴 에이전트)는 여기 오지 않는다."""
+    gone = registry._post.forget_requests_of(f"agent:{tm.key}", registry._run_of)
+    for row in gone:
+        text = requester_gone(label, row.rid, row.text)
+        if row.dst == "main":
+            registry._push_reply(
+                {
+                    "kind": "peer_message",
+                    "key": tm.key,
+                    "profile": tm.profile_name,
+                    "name": tm.instance_name,
+                    "success": True,
+                    "output": text,
+                    "expects_reply": False,
+                    "notice": True,
+                    "ledger": "none",
+                    "wakes_main": False,
+                }
+            )
+            continue
+        peer = registry.get(row.dst.removeprefix("agent:"))
+        if peer is not None and peer.state != "dead":
+            registry.request(
+                peer.key,
+                text,
+                author=f"agent:{tm.key}",
+                expects_reply=False,
+                kind="notice",
+                ledger="none",
+                opens_run=False,
+            )
+    if gone:
+        registry._save_state()
+        registry._notify_roster()
+
+
+def stop_sub_runs(registry, tm, by: str = "") -> None:
+    """``tm`` 이 띄운 run 에이전트를 멈춘다(■ 와 같은 정지 — 그 run 은 내려온다). ✕·run 의 ■ 는 ``tm`` 을 멈춘 쪽과
+    조용함(``stop_replies_wake``)을 물려받는다. 부모의 사망(``by`` = `HARNESS`)과 하니스가 멈춘 ``tm`` 의 자식은
+    `harness_by` 로 띄운 쪽(``tm``)을 싣는다 — 회신이 말하는 "띄운 에이전트" 는 그 자식의 부모다. 상주 자식은 그대로다."""
+    me = f"agent:{tm.key}"
+    by = by or tm.stop_by or "user"
+    if by == HARNESS or _dead_parent(by):
+        by = harness_by(tm.key)
+    for sub in registry.instances():
+        if sub.parent == me and sub.ends_after_task:
+            registry.stop_run(
+                sub.key,
+                by=by,
+                wakes_requesters=tm.stop_replies_wake,
+            )

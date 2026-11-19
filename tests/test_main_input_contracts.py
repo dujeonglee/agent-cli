@@ -44,7 +44,9 @@ class TestWordsAreNotSaved:
 
 
 class TestClosingThePump:
-    def test_queued_words_still_open_runs_before_the_pump_ends(self):
+    def test_queued_words_do_not_open_runs_once_the_box_is_closed(self):
+        """웹 종료(상자 닫기) 때 줄 선 사람의 말은 런을 열지 않는다 — 끄는 중인 프로세스가 모델을 부르면 그 런은 세션
+        정리와 겹친다. 사람의 말은 저장하지 않으므로 그대로 사라진다."""
         q = MainInput()
         q.enqueue("c1", "first", nickname="dj")
         q.enqueue("c1", "second", nickname="dj")
@@ -57,7 +59,7 @@ class TestClosingThePump:
             surface=FakeSurface(),
         )
         pump.run()
-        assert ran == ["first", "second"]
+        assert ran == [] and q.pending_count() == 2
 
 
 class TestNumbersAroundAMailRun:

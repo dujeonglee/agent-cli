@@ -505,7 +505,7 @@ class Session:
         return rows[0]["state"] if rows else ""
 
     def stop_pump(self) -> None:
-        """펌프를 끝낸다(웹 서버 종료와 같은 길) — 줄 선 사람의 입력은 먼저 꺼낸다. 세션은 닫지 않는다."""
+        """펌프를 끝낸다(웹 서버 종료와 같은 길) — 줄 선 사람의 입력은 런을 열지 않는다. 세션은 닫지 않는다."""
         self.main_input.close()
 
     def close(self) -> None:
@@ -1207,6 +1207,9 @@ def s11_stop_everything(root: Path) -> dict:
     def stop_everything(msgs):
         s = box["s"]
         assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        s.reg.main_stop_wakes = (
+            False  # 서버의 Stop everything 과 같이 — main 의 정지 회신도 깨우지 않는다
+        )
         s.surface.stop.set()  # main 먼저 (서버·Ctrl+C 와 같은 순서)
         box["stopped"] = s.reg.stop_all_runs(wakes_requesters=False)
         return call("shell", command="true")
@@ -1632,9 +1635,10 @@ def _roster(s: Session) -> list[dict]:
 
 
 def s21_main_stop_owes_agent(root: Path) -> dict:
-    """1단계 ① main 정지 회신 `[단계 4c 에서 바뀜 — 결정 2]`: 상주가 main 에게 회신 기대 `message` → main 이 그
-    메일로 깬 런에서 사람이 ■ — 지금은 펌프의 런 끝(`main_run_ended`)이 stopped 를 넘기지 않아 빚진 상대(상주)에게
-    라벨 붙은 런 요약 폴백이 간다. 상주는 그것을 회신으로 읽고 새 런을 연다. `[v10.145.1 에서 재기록 — 그 `message` 는
+    """1단계 ① main 정지 회신: 상주가 main 에게 회신 기대 `message` → main 이 그 메일로 깬 런에서 사람이 ■ — 빚진
+    상대(상주)에게 에이전트의 ■ 와 같은 정지 회신(``· stopped by user``, 그 런의 마지막 호출)이 간다. 상주는 그것을
+    회신으로 읽고 새 런을 연다. `[v10.156.0 에서 바뀜 — 종전엔 펌프의 런 끝이 stopped 를 넘기지 않아 라벨 붙은 빈 런 요약
+    폴백이 갔다]` `[v10.145.1 에서 재기록 — 그 `message` 는
     상주의 과제 빚(TASK-S1)을 갚지 않는다: 깬 런의 `complete` 가 되묻기 예산을 다 쓰고 런 끝 폴백이 main 의 새 런을 연다]`"""
     box: dict = {}
 
@@ -1709,8 +1713,9 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
     - ``who="requested"`` (가) `[단계 4c 에서 바뀜 — 변화 5]`: 상주 aa 가 bb 에게 요청하고 `wait` → bb 사망. main
       은 died 통지를 받고, aa 는 bb 가 집어 든 그 요청의 died 회신(`· died` — "… died while it was working on your
       request …")을 받아 그 런에서 읽는다 `[v10.146.3 에서 바뀜 — 종전엔 aa 가 아무것도 받지 않았다]`.
-    - ``who="requester"`` (나) `[단계 4c 에서 바뀜 — 변화 10]`: aa 가 bb 에게 요청한 뒤 aa 사망. bb 는 죽은 쪽에
-      빚진 회신을 Open Items 에 든 채 일한다. 죽은 aa 가 main 에게 빚진 과제 요청에는 main 의 died 통지와 함께 died
+    - ``who="requester"`` (나): aa 가 bb 에게 요청한 뒤 aa 사망. aa 가 기다리던 bb 의 빚은 그 자리에서 닫히고(받을
+      이가 없다), bb 는 다음 턴 경계에 깨우지 않는 통지("request [r-…] … is closed — … is gone; nothing is owed back.")를
+      읽는다 `[v10.156.0 에서 바뀜 — 종전엔 bb 가 죽은 쪽에 빚진 회신을 Open Items 에 든 채 일했다]`. 죽은 aa 가 main 에게 빚진 과제 요청에는 main 의 died 통지와 함께 died
       회신이 간다 `[v10.146.3 에서 바뀜]`.
       `[v10.145.2 에서 바뀜]` bb 의 `reply` 는 "not delivered — … was already gone" 을 실패로 듣고, 배달되지 않은 회신은
       발신 줄(conversation)에도 남지 않는다(종전엔 "delivered to whoever was waiting on it").
@@ -1848,7 +1853,14 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
             facts["notice"] = s.reg.request(
                 aa, "TASK-E1 fyi", author="main", expects_reply=False
             )
-            until(lambda: s.agent_state(aa) == "dead", "aa died")
+            # 죽음의 정리(aa 가 기다리던 회신을 닫음)까지 — 로스터의 dead 는 그 정리보다 먼저 선다
+            until(
+                lambda: (
+                    s.agent_state(aa) == "dead"
+                    and not s.reg.awaited_replies(f"agent:{aa}")
+                ),
+                "aa died and its awaits closed",
+            )
             # 제자리에서 기다리던 main 이 died 통지를 읽은 뒤
             until(lambda: not s.reg.pending_mail(), "main read the death")
             snapshot("after_death")
@@ -1866,6 +1878,112 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
         snapshot("end")
 
     drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+def s34_parent_dies_with_its_run_agent(root: Path) -> dict:
+    """부모가 죽으면 그가 띄운 run 도 멈춘다: main 이 상주 aa 에게 일을 맡기고 제자리에서 기다린다 → aa 가 run
+    에이전트를 띄우고(`agent` run) `wait` → aa 의 워커가 다음 런 시작에서 죽는다(`Recorder.crash_on_start`). main 은 aa 의
+    died 통지·died 회신을 읽고, aa 가 띄운 run 은 하니스가 멈춰(``stopped by harness``) 내려온다 — 그 run 이 aa 에게
+    진 빚은 aa 가 사라질 때 닫혔다. 순서: run 의 첫 꼬리는 aa 가 `wait` 로 런을 끝낸 뒤, main 이 깨어 다음 꼬리를 짓는
+    것은 run 이 내려온 뒤."""
+    box: dict = {}
+    facts: dict = {}
+    crash = threading.Event()
+
+    def aa_delegates(msgs):
+        s = box["s"]
+        aa = _agent_key(s, "aa")
+        # 다음 에이전트 런의 시작(띄운 run 의 것)을 aa 가 한가해질 때까지 잡는다
+        s.recorder.hold("begin_agent_work", "*", lambda: s.agent_state(aa) == "idle")
+        return call("agent", mode="run", task="TASK-G2 child work")
+
+    def kid_works(msgs):
+        s = box["s"]
+        # 부모의 죽음과 그 정리 — 하니스가 이 run 을 멈춘 뒤에 돌아간다(도구 실행 직전 검사가 멈춤을 본다)
+        until(lambda: s.reg.get(kid_key()).stop_cause == "stopped", "run stopped")
+        return call("shell", command="true")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="spawn", name="aa", task="TASK-G1 delegate"),
+                _after_runs_began(box, 1, call("wait")),
+            ]
+            + [complete_all("main read it")] * 10,
+            "TASK-G1": [
+                _main_waits_then(box, aa_delegates),
+                _after_runs_began(box, 2, call("wait")),
+            ],
+            "TASK-G2": [kid_works],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+
+    def kid_key() -> str:
+        keys = [k for k in s.agent_keys() if k != _agent_key(s, "aa")]
+        return keys[0] if keys else ""
+
+    def main_wakes_after_the_run_is_down(args, kwargs):
+        # main 이 제자리 대기에서 깨는 자리 — 다음 꼬리의 로스터가 run 의 내려옴을 본 뒤에 짓게
+        if args and args[0] is False:
+            until(lambda: kid_key() and s.agent_state(kid_key()) == "dead", "run down")
+
+    s.recorder.rules["wait_in_place"] = main_wakes_after_the_run_is_down
+    s.say("MAIN go", nickname="dj")
+
+    def done(s):
+        until(lambda: len(s.agent_keys()) == 2, "run spawned")
+        aa = _agent_key(s, "aa")
+        until(
+            lambda: (
+                s.agent_state(aa) == "idle" and len(p.calls.get("TASK-G2", [])) >= 1
+            ),
+            "aa parked, run working",
+        )
+        s.recorder.crash_on_start[aa] = crash
+        crash.set()
+        facts["notice"] = s.reg.request(
+            aa, "TASK-G1 fyi", author="main", expects_reply=False
+        )
+        until(lambda: s.agent_state(aa) == "dead", "aa died")
+        until(lambda: s.agent_state(kid_key()) == "dead", "run stopped")
+        until(lambda: runs_ended(s) >= 1, "main read the death")
+        until(
+            lambda: all(s.agent_state(k) in ("idle", "dead") for k in s.agent_keys()),
+            "settle",
+        )
+        tm = s.reg.get(kid_key())
+        facts["run"] = {"stop_cause": tm.stop_cause, "stop_by": tm.stop_by}
+        facts["roster"] = _roster(s)
+        facts["awaited_main"] = s.reg.awaited_replies("main")
+
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+def s35_shutdown_with_queued_words_web(root: Path) -> dict:
+    """웹 종료(펌프 닫기) 때 줄 선 사람의 말은 런을 열지 않는다: main 이 일하는 동안 사람의 말 한 줄이 줄을 서고, 그
+    사이 웹이 꺼진다(`stop_pump` — 서버의 `shutdown` 과 같은 길). 지금 런은 끝까지 가고, 펌프는 그 말로 새 런을 열지
+    않고 끝난다(말은 저장하지 않으므로 그대로 사라진다). 순서: 말이 줄을 서고 펌프가 닫힌 뒤에 main 의 첫 응답이 돌아온다."""
+    box: dict = {}
+    facts: dict = {}
+
+    def main_works(msgs):
+        s = box["s"]
+        s.say("MAIN later words", nickname="dj")
+        s.stop_pump()
+        return complete_all("first answer")(msgs)
+
+    p = Provider({"MAIN": [main_works, complete_all("must not run")]})
+    s = box["s"] = Session(root, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    t = s.pump_in_thread()
+    t.join(_PATIENCE_S)
+    facts["pump_ended"] = not t.is_alive()
+    facts["queued_words"] = [i["text"] for i in s.main_input.snapshot()]
+    facts["main_calls"] = len(p.calls.get("MAIN", []))
+    s.close()
     return s.collect(facts)
 
 
@@ -2376,6 +2494,9 @@ def s32_quiet_reply_then_waking_mail(root: Path) -> dict:
     def stop_everything(msgs):
         s = box["s"]
         assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        s.reg.main_stop_wakes = (
+            False  # 서버의 Stop everything 과 같이 — main 의 정지 회신도 깨우지 않는다
+        )
         s.surface.stop.set()  # main 먼저 (서버·Ctrl+C 와 같은 순서)
         box["stopped"] = s.reg.stop_all_runs(wakes_requesters=False)
         return call("shell", command="true")
@@ -2478,6 +2599,9 @@ SCENARIOS = {
     # 메일 런이 열리는 모양
     "s32_quiet_reply_then_waking_mail": s32_quiet_reply_then_waking_mail,
     "s33_words_right_after_mail_run_opens": s33_words_right_after_a_mail_run_opens,
+    # 끝내기 규칙
+    "s34_parent_dies_with_its_run_agent": s34_parent_dies_with_its_run_agent,
+    "s35_shutdown_with_queued_words_web": s35_shutdown_with_queued_words_web,
 }
 
 

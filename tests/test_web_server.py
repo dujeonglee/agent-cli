@@ -2017,7 +2017,12 @@ class TestMessageQueue:
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
+        from tests.test_engine_p2 import wait_until
+
         srv.enqueue("c1", "hello")
+        assert wait_until(
+            lambda: msgs == ["hello"]
+        )  # 꺼낸 뒤에 닫는다 — 닫힘이 줄 선 말을 이긴다
         srv.shutdown()
         t.join(timeout=1.0)
         assert msgs == ["hello", "done"]

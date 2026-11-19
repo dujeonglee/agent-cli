@@ -74,11 +74,16 @@ def test_image_only_message_opens_a_run_on_the_web_pump():
     mi = MainInput()
     mi.enqueue("c1", "", images=[REF])
     mi.enqueue("c1", "next")
-    mi.close()
     ran = []
+
+    def run_main(start):
+        ran.append((start.query, start.images))
+        if len(ran) == 2:
+            mi.close()  # 둘 다 연 뒤에 끝낸다
+
     pump = make_pump(
         main_input=mi,
-        run_main=lambda start: ran.append((start.query, start.images)),
+        run_main=run_main,
         surface=_web_surface(),
         policy=ForeverPolicy(),
     )

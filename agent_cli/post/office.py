@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import enum
 import threading
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Literal
 
 from agent_cli.post.envelope import Envelope
@@ -40,7 +40,7 @@ class _Mark:
         return self._name
 
 
-#: `next_run` — 상자가 닫혔다(`Take.WORDS_FIRST` 는 줄 선 사람의 말을 다 꺼낸 뒤)
+#: `next_run` — 상자가 닫혔다(줄 선 것이 있어도 — 닫힘이 이긴다)
 CLOSED = _Mark("CLOSED")
 
 
@@ -48,7 +48,7 @@ class Take(enum.Enum):
     """`next_run` 이 런을 열 봉투를 꺼내는 법 — 주소의 주인이 정한다."""
 
     #: main — 사람의 말 먼저 하나. 깨우는 메일만 있으면 꺼내지 않고 빈 묶음(메일이 연 런 — 그 첫 턴 경계가 흡수한다).
-    #: 닫혀도 줄 선 사람의 말은 먼저 꺼낸다
+    #: 닫히면 줄 선 사람의 말이 있어도 끝(그 말로 런을 열지 않는다 — 끄는 중이다)
     WORDS_FIRST = "words_first"
     #: 에이전트 — 첫 깨우는 봉투(사람의 말이면 이어진 사람의 말까지 한 묶음)를 집는다. 닫히면 줄 선 것이 있어도 끝
     ARRIVAL = "arrival"
@@ -323,18 +323,19 @@ class PostOffice:
                 )
 
             self.cv.wait_for(ready, timeout)
+            if addr in self._closed:
+                return CLOSED  # 닫힘이 이긴다 — 줄 선 사람의 말로 런을 열지 않는다(끄는 중이다)
             if box.words():
                 self._idle.discard(addr)
                 return (self._take_first_words(box),)
-            if addr in self._closed:
-                return CLOSED
             if any(e.wakes for e in box.mail()):
                 self._idle.discard(addr)
                 return ()
             return None
 
     def close(self, addr: str) -> None:
-        """``addr`` 의 상자를 닫는다 — 기다리는 이를 깨울 뿐, 줄 선 것은 그대로다(남은 사람의 말은 먼저 꺼내진다). 멱등."""
+        """``addr`` 의 상자를 닫는다 — 기다리는 이를 깨운다. 줄 선 것은 그대로다(런을 열지 않는다 — 꺼내는 쪽이
+        `CLOSED` 를 받는다). 멱등."""
         with self.cv:
             self._closed.add(addr)
             self.cv.notify_all()
@@ -373,6 +374,23 @@ class PostOffice:
             self._book.close(qid, "user_answered")
             self._deliver(answer_env)
             self.cv.notify_all()
+
+    def forget_requests_of(
+        self, requester: str, run_of: Callable[[str], str]
+    ) -> tuple[Row, ...]:
+        """요청한 쪽이 사라졌다 — 그가 기다리던 r 줄 중 **빚으로 적힌 것**(picked)을 닫는다: 회신이 갈 곳이 없는 갚음
+        (``unsent`` — `pay_unsent` 와 같다)으로, 빚진 쪽의 지금 런(``run_of(빚진 쪽)``) 끝까지 남겨 그 뒤의 `reply` 가
+        "가지 못했다" 로 듣게. 빚진 쪽의 Open Items 에서는 사라진다. 줄 선 것(아직 시작 안 한 요청)은 그대로다. 닫은
+        줄(닫기 전 값)을 돌려준다."""
+        with self.cv:
+            gone = tuple(
+                r for r in self._book.awaited_by(requester) if r.state == "picked"
+            )
+            for row in gone:
+                self._book.close(row.rid, "unsent", in_run=run_of(row.dst))
+            if gone:
+                self.cv.notify_all()
+            return gone
 
     def forget_questions_of(self, asker: str) -> tuple[str, ...]:
         """묻는 쪽이 사라졌다 — 그 질문 줄을 undeliverable 로 닫는다. 닫은 id 를 돌려준다."""
