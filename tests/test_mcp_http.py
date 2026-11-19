@@ -1,4 +1,4 @@
-"""원격 MCP 전송(sse·streamable-http)을 실제 HTTP 서버로 (vNEXT).
+"""원격 MCP 전송(sse·streamable-http)을 실제 HTTP 서버로 (v10.154.0).
 
 mcp 2.x 에는 ``streamablehttp_client`` 가 없다(새 이름 ``streamable_http_client`` 만, 두 값을 내준다) —
 agent-cli 는 옛 이름을 import 해서 2.x 의 streamable-http 서버에는 붙지 못했다. 전송 선택의 단위

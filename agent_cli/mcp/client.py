@@ -532,7 +532,7 @@ async def _open_transport(config: McpServerConfig):
                 yield read, write
     elif config.is_streamable_http:
         # Streamable HTTP (MCP 2025-03-26, v9.3.0) — 구 sse_client 로 붙으면 Accept 헤더가 모자라
-        # -32600 "Not Acceptable" 로 거절당한다. SDK 세대마다 이름과 내주는 것이 다르다(vNEXT 실측):
+        # -32600 "Not Acceptable" 로 거절당한다. SDK 세대마다 이름과 내주는 것이 다르다(v10.154.0 실측):
         # 1.9~1.23 은 ``streamablehttp_client`` 만, 1.24 부터 ``streamable_http_client`` 가 생겼고(옛 이름은
         # 폐기 예고), 2.x 에는 새 이름만 있다. 1.x 는 세 값(셋째는 session id getter), 2.x 는 두 값을
         # 내준다. 그 차이는 여기 한 곳에서 — 새 이름이 있으면 그것, 없으면 옛 이름. 둘 다 URL 하나로
