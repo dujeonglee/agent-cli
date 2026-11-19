@@ -321,7 +321,7 @@ def test_image_only_message_opens_a_run_and_the_worker_lives_on(stack, page, ws)
     ran: list = []
 
     def run_main(req):
-        ran.append((req.text, [i["path"] for i in req.images]))
+        ran.append((req.query, [i["path"] for i in req.images]))
         return SimpleNamespace(output="", success=True, waiting=False)
 
     pump = make_pump(
