@@ -68,6 +68,22 @@ class TestMainStop:
         assert page.inner_text("#chat-stop") == "Stopping…"
         assert len(_notices(page)) == before
 
+    def test_a_slow_stop_is_not_cut_off(self, stack, page):
+        """상한이 없다(사용자 결정) — 막힌 연결에서 20초가 지나도 끊지 않고 "Stopping…" 그대로, 늦게 닿으면 적용."""
+        page.clock.install()
+        self._busy(stack, page)
+        held: list = []
+        page.route("**/api/stop", lambda route: held.append(route))
+        page.click("#chat-stop")
+        assert _wait(lambda: len(held) == 1)
+        page.clock.run_for(25_000)
+        assert page.inner_text("#chat-stop") == "Stopping…"
+        assert _notices(page) == []
+        with page.expect_response(lambda r: r.url.endswith("/api/stop")) as info:
+            held[0].continue_()
+        assert info.value.ok
+        assert _notices(page) == []
+
     def test_server_error_says_so(self, stack, page):
         self._busy(stack, page)
         page.route("**/api/stop", lambda route: route.fulfill(status=500, body="boom"))
