@@ -282,8 +282,21 @@ class MainActor:
                 if stopped and d.agent_registry is not None:
                     self._answer_stopped()
                 # `wait` 로 끝난 런의 판정은 레지스트리 한 곳(`run_ended`, v10.77.0)
+                # 실패한 런(턴 상한·LLM 오류)은 그 사유를 — 폴백 머리에 원인 한 줄
+                failed = (
+                    {
+                        "success": False,
+                        "error": str(getattr(end.result, "error", "") or ""),
+                    }
+                    if end.outcome == "failed"
+                    else {}
+                )
                 main_run_ended(
-                    d.agent_registry, end.output, waiting=end.waiting, stopped=stopped
+                    d.agent_registry,
+                    end.output,
+                    waiting=end.waiting,
+                    stopped=stopped,
+                    **failed,
                 )
                 if d.auditor is not None:
                     d.auditor.run_ended(

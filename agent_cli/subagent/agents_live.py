@@ -1288,8 +1288,9 @@ class AgentRegistry:
     ) -> int:
         """빚 하나의 폴백 회신 — 배달했으면 1. main 은 상대에게(받은편지함), 상주는 main(메일함)·요청자에게."""
         if debtor == "main":
+            # 실패한 main 런의 폴백도 원인 한 줄을 머리에 — 에이전트 요청자에게 가는 회신은 같은 모양이다
             err = self._deliver_peer_reply(
-                d.to.split(":", 1)[1], "main", summary, 0, re=d.id, settles=d.id
+                d.to.split(":", 1)[1], "main", peer_summary, 0, re=d.id, settles=d.id
             )
             return 0 if err else 1
         key = debtor.split(":", 1)[1]

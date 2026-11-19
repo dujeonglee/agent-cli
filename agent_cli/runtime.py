@@ -294,7 +294,12 @@ def wire_agent_mail(registry, *, on_mail_notice=None, parent_ctx=None):
 
 
 def main_run_ended(
-    agent_registry, output: str = "", *, waiting: bool = False, stopped: bool = False
+    agent_registry,
+    output: str = "",
+    *,
+    waiting: bool = False,
+    stopped: bool = False,
+    **meta,
 ) -> int:
     """main 의 런이 끝났다 — 남은 빚을 정리한다 (v9.22.0).
 
@@ -312,12 +317,13 @@ def main_run_ended(
     돌려준다(0 = 빚 없음).
 
     ``stopped`` (vNEXT): 사람이 main 을 멈췄다(■·Stop everything) — 정지 회신은 부르는 쪽이 먼저 보냈다
-    (`AgentRegistry.answer_main_debts_as_stopped`), 여기는 남은 줄을 버린다(에이전트의 ■ 와 같다).
+    (`AgentRegistry.answer_main_debts_as_stopped`), 여기는 남은 줄을 버린다(에이전트의 ■ 와 같다). ``meta``
+    (vNEXT): 실패한 런이면 ``success=False``·``error`` — 폴백 머리에 원인 한 줄(에이전트의 실패 런과 같다).
     """
     if agent_registry is None:
         return 0
     return agent_registry.run_ended(
-        "main", output or "", waiting=waiting, stopped=stopped
+        "main", output or "", waiting=waiting, stopped=stopped, **meta
     )
 
 
