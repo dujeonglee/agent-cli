@@ -2144,6 +2144,9 @@ agent-cli mcp remove <이름>
 > 구 `sse` 설정으로 Streamable HTTP 서버에 붙으면 서버가 `-32600 "Not Acceptable: Client must accept both application/json and text/event-stream"` 으로 거절합니다. 이 경우 agent-cli 가 **"전송 방식이 다릅니다 — 이 서버는 Streamable HTTP 입니다"** 로 안내합니다 (v9.3.0).
 - `${VAR}` — 환경 변수 참조. **`env` 블록 안에서만** 치환되며(`command`·`url` 에는 적용되지 않음), **정의되지 않은 변수는 빈 문자열**이 됩니다(에러 아님 — 토큰 오타는 인증 실패로만 드러납니다).
 - 한 서버 연결이 실패해도 나머지는 연결되고 에이전트는 계속 돕니다. 실패는 stderr 경고 한 줄뿐이니, 도구가 안 보이면 stderr 를 먼저 확인하세요.
+- **`call_timeout_s`** (v10.149.0) — 그 서버의 도구 호출 하나를 기다리는 상한(초). 생략하면 **120**. 양의 수만 받습니다(`2.5` 같은 소수 가능) — `0`·음수·문자열(`"30"`)·`true` 면 그 서버는 `Invalid config for '<이름>': call_timeout_s must be a positive number of seconds, got …` 로 **연결되지 않습니다**(`command`·`url` 이 없을 때와 같은 길 — 부팅 줄과 🔌 칩에 보입니다). 마법사는 이 키를 묻지 않습니다 — 파일로만 정합니다. `mcp add` 로 같은 이름을 **덮어쓰면** 항목 전체를 새로 쓰므로 이 키도 사라집니다(`env` 처럼).
+
+  상한 안에 답이 없으면 기다리던 요청을 취소하고 모델에게 `MCP mcp__<서버>__<도구> did not answer within 120s, so the call was given up. The server may still be working on it.` 를 돌려줍니다. 런을 멈추면(■·Ctrl+C·`agent` `kill`) 기다림도 그만두고 `This run was stopped, so the MCP call was given up after 3s.` 입니다. agent-cli 는 서버에 취소 통지를 보내지 않습니다 — mcp 1.x 에서는 서버가 하던 일을 계속할 수 있고 늦게 온 답은 버려집니다. mcp 2.x SDK 는 취소된 요청에 통지(`notifications/cancelled`)를 스스로 보내 서버가 그만둡니다. 어느 쪽이든 같은 연결로 다음 호출은 그대로 됩니다. 연결(부팅 때 `initialize`·도구 목록)에는 이 상한이 걸리지 않습니다.
 
 #### 사용
 

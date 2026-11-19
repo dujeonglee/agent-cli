@@ -8,10 +8,70 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from agent_cli.mcp.config import McpServerConfig
+from agent_cli.mcp.config import (
+    DEFAULT_CALL_TIMEOUT_S,
+    McpServerConfig,
+    call_timeout_problem,
+)
+
+#: 도구 호출을 기다리며 런의 정지를 보는 간격(초) — 전경 `shell` 의 ``STOP_POLL_S`` 와 같은 값.
+STOP_POLL_S = 0.2
+
+
+class McpCallTimedOut(Exception):
+    """도구 호출이 상한 안에 답하지 않아 기다림을 그만뒀다. ``limit_s`` 는 그 상한(초)."""
+
+    def __init__(self, limit_s: float) -> None:
+        super().__init__(f"no answer within {limit_s:g}s")
+        self.limit_s = limit_s
+
+
+class McpCallStopped(Exception):
+    """런의 정지가 서서 도구 호출을 기다리기를 그만뒀다. ``elapsed_s`` 는 그때까지 기다린 초
+    (전경 `shell` 의 정지 문장과 같이 버림)."""
+
+    def __init__(self, elapsed_s: int) -> None:
+        super().__init__(f"run stopped after {elapsed_s}s")
+        self.elapsed_s = elapsed_s
+
+
+async def await_answer_or_give_up(
+    call: Awaitable[Any],
+    *,
+    limit_s: float,
+    stopped: Callable[[], bool],
+    clock: Callable[[], float] = time.monotonic,
+    poll_s: float = STOP_POLL_S,
+) -> Any:
+    """``call`` 의 답·상한·런의 정지 중 먼저 온 것으로 끝낸다 — 답이면 그 값을 돌려주고, 상한이면
+    :class:`McpCallTimedOut`, 정지면 :class:`McpCallStopped`. 그만둘 때는 기다리던 요청을
+    취소하고 그 취소가 끝날 때까지 기다린다(떠 있는 태스크를 남기지 않는다).
+
+    이 코드는 서버에 ``notifications/cancelled`` 를 보내지 않는다: 1.x SDK 에는 요청 id 를 얻는
+    공개 길이 없고, mcp 1.6 서버는 그 통지 뒤의 다음 호출에 답하지 않았다(실측). 1.x 에서는 서버가
+    하던 일을 계속할 수 있고 늦게 온 답은 SDK 가 모르는 요청 id 로 버린다. 2.x SDK 는 취소된 요청에
+    그 통지를 스스로 보낸다(실측 2.3.0 — 서버가 그만둔다).
+    ``clock``·``poll_s`` 는 시간 단언 없는 테스트용."""
+    task = asyncio.ensure_future(call)
+    started = clock()
+    try:
+        while not task.done():
+            left = started + limit_s - clock()
+            if left <= 0:
+                raise McpCallTimedOut(limit_s)
+            if stopped():
+                raise McpCallStopped(int(clock() - started))
+            await asyncio.wait({task}, timeout=min(poll_s, left))
+        return task.result()
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 @dataclass
@@ -205,6 +265,9 @@ class McpClientManager:
 
     async def _connect_one(self, name: str, config: McpServerConfig) -> None:
         """Connect to a single MCP server."""
+        problem = call_timeout_problem(config.call_timeout_s)
+        if problem:
+            raise ValueError(f"Invalid config for '{name}': {problem}")
         if config.is_stdio:
             await self._connect_stdio(name, config)
         elif config.is_streamable_http:
@@ -380,21 +443,44 @@ class McpClientManager:
             all_tools.extend(tools)
         return all_tools
 
-    def call_tool(self, server: str, tool_name: str, arguments: dict) -> Any:
-        """Call an MCP tool synchronously. Returns the tool result."""
-        return self._run_sync(self._call_tool_async(server, tool_name, arguments))
+    def call_tool(
+        self,
+        server: str,
+        tool_name: str,
+        arguments: dict,
+        *,
+        stopped: Callable[[], bool] | None = None,
+    ) -> Any:
+        """Call an MCP tool synchronously. Returns the tool result.
+
+        서버 설정의 ``call_timeout_s``(없으면 기본 120초) 안에 답이 없으면
+        :class:`McpCallTimedOut`, ``stopped``(이 런의 정지 — `RunContext.stopped`)가 서면
+        :class:`McpCallStopped` — 둘 다 기다리던 요청을 취소한 뒤다(`await_answer_or_give_up`)."""
+        config = self.configs.get(server)
+        limit_s = config.call_timeout_s if config else DEFAULT_CALL_TIMEOUT_S
+        return self._run_sync(
+            self._call_tool_async(
+                server, tool_name, arguments, limit_s, stopped or (lambda: False)
+            )
+        )
 
     async def _call_tool_async(
-        self, server: str, tool_name: str, arguments: dict
+        self,
+        server: str,
+        tool_name: str,
+        arguments: dict,
+        limit_s: float,
+        stopped: Callable[[], bool],
     ) -> Any:
-        """Call an MCP tool asynchronously."""
+        """Call an MCP tool asynchronously, bounded by ``limit_s`` and ``stopped``."""
         client = self._clients.get(server)
         if client is None:
             raise ConnectionError(f'MCP server "{server}" not connected')
 
         session = client["session"]
-        result = await session.call_tool(tool_name, arguments)
-        return result
+        return await await_answer_or_give_up(
+            session.call_tool(tool_name, arguments), limit_s=limit_s, stopped=stopped
+        )
 
     # ── Resource operations ──────────────────────────
 

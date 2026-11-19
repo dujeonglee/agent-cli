@@ -17,7 +17,7 @@ import hashlib
 import re
 from typing import Any
 
-from agent_cli.mcp.client import McpClientManager
+from agent_cli.mcp.client import McpCallStopped, McpCallTimedOut, McpClientManager
 from agent_cli.paths import display_path
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
@@ -94,14 +94,35 @@ class McpTool(Tool):
         return flat
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        # ctx (RunContext) is accepted for the uniform Tool.run signature; MCP
-        # dispatch is location-independent and ignores it.
+        # ctx (RunContext) 에서 쓰는 것은 런의 정지(`stopped`)뿐이다 — 기다리는 사이 서면
+        # 호출을 그만둔다. 그만둔 이유는 사실 문장으로 돌려준다.
         try:
-            result = self._manager.call_tool(self._server, self._tool_name, args)
+            result = self._manager.call_tool(
+                self._server,
+                self._tool_name,
+                args,
+                stopped=getattr(ctx, "stopped", None),
+            )
             text, images = _extract_mcp_result(
                 result, f"{self._server}-{self._tool_name}"
             )
             return ToolResult(True, output=text, images=images)
+        except McpCallTimedOut as e:
+            return ToolResult(
+                False,
+                error=(
+                    f"MCP {self.name} did not answer within {e.limit_s:g}s, so the "
+                    "call was given up. The server may still be working on it."
+                ),
+            )
+        except McpCallStopped as e:
+            return ToolResult(
+                False,
+                error=(
+                    "This run was stopped, so the MCP call was given up after "
+                    f"{e.elapsed_s}s."
+                ),
+            )
         except Exception as e:
             return ToolResult(False, error=f"MCP {self.name} failed: {e}")
 
