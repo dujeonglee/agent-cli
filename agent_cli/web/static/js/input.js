@@ -8,10 +8,10 @@ import { escapeHtml } from "./markdown.js";
 import { es } from "./sse.js";
 import {
   attachBusy,
-  attachClear,
   attachMessage,
   attachReadyPaths,
   attachRefreshVision,
+  attachRemove,
 } from "./attach.js";
 import { ovActiveChannel, ovRenderAskTray, postStop } from "./channels.js";
 import { ovSyncChannels } from "./runs.js";
@@ -110,7 +110,7 @@ export function highlightDangerHtml(command, spans) {
 }
 
 // ── POST helpers ───────────────────────────
-function postInput(body) {
+function postInput(body, signal) {
   body.conn_id = session.connId; // identifies the sender (queued-message ownership)
   return fetch(
     "api/input",
@@ -118,39 +118,85 @@ function postInput(body) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: signal,
     }
   );
 }
 
 // 입력창은 항상 chat(3b): 활성 채널로 라우팅(main → /api/input, agent →
 // /api/agent/<key>/input). main 의 prompt/confirm 답변은 글로벌 트레이가 담당.
+// 보낸 글·칩은 서버가 받았을 때만 비운다 — 거절(죽은 에이전트·사라진 첨부 등)이나 네트워크 오류면
+// 사유를 보이고 그대로 남긴다. 보내는 중의 두 번째 보내기는 알리고 받지 않는다(중복·순서 뒤바뀜 없음).
+// 응답이 ``SEND_LIMIT_MS`` 안에 오지 않으면(막힌 연결) 요청을 끊고 실패로 본다 — 끊긴 요청의 늦은
+// 결과는 화면을 건드리지 않는다. 요청 본문은 경로뿐이라 정상 응답은 로컬에서 수십 ms 다(큰 이미지
+// 셋이 든 요청도 서버의 검증·보관까지 70 ms) — 상한은 원격·프록시 너머의 지연까지 넉넉히 덮는다.
+const SEND_LIMIT_MS = 20000;
+let sending = false;
 function submitChatOrPrompt() {
   const text = $input.value.trim();
   const images = attachReadyPaths();
   if (!text && !images.length) return;
+  if (sending) {
+    attachMessage("Still sending the previous message");
+    return;
+  }
   if (attachBusy()) {
     attachMessage("Still uploading");
     return;
   }
+  const ctl = new AbortController();
+  let req;
   if (ovActiveChannel !== "main") {
     // 에이전트 채널도 이미지를 받는다 (v10.61.0): inbox 항목 → 그 런의 시작
     // user 레코드 `images`. 같은 업로드 경로, 같은 `images:[path]` 모양.
     const agentBody = { content: text, conn_id: session.connId };
     if (images.length) agentBody.images = images;
-    fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
+    req = fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(agentBody),
+      signal: ctl.signal,
     });
-    $input.value = "";
-    attachClear();
-    return;
+  } else {
+    const body = { kind: "chat", content: text };
+    if (images.length) body.images = images;
+    req = postInput(body, ctl.signal);
   }
-  const body = { kind: "chat", content: text };
-  if (images.length) body.images = images;
-  postInput(body);
-  $input.value = "";
-  attachClear();
+  sending = true;
+  let settled = false;
+  // 이 보내기를 한 번만 끝낸다 — 먼저 온 것(응답·오류·상한)이 이기고 뒤의 것은 아무것도 안 한다
+  function settle(failure) {
+    if (settled) return false;
+    settled = true;
+    clearTimeout(timer);
+    sending = false;
+    if (failure) sendFailed(failure);
+    return true;
+  }
+  const timer = setTimeout(function () {
+    if (settle("no response from the server")) ctl.abort();
+  }, SEND_LIMIT_MS);
+  req
+    .then(function (r) {
+      if (r.ok) {
+        if (!settle("")) return;
+        // 보내는 사이 고쳐 쓴 글·새로 붙인 칩은 남긴다 — 보낸 것만 비운다
+        if ($input.value.trim() === text) $input.value = "";
+        attachRemove(images);
+        return;
+      }
+      return r.json().then(
+        function (d) { settle(d && typeof d.detail === "string" ? d.detail : "HTTP " + r.status); },
+        function () { settle("HTTP " + r.status); }
+      );
+    })
+    .catch(function () {
+      settle("could not reach the server");
+    });
+}
+
+function sendFailed(reason) {
+  attachMessage("Not sent — " + reason);
 }
 
 // main ask 를 접는다 — 409(선착순 소비) / input_resolved 공용.
