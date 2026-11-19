@@ -59,8 +59,8 @@ def test_attach_then_send_queues_the_image(stack, page, ws):
     assert len(item["images"]) == 1
     assert (item["images"][0]["width"], item["images"][0]["height"]) == (64, 32)
     assert (ws / ".agent-cli" / "tmp" / "uploads").is_dir()
-    # 보낸 뒤 칩은 비워진다.
-    assert page.locator("#attach-strip .attach-chip").count() == 0
+    # 보낸 뒤 칩은 비워진다 — 서버가 받았다는 응답이 온 뒤다(v10.147.3), 줄에 선 것보다 늦을 수 있다.
+    assert _wait(lambda: page.locator("#attach-strip .attach-chip").count() == 0)
 
 
 def test_cards_draw_thumbnails_that_load(stack, page, ws):
