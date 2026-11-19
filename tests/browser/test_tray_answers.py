@@ -448,18 +448,45 @@ class TestMainAnswer:
         t.join(5)
 
 
-def _reconnect(stack, page):
-    """SSE 를 서버 쪽에서 끊는다 — EventSource 가 다시 붙고 스냅샷(스티키 포함)을 다시 받는다. 새 연결의
-    identity 가 오면 돌아온다."""
+def _drop_sse(stack, page) -> str:
+    """SSE 를 서버 쪽에서 끊는다 — EventSource 가 약 3초 뒤 다시 붙어 스냅샷(스티키 포함)을 다시 받는다.
+    끊기 전 연결의 id 를 돌려준다."""
     before = page.evaluate("() => window.AGENTCLI_CONN_ID")
     hub = stack.renderer.hub
     for c in list(hub._connections):
         hub.unregister(c)
+    return before
+
+
+def _wait_reconnected(page, before):
+    """새 연결의 ``identity`` 가 왔다(스냅샷이 시작됐다)."""
     assert _wait(
         lambda: page.evaluate("() => window.AGENTCLI_CONN_ID") not in (None, before),
         timeout=15,
     )
+
+
+def _reconnect(stack, page):
+    _wait_reconnected(page, _drop_sse(stack, page))
     page.wait_for_function("() => !!document.querySelector('.ask-main')")
+
+
+def _pending_prompt(stack, results, question):
+    """main 의 물음 하나를 띄운다 — 화면 연결을 기다리지 않는다(끊긴 사이·첫 접속 전에 떠 있게)."""
+    import threading
+
+    def ask():
+        try:
+            results.append(
+                stack.renderer.prompt_user("Your answer: ", context=question)
+            )
+        except EOFError:
+            pass
+
+    t = threading.Thread(target=ask, daemon=True)
+    t.start()
+    assert _wait(lambda: stack.renderer.is_awaiting_input())
+    return t
 
 
 class TestSameAskAcrossReconnect:
@@ -478,6 +505,76 @@ class TestSameAskAcrossReconnect:
             "focused": True,
             "caret": 4,
         }
+
+    def test_ask_resolved_while_disconnected_folds_after_the_snapshot(
+        self, stack, page
+    ):
+        """끊긴 사이 다른 뷰어가 답했다 — 재접속 스냅샷에 물음이 없으면 남은 항목을 접는다(알림 없음)."""
+        import requests
+
+        results: list = []
+        stack.start_ask(results)
+        stack.emit_ready()
+        page.goto(stack.url)
+        page.wait_for_selector(".ask-main .ask-answer", timeout=8000)
+        page.fill(".ask-main .ask-answer", "Pyth")
+        before = _drop_sse(stack, page)
+        r = requests.post(
+            f"{stack.base}/api/input?token={stack.token}",
+            json={"kind": "prompt", "content": "Rust"},
+        )
+        assert r.status_code == 200 and _wait(lambda: results == ["Rust"])
+        # 풀림 알림(input_resolved)은 아무에게도 가지 않았다
+        assert not stack.renderer.hub.has_live_connections()
+        _wait_reconnected(page, before)
+        assert _wait(lambda: page.locator(".ask-main").count() == 0)
+        assert page.locator("#attach-strip .attach-msg").count() == 0
+
+    def test_a_different_ask_in_the_snapshot_replaces_the_item(self, stack, page):
+        """끊긴 사이 물음이 풀리고 새 물음이 떴다 — 다른 ``ask_id`` 라 새 항목이다(쓰던 글은 버려진다)."""
+        import requests
+
+        results: list = []
+        first = _pending_prompt(stack, results, "first?")
+        stack.emit_ready()
+        page.goto(stack.url)
+        page.wait_for_selector(".ask-main .ask-answer", timeout=8000)
+        assert "first?" in page.inner_text(".ask-main")
+        page.fill(".ask-main .ask-answer", "Pyth")
+        page.evaluate(
+            "() => { window.__oldAsk = document.querySelector('.ask-main'); }"
+        )
+        before = _drop_sse(stack, page)
+        r = requests.post(
+            f"{stack.base}/api/input?token={stack.token}",
+            json={"kind": "prompt", "content": "Rust"},
+        )
+        assert r.status_code == 200 and _wait(lambda: results == ["Rust"])
+        first.join(5)
+        second = _pending_prompt(stack, results, "second?")
+        _wait_reconnected(page, before)
+        assert _wait(lambda: "second?" in page.inner_text("#ask-tray"))
+        assert page.locator(".ask-main").count() == 1
+        assert page.evaluate(
+            "() => document.querySelector('.ask-main') !== window.__oldAsk"
+        )
+        assert page.input_value(".ask-main .ask-answer") == ""
+        stack.renderer.push_abort()
+        second.join(5)
+
+    def test_an_ask_pending_at_first_connect_stays(self, stack, page):
+        """첫 접속에 물음이 이미 떠 있다 — 스냅샷 안에 있으니 접지 않는다."""
+        results: list = []
+        t = _pending_prompt(stack, results, "which language?")
+        stack.emit_ready()
+        page.goto(stack.url)
+        page.wait_for_selector(".ask-main .ask-answer", timeout=8000)
+        # 라이브 이벤트 하나가 그려지면 그 앞의 snapshot_end 는 이미 처리됐다
+        stack.renderer.agent_roster([_row(AGT, [])])
+        assert _wait(lambda: page.locator(f".ov-ch[data-key='{AGT}']").count() == 1)
+        assert page.locator(".ask-main").count() == 1
+        stack.renderer.push_abort()
+        t.join(5)
 
 
 class TestConfirmStall:
