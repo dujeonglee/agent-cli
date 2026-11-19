@@ -52,9 +52,10 @@ async def await_answer_or_give_up(
     :class:`McpCallTimedOut`, 정지면 :class:`McpCallStopped`. 그만둘 때는 기다리던 요청을
     취소하고 그 취소가 끝날 때까지 기다린다(떠 있는 태스크를 남기지 않는다).
 
-    취소는 이 클라이언트 안에서만이다 — 서버에 ``notifications/cancelled`` 는 보내지 않는다:
-    SDK 에 요청 id 를 얻는 공개 길이 없고, mcp 1.6 서버는 그 통지 뒤의 다음 호출에 답하지 않았다
-    (실측). 서버는 하던 일을 계속할 수 있고, 늦게 온 답은 SDK 가 모르는 요청 id 로 버린다.
+    이 코드는 서버에 ``notifications/cancelled`` 를 보내지 않는다: 1.x SDK 에는 요청 id 를 얻는
+    공개 길이 없고, mcp 1.6 서버는 그 통지 뒤의 다음 호출에 답하지 않았다(실측). 1.x 에서는 서버가
+    하던 일을 계속할 수 있고 늦게 온 답은 SDK 가 모르는 요청 id 로 버린다. 2.x SDK 는 취소된 요청에
+    그 통지를 스스로 보낸다(실측 2.3.0 — 서버가 그만둔다).
     ``clock``·``poll_s`` 는 시간 단언 없는 테스트용."""
     task = asyncio.ensure_future(call)
     started = clock()

@@ -17,7 +17,12 @@ import threading
 import time
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except (
+    ModuleNotFoundError
+):  # mcp 2.x — FastMCP 가 MCPServer 로 이름이 바뀌었다(핀은 `mcp>=1.6,<3`)
+    from mcp.server.mcpserver import MCPServer as FastMCP
 
 MARKS = Path(sys.argv[1])
 MARKS.mkdir(parents=True, exist_ok=True)

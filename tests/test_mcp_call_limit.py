@@ -70,6 +70,8 @@ class _NeverAnswers:
 #: 테스트가 끝나지 않는 대신 실패하게 하는 바깥 한도(초) — 시간 단언이 아니다(구현이 상한·정지를
 #: 잃으면 여기서 걸린다).
 NO_HANG_S = 30
+#: 정리 단계에서 disconnect 를 기다리는 한도(초) — 아래 `servers` 의 주석.
+DISCONNECT_WAIT_S = 5
 
 
 def _run(coro):
@@ -292,11 +294,15 @@ def servers(tmp_path_factory):
     baseline = len(asyncio.all_tasks(m._get_loop()))
     yield m, marks, baseline
     try:
-        m.disconnect_all()
+        # disconnect 는 이 변경 전부터 믿을 수 없다 — 1.x 에서는 서버를 끝내지 못하고, mcp 2.x 에서는
+        # 돌아오지 않는다(호출이 없어도, 2b0e3bde 에서도 실측). 그래서 스레드에서 부르고 한도까지만
+        # 기다린다. 걸린 스레드는 데몬이라 프로세스 종료를 막지 않는다.
+        t = threading.Thread(target=m.disconnect_all, daemon=True)
+        t.start()
+        t.join(DISCONNECT_WAIT_S)
     finally:
-        # disconnect 가 서버 프로세스를 끝내지 못하는 경우가 있다(이 변경 전부터) — 이 테스트가
-        # 띄운 프로세스는 이 테스트가 거둔다. disconnect 가 터져도(루프가 끝나지 않은 호출로 아직
-        # 도는 중이면 "Cannot close a running event loop") 거두도록 finally 다.
+        # 이 테스트가 띄운 프로세스는 이 테스트가 거둔다 — disconnect 가 터지거나 걸려도
+        # (루프가 끝나지 않은 호출로 아직 도는 중이면 "Cannot close a running event loop").
         for pid in pids:
             if _alive(pid):
                 os.kill(pid, signal.SIGTERM)
@@ -339,8 +345,15 @@ def test_real_server_a_late_answer_does_not_become_the_next_result(servers):
     m, marks, baseline = servers
     r = _call(m, "quick", "sleep", {"seconds": 1.0, "tag": "late"})
     assert "did not answer within 0.5s" in r.error
-    # 서버는 하던 일을 끝내고 답을 보냈다 — 그 답이 다음 호출의 결과로 섞이지 않는다
-    assert wait_until(lambda: (marks["quick"] / "slept-late").exists())
+    # 서버가 그 요청을 끝냈다 — 1.x 는 끝까지 자고 늦은 답을 보낸다(slept), 2.x SDK 는 취소된
+    # 요청에 `notifications/cancelled` 를 스스로 보내 서버가 그만둔다(cancelled). 어느 쪽이든
+    # 다음 호출의 결과는 그 호출의 것이다.
+    assert wait_until(
+        lambda: (
+            (marks["quick"] / "slept-late").exists()
+            or (marks["quick"] / "cancelled-late").exists()
+        )
+    )
     assert _fast(m, "quick", "after-late") == "fast:after-late"
     assert _fast(m, "quick", "again") == "fast:again"
     assert len(asyncio.all_tasks(m._get_loop())) == baseline
