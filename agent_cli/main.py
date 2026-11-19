@@ -33,6 +33,7 @@ from agent_cli.dialects import (
     set_dialect_override as _set_dialect_override,
 )
 from agent_cli.knobs import knob_options
+from agent_cli.main_input import human_addr
 from agent_cli.providers import (
     Credentials,
     UnsupportedModelError,
@@ -625,7 +626,7 @@ def _parse_at_profile(name: str) -> tuple[str, str]:
 
 
 def _try_dispatch_agent_command(
-    message: str, output: DispatchOutput, agent_registry, images=()
+    message: str, output: DispatchOutput, agent_registry, images=(), author="user"
 ) -> bool:
     """상주 에이전트 방향의 ``@`` 명령 — LLM 을 거치지 않는 직접 표면.
 
@@ -640,6 +641,7 @@ def _try_dispatch_agent_command(
     False 로 폴스루 — ``_dispatch_agent`` 가 run 엔진으로 실행한다.
 
     ``images``: 그 말에 딸린 이미지 — 말이 요청으로 가는 갈래(메시지·초기 task)에 함께 실린다 (v10.149.3).
+    ``author``: 그 말을 한 사람의 주소(`main_input.human_addr`) — 요청의 작성자, 에이전트 채널과 같은 규칙 (v10.149.4).
     """
     if not message.startswith("@"):
         return False
@@ -660,7 +662,7 @@ def _try_dispatch_agent_command(
             output.agent_dispatch_result(agent_registry.format_status(name), True)
             return True
         error = agent_registry.request(
-            name, parts[1], author="user", images=list(images) or None
+            name, parts[1], author=author, images=list(images) or None
         )
         if error:
             output.agent_dispatch_result(f"@{name}: {error}", False)
@@ -686,7 +688,7 @@ def _try_dispatch_agent_command(
         task = parts[1] if len(parts) > 1 else ""
         if task:
             send_error = agent_registry.request(
-                key, task, author="user", images=list(images) or None
+                key, task, author=author, images=list(images) or None
             )
             if send_error:
                 output.agent_dispatch_result(f"@{key}: {send_error}", False)
@@ -847,6 +849,7 @@ def try_dispatch_agent_or_skill(
     stop_event=None,
     agent_registry=None,
     images=(),
+    author: str = "user",
 ) -> bool:
     """Detect and run ``@<name> <task>`` / ``/<skill> <args>`` invocations.
 
@@ -876,7 +879,7 @@ def try_dispatch_agent_or_skill(
     if message.startswith("@"):
         # 상주 방향 명령이 먼저 — ``@agents`` 통합 목록 / ``@agt-<key>``
         # 직접 조작 / ``@<profile>-spawn`` (run 은 폴스루).
-        if _try_dispatch_agent_command(message, output, agent_registry, images):
+        if _try_dispatch_agent_command(message, output, agent_registry, images, author):
             return True
         parts = message.split(maxsplit=1)
         name = parts[0][1:]
@@ -996,6 +999,7 @@ def _command_dispatch(spec, owners, output, *, graceful_interrupt: bool):
             stop_event=stop_event,
             agent_registry=owners.agent_registry,
             images=(item or {}).get("images") or (),
+            author=human_addr((item or {}).get("nickname")),
         )
 
     return dispatch

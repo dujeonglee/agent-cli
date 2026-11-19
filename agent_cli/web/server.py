@@ -59,7 +59,7 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
 
 from agent_cli import images as _images
-from agent_cli.main_input import MainInput
+from agent_cli.main_input import MainInput, human_addr
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
 from agent_cli.session_slots import get_job_registry, get_schedule_registry
@@ -1436,7 +1436,7 @@ def create_app(server: WebServer) -> FastAPI:
             raise HTTPException(
                 status_code=400, detail="content must be a non-empty string"
             )
-        nickname = server.renderer.hub.nickname_for(body.get("conn_id")) or "user"
+        author = human_addr(server.renderer.hub.nickname_for(body.get("conn_id")))
         answer_id = body.get("answer_id")
         if answer_id:
             if images:
@@ -1447,15 +1447,11 @@ def create_app(server: WebServer) -> FastAPI:
             # (비동기 ask/answer, docs/agent-ask/DESIGN.md §3.6). 주소가
             # 사람인 질문만 트레이에 뜨고, `user*` 는 하나의 주체라 어느
             # 뷰어가 답하든 받는다 — 먼저 답한 쪽이 claim 한다.
-            error = registry.answer_question(
-                str(answer_id), content, by=f"user:{nickname}"
-            )
+            error = registry.answer_question(str(answer_id), content, by=author)
             if error:
                 raise HTTPException(status_code=409, detail=error)
             return JSONResponse({"accepted": True, "answered": answer_id})
-        error = registry.request(
-            key, content, author=f"user:{nickname}", images=images or None
-        )
+        error = registry.request(key, content, author=author, images=images or None)
         if error:
             raise HTTPException(status_code=404, detail=error)
         return JSONResponse({"accepted": True})
