@@ -20,7 +20,7 @@ function refusalReason(r) {
 
 // 보내기 하나를 시작해 응답·오류·상한 중 먼저 온 것으로 한 번만 끝낸다. ``slot`` 은 그 자리의 상태
 // ``{sending}`` — 보내는 동안 true(호출자가 넘긴 것만 바꾼다). ``request(signal)`` 은 fetch 의 약속,
-// ``settled(failure, status)`` 는 끝에 한 번 불린다: ``failure`` 는 받았으면 "", 아니면 사유(서버의
+// ``settled(failure, status, response)`` 는 끝에 한 번 불린다: ``failure`` 는 받았으면 "", 아니면 사유(서버의
 // detail · ``HTTP <code>`` · ``could not reach the server`` · ``no response from the server``).
 //
 // ``limit`` (vNEXT): false 면 상한이 없다 — 늦게라도 닿으면 적용되는 것이 맞는 누름(확인 클릭·정지·취소·되살리기)은
@@ -29,12 +29,12 @@ export function sendOnce(slot, request, settled, { limit = true } = {}) {
   const ctl = new AbortController();
   let done = false;
   slot.sending = true;
-  function finish(failure, status) {
+  function finish(failure, status, response) {
     if (done) return;
     done = true;
     clearTimeout(timer);
     slot.sending = false;
-    settled(failure, status);
+    settled(failure, status, response);
   }
   const timer = limit
     ? setTimeout(function () {
@@ -45,7 +45,7 @@ export function sendOnce(slot, request, settled, { limit = true } = {}) {
     : null;
   request(ctl.signal)
     .then(function (r) {
-      if (r.ok) return finish("", r.status);
+      if (r.ok) return finish("", r.status, r); // 받았다 — 본문이 필요한 자리(취소의 결과 등)는 응답을 읽는다
       return refusalReason(r).then(function (why) { finish(why, r.status); });
     })
     .catch(function () {
