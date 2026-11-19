@@ -16,7 +16,7 @@ function all() {
   }
   return loaded;
 }
-// 바꾸기 — 언제나 ``{ok: true, …상태}`` 또는 ``{ok: false, error}`` 로 끝난다 (vNEXT: 종전엔 실패를 null 로 뭉개
+// 바꾸기 — 언제나 ``{ok: true, …상태}`` 또는 ``{ok: false, error}`` 로 끝난다 (v10.155.0: 종전엔 실패를 null 로 뭉개
 // 서버가 준 사유를 버렸다). 거부(미등록 모델 등)는 서버의 200 ``{ok: false, error}``, 그 밖(없는 노브·네트워크)은
 // 보내기의 사유. 상한 없음 — 늦게라도 닿으면 적용된다(다른 누름과 같다).
 function set(name, value) {

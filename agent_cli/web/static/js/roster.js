@@ -128,7 +128,7 @@ if ($renameBtn) {
 const $queueList = document.getElementById("queue-list");
 let qPrevById = {}; // 직전 pending: id → item
 const qLeaving = {}; // id → {item, state:'wait'|'injected'|'cancelled', _timer}
-// 내 ✕ 의 결과 (vNEXT) — "취소됨" 은 서버가 뺐다고 답한 뒤에만 그린다. 종전엔 누르는 즉시 확정해, 그 사이 워커가
+// 내 ✕ 의 결과 (v10.155.0) — "취소됨" 은 서버가 뺐다고 답한 뒤에만 그린다. 종전엔 누르는 즉시 확정해, 그 사이 워커가
 // 꺼내 처리한 말도 "Cancelled" 로 보였다(서버는 ``cancelled: false``). id → "asked"(답을 기다림) | "cancelled".
 const qMyCancel = {};
 let qPending = [];

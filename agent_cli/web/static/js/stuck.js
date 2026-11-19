@@ -20,7 +20,7 @@ function stStop(asking) {
   if (stStopping) return;
   stStopping = true;
   render(lastStuck);
-  // 상한 없이 — 늦게라도 닿으면 멈춘다. 닿지 못했거나 거절이면 "Stopping…" 을 풀고 사유 (vNEXT)
+  // 상한 없이 — 늦게라도 닿으면 멈춘다. 닿지 못했거나 거절이면 "Stopping…" 을 풀고 사유 (v10.155.0)
   sendOnce(
     { sending: false },
     function (signal) {

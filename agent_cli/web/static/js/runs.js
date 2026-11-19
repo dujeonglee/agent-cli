@@ -498,7 +498,7 @@ function ovRenderChannelHead() {
     b.disabled = true; // 눌렀다 — 명단(SSE)이 다시 그린다
     var act = b.getAttribute("data-act");
     var path = "api/agent/" + encodeURIComponent(head.getAttribute("data-key")) + "/" + act;
-    // 상한 없이 — 늦게라도 닿으면 적용. 닿지 못했거나 거절이면 버튼을 풀고 사유 (vNEXT; 종전엔 잠긴 채 남았다)
+    // 상한 없이 — 늦게라도 닿으면 적용. 닿지 못했거나 거절이면 버튼을 풀고 사유 (v10.155.0; 종전엔 잠긴 채 남았다)
     sendOnce(
       { sending: false },
       function (signal) { return fetch(path, { method: "POST", signal: signal }); },

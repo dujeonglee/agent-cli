@@ -40,7 +40,7 @@ if ($chips && $header) {
   }
   function post(d, value) {
     KNOBS.set(d.name, value).then((r) => {
-      // 거부(미등록 모델 등)·실패면 마지막 상태로 되돌리고 사유를 그 칩의 설명 줄에 (vNEXT — 종전엔 말없이
+      // 거부(미등록 모델 등)·실패면 마지막 상태로 되돌리고 사유를 그 칩의 설명 줄에 (v10.155.0 — 종전엔 말없이
       // 되돌렸다). 설명 줄이 없는 머리 토글은 입력창 아래 줄에. 다음 상태가 오면 설명 줄은 제 글로 돌아간다.
       if (r.ok) return;
       apply(states[d.name], true);

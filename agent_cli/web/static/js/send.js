@@ -1,4 +1,4 @@
-// send.js — 보내기 한 번 (v10.147.3 입력창 → v10.147.4 트레이 답 → vNEXT 확인·글 없는 버튼): 응답·오류·상한 중
+// send.js — 보내기 한 번 (v10.147.3 입력창 → v10.147.4 트레이 답 → v10.155.0 확인·글 없는 버튼): 응답·오류·상한 중
 // 먼저 온 것으로 한 번만 끝내고, 거절의 사유를 한 가지로 읽는다. 순환 밖 잎 — import 없음(``fetch`` 는 호출자가
 // ``request`` 로 준다)이라 잎 모듈(stuck 등)도 쓴다.
 //
@@ -23,7 +23,7 @@ function refusalReason(r) {
 // ``settled(failure, status, response)`` 는 끝에 한 번 불린다: ``failure`` 는 받았으면 "", 아니면 사유(서버의
 // detail · ``HTTP <code>`` · ``could not reach the server`` · ``no response from the server``).
 //
-// ``limit`` (vNEXT): false 면 상한이 없다 — 늦게라도 닿으면 적용되는 것이 맞는 누름(확인 클릭·정지·취소·되살리기)은
+// ``limit`` (v10.155.0): false 면 상한이 없다 — 늦게라도 닿으면 적용되는 것이 맞는 누름(확인 클릭·정지·취소·되살리기)은
 // 막힌 연결에서 끊지 않고 기다린다. 그 길의 실패는 서버의 거절과 네트워크 오류뿐이다.
 export function sendOnce(slot, request, settled, { limit = true } = {}) {
   const ctl = new AbortController();

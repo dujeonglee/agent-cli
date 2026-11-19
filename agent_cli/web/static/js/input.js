@@ -301,7 +301,7 @@ function requestStop(scope) {
     session.stopRequested = true;
     updateSendEnabled();
   }
-  // 닿지 못했으면 "Stopping…" 을 푼다 — 다시 누를 수 있게 (vNEXT; 종전엔 그 런이 끝날 때까지 잠겼다)
+  // 닿지 못했으면 "Stopping…" 을 푼다 — 다시 누를 수 있게 (v10.155.0; 종전엔 그 런이 끝날 때까지 잠겼다)
   postStop(scope, function () {
     if (scope === "agents") return;
     session.stopRequested = false;
