@@ -5,6 +5,6 @@
 # typer 0.12.4~0.15.3 은 click 상한이 없는데 click 8.2 에서 깨진다
 # ("Secondary flag is not valid for non-boolean flag", make_metavar() 인자 수). 0.15.4 부터 typer 가 `click<8.2`.
 click<8.2
-# mcp 1.6~1.21 은 pydantic 2.14 에서 import 가 깨진다
+# mcp 1.21 까지(하한 1.9 포함)는 pydantic 2.14 에서 import 가 깨진다
 # ("cannot import name 'eval_type_backport'"). mcp 1.22 부터 자체 해결.
 pydantic<2.14
