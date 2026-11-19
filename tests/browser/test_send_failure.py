@@ -116,3 +116,44 @@ def test_two_quick_enters_send_once(stack, page, ws):
     assert _wait(lambda: page.input_value("#input") == "")
     assert stack.server.main_input.pending_count() == 1
     assert stack.server.main_input.take_next()["text"] == "once"
+
+
+def test_no_response_times_out_keeps_text_and_frees_the_next_send(stack, page, ws):
+    """응답이 오지 않는 보내기 — 상한(테스트가 짧게 줄인 ``SEND_LIMIT.ms``)이 지나면 알림이 서고 글·칩이
+    남으며 다음 보내기가 다시 된다. 끊긴 요청에 늦게 온 응답은 화면을 건드리지 않는다."""
+    stack.emit_ready()
+    page.goto(stack.url)
+    page.wait_for_selector("#attach", timeout=8000)
+    page.evaluate(
+        """async () => {
+            const m = await import(new URL('static/js/input.js', document.baseURI).href);
+            m.SEND_LIMIT.ms = 300;
+            window.__notices = [];
+            new MutationObserver(() => {
+              const n = document.querySelector('#attach-strip .attach-msg');
+              if (n) window.__notices.push(n.textContent);
+            }).observe(document.getElementById('attach-strip'),
+                       {childList: true, subtree: true, characterData: true});
+        }"""
+    )
+    held: list = []
+    page.route("**/api/input", lambda route: held.append(route))  # 응답을 주지 않는다
+    _attach(page)
+    page.fill("#input", "anyone there?")
+    page.press("#input", "Enter")
+    assert _notice(page) == "Not sent — no response from the server"
+    assert page.input_value("#input") == "anyone there?"
+    assert page.locator("#attach-strip .attach-chip").count() == 1
+    assert len(held) == 1
+    # 끊긴 요청에 늦은 응답 — 끊겼으니 페이지에 닿지 않는다
+    try:
+        held[0].fulfill(status=400, json={"detail": "late"})
+    except Exception:
+        pass  # 이미 끊긴 요청이면 Playwright 가 거절한다 — 어느 쪽이든 페이지는 못 받는다
+    page.unroute("**/api/input")
+    page.press("#input", "Enter")  # 다음 보내기가 다시 된다
+    assert _wait(lambda: stack.server.main_input.pending_count() == 1)
+    assert _wait(lambda: page.input_value("#input") == "")
+    assert _wait(lambda: page.locator("#attach-strip .attach-chip").count() == 0)
+    assert "Not sent — late" not in page.evaluate("() => window.__notices")
+    assert stack.server.main_input.take_next()["text"] == "anyone there?"
