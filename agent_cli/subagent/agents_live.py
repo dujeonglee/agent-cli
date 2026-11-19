@@ -931,16 +931,13 @@ class AgentRegistry:
             return unknown
         if not is_human_addr(by):
             return f'question "{qid}" is addressed to the person, not "{by}"'
-        try:
-            self._deliver_answer(
-                q, text
-            )  # 답의 배달이 곧 질문 줄 닫기(``settles`` — 한 락 구간)
+        try:  # 답의 배달이 곧 질문 줄 닫기(``settles`` — 한 락 구간)
+            refused = self._deliver_answer(q, text)
         except RowError:
             return unknown  # 다른 답변자가 먼저 답했다 — 줄이 이미 닫혔다
-        if (
-            self._post.row(qid) is not None
-        ):  # 묻는 쪽이 사라져 답이 가지 않았다 — 질문을 버린다
-            self._post.forget_questions_of(f"agent:{q.asker}")
+        if refused:  # 묻는 쪽이 멈췄거나 사라져 받지 못한다 — 그 질문들을 닫고 명단에 알린다 (v10.147.5)
+            self._purge_questions_for(q.asker)
+            return f'the agent that asked "{qid}" has stopped — the question is closed'
         self._save_state()
         return ""
 
@@ -1315,13 +1312,13 @@ class AgentRegistry:
             )
         return 1
 
-    def _deliver_answer(self, q: Question, text: str) -> None:
-        """사람의 답을 asker 에게 — 새 배달(사람 발신이라 ``u-``)로.
+    def _deliver_answer(self, q: Question, text: str) -> str:
+        """사람의 답을 asker 에게 — 새 배달(사람 발신이라 ``u-``)로. `request` 의 거절(묻는 쪽이 받지 못함) 또는 "".
 
         사람이 보낸 것이므로 그 런은 사람 런이다: 결과는 창이 곧 배달이고, 닫는
         법은 사람 요청과 같다(`complete` 의 `answers`). 봉투가 무엇에 대한
         답인지(``re``) 적는다."""
-        self.request(
+        return self.request(
             q.asker,
             f"Your question: {q.text}\nAnswer: {text}",
             author=q.target,
@@ -1341,10 +1338,9 @@ class AgentRegistry:
         ).count
 
     def _purge_questions_for(self, key: str) -> None:
-        """에이전트 사망 정리 — 그가 건 질문은 폐기한다(답할 사람이 트레이에서
-        답해도 받을 곳이 없다). 호출자가 ``not revivable`` 아래에서만 부른다 —
-        세션 종료(``shutdown_all``)에서 지우면 직후의 ``_save_state`` 가 빈 목록을
-        저장해 resume 이 질문을 되살리지 못한다.
+        """그가 건 질문을 닫고(받을 곳이 없다) 저장·명단 알림 — 영구 사망(✕·크래시, ``not revivable``)과 답이
+        거절됐을 때(`answer_question`)만 부른다. 세션 종료(``shutdown_all``)에서 지우면 직후의 ``_save_state`` 가
+        빈 목록을 저장해 resume 이 질문을 되살리지 못한다.
         """
         outgoing = self._post.forget_questions_of(f"agent:{key}")
         if outgoing:
@@ -2345,10 +2341,12 @@ class AgentRegistry:
         return ""
 
     def _end_agent(self, tm: AgentInstance, *, join: bool) -> None:
-        """에이전트의 평생을 끝낸다 — 되살리지 않음·체크인·감시 정리·평생 정지·워커 깨우기(``join`` 이면
+        """에이전트의 평생을 끝낸다 — 되살리지 않음·건 질문 닫기·체크인·감시 정리·평생 정지·워커 깨우기(``join`` 이면
         ≤2s 기다림 — ✕ 는 창을 비우기 전에 기다린다, ■ 는 기다리지 않는다). 빚 알림은 워커의 정리
         (`_answer_after_stop`)가 원인(``stop_cause``)을 보고 한다."""
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
+        # 건 질문은 지금 닫는다 (v10.147.5) — 워커의 정리(다음 턴 경계)까지 미루면 그 사이 트레이에 남아 답이 갈 곳이 없다
+        self._purge_questions_for(tm.key)
         self._cancel_checkins(f"agent:{tm.key}")  # 죽은 에이전트에게 알림이 가지 않게
         # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
         # 현재 턴을 마저 돌고(join 은 best-effort), 그 창에 발화하면 항목이
