@@ -8,10 +8,10 @@ import { escapeHtml } from "./markdown.js";
 import { es } from "./sse.js";
 import {
   attachBusy,
-  attachClear,
   attachMessage,
   attachReadyPaths,
   attachRefreshVision,
+  attachRemove,
 } from "./attach.js";
 import { ovActiveChannel, ovRenderAskTray, postStop } from "./channels.js";
 import { ovSyncChannels } from "./runs.js";
@@ -124,33 +124,61 @@ function postInput(body) {
 
 // 입력창은 항상 chat(3b): 활성 채널로 라우팅(main → /api/input, agent →
 // /api/agent/<key>/input). main 의 prompt/confirm 답변은 글로벌 트레이가 담당.
+// 보낸 글·칩은 서버가 받았을 때만 비운다 — 거절(죽은 에이전트·사라진 첨부 등)이나 네트워크 오류면
+// 사유를 보이고 그대로 남긴다. 보내는 중의 두 번째 보내기는 알리고 받지 않는다(중복·순서 뒤바뀜 없음).
+let sending = false;
 function submitChatOrPrompt() {
   const text = $input.value.trim();
   const images = attachReadyPaths();
   if (!text && !images.length) return;
+  if (sending) {
+    attachMessage("Still sending the previous message");
+    return;
+  }
   if (attachBusy()) {
     attachMessage("Still uploading");
     return;
   }
+  let req;
   if (ovActiveChannel !== "main") {
     // 에이전트 채널도 이미지를 받는다 (v10.61.0): inbox 항목 → 그 런의 시작
     // user 레코드 `images`. 같은 업로드 경로, 같은 `images:[path]` 모양.
     const agentBody = { content: text, conn_id: session.connId };
     if (images.length) agentBody.images = images;
-    fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
+    req = fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(agentBody),
     });
-    $input.value = "";
-    attachClear();
-    return;
+  } else {
+    const body = { kind: "chat", content: text };
+    if (images.length) body.images = images;
+    req = postInput(body);
   }
-  const body = { kind: "chat", content: text };
-  if (images.length) body.images = images;
-  postInput(body);
-  $input.value = "";
-  attachClear();
+  sending = true;
+  req
+    .then(function (r) {
+      if (r.ok) {
+        // 보내는 사이 고쳐 쓴 글·새로 붙인 칩은 남긴다 — 보낸 것만 비운다
+        if ($input.value.trim() === text) $input.value = "";
+        attachRemove(images);
+        return;
+      }
+      return r.json().then(
+        function (d) { sendFailed(d && typeof d.detail === "string" ? d.detail : "HTTP " + r.status); },
+        function () { sendFailed("HTTP " + r.status); }
+      );
+    })
+    .catch(function () {
+      sendFailed("could not reach the server");
+    })
+    .then(function () {
+      sending = false;
+    });
+}
+
+function sendFailed(reason) {
+  attachMessage("Not sent — " + reason);
 }
 
 // main ask 를 접는다 — 409(선착순 소비) / input_resolved 공용.

@@ -55,8 +55,11 @@ export function attachReadyPaths() {
 export function attachBusy() {
   return attachChips.some(function (c) { return c.uploading; });
 }
-export function attachClear() {
-  attachChips.splice(0).forEach(function (c) { c.chip.remove(); });
+// 보낸 칩만 뗀다(``paths`` — 보낼 때의 `attachReadyPaths`) — 보내는 사이 새로 붙인 칩은 남는다.
+export function attachRemove(paths) {
+  for (let i = attachChips.length - 1; i >= 0; i--) {
+    if (paths.indexOf(attachChips[i].path) >= 0) attachChips.splice(i, 1)[0].chip.remove();
+  }
   attachSyncStrip();
 }
 
