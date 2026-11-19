@@ -208,7 +208,8 @@ class TestFailurePolicy:
     def test_run_starting_is_inside_the_runs_try(self):
         """v10.130.6: 런 시작 알림은 ``run_main`` 바로 앞, 같은 try 안 — 표면의 예외도
         런 예외처럼 ``run_failed`` 로 가고, 런은 열리지 않는다(종전 web 의 비전
-        알림이 ``_run_main`` 안에서 돌던 자리와 같다)."""
+        알림이 ``_run_main`` 안에서 돌던 자리와 같다). 예외로 끝난 차례도 끝 정리를 한다(vNEXT — 실패한
+        런처럼, `run_failed` 뒤에)."""
         q = MainInput()
         q.enqueue(None, "hi")
         surface = FakeSurface(swallow_errors=True, fail_on_start=True)
@@ -216,8 +217,11 @@ class TestFailurePolicy:
         make_pump(main_input=q, run_main=run_main, surface=surface).run()
         run_main.assert_not_called()
         kinds = [c[0] for c in surface.calls]
-        assert kinds.index("run_starting") < kinds.index("run_failed")
-        assert "run_ended" not in kinds
+        assert (
+            kinds.index("run_starting")
+            < kinds.index("run_failed")
+            < kinds.index("run_ended")
+        )
         assert surface.calls[-1] == ("bind_stop", False)
 
     def test_a_route_that_raises_goes_to_run_failed_and_the_pump_goes_on(self):
