@@ -582,13 +582,13 @@ def wire_session(
     on_mail_notice=None,
     on_wait_input=None,
 ) -> WiredSession:
-    """메일 복원·자동 스폰(`wire_agent_mail`) → `MainLoop` → `SessionPump` → 예약 스레드.
+    """메일 복원·자동 스폰(`wire_agent_mail`) → `MainLoop` → `MainActor` → 예약 스레드.
     **소비자를 다 세운 뒤에 생산자를 켠다** 가 이 함수 하나에서 보장된다 — 도중에
     죽으면 예약은 켜지지 않는다. ``surface``·``policy`` 는 호스트의 것(펌프 표면·수명),
     ``on_mail_notice`` 는 main 이 바쁠 때의 메일 알림(run 만 — web 은 대기열이 그 자리),
     ``on_wait_input`` 은 제자리 대기를 깨울 사람 입력을 기다리는 법(없으면 main 앞 사람의 말 — run 은
     터미널 줄도). 사람의 말은 ``stores.main_input`` 이다."""
-    from agent_cli.pump import PumpDeps, SessionPump
+    from agent_cli.pump import MainActor, PumpDeps
 
     registry = owners.agent_registry
     main_input = stores.main_input
@@ -615,7 +615,7 @@ def wire_session(
         hooks_config=spec.hooks_config,
         graceful_interrupt=surface.graceful_interrupt,
     )
-    pump = SessionPump(
+    pump = MainActor(
         PumpDeps(
             main_input=main_input,
             agent_registry=registry,

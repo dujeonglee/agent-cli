@@ -3230,7 +3230,7 @@ def web(
 
     def _worker_loop() -> None:
         """Assemble the session and drive the session pump in a background
-        thread (v10.33.1 — the loop itself is ``pump.SessionPump``, shared
+        thread (v10.33.1 — the loop itself is ``pump.MainActor``, shared
         with ``run``; what differs is ``WebSurface`` + ``ForeverPolicy``).
 
         Each ``run_loop`` invocation reuses the same ``ctx``, so history

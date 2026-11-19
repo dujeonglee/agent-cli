@@ -284,7 +284,7 @@ class AgentInstance:
         self.key = key
         self.profile_name = profile_name
         #: run 에이전트(`agent` ``mode`` "run", docs/agent-engine/DESIGN.md §2) — 과제 하나의
-        #: 런이 `complete` 로 끝나면 내려온다(`wait` 로 끝난 런은 아니다 — `_run_ended_by_wait`).
+        #: 런이 `complete` 로 끝나면 내려온다(`wait` 로 끝난 런은 아니다 — `AgentActor.ended_by_wait`).
         #: 그 밖은 spawn 과 같다:
         #: 명단·주소·상한·agents.json·채널. ``task_id`` 가 그 과제 요청의 id 다.
         self.ends_after_task = ends_after_task
@@ -2901,8 +2901,9 @@ class AgentRegistry:
 
         상태 전이는 전부 이 함수 안이다.
         """
+        from agent_cli.actor import run_actor
         from agent_cli.render import get_renderer
-        from agent_cli.subagent.resident_loop import ResidentLoop
+        from agent_cli.subagent.resident_loop import AgentActor, ResidentLoop
 
         renderer = get_renderer()
         _disp = (
@@ -2930,15 +2931,7 @@ class AgentRegistry:
             # (busy/dead 전환만 알리고 최초 idle 을 빠뜨렸었음, v4.62.1).
             self._notify_roster()
 
-            while not tm.stop_event.is_set():
-                items = self._next_run_items(tm)
-                if not items:
-                    break
-                self._begin_items(tm, items)
-                finished = kind.run(kind.start(items))
-                if tm.ends_after_task and not self._run_ended_by_wait(finished):
-                    self._come_down(tm, finished)
-                    break
+            run_actor(AgentActor(self, tm, kind))
         except BaseException as e:
             tm.error = f"{type(e).__name__}: {e}"
             crash = tm.error
@@ -3009,29 +3002,6 @@ class AgentRegistry:
         것이 있어도 런을 열지 않는다). 순서: 정지 먼저 — 깬 워커가 런 도중이면 다음 흡수가 정지를 본다."""
         tm.stop_event.set()
         self._post.close(f"agent:{tm.key}")
-
-    @staticmethod
-    def _run_ended_by_wait(finished) -> bool:
-        """그 런이 `wait` 로 끝났는가 — run 에이전트가 내려오지 않는 유일한 끝이다(깨어 계속한다).
-        그 밖의 끝(`complete`, 턴 상한·오류)은 run 에이전트의 수명 끝이다 (사용자 결정 2026-11-15:
-        회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도 남으면 런 끝
-        폴백이 런 요약으로 회신한다). 런 중간의 `reply` 는 끝이 아니다."""
-        result = finished[0] if isinstance(finished, tuple) else finished
-        return bool(getattr(result, "waiting", False))
-
-    def _come_down(self, tm: AgentInstance, finished) -> None:
-        """run 에이전트가 과제를 마쳤다 — 되살릴 대상이 아니고(채널은 회색으로 남는다),
-        부른 쪽이 건 ``on_task_end``(OnAgentEnd 훅)를 마지막 런의 결과로 한 번 부른다.
-        상태(dead)·저장·로스터는 워커의 정리(`finally`)가 한다."""
-        tm.revivable = False
-        tm.handled = max(tm.handled, 1)
-        hook, tm.on_task_end = tm.on_task_end, None
-        if hook is not None:
-            result = finished[0] if isinstance(finished, tuple) else finished
-            try:
-                hook(result)
-            except Exception:
-                pass  # 훅은 best-effort — 내려오는 길을 막지 않는다
 
     @staticmethod
     def _is_human_direct(item) -> bool:

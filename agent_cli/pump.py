@@ -22,7 +22,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from agent_cli.main_input import CLOSED, MainInput
+from agent_cli.actor import run_actor
+from agent_cli.main_input import MainInput
 
 
 class LifetimePolicy(Protocol):
@@ -163,7 +164,14 @@ class PumpDeps:
     auditor: Any = None
 
 
-class SessionPump:
+class MainActor:
+    """main 의 액터 (`actor.run_actor`) — main 상자에서 런을 열 것(사람의 말 먼저, 없으면 깨우는 메일)을 꺼내, 명령이면
+    그 자리에서 라우팅하고 아니면 런을 돌린다. 수명은 세션이다 — 정책(`LifetimePolicy`)이 끝을 정하거나 상자가 닫힌다.
+
+    런의 예외는 표면이 정한다(`run_failed` — web 은 알리고 계속, run 은 전파). 그 길에서는 런 끝 정리(빚 정리·감사·
+    표면의 `run_ended`)를 부르지 않는다(`tests/test_actor_lifetime.py` 의 웹 main 런 예외 — 끝내기 규칙을 모으는 단계의
+    자리)."""
+
     def __init__(self, deps: PumpDeps):
         self.deps = deps
 
@@ -174,54 +182,84 @@ class SessionPump:
     def run(self) -> None:
         """``KeyboardInterrupt`` 는 잡지 않는다 — 호출자 정책(run 은 중단 안내,
         web 은 uvicorn 이 받는다)."""
-        d = self.deps
-        while True:
-            if d.policy.poll_secs is not None and d.policy.should_stop():
-                return
-            d.surface.idle()
-            # 사람의 말과 메일이 같은 상자·같은 조건변수 — 판정과 대기가 한 락이라 그 사이 온 것을 놓치지 않는다
-            got = d.main_input.wait_to_open(timeout=d.policy.poll_secs)
-            if got is CLOSED:
-                return
-            if got is None:
-                continue  # timeout — 정지 조건을 다시 판정(한가함은 그대로 — 끄면 그 사이 온 메일이 "바쁨" 으로 보인다)
-            # 빈 묶음 = 메일이 연 런(메일은 꺼내지 않았다 — 그 첫 턴 경계가 흡수한다)
-            item = got if got else None
-            d.surface.busy()
-            if item is not None:
-                d.surface.echo(item)
-            # 귀속 승계의 런-시작 스냅샷: run_loop 를 안 타는 라우팅 명령이
-            # 만든 요청도 이 런의 요청자를 물려받는다 — run_loop 는 주입마다
-            # 재갱신한다. 메일 런엔 귀속할 사용자가 없다.
-            author = (item or {}).get("nickname") or None
-            d.agent_registry.set_current_run_authors([author] if author else [])
-            stop_event = threading.Event()
-            d.surface.bind_stop(stop_event)
-            start = d.main.start(item, stop_event)
-            try:
-                try:
-                    # 명령의 라우팅도 런과 같은 보호 안 — 그 예외도 `run_failed` 로 간다(web 은 알리고 계속)
-                    if item is not None and d.surface.route(
-                        start.query, start, item=item
-                    ):
-                        continue
-                    d.surface.run_starting(start)
-                    result = d.main.run(start)
-                    from agent_cli.runtime import main_run_ended
+        run_actor(self)
 
-                    # `wait` 로 끝난 런의 판정은 레지스트리 한 곳(`run_ended`, v10.77.0)
-                    main_run_ended(
-                        d.agent_registry,
-                        getattr(result, "output", "") or "",
-                        waiting=bool(getattr(result, "waiting", False)),
-                    )
-                    if d.auditor is not None:
-                        d.auditor.run_ended(
-                            start, ok=bool(getattr(result, "success", False))
-                        )
-                    d.surface.run_ended(result, start)
-                except Exception as exc:
-                    if not d.surface.run_failed(exc):
-                        raise
+    # ── `actor.Actor` ───────────────────────────────
+
+    @property
+    def poll_secs(self) -> float | None:
+        return self.deps.policy.poll_secs
+
+    def should_stop(self) -> bool:
+        return self.deps.policy.should_stop()
+
+    def idle(self) -> None:
+        self.deps.surface.idle()
+
+    def take(self, timeout: float | None):
+        """사람의 말과 메일이 같은 상자·같은 조건변수 — 판정과 대기가 한 락이라 그 사이 온 것을 놓치지 않는다. 사람의 말
+        항목, 빈 묶음(메일이 연 런 — 메일은 꺼내지 않았다, 그 첫 턴 경계가 흡수한다), `CLOSED`, 또는 None(시한 —
+        한가함은 그대로: 끄면 그 사이 온 메일이 "바쁨" 으로 보인다)."""
+        return self.deps.main_input.wait_to_open(timeout=timeout)
+
+    def open(self, got):
+        """그 차례의 시작 — 사람의 말이면 말풍선을 내고, 명령이면 그 자리에서 라우팅하고 None(런을 열지 않는다)."""
+        d = self.deps
+        item = got if got else None
+        d.surface.busy()
+        if item is not None:
+            d.surface.echo(item)
+        # 귀속 승계의 런-시작 스냅샷: run_loop 를 안 타는 라우팅 명령이
+        # 만든 요청도 이 런의 요청자를 물려받는다 — run_loop 는 주입마다
+        # 재갱신한다. 메일 런엔 귀속할 사용자가 없다.
+        author = (item or {}).get("nickname") or None
+        d.agent_registry.set_current_run_authors([author] if author else [])
+        stop_event = threading.Event()
+        d.surface.bind_stop(stop_event)
+        start = d.main.start(item, stop_event)
+        if item is None:
+            return start
+        # 명령의 라우팅도 런과 같은 보호 안 — 그 예외도 `run_failed` 로 간다(web 은 알리고 계속)
+        try:
+            routed = d.surface.route(start.query, start, item=item)
+        except Exception as exc:
+            try:
+                if not d.surface.run_failed(exc):
+                    raise
             finally:
                 d.surface.bind_stop(None)
+            return None
+        if routed:
+            d.surface.bind_stop(None)
+            return None
+        return start
+
+    def run_start(self, start):
+        """런 하나와 그 끝 정리 — 같은 보호 안(예외는 `run_failed`, 정리는 건너뛴다). 끝나면 중단 핸들을 푼다."""
+        d = self.deps
+        try:
+            try:
+                d.surface.run_starting(start)
+                result = d.main.run(start)
+                from agent_cli.runtime import main_run_ended
+
+                # `wait` 로 끝난 런의 판정은 레지스트리 한 곳(`run_ended`, v10.77.0)
+                main_run_ended(
+                    d.agent_registry,
+                    getattr(result, "output", "") or "",
+                    waiting=bool(getattr(result, "waiting", False)),
+                )
+                if d.auditor is not None:
+                    d.auditor.run_ended(
+                        start, ok=bool(getattr(result, "success", False))
+                    )
+                d.surface.run_ended(result, start)
+            except Exception as exc:
+                if not d.surface.run_failed(exc):
+                    raise
+        finally:
+            d.surface.bind_stop(None)
+
+    def ended(self, start, finished) -> bool:
+        """main 의 수명은 세션이다 — 런 하나로 끝나지 않는다."""
+        return False

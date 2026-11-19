@@ -41,6 +41,13 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 `wait_to_open`(창구)·`start_run`·`OPEN_MAIL` 은 없다. 에이전트의 평생 정지는 상자를 닫는 것이다(`_stop_worker` —
 정지 세우기 → 닫기); 기다리는 워커는 닫힘으로 깨어 나오고, 같은 세션에서 되살리면 상자를 다시 연다(`reopen`).
 
+**v10.151.0 — 런을 여는 루프가 하나다.** `actor.run_actor` 가 기다림(`take`) → 열기(`open` — None 이면 런을 열지 않은
+차례) → 런(`run_start`) → 끝 판정(`ended` — 참이면 액터의 수명 끝)을 되풀이한다. 구현은 둘이다: main 의 `MainActor`
+(옛 `SessionPump` — 정책·표면·명령 라우팅·런 끝 정리를 들고, 수명은 세션)와 에이전트 워커의 `AgentActor`
+(`subagent/resident_loop.py` — 꺼내기는 레지스트리의 `_next_run_items`, run 에이전트는 `wait` 로 끝나지 않은 런 뒤
+내려온다). 루프는 예외를 잡지 않는다 — main 의 런 예외는 표면의 `run_failed`, 에이전트의 것은 종류의 `crashed`.
+아래의 `SessionPump` 는 그 전의 이름이다.
+
 ## 1. 왜
 
 `agent-cli run` 과 `agent-cli web` 은 이미 같은 부품을 쓴다 — `InputQueue`,

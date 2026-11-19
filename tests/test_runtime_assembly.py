@@ -556,7 +556,7 @@ class TestExitPathConvergence:
         wire = _def_src(_RUNTIME_SRC, "wire_session")
         assert wire.count("stores.schedules.start()") == 1
         start = wire.index("stores.schedules.start()")
-        assert wire.index("SessionPump(") < start, "펌프보다 먼저 켠다"
+        assert wire.index("MainActor(") < start, "펌프보다 먼저 켠다"
         assert wire.index("wire_agent_mail(") < start
         assert wire.index("MainLoop(") < start
         assert "schedules.enqueue =" in _def_src(_RUNTIME_SRC, "build_session_stores")
@@ -641,7 +641,7 @@ class TestExitPathConvergence:
                 "build_agent_registry(",
                 "wire_agent_mail(",
                 "MainLoop(",
-                "SessionPump(",
+                "MainActor(",
                 "teardown_session(",
                 "AgentRuntime(",
                 "build_auditor(",
@@ -693,7 +693,7 @@ class TestExitPathConvergence:
 
 
 class _ItemsPump:
-    """SessionPump 대역 — main 상자 대신 ``items`` ``[(text, wake), …]`` 를 펌프와 같은
+    """MainActor 대역 — main 상자 대신 ``items`` ``[(text, wake), …]`` 를 펌프와 같은
     순서(echo → 라우팅 → 런 → run_ended)로 한 번씩 돌린다. ``wake`` 는 메일이 연 런."""
 
     items = (("hi", False),)
@@ -741,7 +741,7 @@ class TestRunCommandTeardownIntegration:
     def _run_with(
         self, query, *, pump=None, dispatch_result=False, run_loop=None, args=()
     ):
-        """``pump`` 는 SessionPump 대역 클래스(기본 :class:`_ItemsPump` — 큐
+        """``pump`` 는 MainActor 대역 클래스(기본 :class:`_ItemsPump` — 큐
         대신 ``items`` 를 한 번씩 돌린다)."""
         from contextlib import ExitStack
 
@@ -791,7 +791,7 @@ class TestRunCommandTeardownIntegration:
                 )
             )
             st.enter_context(patch("agent_cli.loop.run.run_loop", run_loop))
-            st.enter_context(patch("agent_cli.pump.SessionPump", pump))
+            st.enter_context(patch("agent_cli.pump.MainActor", pump))
             td = st.enter_context(patch("agent_cli.runtime.teardown_session"))
             result = self._invoke_cli(query, *args)
             calls["teardown"] = td

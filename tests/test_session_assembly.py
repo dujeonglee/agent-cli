@@ -101,7 +101,7 @@ def _patch_parts(st: ExitStack, order: list, *, mainloop_boom=False):
 
     st.enter_context(patch.object(R, "MainLoop", _mainloop))
     st.enter_context(
-        patch("agent_cli.pump.SessionPump", rec("pump", lambda: MagicMock()))
+        patch("agent_cli.pump.MainActor", rec("pump", lambda: MagicMock()))
     )
     return SimpleNamespace(jobs=jobs, schedules=schedules, registry=registry)
 
@@ -391,7 +391,7 @@ class TestSpecHooks:
             patch("agent_cli.knobs.apply_all"),
             patch.object(R, "wire_agent_mail", return_value=(0, 0)),
             patch.object(R, "MainLoop", lambda **kw: loops.append(kw)),
-            patch("agent_cli.pump.SessionPump"),
+            patch("agent_cli.pump.MainActor"),
         ):
             stores = SessionStores(
                 monitors=None,

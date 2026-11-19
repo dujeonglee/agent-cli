@@ -92,11 +92,11 @@ def make_pump(
     ``policy`` 를 주면 그 수명 정책으로(기본은 run 의 `QuietPolicy`)."""
     from types import SimpleNamespace
 
-    from agent_cli.pump import PumpDeps, QuietPolicy, SessionPump
+    from agent_cli.pump import MainActor, PumpDeps, QuietPolicy
     from agent_cli.runtime import MainLoop
 
     registry = registry if registry is not None else FakeRegistry()
-    return SessionPump(
+    return MainActor(
         PumpDeps(
             main_input=main_input,
             agent_registry=registry,

@@ -25,6 +25,7 @@ from agent_cli.subagent.delegation_checks import (
     depth_or_recursion_refusal,
     run_refusal,
 )
+from agent_cli.subagent.resident_loop import AgentActor
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller, runtime_of
@@ -368,7 +369,7 @@ class TestNoHiddenSideEffects:
         reg.agent_limit_refusal()
         agent_wake_lines(reg, "main")
         reg.awaited_replies("main")
-        reg._run_ended_by_wait((ToolResult(True, output="x"), 0.0))
+        AgentActor.ended_by_wait((ToolResult(True, output="x"), 0.0))
         assert writes == []
         assert not tm.stop_event.is_set() and tm.state == "idle"
 
