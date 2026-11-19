@@ -6,12 +6,11 @@ agent-cli 는 옛 이름을 import 해서 2.x 의 streamable-http 서버에는 �
 연결·호출·상한 포기·해제를 본다.
 
 가짜 서버는 ``tests/fixtures/slow_mcp_server.py`` 를 HTTP 모드로 — 127.0.0.1 의 OS 가 고른 포트.
-mcp 1.6·1.7 에는 streamable-http 가 클라이언트·서버 모두 없어 그 경우만 건너뛴다.
+CI 의 두 잡이 하한(min-deps)과 최신 SDK 에서 같은 테스트를 돌린다.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import subprocess
 import sys
@@ -32,18 +31,9 @@ from tests.test_mcp_call_limit import (
     wait_until,
 )
 
-HAS_STREAMABLE_HTTP = importlib.util.find_spec("mcp.client.streamable_http") is not None
-
 TRANSPORTS = [
     pytest.param(("sse", "/sse"), id="sse"),
-    pytest.param(
-        ("streamable-http", "/mcp"),
-        id="streamable-http",
-        marks=pytest.mark.skipif(
-            not HAS_STREAMABLE_HTTP,
-            reason="this mcp SDK has no streamable-http (added in 1.8)",
-        ),
-    ),
+    pytest.param(("streamable-http", "/mcp"), id="streamable-http"),
 ]
 
 
@@ -86,6 +76,19 @@ def _disconnect_within_bound(m: McpClientManager) -> None:
     t.start()
     t.join(NO_HANG_S)
     assert not t.is_alive(), "disconnect_all 이 돌아오지 않았다"
+
+
+def test_connect_call_and_disconnect(http_server):
+    """모든 SDK 판(하한 1.9 포함)에서 — 연결하고, 도구 목록을 받고, 부르고, 끊는다."""
+    transport, url, _marks = http_server
+    m = _connect(transport, url, limit_s=NO_HANG_S)
+    try:
+        assert {t.name for t in m.list_tools("h")} >= {"fast", "sleep", "hang"}
+        assert McpTool(m, "h", "fast", "", {}).run({"text": "x"}).output == "fast:x"
+        assert McpTool(m, "h", "fast", "", {}).run({"text": "y"}).output == "fast:y"
+    finally:
+        _disconnect_within_bound(m)
+    assert m._thread is None
 
 
 def test_connect_call_give_up_and_disconnect(http_server):

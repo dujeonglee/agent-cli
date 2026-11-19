@@ -476,9 +476,8 @@ class TestMcpSdkIsADeclaredDependency:
         )
 
     def test_stdio_client_accepts_errlog(self):
-        """하한 1.6 의 근거. ``errlog`` 는 1.6.0 에 들어왔고 1.4.0 엔 없다 —
-        없는 SDK 로는 ``_open_transport`` 가 TypeError 로 깨진다. SDK 를
-        올리다 이 인자가 사라지면 여기서 먼저 잡힌다."""
+        """``_open_transport`` 가 쓰는 ``errlog`` — 1.6.0 에 들어와 하한보다 아래다. SDK 를 올리다
+        이 인자가 사라지면 ``_open_transport`` 가 TypeError 로 깨지기 전에 여기서 먼저 잡힌다."""
         import inspect
 
         from mcp.client.stdio import stdio_client
@@ -758,8 +757,7 @@ class TestStreamableHttpTransport:
     @staticmethod
     def _which_transport(monkeypatch, cfg, http_names=("streamablehttp_client",), n=3):
         """``_open_transport`` 가 고른 SDK 함수 이름과 받은 스트림 — 두 원격 전송 모듈을 가짜로 바꿔
-        본다(SDK 세대마다 모듈·이름이 달라 진짜 모듈에 덧대지 않는다: 1.6 에는 streamable_http 가
-        없다). ``http_names`` 는 가짜 streamable_http 모듈에 둘 함수 이름들, ``n`` 은 그 함수가 내주는
+        본다(설치된 SDK 는 한 세대뿐이라 진짜 모듈로는 다른 세대의 이름·모양을 볼 수 없다). ``http_names`` 는 가짜 streamable_http 모듈에 둘 함수 이름들, ``n`` 은 그 함수가 내주는
         값 수(1.x 는 3, 2.x 는 2). 실제 SDK 와의 연결은 tests/test_mcp_http.py 가 본다."""
         import asyncio
         import contextlib
@@ -805,7 +803,7 @@ class TestStreamableHttpTransport:
             name="s", url="http://h/mcp", transport="streamable-http"
         )
 
-    def test_streamable_http_on_sdk_1_8_to_1_23_uses_the_old_name(self, monkeypatch):
+    def test_streamable_http_on_sdk_before_1_24_uses_the_old_name(self, monkeypatch):
         cfg = self._http_cfg()
         assert self._which_transport(monkeypatch, cfg) == (
             "streamablehttp_client",

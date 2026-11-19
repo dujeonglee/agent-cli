@@ -12,8 +12,8 @@
 끝나지 않아, 테스트가 정리 전에 죽으면(SIGKILL·시간 초과) 고아로 남았다.
 """
 
-from __future__ import annotations
-
+# ``from __future__ import annotations`` 를 쓰지 않는다 — mcp 1.8·1.9 의 FastMCP 는 도구 인자의 주석을
+# ``issubclass`` 로 보아, 문자열이 된 주석에서 TypeError 로 서버가 뜨지 못한다(실측).
 import asyncio
 import os
 import sys
@@ -25,7 +25,7 @@ try:
     from mcp.server.fastmcp import FastMCP
 except (
     ModuleNotFoundError
-):  # mcp 2.x — FastMCP 가 MCPServer 로 이름이 바뀌었다(핀은 `mcp>=1.6,<3`)
+):  # mcp 2.x — FastMCP 가 MCPServer 로 이름이 바뀌었다(핀은 `mcp>=1.9,<3`)
     from mcp.server.mcpserver import MCPServer as FastMCP
 
 MARKS = Path(sys.argv[1])

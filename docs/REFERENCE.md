@@ -6,7 +6,7 @@ ReAct 패턴 기반 에이전트 CLI. 멀티 프로바이더(OpenAI, Anthropic) 
 
 ## 설치
 
-Python 3.10+ 필요. 의존성 하한(`pyproject.toml`)은 쓰는 API 가 들어온 버전이고, CI `min-deps` 잡이 Python 3.10 에 하한 버전들을 실제로 깔아 유닛 수트를 돌린다(v10.124.1).
+Python 3.10+ 필요. 의존성 하한(`pyproject.toml`)은 쓰는 API 가 들어온 버전이고, CI `min-deps` 잡이 Python 3.10 에 하한 버전들을 실제로 깔아 유닛 수트를 돌린다(v10.124.1). MCP SDK 는 `mcp>=1.9,<3` 이다(vNEXT, 종전 1.6 — streamable-http 전송이 제대로 도는 첫 판; 1.6~1.8 환경은 업데이트할 때 함께 올라간다).
 
 ```bash
 # 설치 (기본 브랜치의 최신 — 릴리스 태그로 고정하려면 URL 끝에 @<태그>, 목록은 GitHub Releases)
@@ -2097,7 +2097,7 @@ agent-cli web --resume <session_id>   # 이전 세션 이어서 작업
 
 ### MCP (Model Context Protocol) 지원
 
-외부 MCP 서버의 도구를 agent-cli에서 사용할 수 있습니다. MCP 클라이언트 SDK(`mcp`)는 **기본 설치에 포함**됩니다 (v8.62.0 — 그 전에는 별도 설치가 필요했고, 없으면 서버 연결이 stderr 경고 한 줄로 조용히 실패해 도구만 사라졌습니다).
+외부 MCP 서버의 도구를 agent-cli에서 사용할 수 있습니다. MCP 클라이언트 SDK(`mcp`)는 **기본 설치에 포함**됩니다 (v8.62.0 — 그 전에는 별도 설치가 필요했고, 없으면 서버 연결이 stderr 경고 한 줄로 조용히 실패해 도구만 사라졌습니다). 필요한 판은 **`mcp>=1.9,<3`** 입니다(vNEXT, 종전 1.6) — streamable-http 전송이 제대로 도는 첫 판이기 때문입니다(1.6·1.7 에는 이 전송이 없어 그 서버의 연결이 import 오류로 실패했고, 1.8 의 클라이언트는 요청을 하나씩만 보내 상한으로 포기한 호출 하나가 그 연결을 막았습니다). 1.6~1.8 이 깔린 환경은 `agent-cli update`(또는 다시 설치)할 때 pip 가 mcp 를 함께 올립니다.
 
 #### 등록 — `agent-cli mcp` (v9.1.0)
 
@@ -2142,7 +2142,7 @@ agent-cli mcp remove <이름>
 ```
 
 - **stdio**: `command` + `args` — 로컬 프로세스로 실행
-- **Streamable HTTP**: `url` + `transport: "streamable-http"` — MCP 2025-03-26 의 원격 전송(현재 권장). `streamable_http` · `http` 도 같은 뜻으로 받습니다. mcp SDK 1.8 이상이 필요합니다(1.6·1.7 에는 이 전송이 없어 그 서버의 연결이 실패합니다). mcp 2.x 에서도 붙습니다(vNEXT — 전에는 2.x 에서 `cannot import name 'streamablehttp_client'` 로 연결되지 않았습니다).
+- **Streamable HTTP**: `url` + `transport: "streamable-http"` — MCP 2025-03-26 의 원격 전송(현재 권장). `streamable_http` · `http` 도 같은 뜻으로 받습니다. mcp 2.x 에서도 붙습니다(vNEXT — 전에는 2.x 에서 `cannot import name 'streamablehttp_client'` 로 연결되지 않았습니다).
 - **SSE**: `url` + `transport: "sse"` — 구 HTTP+SSE 전송
 - **로컬/원격은 `url` 키의 유무로 결정**됩니다. `url` 이 없으면 `stdio` — `transport: "sse"` 를 적어도 `url` 이 없으면 stdio 로 취급됩니다. `url` 이 있는데 `transport` 를 생략하면 **`sse`** 입니다(기존 설정 호환). 신규 서버는 대개 Streamable HTTP 이니 `agent-cli mcp add` 로 등록하거나 `transport` 를 명시하세요.
 
