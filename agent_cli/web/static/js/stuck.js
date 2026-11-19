@@ -10,6 +10,8 @@
 import { el } from "./dom.js";
 import { session } from "./state.js";
 import { es } from "./sse.js";
+import { attachMessage } from "./attach.js";
+import { sendOnce } from "./send.js";
 
 const $stuck = document.getElementById("stuck-band");
 let stStopping = false;
@@ -18,16 +20,27 @@ function stStop(asking) {
   if (stStopping) return;
   stStopping = true;
   render(lastStuck);
-  const req = asking
-    ? fetch("api/input", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: "confirm", key: "s", comment: "", conn_id: session.connId }),
-      })
-    : fetch("api/stop", { method: "POST" });
-  req.catch(function () {
-    /* network blip — 런은 사람이 다시 누르거나 스스로 끝난다 */
-  });
+  // 상한 없이 — 늦게라도 닿으면 멈춘다. 닿지 못했거나 거절이면 "Stopping…" 을 풀고 사유 (vNEXT)
+  sendOnce(
+    { sending: false },
+    function (signal) {
+      return asking
+        ? fetch("api/input", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "confirm", key: "s", comment: "", conn_id: session.connId }),
+            signal: signal,
+          })
+        : fetch("api/stop", { method: "POST", signal: signal });
+    },
+    function (failure) {
+      if (!failure) return;
+      stStopping = false;
+      render(lastStuck);
+      attachMessage("Not stopped — " + failure);
+    },
+    { limit: false }
+  );
 }
 
 let lastStuck = null;

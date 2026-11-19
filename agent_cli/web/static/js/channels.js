@@ -473,15 +473,27 @@ export function ovJump(key) {
 })();
 
 // 정지 요청 하나 (v10.142.0) — ``/api/stop`` 의 범위: "main" · "agents" · "all". 결과는 SSE(worker_state·
-// 명단)가 그린다.
-export function postStop(scope) {
-  return fetch("api/stop", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scope: scope }),
-  }).catch(function () {
-    /* network blip — the run ends on its own anyway */
-  });
+// 명단)가 그린다. 상한이 없다 — 막힌 연결에서도 늦게라도 닿으면 멈춘다(사용자 결정 vNEXT). 닿지 못했거나 서버가
+// 거절하면 ``failed(사유)`` 를 한 번 부르고 입력창 아래에 ``Not stopped — <사유>`` 를 세운다. ``stopped: false``
+// ("돌던 턴 없음")는 실패가 아니다.
+export function postStop(scope, failed) {
+  sendOnce(
+    { sending: false },
+    function (signal) {
+      return fetch("api/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: scope }),
+        signal: signal,
+      });
+    },
+    function (failure) {
+      if (!failure) return;
+      if (failed) failed(failure);
+      attachMessage("Not stopped — " + failure);
+    },
+    { limit: false }
+  );
 }
 
 /** Scroll the TIMELINE CONTAINER to a card — never scrollIntoView, which

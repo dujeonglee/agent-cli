@@ -301,7 +301,12 @@ function requestStop(scope) {
     session.stopRequested = true;
     updateSendEnabled();
   }
-  postStop(scope);
+  // 닿지 못했으면 "Stopping…" 을 푼다 — 다시 누를 수 있게 (vNEXT; 종전엔 그 런이 끝날 때까지 잠겼다)
+  postStop(scope, function () {
+    if (scope === "agents") return;
+    session.stopRequested = false;
+    updateSendEnabled();
+  });
 }
 
 function closeStopMenu() {
