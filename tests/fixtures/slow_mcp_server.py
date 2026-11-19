@@ -31,7 +31,9 @@ except (
 MARKS = Path(sys.argv[1])
 MARKS.mkdir(parents=True, exist_ok=True)
 (MARKS / "server.pid").write_text(str(os.getpid()))
-PARENT = os.getppid()
+# 띄운 프로세스 — 띄운 쪽이 ``SLOW_MCP_PARENT`` 로 알려 준다. ``getppid()`` 를 여기서 읽으면, 띄운 쪽이
+# 이 줄에 닿기 전에 죽은 경우(SIGKILL 직후 막 뜬 서버) 이미 새 부모를 적어 영영 알아채지 못한다(실측).
+PARENT = int(os.environ.get("SLOW_MCP_PARENT") or os.getppid())
 
 
 def _exit_when_orphaned() -> None:

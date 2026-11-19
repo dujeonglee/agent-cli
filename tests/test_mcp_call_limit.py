@@ -41,6 +41,12 @@ from agent_cli.tools.base import RunContext
 SERVER = Path(__file__).parent / "fixtures" / "slow_mcp_server.py"
 
 
+def server_env() -> dict[str, str]:
+    """가짜 서버에 넘길 환경 — 띄운 프로세스(이 테스트)의 PID. 서버는 그 PID 가 부모가 아니게 되면
+    스스로 끝난다(``slow_mcp_server.py`` 의 ``PARENT``)."""
+    return {"SLOW_MCP_PARENT": str(os.getpid())}
+
+
 def _ticks(*values: float):
     """부를 때마다 다음 값을 내는 가짜 시계 — 마지막 값에서 멈춘다."""
     it = iter(values)
@@ -285,12 +291,14 @@ def servers(tmp_path_factory):
             name="quick",
             command=sys.executable,
             args=[str(SERVER), str(marks["quick"])],
+            env=server_env(),
             call_timeout_s=0.5,
         ),
         "patient": McpServerConfig(
             name="patient",
             command=sys.executable,
             args=[str(SERVER), str(marks["patient"])],
+            env=server_env(),
             call_timeout_s=60,
         ),
     }

@@ -25,7 +25,14 @@ import pytest
 from agent_cli.mcp.adapter import McpTool
 from agent_cli.mcp.client import McpClientManager
 from agent_cli.mcp.config import McpServerConfig
-from tests.test_mcp_call_limit import NO_HANG_S, SERVER, _alive, loop_tasks, wait_until
+from tests.test_mcp_call_limit import (
+    NO_HANG_S,
+    SERVER,
+    _alive,
+    loop_tasks,
+    server_env,
+    wait_until,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -35,6 +42,7 @@ def _config(name: str, marks: Path, limit_s: float = 60) -> McpServerConfig:
         name=name,
         command=sys.executable,
         args=[str(SERVER), str(marks)],
+        env=server_env(),
         call_timeout_s=limit_s,
     )
 
@@ -81,7 +89,9 @@ from agent_cli.mcp.adapter import McpTool
 from agent_cli.mcp.client import McpClientManager
 from agent_cli.mcp.config import McpServerConfig
 m = McpClientManager()
+import os
 cfg = McpServerConfig(name="s", command=sys.executable, args=[sys.argv[2], sys.argv[3]],
+                      env={"SLOW_MCP_PARENT": str(os.getpid())},
                       call_timeout_s=0.5)
 status = m.connect_all({"s": cfg}, warn=False)
 hang = McpTool(m, "s", "hang", "", {}).run({"tag": "child"}).error if sys.argv[4] == "hang" else ""
@@ -292,7 +302,10 @@ def test_a_server_that_never_answers_initialize_fails_at_the_limit_and_ends(tmp_
     프로세스는 끝난다. 그 서버는 영영 답하지 않으니 상한이 짧아도 결과가 시간에 기대지 않는다."""
     m = McpClientManager(connect_timeout_s=0.5)
     mute_cfg = McpServerConfig(
-        name="mute", command=sys.executable, args=[str(SERVER), str(tmp_path), "mute"]
+        name="mute",
+        command=sys.executable,
+        args=[str(SERVER), str(tmp_path), "mute"],
+        env=server_env(),
     )
     try:
         t, box = _in_thread(lambda: m.connect_all({"mute": mute_cfg}, warn=False))

@@ -12,6 +12,7 @@ mcp 1.6·1.7 에는 streamable-http 가 클라이언트·서버 모두 없어 �
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 import threading
@@ -21,7 +22,14 @@ import pytest
 from agent_cli.mcp.adapter import McpTool
 from agent_cli.mcp.client import McpClientManager
 from agent_cli.mcp.config import McpServerConfig
-from tests.test_mcp_call_limit import NO_HANG_S, SERVER, _alive, loop_tasks, wait_until
+from tests.test_mcp_call_limit import (
+    NO_HANG_S,
+    SERVER,
+    _alive,
+    loop_tasks,
+    server_env,
+    wait_until,
+)
 
 HAS_STREAMABLE_HTTP = importlib.util.find_spec("mcp.client.streamable_http") is not None
 
@@ -45,6 +53,7 @@ def http_server(request, tmp_path):
     proc = subprocess.Popen(
         [sys.executable, str(SERVER), str(tmp_path), transport],
         stdin=subprocess.DEVNULL,
+        env={**os.environ, **server_env()},
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
