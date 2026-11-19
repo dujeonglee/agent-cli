@@ -284,7 +284,7 @@ class AgentInstance:
         self.key = key
         self.profile_name = profile_name
         #: run 에이전트(`agent` ``mode`` "run", docs/agent-engine/DESIGN.md §2) — 과제 하나의
-        #: 런이 `complete` 로 끝나면 내려온다(`wait` 로 끝난 런은 아니다 — `AgentActor.ended_by_wait`).
+        #: 런이 `complete` 로 끝나면 내려온다(`wait` 로 끝난 런은 아니다 — `RunEnd.waiting`).
         #: 그 밖은 spawn 과 같다:
         #: 명단·주소·상한·agents.json·채널. ``task_id`` 가 그 과제 요청의 id 다.
         self.ends_after_task = ends_after_task

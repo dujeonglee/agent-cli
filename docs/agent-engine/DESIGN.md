@@ -86,7 +86,7 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
   밖으로 두고, 에이전트(run·spawn)는 종전부터 회신·통지를 항목으로 올리지 않았다(시작 항목·흡수 항목 모두). 작업·모니터·
   사망·체크인·하니스 메일의 규칙은 그대로다.
 - **내려옴 (사용자 결정).** run 에이전트는 런이 `complete` 로 끝날 때 내려온다 — `complete` 는 모든 루프에서 런을 끝내는
-  동사이고, run 에이전트에게는 그게 곧 수명 끝이다(`AgentActor.ended_by_wait` 가 아니면 내려옴; 턴 상한·오류로 끝난 런도
+  동사이고, run 에이전트에게는 그게 곧 수명 끝이다(`AgentActor.ended` — 런 끝 사실 `RunEnd` 가 `wait` 가 아니면 내려옴; 턴 상한·오류로 끝난 런도
   끝이다). `wait` 로 끝난 런(자기 하위 run 을 기다림)은 내려오지 않고 깨어 계속하다 `complete` 때 내려온다. 런 중간에
   `reply` 를 먼저 보내도 내려오지 않는다. 회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도
   남으면 런 끝 폴백이 런 요약으로 회신한다. 정지(■·✕)로 끊긴 run 도 내려온다 — 요청자에게는 stopped 회신(§2.3).

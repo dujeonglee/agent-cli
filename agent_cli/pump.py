@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from agent_cli.actor import run_actor
+from agent_cli.actor import RunEnd, run_actor
 from agent_cli.main_input import MainInput
 
 
@@ -234,32 +234,47 @@ class MainActor:
             return None
         return start
 
-    def run_start(self, start):
-        """런 하나와 그 끝 정리 — 같은 보호 안(예외는 `run_failed`, 정리는 건너뛴다). 끝나면 중단 핸들을 푼다."""
+    def run_start(self, start) -> RunEnd:
+        """런 하나 — 그 끝의 사실(`RunEnd`). 런의 예외는 표면이 정한다(`run_failed`: web 은 삼켜 ``crashed`` 로,
+        run 은 전파). 예외 길은 여기서 중단 핸들을 푼다 — 정상 길은 끝 정리(`ended`) 뒤에 푼다."""
+        d = self.deps
+        try:
+            d.surface.run_starting(start)
+            result = d.main.run(start)
+        except Exception as exc:
+            try:
+                if not d.surface.run_failed(exc):
+                    raise
+            finally:
+                d.surface.bind_stop(None)
+            return RunEnd.crashed(exc)
+        stop = getattr(start, "stop_event", None)
+        return RunEnd.of(result, stopped=bool(stop is not None and stop.is_set()))
+
+    def ended(self, start, end: RunEnd) -> bool:
+        """런 끝 정리 — 빚 정리·감사·표면의 런 끝, 같은 보호 안(예외는 `run_failed`). 끝나면 중단 핸들을 푼다.
+        main 의 수명은 세션이다 — 런 하나로 끝나지 않는다.
+
+        예외로 끝난 런(``crashed``)은 정리하지 않는다 — 지금 동작(`tests/test_actor_lifetime.py`), 끝내기 규칙을
+        모으는 단계가 바꾼다. main 의 정리는 아직 ``stopped``·``failed`` 를 가르지 않는다(보통의 끝으로 — 같은
+        단계가 바꾼다)."""
+        if end.outcome == "crashed":
+            return False
         d = self.deps
         try:
             try:
-                d.surface.run_starting(start)
-                result = d.main.run(start)
                 from agent_cli.runtime import main_run_ended
 
                 # `wait` 로 끝난 런의 판정은 레지스트리 한 곳(`run_ended`, v10.77.0)
-                main_run_ended(
-                    d.agent_registry,
-                    getattr(result, "output", "") or "",
-                    waiting=bool(getattr(result, "waiting", False)),
-                )
+                main_run_ended(d.agent_registry, end.output, waiting=end.waiting)
                 if d.auditor is not None:
                     d.auditor.run_ended(
-                        start, ok=bool(getattr(result, "success", False))
+                        start, ok=bool(getattr(end.result, "success", False))
                     )
-                d.surface.run_ended(result, start)
+                d.surface.run_ended(end.result, start)
             except Exception as exc:
                 if not d.surface.run_failed(exc):
                     raise
         finally:
             d.surface.bind_stop(None)
-
-    def ended(self, start, finished) -> bool:
-        """main 의 수명은 세션이다 — 런 하나로 끝나지 않는다."""
         return False

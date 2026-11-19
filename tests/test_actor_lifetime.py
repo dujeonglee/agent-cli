@@ -115,3 +115,30 @@ class TestMainRunEnd:
         assert seen == ["boom", "fine"]
         assert reg.ended == [("main", "ok", False)]  # 예외로 끝난 런의 정리는 없다
         assert [c[0] for c in surface.calls].count("run_failed") == 1
+
+
+class TestMainRunEndOrder:
+    def test_a_cleanup_that_raises_goes_to_run_failed_then_the_stop_handle_is_released(
+        self,
+    ):
+        """끝 정리 안의 예외도 런과 같은 보호 안 — `run_failed` 뒤에 중단 핸들을 푼다(정리를 두 번 하지 않는다)."""
+        q = MainInput()
+        q.enqueue(None, "hi")
+        surface = FakeSurface(swallow_errors=True)
+        surface.run_ended = lambda result, start: (_ for _ in ()).throw(
+            RuntimeError("cleanup bug")
+        )
+        reg = FakeRegistry()
+        pump = make_pump(
+            main_input=q,
+            run_main=lambda s: ToolResult(True, output="ok"),
+            registry=reg,
+            surface=surface,
+        )
+        pump.run()
+        kinds = [c[0] for c in surface.calls]
+        assert kinds[-2:] == ["run_failed", "bind_stop"] and surface.calls[-1] == (
+            "bind_stop",
+            False,
+        )
+        assert reg.ended == [("main", "ok", False)]  # 정리는 한 번
