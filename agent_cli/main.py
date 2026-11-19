@@ -2322,7 +2322,7 @@ def _terminal_steer_input(main_input, surface):
 
     명령(``surface.is_command``, ``/stop agt-3`` 등)은 줄 선 것이든 친 것이든 그 자리에서 ``surface.route`` 하고
     기다림을 깨우지 않는다 — 깨우면 main 이 "사용자가 썼다" 로 깨어 그 말이 없는 관찰을 읽는다(명령은 흡수 때
-    소비된다). 멈춘 에이전트의 회신이 따로 깨운다 (vNEXT: 줄 선 명령도 — 종전엔 친 줄만)."""
+    소비된다). 멈춘 에이전트의 회신이 따로 깨운다 (v10.148.0: 줄 선 명령도 — 종전엔 친 줄만)."""
     import select
 
     from agent_cli.runtime import wait_for_human_words

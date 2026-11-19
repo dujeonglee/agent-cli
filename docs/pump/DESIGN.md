@@ -24,7 +24,7 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 그 창구를 받는다(`build_agent_registry(post=…)`). 아래 §3 의 그림과 §3.4 의 깨우기 이야기는 그 전의 기록이다 — 지금의
 루프는 `agent_cli/pump.py` 의 `SessionPump.run` 이다.
 
-**vNEXT — 런은 상자가 연다, 표면은 `Start` 를 받는다.** 펌프 고유의 요청 타입(`RunRequest`)과 깨우기 문장·작성자
+**v10.148.0 — 런은 상자가 연다, 표면은 `Start` 를 받는다.** 펌프 고유의 요청 타입(`RunRequest`)과 깨우기 문장·작성자
 (`WAKE_TEXT`·`WAKE_AUTHOR`)가 없어졌다. 펌프는 꺼낸 사람의 말(또는 깨우는 메일)을 `MainLoop.start(item, stop_event)`
 에 넘겨 엔진의 `Start` 를 짓는다 — 사람의 말이면 그 말이 시작(``author_is_user=True``, 작성자는 별명, 없으면 argv
 질의), 메일이면 빈 시작(``author_is_user=False`` — 첫 입력은 첫 턴 경계가 배달하는 메일). 표면은 그 `Start` 를
@@ -110,7 +110,7 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 class PumpDeps:          # 세션 수명 객체 — 한 번 조립
     main_input: MainInput          # v10.147.0 — 종전 queue: InputQueue + waker: MailWaker
     agent_registry: AgentRegistry
-    main: MainLoop                 # vNEXT — 종전 run_main: Callable[[RunRequest], ToolResult]
+    main: MainLoop                 # v10.148.0 — 종전 run_main: Callable[[RunRequest], ToolResult]
     surface: PumpSurface
     policy: LifetimePolicy
 
@@ -119,7 +119,7 @@ class SessionPump:
     def run(self) -> None:   # 위 그림. KeyboardInterrupt 는 잡지 않는다 (호출자 정책)
 ```
 
-런의 시작은 엔진의 `Start`(`loop/kind.py`) — `MainLoop.start(item, stop_event)` 가 짓는다(vNEXT, 종전
+런의 시작은 엔진의 `Start`(`loop/kind.py`) — `MainLoop.start(item, stop_event)` 가 짓는다(v10.148.0, 종전
 `RunRequest`).
 
 ### 3.2 `LifetimePolicy` — "왜 살아 있는가" 한 곳
@@ -150,7 +150,7 @@ class PumpSurface(Protocol):
     def echo(self, item: dict)                   # web: push_user_message 말풍선; run: no-op
                                                  # 메일이 연 런엔 부르지 않는다 (v10.51.0)
     def bind_stop(self, ev: Event | None)        # web: server.set_stop_handle; run: no-op
-    def is_command(self, text: str) -> bool      # route 가 명령으로 받는가 — 실행 없이 판정만 (vNEXT)
+    def is_command(self, text: str) -> bool      # route 가 명령으로 받는가 — 실행 없이 판정만 (v10.148.0)
     def route(self, text: str, start=None) -> bool   # web: handle_slash_command → try_dispatch…(web_output)
                                                  # run: /sh 제외 가드 + try_dispatch…(console)
                                                  # start = 그 말로 연 차례(run 의 argv 질의 판정), 턴 경계는 None
