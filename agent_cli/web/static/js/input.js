@@ -123,20 +123,73 @@ function postInput(body, signal) {
   );
 }
 
+// ── 보내기 한 번 (v10.147.3 입력창 → v10.147.4 트레이 답도) ─────────────
+// 규칙 하나: 쓴 글은 서버가 받았을 때만 비운다 — 거절(죽은 에이전트·사라진 첨부 등)·네트워크 오류·무응답이면
+// 사유를 알리고 글은 남긴다. 보내는 자리(입력창 하나, 트레이 항목마다 하나)마다 "보내는 중" 이 따로 서고,
+// 같은 자리의 두 번째 보내기는 알리고 받지 않는다(중복·순서 뒤바뀜 없음) — 다른 자리는 막지 않는다.
+// 응답이 ``SEND_LIMIT_MS`` 안에 오지 않으면(막힌 연결) 요청을 끊고 실패로 본다 — 끊긴 요청의 늦은 결과는
+// 화면을 건드리지 않는다. 요청 본문은 글·경로뿐이라 정상 응답은 로컬에서 수십 ms 다(큰 이미지 셋이 든
+// 요청도 서버의 검증·보관까지 70 ms) — 상한은 원격·프록시 너머의 지연까지 넉넉히 덮는다.
+const SEND_LIMIT_MS = 20000;
+
+// 거절 응답의 사유 — 서버의 ``detail`` 글, 없으면 ``HTTP <code>``. 읽기만 한다.
+function refusalReason(r) {
+  return r.json().then(
+    function (d) { return d && typeof d.detail === "string" ? d.detail : "HTTP " + r.status; },
+    function () { return "HTTP " + r.status; }
+  );
+}
+
+// 보내기 하나를 시작해 응답·오류·상한 중 먼저 온 것으로 한 번만 끝낸다. ``slot`` 은 그 자리의 상태
+// ``{sending}`` — 보내는 동안 true(호출자가 넘긴 것만 바꾼다). ``request(signal)`` 은 fetch 의 약속,
+// ``settled(failure, status)`` 는 끝에 한 번 불린다: ``failure`` 는 받았으면 "", 아니면 사유(서버의
+// detail · ``HTTP <code>`` · ``could not reach the server`` · ``no response from the server``).
+export function sendOnce(slot, request, settled) {
+  const ctl = new AbortController();
+  let done = false;
+  slot.sending = true;
+  function finish(failure, status) {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    slot.sending = false;
+    settled(failure, status);
+  }
+  const timer = setTimeout(function () {
+    if (done) return;
+    finish("no response from the server", 0);
+    ctl.abort();
+  }, SEND_LIMIT_MS);
+  request(ctl.signal)
+    .then(function (r) {
+      if (r.ok) return finish("", r.status);
+      return refusalReason(r).then(function (why) { finish(why, r.status); });
+    })
+    .catch(function () {
+      finish("could not reach the server", 0);
+    });
+}
+
+// 트레이 항목 안 맨 아래의 알림 줄 하나(`.ask-failed`, `.confirm-stall` 과 같은 모양) — 있으면 글만 바꾼다.
+export function noteOnAnswer(item, text) {
+  let n = item.querySelector(":scope > .ask-failed");
+  if (!n) n = el("div", ["ask-failed"]);
+  n.textContent = text;
+  item.appendChild(n); // 늘 맨 아래 — stall 경고가 먼저 섰어도 그 뒤
+}
+export function clearAnswerNote(item) {
+  const n = item.querySelector(":scope > .ask-failed");
+  if (n) n.remove();
+}
+
 // 입력창은 항상 chat(3b): 활성 채널로 라우팅(main → /api/input, agent →
 // /api/agent/<key>/input). main 의 prompt/confirm 답변은 글로벌 트레이가 담당.
-// 보낸 글·칩은 서버가 받았을 때만 비운다 — 거절(죽은 에이전트·사라진 첨부 등)이나 네트워크 오류면
-// 사유를 보이고 그대로 남긴다. 보내는 중의 두 번째 보내기는 알리고 받지 않는다(중복·순서 뒤바뀜 없음).
-// 응답이 ``SEND_LIMIT_MS`` 안에 오지 않으면(막힌 연결) 요청을 끊고 실패로 본다 — 끊긴 요청의 늦은
-// 결과는 화면을 건드리지 않는다. 요청 본문은 경로뿐이라 정상 응답은 로컬에서 수십 ms 다(큰 이미지
-// 셋이 든 요청도 서버의 검증·보관까지 70 ms) — 상한은 원격·프록시 너머의 지연까지 넉넉히 덮는다.
-const SEND_LIMIT_MS = 20000;
-let sending = false;
+const chatSlot = { sending: false };
 function submitChatOrPrompt() {
   const text = $input.value.trim();
   const images = attachReadyPaths();
   if (!text && !images.length) return;
-  if (sending) {
+  if (chatSlot.sending) {
     attachMessage("Still sending the previous message");
     return;
   }
@@ -144,59 +197,36 @@ function submitChatOrPrompt() {
     attachMessage("Still uploading");
     return;
   }
-  const ctl = new AbortController();
-  let req;
-  if (ovActiveChannel !== "main") {
-    // 에이전트 채널도 이미지를 받는다 (v10.61.0): inbox 항목 → 그 런의 시작
-    // user 레코드 `images`. 같은 업로드 경로, 같은 `images:[path]` 모양.
-    const agentBody = { content: text, conn_id: session.connId };
-    if (images.length) agentBody.images = images;
-    req = fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(agentBody),
-      signal: ctl.signal,
-    });
-  } else {
-    const body = { kind: "chat", content: text };
-    if (images.length) body.images = images;
-    req = postInput(body, ctl.signal);
-  }
-  sending = true;
-  let settled = false;
-  // 이 보내기를 한 번만 끝낸다 — 먼저 온 것(응답·오류·상한)이 이기고 뒤의 것은 아무것도 안 한다
-  function settle(failure) {
-    if (settled) return false;
-    settled = true;
-    clearTimeout(timer);
-    sending = false;
-    if (failure) sendFailed(failure);
-    return true;
-  }
-  const timer = setTimeout(function () {
-    if (settle("no response from the server")) ctl.abort();
-  }, SEND_LIMIT_MS);
-  req
-    .then(function (r) {
-      if (r.ok) {
-        if (!settle("")) return;
-        // 보내는 사이 고쳐 쓴 글·새로 붙인 칩은 남긴다 — 보낸 것만 비운다
-        if ($input.value.trim() === text) $input.value = "";
-        attachRemove(images);
+  sendOnce(
+    chatSlot,
+    function (signal) {
+      // 바로 불린다(`sendOnce` 가 시작하며) — 지금의 채널로 간다
+      if (ovActiveChannel !== "main") {
+        // 에이전트 채널도 이미지를 받는다 (v10.61.0): inbox 항목 → 그 런의 시작
+        // user 레코드 `images`. 같은 업로드 경로, 같은 `images:[path]` 모양.
+        const agentBody = { content: text, conn_id: session.connId };
+        if (images.length) agentBody.images = images;
+        return fetch("api/agent/" + encodeURIComponent(ovActiveChannel) + "/input", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(agentBody),
+          signal: signal,
+        });
+      }
+      const body = { kind: "chat", content: text };
+      if (images.length) body.images = images;
+      return postInput(body, signal);
+    },
+    function (failure) {
+      if (failure) {
+        attachMessage("Not sent — " + failure);
         return;
       }
-      return r.json().then(
-        function (d) { settle(d && typeof d.detail === "string" ? d.detail : "HTTP " + r.status); },
-        function () { settle("HTTP " + r.status); }
-      );
-    })
-    .catch(function () {
-      settle("could not reach the server");
-    });
-}
-
-function sendFailed(reason) {
-  attachMessage("Not sent — " + reason);
+      // 보내는 사이 고쳐 쓴 글·새로 붙인 칩은 남긴다 — 보낸 것만 비운다
+      if ($input.value.trim() === text) $input.value = "";
+      attachRemove(images);
+    }
+  );
 }
 
 // main ask 를 접는다 — 409(선착순 소비) / input_resolved 공용.
@@ -208,6 +238,18 @@ function ovFoldMainAsk() {
   setAbortVisible(false);
 }
 
+// 답할 물음이 이미 닫혔다는 알림 — 트레이 답의 409(다른 뷰어가 먼저 답함·묻기가 끝남), 그리고 보내는 사이
+// 항목이 트레이에서 빠진 뒤의 실패. 입력창 아래 줄에 선다. 409 는 상태 코드로만 읽는다 — 웹에서 나오는
+// 트레이 답의 409 는 "닫힌 물음" 뿐이고, 서버 문구(모델도 읽는 글)에 화면을 묶지 않는다.
+export const ALREADY_CLOSED_NOTICE = "Not sent — already answered or closed";
+
+// main 의 답이 409 — 항목을 접고 알린다. 쓴 글은 버린다(물음이 없다). 그 사이 새 물음이 떴으면
+// (``item.askOf`` 가 지금의 것이 아니면) 새 물음은 접지 않는다.
+function mainAskAlreadyClosed(item) {
+  if (session.mainAsk === item.askOf) ovFoldMainAsk();
+  attachMessage(ALREADY_CLOSED_NOTICE);
+}
+
 // ── Confirm stall visibility ───────────────
 // A confirm click normally resolves in well under a second (POST →
 // worker unblocks → input_resolved). When nothing comes back — e.g.
@@ -217,29 +259,51 @@ function ovFoldMainAsk() {
 const CONFIRM_STALL_MS = 3000;
 let confirmStallTimer = null;
 
-function clearConfirmStall() {
+// stall 타이머를 멈추고, ``item`` 을 주면 그 항목의 경고 줄도 지운다(항목이 접힐 때는 항목째 사라진다).
+function clearConfirmStall(item) {
   if (confirmStallTimer) {
     clearTimeout(confirmStallTimer);
     confirmStallTimer = null;
   }
-  const w = document.getElementById("confirm-stall");
+  const w = item && item.querySelector(":scope > .confirm-stall");
   if (w) w.remove();
 }
 
-// main prompt(ask) 답변 — 트레이 항목의 입력에서 호출.
-export function ovSubmitMainPrompt(text) {
+// main prompt(ask) 답변 — 트레이 항목(``item``·그 입력 ``input``)에서 호출. 입력창과 같은 규칙:
+// 받았을 때만 비우고(input_resolved 가 항목을 접는다), 실패면 항목 안에 사유·글 남김, 409 는 접고 알림.
+export function ovSubmitMainPrompt(item, input) {
+  const text = input.value;
   if (!text.trim()) return;
-  postInput({ kind: "prompt", content: text }).then(function (res) {
-    if (res && res.status === 409) ovFoldMainAsk(); // 이미 응답됨(다른 뷰어)
-  });
+  const slot = item.sendSlot;
+  if (slot.sending) {
+    noteOnAnswer(item, "Still sending the previous answer");
+    return;
+  }
+  clearAnswerNote(item);
+  sendOnce(
+    slot,
+    function (signal) { return postInput({ kind: "prompt", content: text }, signal); },
+    function (failure, status) {
+      if (!failure) {
+        if (input.value === text) input.value = "";
+        return;
+      }
+      if (status === 409) return mainAskAlreadyClosed(item);
+      // 보내는 사이 항목이 빠졌다(물음이 풀렸다) — 보이지 않는 곳에 사유를 세우지 않는다
+      if (!item.isConnected) return attachMessage(ALREADY_CLOSED_NOTICE);
+      noteOnAnswer(item, "⚠ Not sent — " + failure);
+    }
+  );
 }
 
-// main confirm 결정 — 트레이 항목의 옵션 버튼에서 호출(key + 선택 코멘트).
-export function ovSubmitMainConfirm(key, comment) {
-  clearConfirmStall();
+// main confirm 결정 — 트레이 항목의 옵션 버튼에서 호출(key + 선택 코멘트). 지연·네트워크 오류는 상한도
+// 끊기도 없이 둔다 — 늦게라도 닿은 확인 클릭은 적용되는 것이 맞다(3초 stall 경고가 보인다). 서버가
+// 거절하면(409 밖) 항목 안에 사유가 서고 코멘트는 남는다.
+export function ovSubmitMainConfirm(item, key, comment) {
+  clearConfirmStall(item);
+  clearAnswerNote(item);
   confirmStallTimer = setTimeout(function () {
-    var item = document.querySelector(".ask-main");
-    if (!session.mainAsk || session.mainAsk.kind !== "confirm" || !item) return;
+    if (!session.mainAsk || session.mainAsk.kind !== "confirm" || !item.isConnected) return;
     if (item.querySelector(".confirm-stall")) return;
     const warn = el("div", ["confirm-stall"]);
     warn.textContent =
@@ -251,7 +315,12 @@ export function ovSubmitMainConfirm(key, comment) {
   }, CONFIRM_STALL_MS);
   postInput({ kind: "confirm", key: key, comment: comment || "" })
     .then(function (res) {
-      if (res && res.status === 409) ovFoldMainAsk(); // 이미 응답됨
+      clearConfirmStall(item); // 답이 왔다 — 지연 경고는 끝났다
+      if (res.ok) return;
+      if (res.status === 409) return mainAskAlreadyClosed(item);
+      return refusalReason(res).then(function (why) {
+        noteOnAnswer(item, "⚠ Not sent — " + why);
+      });
     })
     .catch(function () {
       /* network error — the stall warning covers the visible feedback */
@@ -348,6 +417,9 @@ $abort.addEventListener("click", function () {
 
 es.addEventListener("input_required", function (e) {
   const d = JSON.parse(e.data);
+  // 같은 물음이 다시 왔다(재접속 스냅샷의 재생) — 항목을 그대로 둔다(쓰던 답·지연 경고가 산다). 물음마다
+  // 서버가 새 ``ask_id`` 를 싣는다(v10.147.4).
+  if (session.mainAsk && session.mainAsk.data.ask_id === d.ask_id) return;
   // 3b: main 의 prompt/confirm 을 글로벌 ask 트레이 항목으로(입력창은 chat 유지).
   clearConfirmStall();
   session.mainAsk = { kind: d.kind, data: d };

@@ -1927,14 +1927,18 @@ class TestConfirmStallWarning:
 
     def test_frontend_handles_409_as_stale_ask(self, server_and_client):
         """409(이미 해결된 ask) 응답이면 stale main-ask 트레이 항목을 접는다
-        (ovFoldMainAsk) — confirm/prompt 두 제출부 각각의 분기 안에서."""
+        (ovFoldMainAsk) — confirm/prompt 두 제출부 각각의 분기 안에서. v10.147.4: 접기는
+        `mainAskAlreadyClosed(item)` 한 곳 — 그 항목의 물음이 지금의 것일 때만 접고 알린다."""
         js = js_text()
         confirm_body = js_fn_body(js, "ovSubmitMainConfirm")
         assert "res.status === 409" in confirm_body
-        assert "ovFoldMainAsk()" in confirm_body
+        assert "mainAskAlreadyClosed(item)" in confirm_body
         prompt_body = js_fn_body(js, "ovSubmitMainPrompt")
-        assert "res.status === 409" in prompt_body
-        assert "ovFoldMainAsk()" in prompt_body
+        assert "status === 409" in prompt_body
+        assert "mainAskAlreadyClosed(item)" in prompt_body
+        closed = js_fn_body(js, "mainAskAlreadyClosed")
+        assert "session.mainAsk === item.askOf" in closed
+        assert "ovFoldMainAsk()" in closed
         # 두 제출부 모두 postInput 이 raw fetch Response 를 반환한다는 전제.
         assert "return fetch(" in js_fn_body(js, "postInput")
 
