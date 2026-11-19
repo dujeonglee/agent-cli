@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from agent_cli.post import envelope as E
 from tests.test_agents_live import _FakeLoopResult, make_registry
 from tests.test_engine_p2 import wait_until
@@ -565,3 +567,140 @@ class TestTwoEndsAtOnce:
         assert [r.rid for r in reg._post.rows() if r.state != "closed"] == []
         reg._post.check_consistency()
         reg.shutdown_all()
+
+
+def _gated_runner(*words: str):
+    """``words`` 중 하나를 담은 런은 그 문에서 멈춘다 — 문은 테스트가 열거나, 그 런의 정지(■·세션 종료)가 연다."""
+    gates = {w: threading.Event() for w in words}
+    calls: list[str] = []
+
+    def runner(kind, start, ctx):
+        calls.append(start.query)
+        stop = kind._run_stop
+        for word, gate in gates.items():
+            if word in start.query:
+                assert wait_until(lambda g=gate: g.is_set() or stop.is_set())
+        return _FakeLoopResult(output="ok"), 0.01
+
+    return gates, calls, runner
+
+
+def _crash_on_open(monkeypatch, key):
+    from agent_cli.subagent.resident_loop import ResidentLoop
+
+    real_open = ResidentLoop.open_scope
+
+    def crashing(self, start):
+        if self.tm.key == key:
+            raise MemoryError("worker machinery")
+        return real_open(self, start)
+
+    monkeypatch.setattr(ResidentLoop, "open_scope", crashing)
+
+
+class TestAQueuedRequestOfAGoneRequester:
+    """요청한 쪽이 사라지면(✕·사망) 그가 보낸 요청 중 아직 아무 런도 집지 않은 것은 빚진 쪽 상자에서 빠진다 — 그
+    요청으로 런이 열리지 않고(아무도 받지 않을 일을 끝까지 하지 않는다), 대기열·로스터 수가 줄고, 통지는 없다(본 적 없는
+    id 다). 재시작도 그것을 되살리지 않는다. 세션 종료는 이 길을 지나지 않는다."""
+
+    @pytest.mark.parametrize("end", ["kill", "death"])
+    def test_it_never_opens_a_run(self, tmp_path, monkeypatch, end):
+        gates, calls, runner = _gated_runner("job1", "go")
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        bb, bb_tm = _idle_agent(reg, "bb")
+        assert reg.message_handler("main")(bb, "job1", True)[1] == ""
+        assert wait_until(lambda: bb_tm.state == "busy")
+        _, err = reg.message_handler(f"agent:{aa}")(bb, "job2 for aa", True)
+        assert not err
+        (queued,) = reg.queued_for(f"agent:{bb}")
+        assert reg.backlog_of(bb) == 1
+        try:
+            if end == "kill":
+                assert reg.kill(aa) == ""
+            else:
+                _crash_on_open(monkeypatch, aa)
+                assert reg.request(aa, "go") == ""
+            assert wait_until(lambda: not aa_tm.worker.is_alive())
+            assert reg.queued_for(f"agent:{bb}") == ()
+            assert reg.backlog_of(bb) == 0
+            (snap,) = [s for s in reg.roster_snapshot() if s["key"] == bb]
+            assert snap["pending_requests"] == 0
+            assert queued.id not in {r.rid for r in reg._post.rows()}
+        finally:
+            for gate in gates.values():
+                gate.set()
+        assert wait_until(lambda: bb_tm.state == "idle")
+        assert calls == ["job1"]  # 그 요청으로 연 런은 없다
+        assert reg._post.queued(f"agent:{bb}") == ()  # 통지도 없다
+        reg.shutdown_all()
+
+    def test_main_as_the_debtor_loses_it_from_the_mail_queue(self, tmp_path):
+        """main 상자에 줄 선(아직 흡수하지 않은) 요청 — 메일에서 빠지고 입력창 위 대기열이 다시 그려진다."""
+        _calls, runner = _counting_runner()
+        reg = make_registry(tmp_path, runner=runner)
+        redraws = []
+        reg.on_pending_change = lambda: redraws.append(len(reg.pending_mail()))
+        aa, aa_tm = _idle_agent(reg, "aa")
+        _, err = reg.message_handler(f"agent:{aa}")("main", "which file?", True)
+        assert not err
+        assert len(reg.pending_mail()) == 1
+        assert reg.kill(aa) == ""
+        assert wait_until(lambda: not aa_tm.worker.is_alive())
+        assert reg._post.mail("main") == () and reg.pending_mail() == []
+        assert reg.reply_debts("main") == [] and reg._post.rows() == ()
+        assert redraws and redraws[-1] == 0
+        reg.shutdown_all()
+
+    def test_a_restart_does_not_bring_it_back(self, tmp_path, monkeypatch):
+        """요청자가 죽은 것이 저장됐는데 그 요청을 빼기 전에 프로세스가 끝났다(그 사이) — 재시작은 그 요청을 되넣지
+        않는다: 에이전트 받은편지함에도, main 메일에도."""
+        from agent_cli.subagent import agent_stop
+
+        gates, _calls, runner = _gated_runner("job1")
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        bb, bb_tm = _idle_agent(reg, "bb")
+        assert reg.message_handler("main")(bb, "job1", True)[1] == ""
+        assert wait_until(lambda: bb_tm.state == "busy")
+        send = reg.message_handler(f"agent:{aa}")
+        assert send(bb, "job2 for aa", True)[1] == ""
+        assert send("main", "which file?", True)[1] == ""
+        monkeypatch.setattr(agent_stop, "close_debts_owed_to", lambda *a: None)
+        assert reg.kill(aa) == ""
+        assert wait_until(lambda: not aa_tm.worker.is_alive())
+        assert len(reg.queued_for(f"agent:{bb}")) == 1  # 그 사이 — 아직 빼지 않았다
+        reg.shutdown_all()
+        gates["job1"].set()
+        monkeypatch.undo()
+
+        again = make_registry(
+            tmp_path, runner=_gated_runner("job2")[2]
+        )  # 되넣은 job2 는 문에 선다
+        assert again.restore() == 1
+        # 되넣기는 restore 안에서 끝난다 — 되넣었다면 줄에 섰거나 이미 집혔다
+        assert again.queued_for(f"agent:{bb}") == ()
+        assert again.taken_by(f"agent:{bb}") == ()
+        assert again._post.mail("main") == () and again._post.rows() == ()
+        again.shutdown_all()
+
+    def test_a_session_end_keeps_it_for_resume(self, tmp_path):
+        """세션 종료는 되살릴 에이전트다 — 줄 선 요청은 디스크에 남고 재시작이 되넣는다(요청자도 돌아온다)."""
+        gates, _calls, runner = _gated_runner("job1")
+        reg = make_registry(tmp_path, runner=runner)
+        aa, _ = _idle_agent(reg, "aa")
+        bb, bb_tm = _idle_agent(reg, "bb")
+        assert reg.message_handler("main")(bb, "job1", True)[1] == ""
+        assert wait_until(lambda: bb_tm.state == "busy")
+        assert reg.message_handler(f"agent:{aa}")(bb, "job2 for aa", True)[1] == ""
+        reg.shutdown_all()
+        gates["job1"].set()
+
+        again = make_registry(
+            tmp_path, runner=_gated_runner("job2")[2]
+        )  # 되넣은 job2 는 문에 선다
+        assert again.restore() == 2
+        assert [v.text for v in again.queued_for(f"agent:{bb}")] + [
+            v.text for v in again.taken_by(f"agent:{bb}")
+        ] == ["job2 for aa"]
+        again.shutdown_all()

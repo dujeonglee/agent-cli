@@ -276,6 +276,43 @@ class TestStops:
         assert office.rows() == () and office.queued(A) == ()
         assert [e.mark for e in office.queued("main")] == ["removed by user"]
 
+    def test_a_gone_requester_s_queued_request_leaves_the_box(self, office):
+        """요청한 쪽이 사라졌다 — 아직 아무 런도 집지 않은 요청은 상자에서 빠지고 줄은 dropped(남지 않는다). 사람의
+        말·통지·다른 요청자의 요청은 그대로 — 다음 런은 사람의 말이 연다."""
+        office.deliver(E.request("r-1", "agent:b", A, "for b"))
+        office.deliver(E.human("u-2", "user:dj", A, "hi"))
+        office.deliver(E.notice("n-3", "agent:b", A, "fyi"))
+        office.deliver(E.request("r-4", "main", "agent:c", "for main"))
+        gone = office.forget_requests_of("agent:b", lambda addr: "")
+        assert [(r.rid, r.state) for r in gone] == [("r-1", "queued")]
+        assert [e.id for e in office.queued(A)] == ["u-2", "n-3"]
+        assert _rows(office) == [("u-2", "queued", None), ("r-4", "queued", None)]
+        assert office.backlog(A) == 2  # 사람의 말·통지
+        office.forget_requests_of("agent:b", lambda addr: "")  # 멱등
+        assert [e.id for e in office.next_run(A, Take.ARRIVAL, timeout=0)] == ["u-2"]
+
+    def test_picked_or_queued_never_both(self, office):
+        """집기와 같은 락 구간 — 집힌 뒤면 빚(unsent, 그 런 끝까지 남는다), 집히기 전이면 상자에서 빠짐(dropped).
+        두 순서 모두 한 요청은 한 갈래로만 닫힌다."""
+        office.deliver(E.request("r-1", "agent:b", A, "first"))
+        office.deliver(E.request("r-2", "agent:b", A, "second"))
+        assert [e.id for e in office.next_run(A, Take.ARRIVAL, timeout=0)] == ["r-1"]
+        gone = office.forget_requests_of("agent:b", lambda addr: "run-1")
+        assert [(r.rid, r.state) for r in gone] == [
+            ("r-1", "picked"),
+            ("r-2", "queued"),
+        ]
+        assert _rows(office) == [("r-1", "closed", "unsent")]
+        assert office.queued(A) == () and [e.id for e in office.taken(A)] == ["r-1"]
+        assert office.next_run(A, Take.ARRIVAL, timeout=0) is None
+
+    def test_main_s_mail_run_can_lose_its_mail(self, office):
+        """main 의 메일 런은 메일을 꺼내지 않고 열린다 — 그 사이 요청자가 사라지면 첫 경계에 읽을 것이 없다."""
+        office.deliver(E.request("r-1", "agent:b", "main", "for b"))
+        assert office.next_run("main", Take.WORDS_FIRST, timeout=0) == ()
+        office.forget_requests_of("agent:b", lambda addr: "")
+        assert office.absorb("main") == () and office.rows() == ()
+
     def test_take_reply_leaves_the_box(self, office):
         office.deliver(E.reply("n-1", A, "main", "ans", re="r-7"))
         assert office.take_reply("main", "r-7").id == "n-1"

@@ -378,16 +378,21 @@ class PostOffice:
     def forget_requests_of(
         self, requester: str, run_of: Callable[[str], str]
     ) -> tuple[Row, ...]:
-        """요청한 쪽이 사라졌다 — 그가 기다리던 r 줄 중 **빚으로 적힌 것**(picked)을 닫는다: 회신이 갈 곳이 없는 갚음
-        (``unsent`` — `pay_unsent` 와 같다)으로, 빚진 쪽의 지금 런(``run_of(빚진 쪽)``) 끝까지 남겨 그 뒤의 `reply` 가
-        "가지 못했다" 로 듣게. 빚진 쪽의 Open Items 에서는 사라진다. 줄 선 것(아직 시작 안 한 요청)은 그대로다. 닫은
-        줄(닫기 전 값)을 돌려준다."""
+        """요청한 쪽이 사라졌다 — 그가 기다리던 r 줄을 모두 닫는다. **빚으로 적힌 것**(picked)은 회신이 갈 곳이 없는
+        갚음(``unsent`` — `pay_unsent` 와 같다)으로, 빚진 쪽의 지금 런(``run_of(빚진 쪽)``) 끝까지 남겨 그 뒤의 `reply` 가
+        "가지 못했다" 로 듣게(빚진 쪽의 Open Items 에서는 사라진다). **줄 선 것**(아직 아무 런도 집지 않은 요청)은 빚진
+        쪽 상자에서 봉투를 빼고 ``dropped`` — 빚진 쪽은 그것을 본 적이 없다. 집기(`next_run`·`absorb`)와 같은 락
+        구간이라 한 요청은 둘 중 하나로만 닫힌다. 닫은 줄(닫기 전 값 — ``state`` 가 갈래)을 돌려준다."""
         with self.cv:
             gone = tuple(
-                r for r in self._book.awaited_by(requester) if r.state == "picked"
+                r for r in self._book.awaited_by(requester) if r.state != "closed"
             )
             for row in gone:
-                self._book.close(row.rid, "unsent", in_run=run_of(row.dst))
+                if row.state == "picked":
+                    self._book.close(row.rid, "unsent", in_run=run_of(row.dst))
+                else:
+                    self._box_or_empty(row.dst).remove(row.rid)
+                    self._book.close(row.rid, "dropped")
             if gone:
                 self.cv.notify_all()
             return gone

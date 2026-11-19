@@ -316,9 +316,12 @@ def close_debts_owed_to(registry, tm, label: str) -> None:
     """사라진 에이전트(✕·사망·과제를 마친 run — 되살리지 않는 끝)가 기다리던 회신을 닫는다: 빚으로 적힌 줄을 회신이 갈
     곳 없는 갚음으로(빚진 쪽의 지금 런 끝까지 남아 그 뒤의 `reply` 는 "가지 못했다" 로 듣는다 —
     `PostOffice.forget_requests_of`), 빚진 쪽마다 깨우지 않는 통지 한 통(`requester_gone`) — 그 빚은 다음 꼬리부터
-    Open Items 에 없다. ``label`` 은 사라진 쪽의 이름표. 세션 종료(되살릴 에이전트)는 여기 오지 않는다."""
+    Open Items 에 없다. 아직 아무 런도 집지 않은 요청은 빚진 쪽 상자에서 빠진다 — 통지는 없다(본 적 없는 id 다), 그
+    상대의 대기열·로스터 수가 준다. ``label`` 은 사라진 쪽의 이름표. 세션 종료(되살릴 에이전트)는 여기 오지 않는다."""
     gone = registry._post.forget_requests_of(f"agent:{tm.key}", registry._run_of)
     for row in gone:
+        if row.state != "picked":
+            continue  # 줄 선 채 빠졌다 — 빚진 쪽은 본 적이 없다
         text = requester_gone(label, row.rid, row.text)
         if row.dst == "main":
             registry._push_reply(
@@ -350,6 +353,28 @@ def close_debts_owed_to(registry, tm, label: str) -> None:
     if gone:
         registry._save_state()
         registry._notify_roster()
+        if any(row.dst == "main" for row in gone):
+            registry._pending_changed()  # 입력창 위 대기열의 메일 줄
+
+
+def live_requests(registry, items: list[dict]) -> list[dict]:
+    """재시작이 되넣을 줄 선 항목 중 요청자가 돌아오지 않은(죽었거나 명단에 없는) 에이전트의 요청을 뺀다 — 살아 있는
+    세션에서 요청자가 사라질 때(`close_debts_owed_to`)와 같은 규칙. 회신·통지·사람·main 의 것은 그대로."""
+    return [
+        it
+        for it in items
+        if it.get("kind")
+        or not it.get("expects_reply", True)
+        or registry._agent_alive(str(it.get("author") or "main"))
+    ]
+
+
+def forget_gone_requesters(registry) -> None:
+    """재시작 복원 — 명단을 다 세운 뒤, 에이전트의 항목을 되넣기 **전**(그때 줄은 main 상자에 되살린 메일뿐이다): 요청자가
+    돌아오지 않은 에이전트의 줄 선 요청을 닫는다(`live_requests` 와 같은 규칙)."""
+    for src in {r.src for r in registry._post.rows() if r.state == "queued"}:
+        if src.startswith("agent:") and not registry._agent_alive(src):
+            registry._post.forget_requests_of(src, registry._run_of)
 
 
 def stop_sub_runs(registry, tm, by: str = "") -> None:

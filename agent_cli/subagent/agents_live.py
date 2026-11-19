@@ -2760,17 +2760,16 @@ class AgentRegistry:
                 name=f"agent-{key}",
             )
             tm.worker.start()
-            # 5.13: 세션 resume(b) 근본 경로 — 새 프로세스라 replay 버퍼가
-            # 비어 🤝 대화창이 텅 비던 증상. conversation.jsonl 을 재생해
-            # 복원한다(restore 는 SSE 접속 전이라 buffer 에 쌓였다가 첫
-            # 접속 snapshot 으로 배달). dead(kill) 툼스톤은 재생 안 함 —
-            # kill=정리 일관(필요하면 mode:"resume" 이 그때 복원).
+            # 5.13: 세션 resume(b) 근본 경로 — 새 프로세스라 replay 버퍼가 비어 🤝 대화창이 텅 비던 증상.
+            # conversation.jsonl 을 재생해 복원한다(restore 는 SSE 접속 전이라 buffer 에 쌓였다가 첫 접속 snapshot
+            # 으로 배달). dead(kill) 툼스톤은 재생 안 함 — kill=정리 일관(필요하면 mode:"resume" 이 그때 복원).
             self._replay_conversation(tm)
             requeue.append((tm, in_flight, queued))
             revived += 1
         # 되넣기는 명단을 다 세운 뒤 — 끊긴 run 의 요청자가 돌아왔는지 봐야 한다
+        agent_stop.forget_gone_requesters(self)  # 되넣기 전 — 지금 줄은 main 의 메일뿐
         for tm, in_flight, queued in requeue:
-            self._requeue(tm, in_flight, queued)
+            self._requeue(tm, in_flight, agent_stop.live_requests(self, queued))
         self._adopt_questions(restored)
         self._save_state()
         self._notify_roster()

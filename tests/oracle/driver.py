@@ -1987,6 +1987,85 @@ def s35_shutdown_with_queued_words_web(root: Path) -> dict:
     return s.collect(facts)
 
 
+def s36_queued_request_of_a_gone_requester(root: Path) -> dict:
+    """요청한 쪽이 사라지면 그가 보낸 줄 선 요청은 빠진다: main 이 bb 에게 느린 일(통지)을 맡기고 aa 에게 bb 에게
+    물어보라고(통지) 한다 → aa 가 바쁜 bb 에게 회신 기대 `message` 를 보내고 `wait` (그 요청은 bb 상자에 줄을 선다)
+    → 사람이 aa 를 ✕. 그 요청은 bb 상자에서 빠지고(대기열·로스터 수가 준다) 통지는 없다 — bb 는 느린 일을 마친 뒤
+    한가해지고 그 요청으로 런을 열지 않는다. 순서: 사람의 ✕ 는 aa 가 `wait` 로 런을 끝내고 그 요청이 줄을 선 뒤, bb 의
+    느린 일은 ✕ 의 정리를 본 뒤에 끝난다."""
+    box: dict = {}
+    facts: dict = {}
+    slow_go = threading.Event()
+
+    def snapshot(tag: str):
+        s = box["s"]
+        facts[tag] = {"roster": _roster(s), "queue_lines": s.reg.pending_mail()}
+
+    def bb_queued(s) -> int:
+        bb = _agent_key(s, "bb")
+        return next(r["pending_requests"] for r in _roster(s) if r["key"] == bb)
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="spawn", name="bb"),
+                call("agent", mode="spawn", name="aa"),
+                lambda m: _held_request_to(
+                    box, "bb", "TASK-H1 slow job", expects_reply=False
+                ),
+                lambda m: _held_request_to(
+                    box, "aa", "TASK-H2 ask bb", expects_reply=False
+                ),
+                complete_all("delegated"),
+            ]
+            + [complete_all("main read it")] * 10,
+            "TASK-H1": [
+                lambda m: (
+                    slow_go.wait(_PATIENCE_S),
+                    call("complete", result="slow job done"),
+                )[1],
+            ],
+            "TASK-H2": [
+                call("message", to="bb", text="TASK-H3 for aa"),
+                call("wait"),
+            ],
+            "TASK-H3": [complete_all("must not run")],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.say("MAIN go", nickname="dj")
+
+    def done(s):
+        until(lambda: len(s.agent_keys()) == 2, "spawned")
+        aa, bb = _agent_key(s, "aa"), _agent_key(s, "bb")
+        until(
+            lambda: (
+                s.agent_state(aa) == "idle"
+                and s.reg.awaited_replies(f"agent:{aa}")
+                and s.agent_state(bb) == "busy"
+                and bb_queued(s) == 1
+            ),
+            "aa parked, its request queued at a busy bb",
+        )
+        until(lambda: runs_ended(s) >= 1, "main's run ends")
+        snapshot("before_kill")
+        facts["kill"] = s.reg.kill(aa)
+        until(lambda: s.agent_state(aa) == "dead", "aa removed")
+        until(lambda: bb_queued(s) == 0, "the request left bb's box")
+        snapshot("after_kill")
+        slow_go.set()
+        until(lambda: s.agent_state(bb) == "idle", "bb done")
+        until(
+            lambda: all(s.agent_state(k) in ("idle", "dead") for k in s.agent_keys()),
+            "settle",
+        )
+        snapshot("end")
+        facts["h3_calls"] = len(p.calls.get("TASK-H3", []))
+
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
 class _HeldTimer:
     """체크인 타이머 대역 — 걸리기만 하고 스스로 발화하지 않는다. 대본이 `fire_checkin` 을 직접 부른다
     (`threading.Timer` 는 가짜 시계로 돌릴 수 없다 — 레지스트리의 `checkin_timer_factory` 자리)."""
@@ -2602,6 +2681,7 @@ SCENARIOS = {
     # 끝내기 규칙
     "s34_parent_dies_with_its_run_agent": s34_parent_dies_with_its_run_agent,
     "s35_shutdown_with_queued_words_web": s35_shutdown_with_queued_words_web,
+    "s36_queued_request_of_a_gone_requester": s36_queued_request_of_a_gone_requester,
 }
 
 
