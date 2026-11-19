@@ -36,16 +36,11 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 
 from agent_cli.fsio import atomic_write_json
-from agent_cli.mcp.client import humanize_error
+from agent_cli.mcp.client import CONNECT_TIMEOUT_S, humanize_error
 from agent_cli.mcp.config import _parse_server_config
 from agent_cli.paths import project_dir, user_dir
 
 console = Console()
-
-# 연결 테스트 상한. ``session.initialize()`` 자체엔 타임아웃이 없어 응답 없는
-# 서버가 마법사를 영원히 세운다. 넉넉한 이유: ``npx -y`` 첫 실행은 패키지
-# 설치를 겸해 수십 초가 걸릴 수 있고, 마법사는 정확히 그 "첫 실행" 자리다.
-PROBE_TIMEOUT_S = 45.0
 
 # 사용자가 고르는 건 **확실히 아는 것**(로컬이냐 원격이냐)뿐. 원격의 HTTP
 # 세대(streamable-http vs 구 sse)는 문서의 URL 만 봐서는 대개 알 수 없으므로
@@ -162,12 +157,13 @@ def resolve_command(cmd: str) -> str | None:
 
 
 def probe_server(
-    name: str, entry: dict, timeout: float = PROBE_TIMEOUT_S, *, warn: bool = False
+    name: str, entry: dict, timeout: float = CONNECT_TIMEOUT_S, *, warn: bool = False
 ) -> tuple[bool, str, list[str], float]:
     """실제로 연결해 도구 목록을 받아 본다.
 
     Returns ``(ok, message, tool_names, seconds)``. 실패 message 는 사람이
-    다음에 뭘 할지 알 수 있게 원인별로 다르게 쓴다. 연결은 프로브 후 항상
+    다음에 뭘 할지 알 수 있게 원인별로 다르게 쓴다. 응답 없는 서버는 매니저의 연결 상한
+    (``timeout`` — 부팅과 같은 ``CONNECT_TIMEOUT_S``)에서 실패한다. 연결은 프로브 후 항상
     끊는다 — 마법사가 띄운 서버 프로세스를 남기지 않는다."""
     from agent_cli.mcp.client import McpClientManager
 
@@ -182,60 +178,20 @@ def probe_server(
             0.0,
         )
 
-    manager = McpClientManager()
+    manager = McpClientManager(connect_timeout_s=timeout)
     t0 = time.perf_counter()
     try:
-        results = _connect_with_timeout(manager, {name: cfg}, timeout, warn=warn)
+        results = manager.connect_all({name: cfg}, warn=warn)
         status = results.get(name, "error: unknown")
         if status != "connected":
             return False, humanize_error(status, cfg), [], time.perf_counter() - t0
         tools = [t.name for t in manager.list_tools(name)]
         return True, "connected", tools, time.perf_counter() - t0
-    except TimeoutError:
-        return (
-            False,
-            (
-                f"no response within {int(timeout)}s — the server started but does not "
-                "answer initialize (check the package name and arguments)"
-            ),
-            [],
-            time.perf_counter() - t0,
-        )
     finally:
         try:
             manager.disconnect_all()
         except Exception:
             pass
-
-
-def _connect_with_timeout(
-    manager, configs: dict, timeout: float, *, warn: bool = False
-) -> dict[str, str]:
-    """``connect_all`` 은 서버별 예외를 삼켜 status 문자열로 돌려주지만 타임아웃이
-    없다. 여기서만 상한을 건다 — 부팅 경로(``_setup_mcp``)는 느린 첫 실행을
-    기다려야 하므로 건드리지 않는다.
-
-    매니저가 자기 이벤트 루프(``_run_sync``)를 들고 있어 asyncio 로 감싸면
-    루프가 겹친다. **데몬 스레드 + join(timeout)** 이 단순하고, 타임아웃 뒤
-    스레드가 남아도 데몬이라 프로세스 종료를 막지 않는다."""
-    import threading
-
-    box: dict = {}
-
-    def _work():
-        try:
-            box["result"] = manager.connect_all(configs, warn=warn)
-        except BaseException as e:  # 스레드 경계 — 결과로 실어 보낸다
-            box["error"] = e
-
-    t = threading.Thread(target=_work, daemon=True)
-    t.start()
-    t.join(timeout)
-    if t.is_alive():
-        raise TimeoutError
-    if "error" in box:
-        raise box["error"]
-    return box["result"]
 
 
 # ── 대화형 ──────────────────────────────────────────────
@@ -504,7 +460,7 @@ class McpWizard:
             f"{cfg.command} {' '.join(cfg.args)}".strip() if cfg.is_stdio else cfg.url
         )
         self.console.print(
-            f"   [dim]Running {target}… (up to {int(PROBE_TIMEOUT_S)}s; "
+            f"   [dim]Running {target}… (up to {CONNECT_TIMEOUT_S}s; "
             "a first npx run can take a while to install the package)[/]"
         )
         ok, msg, tools, secs = probe_server(name, entry)
