@@ -1637,7 +1637,7 @@ def _roster(s: Session) -> list[dict]:
 def s21_main_stop_owes_agent(root: Path) -> dict:
     """1단계 ① main 정지 회신: 상주가 main 에게 회신 기대 `message` → main 이 그 메일로 깬 런에서 사람이 ■ — 빚진
     상대(상주)에게 에이전트의 ■ 와 같은 정지 회신(``· stopped by user``, 그 런의 마지막 호출)이 간다. 상주는 그것을
-    회신으로 읽고 새 런을 연다. `[vNEXT 에서 바뀜 — 종전엔 펌프의 런 끝이 stopped 를 넘기지 않아 라벨 붙은 빈 런 요약
+    회신으로 읽고 새 런을 연다. `[v10.156.0 에서 바뀜 — 종전엔 펌프의 런 끝이 stopped 를 넘기지 않아 라벨 붙은 빈 런 요약
     폴백이 갔다]` `[v10.145.1 에서 재기록 — 그 `message` 는
     상주의 과제 빚(TASK-S1)을 갚지 않는다: 깬 런의 `complete` 가 되묻기 예산을 다 쓰고 런 끝 폴백이 main 의 새 런을 연다]`"""
     box: dict = {}
@@ -1715,7 +1715,7 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
       request …")을 받아 그 런에서 읽는다 `[v10.146.3 에서 바뀜 — 종전엔 aa 가 아무것도 받지 않았다]`.
     - ``who="requester"`` (나): aa 가 bb 에게 요청한 뒤 aa 사망. aa 가 기다리던 bb 의 빚은 그 자리에서 닫히고(받을
       이가 없다), bb 는 다음 턴 경계에 깨우지 않는 통지("request [r-…] … is closed — … is gone; nothing is owed back.")를
-      읽는다 `[vNEXT 에서 바뀜 — 종전엔 bb 가 죽은 쪽에 빚진 회신을 Open Items 에 든 채 일했다]`. 죽은 aa 가 main 에게 빚진 과제 요청에는 main 의 died 통지와 함께 died
+      읽는다 `[v10.156.0 에서 바뀜 — 종전엔 bb 가 죽은 쪽에 빚진 회신을 Open Items 에 든 채 일했다]`. 죽은 aa 가 main 에게 빚진 과제 요청에는 main 의 died 통지와 함께 died
       회신이 간다 `[v10.146.3 에서 바뀜]`.
       `[v10.145.2 에서 바뀜]` bb 의 `reply` 는 "not delivered — … was already gone" 을 실패로 듣고, 배달되지 않은 회신은
       발신 줄(conversation)에도 남지 않는다(종전엔 "delivered to whoever was waiting on it").

@@ -208,7 +208,7 @@ class TestFailurePolicy:
     def test_run_starting_is_inside_the_runs_try(self):
         """v10.130.6: 런 시작 알림은 ``run_main`` 바로 앞, 같은 try 안 — 표면의 예외도
         런 예외처럼 ``run_failed`` 로 가고, 런은 열리지 않는다(종전 web 의 비전
-        알림이 ``_run_main`` 안에서 돌던 자리와 같다). 예외로 끝난 차례도 끝 정리를 한다(vNEXT — 실패한
+        알림이 ``_run_main`` 안에서 돌던 자리와 같다). 예외로 끝난 차례도 끝 정리를 한다(v10.156.0 — 실패한
         런처럼, `run_failed` 뒤에)."""
         q = MainInput()
         q.enqueue(None, "hi")

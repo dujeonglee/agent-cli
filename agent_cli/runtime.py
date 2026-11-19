@@ -316,9 +316,9 @@ def main_run_ended(
     독촉은 main 의 상자로 가고 한가한 펌프가 그것으로 런을 연다. 건 수를
     돌려준다(0 = 빚 없음).
 
-    ``stopped`` (vNEXT): 사람이 main 을 멈췄다(■·Stop everything) — 정지 회신은 부르는 쪽이 먼저 보냈다
+    ``stopped`` (v10.156.0): 사람이 main 을 멈췄다(■·Stop everything) — 정지 회신은 부르는 쪽이 먼저 보냈다
     (`AgentRegistry.answer_main_debts_as_stopped`), 여기는 남은 줄을 버린다(에이전트의 ■ 와 같다). ``meta``
-    (vNEXT): 실패한 런이면 ``success=False``·``error`` — 폴백 머리에 원인 한 줄(에이전트의 실패 런과 같다).
+    (v10.156.0): 실패한 런이면 ``success=False``·``error`` — 폴백 머리에 원인 한 줄(에이전트의 실패 런과 같다).
     """
     if agent_registry is None:
         return 0

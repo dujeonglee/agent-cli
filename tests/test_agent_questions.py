@@ -2082,7 +2082,7 @@ class TestPerRequestDebts:
     def test_a_reply_to_a_gone_requester_still_counts_as_replied(self, mkreg, renderer):
         """요청자가 사라져 회신이 가지 못해도 빚은 닫힌다 — 첫 `reply` 는 가지 못했다는 사실을 돌려받고(v10.145.2 —
         종전엔 조용히 버리고 ""), 같은 런의 둘째 `reply` 도 같은 사실을 듣는다("이미 회신했다" 가 아니다 — 우편의
-        줄은 ``unsent`` 로 닫혀 그 런 끝까지 남는다). 그 요청자에게 진 다른 빚도 요청자가 사라질 때 함께 닫혔다(vNEXT —
+        줄은 ``unsent`` 로 닫혀 그 런 끝까지 남는다). 그 요청자에게 진 다른 빚도 요청자가 사라질 때 함께 닫혔다(v10.156.0 —
         받을 이가 없다)."""
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
