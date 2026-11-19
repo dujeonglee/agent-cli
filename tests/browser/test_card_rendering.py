@@ -650,8 +650,14 @@ class TestGeneratingIndicator:
         stack.renderer.stream_chunk("x" * 400)  # 100 토큰 — 연결 전
         assert not stack.renderer.hub.has_live_connections()
 
-        page.wait_for_load_state("load")  # 라우트 콜백이 돌아 연결이 붙는다
-        assert stack.wait_connected()
+        page.wait_for_load_state("load")
+        # 라우트 콜백은 playwright 호출 안에서만 돈다 — load 는 EventSource 를 기다리지
+        # 않으므로, 그 요청이 load 뒤에 잡히면 잠만 자는 대기(``wait_connected``)로는
+        # 영영 붙지 않는다. 붙을 때까지 playwright 호출로 기다린다.
+        deadline = time.time() + 10.0
+        while not stack.renderer.hub.has_live_connections():
+            assert time.time() < deadline, "SSE 연결이 붙지 않았다"
+            page.wait_for_timeout(50)
         # 동기화 지점: 연결 뒤의 영속 카드가 보이면 그 앞(스냅샷)은 다 처리됐다.
         stack.renderer.final("이전 답", turn=0)
         assert _wait(lambda: page.locator("#messages > .card").count() == 1)
