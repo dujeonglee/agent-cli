@@ -446,3 +446,42 @@ def test_the_harness_stop_reply_is_one_constant():
         "Nothing was done for it."
     )
     assert agent_stop.stop_mark(agent_stop.STOPPED, by) == "stopped by harness"
+
+
+class TestTwoEndsAtOnce:
+    def test_two_agents_that_wait_on_each_other_die_together(
+        self, tmp_path, monkeypatch
+    ):
+        """aa 와 bb 가 서로에게 회신을 기다리는 채로 둘이 함께 죽는다 — 각자의 정리가 상대의 빚을 닫는 순서가 어느 쪽이든
+        장부는 비고(열린 줄 없음) 불변식이 지켜지며, 정리는 예외 없이 끝난다(둘 다 dead)."""
+        from agent_cli.subagent.resident_loop import ResidentLoop
+
+        gate = threading.Event()
+        _calls, runner = _counting_runner(gate)
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        bb, bb_tm = _idle_agent(reg, "bb")
+        assert not reg.message_handler(f"agent:{aa}")(bb, "for bb", True)[1]
+        assert not reg.message_handler(f"agent:{bb}")(aa, "for aa", True)[1]
+        assert wait_until(lambda: aa_tm.state == "busy" and bb_tm.state == "busy")
+        real_open = ResidentLoop.open_scope
+        monkeypatch.setattr(
+            ResidentLoop,
+            "open_scope",
+            lambda self, start: (
+                (_ for _ in ()).throw(MemoryError("x"))
+                if self.tm.key in (aa, bb)
+                else real_open(self, start)
+            ),
+        )
+        # 지금 런을 끝내면 다음 런 시작(각자에게 온 통지)에서 둘이 함께 죽는다
+        assert reg.request(aa, "fyi", author="main", expects_reply=False) == ""
+        assert reg.request(bb, "fyi", author="main", expects_reply=False) == ""
+        gate.set()
+        assert wait_until(
+            lambda: not aa_tm.worker.is_alive() and not bb_tm.worker.is_alive()
+        )
+        assert aa_tm.state == bb_tm.state == "dead"
+        assert [r.rid for r in reg._post.rows() if r.state != "closed"] == []
+        reg._post.check_consistency()
+        reg.shutdown_all()
