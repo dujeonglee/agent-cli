@@ -2142,7 +2142,7 @@ agent-cli mcp remove <이름>
 ```
 
 - **stdio**: `command` + `args` — 로컬 프로세스로 실행
-- **Streamable HTTP**: `url` + `transport: "streamable-http"` — MCP 2025-03-26 의 원격 전송(현재 권장). `streamable_http` · `http` 도 같은 뜻으로 받습니다.
+- **Streamable HTTP**: `url` + `transport: "streamable-http"` — MCP 2025-03-26 의 원격 전송(현재 권장). `streamable_http` · `http` 도 같은 뜻으로 받습니다. mcp SDK 1.8 이상이 필요합니다(1.6·1.7 에는 이 전송이 없어 그 서버의 연결이 실패합니다). mcp 2.x 에서도 붙습니다(vNEXT — 전에는 2.x 에서 `cannot import name 'streamablehttp_client'` 로 연결되지 않았습니다).
 - **SSE**: `url` + `transport: "sse"` — 구 HTTP+SSE 전송
 - **로컬/원격은 `url` 키의 유무로 결정**됩니다. `url` 이 없으면 `stdio` — `transport: "sse"` 를 적어도 `url` 이 없으면 stdio 로 취급됩니다. `url` 이 있는데 `transport` 를 생략하면 **`sse`** 입니다(기존 설정 호환). 신규 서버는 대개 Streamable HTTP 이니 `agent-cli mcp add` 로 등록하거나 `transport` 를 명시하세요.
 

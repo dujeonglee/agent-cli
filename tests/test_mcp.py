@@ -756,51 +756,85 @@ class TestStreamableHttpTransport:
         assert not c.is_streamable_http and not c.is_remote
 
     @staticmethod
-    def _which_transport(monkeypatch, cfg) -> str:
-        """``_open_transport`` 가 고른 SDK 함수의 이름 — 두 원격 전송 모듈을 가짜로 바꿔 본다
-        (SDK 세대마다 모듈·이름이 달라 진짜 모듈에 덧대지 않는다: 1.6 에는 streamable_http 가 없다)."""
+    def _which_transport(monkeypatch, cfg, http_names=("streamablehttp_client",), n=3):
+        """``_open_transport`` 가 고른 SDK 함수 이름과 받은 스트림 — 두 원격 전송 모듈을 가짜로 바꿔
+        본다(SDK 세대마다 모듈·이름이 달라 진짜 모듈에 덧대지 않는다: 1.6 에는 streamable_http 가
+        없다). ``http_names`` 는 가짜 streamable_http 모듈에 둘 함수 이름들, ``n`` 은 그 함수가 내주는
+        값 수(1.x 는 3, 2.x 는 2). 실제 SDK 와의 연결은 tests/test_mcp_http.py 가 본다."""
         import asyncio
         import contextlib
         import sys
         import types
 
+        import mcp.client
+
         from agent_cli.mcp.client import _open_transport
 
         picked: list[str] = []
 
-        def fake_module(modname, attr, label, n):
-            @contextlib.asynccontextmanager
-            async def cm(*a, **k):
-                picked.append(label)
-                yield (object(),) * n
-
+        def fake_module(modname, attrs, k):
             mod = types.ModuleType(modname)
-            setattr(mod, attr, cm)
-            monkeypatch.setitem(sys.modules, modname, mod)
+            for attr in attrs:
 
-        fake_module(
-            "mcp.client.streamable_http", "streamablehttp_client", "streamable", 3
-        )
-        fake_module("mcp.client.sse", "sse_client", "sse", 2)
+                @contextlib.asynccontextmanager
+                async def cm(*a, _attr=attr, **kw):
+                    picked.append(_attr)
+                    yield ("read", "write", "session-id")[:k]
+
+                setattr(mod, attr, cm)
+            monkeypatch.setitem(sys.modules, modname, mod)
+            monkeypatch.setattr(
+                mcp.client, modname.rsplit(".", 1)[1], mod, raising=False
+            )
+
+        fake_module("mcp.client.streamable_http", http_names, n)
+        fake_module("mcp.client.sse", ["sse_client"], 2)
 
         async def go():
-            async with _open_transport(cfg):
-                pass
+            async with _open_transport(cfg) as streams:
+                return streams
 
-        asyncio.run(go())
-        return picked[0]
+        streams = asyncio.run(go())
+        return picked[0], streams
 
-    def test_streamable_http_config_opens_streamable_http(self, monkeypatch):
+    @staticmethod
+    def _http_cfg():
         from agent_cli.mcp.config import McpServerConfig
 
-        cfg = McpServerConfig(name="s", url="http://h/mcp", transport="streamable-http")
-        assert self._which_transport(monkeypatch, cfg) == "streamable"
+        return McpServerConfig(
+            name="s", url="http://h/mcp", transport="streamable-http"
+        )
+
+    def test_streamable_http_on_sdk_1_8_to_1_23_uses_the_old_name(self, monkeypatch):
+        cfg = self._http_cfg()
+        assert self._which_transport(monkeypatch, cfg) == (
+            "streamablehttp_client",
+            ("read", "write"),
+        )
+
+    def test_streamable_http_prefers_the_new_name_when_both_exist(self, monkeypatch):
+        """1.24~1.x — 두 이름이 다 있고 옛 이름은 폐기 예고다."""
+        cfg = self._http_cfg()
+        names = ("streamablehttp_client", "streamable_http_client")
+        assert self._which_transport(monkeypatch, cfg, names) == (
+            "streamable_http_client",
+            ("read", "write"),
+        )
+
+    def test_streamable_http_on_sdk_2_takes_two_streams(self, monkeypatch):
+        """2.x — 새 이름만, 두 값만 내준다."""
+        cfg = self._http_cfg()
+        got = self._which_transport(monkeypatch, cfg, ("streamable_http_client",), n=2)
+        assert got == ("streamable_http_client", ("read", "write"))
 
     def test_sse_config_still_opens_sse(self, monkeypatch):
         from agent_cli.mcp.config import McpServerConfig
 
         cfg = McpServerConfig(name="s", url="http://h/sse", transport="sse")
-        assert self._which_transport(monkeypatch, cfg) == "sse"
+        assert self._which_transport(monkeypatch, cfg) == (
+            "sse_client",
+            ("read", "write"),
+        )
 
     def test_invalid_config_names_both_remote_options(self):
         from agent_cli.mcp.client import _check_config
