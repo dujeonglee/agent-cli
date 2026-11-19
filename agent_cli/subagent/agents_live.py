@@ -1288,7 +1288,6 @@ class AgentRegistry:
     ) -> int:
         """빚 하나의 폴백 회신 — 배달했으면 1. main 은 상대에게(받은편지함), 상주는 main(메일함)·요청자에게."""
         if debtor == "main":
-            # 실패한 main 런의 폴백도 원인 한 줄을 머리에 — 에이전트 요청자에게 가는 회신은 같은 모양이다
             err = self._deliver_peer_reply(
                 d.to.split(":", 1)[1], "main", peer_summary, 0, re=d.id, settles=d.id
             )
@@ -2426,7 +2425,7 @@ class AgentRegistry:
         by = tm.stop_by or "user"
         self._answer_debts(
             tm,
-            agent_stop.STOPPED_MARK.format(by=by),
+            agent_stop.stop_mark(agent_stop.STOPPED, by),
             partial(agent_stop.stopped_reply, activity=activity, notes=notes, by=by),
         )
 
@@ -2532,14 +2531,7 @@ class AgentRegistry:
         else:
             kept = len(self._queued(tm))
         if rule.stops_sub_runs:
-            me = f"agent:{tm.key}"
-            for sub in list(self._agents.values()):
-                if sub.parent == me and sub.ends_after_task:
-                    self.stop_run(
-                        sub.key,
-                        by=tm.stop_by or "user",
-                        wakes_requesters=tm.stop_replies_wake,
-                    )
+            agent_stop.stop_sub_runs(self, tm)
         self.report_stop(tm, kept=kept)
 
     def report_stop(self, tm: AgentInstance, *, kept: int) -> None:
@@ -2974,6 +2966,8 @@ class AgentRegistry:
                 )
             if not tm.revivable:
                 agent_stop.close_debts_owed_to(self, tm, self._who(f"agent:{tm.key}"))
+                if crash and not tm.stop_event.is_set():  # 결과를 받을 부모가 없다
+                    agent_stop.stop_sub_runs(self, tm, agent_stop.HARNESS)
                 # **영구 사망(kill·crash)일 때만** 질문을 정리한다 (§3.8).
                 # 세션 종료(shutdown_all)는 revivable 을 유지하므로 여기
                 # 들어오지 않는다 — 들어오면 직후의 _save_state 가 빈 목록을

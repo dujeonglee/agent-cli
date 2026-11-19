@@ -314,3 +314,135 @@ class TestARequesterThatIsGone:
         assert mail.wakes is False
         assert f"request [{debt.id}]" in mail.text and "is gone" in mail.text
         reg.shutdown_all()
+
+
+class TestAParentThatDies:
+    def test_its_run_agent_is_stopped_with_it(self, tmp_path, monkeypatch):
+        """부모 에이전트의 워커가 오류로 죽으면 그가 띄운 run 에이전트도 멈춘다(✕ 와 같이 — 결과를 받을 부모가 없다).
+        멈춘 쪽은 하니스다(``stopped by harness``). 그 run 이 부모에게 진 빚은 부모가 사라질 때 먼저 닫혔다."""
+        from agent_cli.subagent import agent_stop
+        from agent_cli.subagent.resident_loop import ResidentLoop
+
+        gate = threading.Event()
+        _calls, runner = _counting_runner(gate)
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        kid, err = reg.spawn(name="kid", ends_after_task=True, parent=f"agent:{aa}")
+        assert not err
+        kid_tm = reg.get(kid)
+        assert wait_until(lambda: kid_tm.state == "idle")
+        _, err = reg.message_handler(f"agent:{aa}")(kid, "child work", True)
+        assert not err
+        assert wait_until(lambda: kid_tm.state == "busy")  # 문에서 멈춘 채 일한다
+        real_open = ResidentLoop.open_scope
+
+        def crashing(self, start):
+            if self.tm.key == aa:
+                raise MemoryError("worker machinery")
+            return real_open(self, start)
+
+        monkeypatch.setattr(ResidentLoop, "open_scope", crashing)
+        assert reg.request(aa, "go") == ""
+        assert wait_until(lambda: not aa_tm.worker.is_alive())
+        assert aa_tm.error.startswith("MemoryError")
+        assert kid_tm.stop_cause == agent_stop.STOPPED
+        assert kid_tm.stop_by == agent_stop.harness_by(aa)
+        assert reg.reply_debts(f"agent:{kid}") == []  # 부모에게 진 빚은 닫혔다
+        gate.set()
+        assert wait_until(lambda: not kid_tm.worker.is_alive())
+        assert kid_tm.state == "dead"
+        reg.shutdown_all()
+
+    def test_its_other_requester_hears_why(self, tmp_path, monkeypatch):
+        """그 run 이 다른 쪽(main)의 요청을 일하던 중이면 main 은 하니스의 정지 회신을 듣는다 — 왜 멈췄는지(띄운 부모가
+        죽었다)를 한 문장으로, 표지는 ``stopped by harness``."""
+        from agent_cli.subagent import agent_stop
+        from agent_cli.subagent.resident_loop import ResidentLoop
+
+        gate = threading.Event()
+        _calls, runner = _counting_runner(gate)
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        kid, err = reg.spawn(name="kid", ends_after_task=True, parent=f"agent:{aa}")
+        assert not err
+        kid_tm = reg.get(kid)
+        assert wait_until(lambda: kid_tm.state == "idle")
+        _, err = reg.message_handler("main")(kid, "main work", True)
+        assert not err
+        assert wait_until(lambda: kid_tm.state == "busy")
+        (debt,) = reg.reply_debts(f"agent:{kid}")
+        real_open = ResidentLoop.open_scope
+
+        def crashing(self, start):
+            if self.tm.key == aa:
+                raise MemoryError("worker machinery")
+            return real_open(self, start)
+
+        monkeypatch.setattr(ResidentLoop, "open_scope", crashing)
+        try:
+            assert reg.request(aa, "go") == ""
+            assert wait_until(lambda: not aa_tm.worker.is_alive())
+            assert kid_tm.stop_by == agent_stop.harness_by(aa)
+        finally:
+            gate.set()  # 정지 회신은 그 런이 내려올 때 간다
+
+        def replies():
+            return [m for m in reg._post.mail("main") if f"[{debt.id}]" in m.text]
+
+        assert wait_until(replies)
+        (mail,) = replies()
+        assert mail.mark == "stopped by harness"
+        assert mail.text.splitlines()[0] == (
+            f"{kid} was stopped because {aa} (the agent that started it) died, "
+            f'while it was working on your request [{debt.id}] ("main work").'
+        )
+        assert wait_until(lambda: not kid_tm.worker.is_alive())
+        reg.shutdown_all()
+
+    def test_a_resident_child_is_left_alone(self, tmp_path, monkeypatch):
+        """상주(``ends_after_task`` 아님)는 부모와 수명을 같이하지 않는다 — ✕ 와 같은 규칙."""
+        from agent_cli.subagent.resident_loop import ResidentLoop
+
+        _calls, runner = _counting_runner()
+        reg = make_registry(tmp_path, runner=runner)
+        aa, aa_tm = _idle_agent(reg, "aa")
+        res, err = reg.spawn(name="res", parent=f"agent:{aa}")
+        assert not err
+        res_tm = reg.get(res)
+        assert wait_until(lambda: res_tm.state == "idle")
+        real_open = ResidentLoop.open_scope
+        monkeypatch.setattr(
+            ResidentLoop,
+            "open_scope",
+            lambda self, start: (
+                (_ for _ in ()).throw(MemoryError("x"))
+                if self.tm.key == aa
+                else real_open(self, start)
+            ),
+        )
+        assert reg.request(aa, "go") == ""
+        assert wait_until(lambda: not aa_tm.worker.is_alive())
+        assert res_tm.stop_cause == "" and res_tm.worker.is_alive()
+        reg.shutdown_all()
+
+
+def test_the_harness_stop_reply_is_one_constant():
+    """하니스가 멈춘 run 의 회신 첫 줄은 정지 이유 상수 한 자리(`agent_stop.HARNESS_CAUSE`)에 일하던 중·시작 전이
+    붙는다 — 표지는 ``stopped by harness``."""
+    from agent_cli.subagent import agent_stop
+
+    by = agent_stop.harness_by("agt-X")
+    working = agent_stop.stopped_reply("agt-Y", "r-3", "child work", [], "", by=by)
+    queued = agent_stop.unstarted_reply(
+        "agt-Y", "r-4", "later", by=by, cause=agent_stop.STOPPED
+    )
+    cause = "agt-Y was stopped because agt-X (the agent that started it) died"
+    assert agent_stop.HARNESS_CAUSE.format(agent="agt-Y", parent="agt-X") == cause
+    assert working.splitlines()[0] == (
+        f'{cause}, while it was working on your request [r-3] ("child work").'
+    )
+    assert queued.splitlines()[0] == (
+        f'{cause}, before it started your request [r-4] ("later"). '
+        "Nothing was done for it."
+    )
+    assert agent_stop.stop_mark(agent_stop.STOPPED, by) == "stopped by harness"

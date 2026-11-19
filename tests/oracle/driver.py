@@ -1853,7 +1853,14 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
             facts["notice"] = s.reg.request(
                 aa, "TASK-E1 fyi", author="main", expects_reply=False
             )
-            until(lambda: s.agent_state(aa) == "dead", "aa died")
+            # 죽음의 정리(aa 가 기다리던 회신을 닫음)까지 — 로스터의 dead 는 그 정리보다 먼저 선다
+            until(
+                lambda: (
+                    s.agent_state(aa) == "dead"
+                    and not s.reg.awaited_replies(f"agent:{aa}")
+                ),
+                "aa died and its awaits closed",
+            )
             # 제자리에서 기다리던 main 이 died 통지를 읽은 뒤
             until(lambda: not s.reg.pending_mail(), "main read the death")
             snapshot("after_death")
@@ -1869,6 +1876,87 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
             "settle",
         )
         snapshot("end")
+
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+def s34_parent_dies_with_its_run_agent(root: Path) -> dict:
+    """부모가 죽으면 그가 띄운 run 도 멈춘다: main 이 상주 aa 에게 일을 맡기고 제자리에서 기다린다 → aa 가 run
+    에이전트를 띄우고(`agent` run) `wait` → aa 의 워커가 다음 런 시작에서 죽는다(`Recorder.crash_on_start`). main 은 aa 의
+    died 통지·died 회신을 읽고, aa 가 띄운 run 은 하니스가 멈춰(``stopped by harness``) 내려온다 — 그 run 이 aa 에게
+    진 빚은 aa 가 사라질 때 닫혔다. 순서: run 의 첫 꼬리는 aa 가 `wait` 로 런을 끝낸 뒤, main 이 깨어 다음 꼬리를 짓는
+    것은 run 이 내려온 뒤."""
+    box: dict = {}
+    facts: dict = {}
+    crash = threading.Event()
+
+    def aa_delegates(msgs):
+        s = box["s"]
+        aa = _agent_key(s, "aa")
+        # 다음 에이전트 런의 시작(띄운 run 의 것)을 aa 가 한가해질 때까지 잡는다
+        s.recorder.hold("begin_agent_work", "*", lambda: s.agent_state(aa) == "idle")
+        return call("agent", mode="run", task="TASK-G2 child work")
+
+    def kid_works(msgs):
+        s = box["s"]
+        # 부모의 죽음과 그 정리 — 하니스가 이 run 을 멈춘 뒤에 돌아간다(도구 실행 직전 검사가 멈춤을 본다)
+        until(lambda: s.reg.get(kid_key()).stop_cause == "stopped", "run stopped")
+        return call("shell", command="true")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="spawn", name="aa", task="TASK-G1 delegate"),
+                _after_runs_began(box, 1, call("wait")),
+            ]
+            + [complete_all("main read it")] * 10,
+            "TASK-G1": [
+                _main_waits_then(box, aa_delegates),
+                _after_runs_began(box, 2, call("wait")),
+            ],
+            "TASK-G2": [kid_works],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+
+    def kid_key() -> str:
+        keys = [k for k in s.agent_keys() if k != _agent_key(s, "aa")]
+        return keys[0] if keys else ""
+
+    def main_wakes_after_the_run_is_down(args, kwargs):
+        # main 이 제자리 대기에서 깨는 자리 — 다음 꼬리의 로스터가 run 의 내려옴을 본 뒤에 짓게
+        if args and args[0] is False:
+            until(lambda: kid_key() and s.agent_state(kid_key()) == "dead", "run down")
+
+    s.recorder.rules["wait_in_place"] = main_wakes_after_the_run_is_down
+    s.say("MAIN go", nickname="dj")
+
+    def done(s):
+        until(lambda: len(s.agent_keys()) == 2, "run spawned")
+        aa = _agent_key(s, "aa")
+        until(
+            lambda: (
+                s.agent_state(aa) == "idle" and len(p.calls.get("TASK-G2", [])) >= 1
+            ),
+            "aa parked, run working",
+        )
+        s.recorder.crash_on_start[aa] = crash
+        crash.set()
+        facts["notice"] = s.reg.request(
+            aa, "TASK-G1 fyi", author="main", expects_reply=False
+        )
+        until(lambda: s.agent_state(aa) == "dead", "aa died")
+        until(lambda: s.agent_state(kid_key()) == "dead", "run stopped")
+        until(lambda: runs_ended(s) >= 1, "main read the death")
+        until(
+            lambda: all(s.agent_state(k) in ("idle", "dead") for k in s.agent_keys()),
+            "settle",
+        )
+        tm = s.reg.get(kid_key())
+        facts["run"] = {"stop_cause": tm.stop_cause, "stop_by": tm.stop_by}
+        facts["roster"] = _roster(s)
+        facts["awaited_main"] = s.reg.awaited_replies("main")
 
     drive(s, path="web", until_done=done)
     return s.collect(facts)
@@ -2486,6 +2574,8 @@ SCENARIOS = {
     # 메일 런이 열리는 모양
     "s32_quiet_reply_then_waking_mail": s32_quiet_reply_then_waking_mail,
     "s33_words_right_after_mail_run_opens": s33_words_right_after_a_mail_run_opens,
+    # 끝내기 규칙
+    "s34_parent_dies_with_its_run_agent": s34_parent_dies_with_its_run_agent,
 }
 
 
