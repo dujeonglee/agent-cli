@@ -817,7 +817,7 @@ def _tool_help_samples(dialect) -> list[tuple[str, str, str]]:
 def _runtime_texts(dialect) -> list[dict]:
     """Texts the harness injects mid-run. Hand-kept: add an entry when a new
     model-facing text is introduced outside the system prompt."""
-    from agent_cli.constants import AUDIT_REQUEST
+    from agent_cli.constants import AUDIT_REQUEST, RESTART_NOTICE
     from agent_cli.context.manager import _OBS_COMPLETE_NUDGE
     from agent_cli.loop.dispatch import BATCH_OP_SKIPPED_NOTE
     from agent_cli.prompts.session_state import (
@@ -853,6 +853,11 @@ def _runtime_texts(dialect) -> list[dict]:
         ("rules_header", "Opens the standing-rules part of that block", RULES_HEADER),
         ("tail_boundary", "Separates the tail block from the message", TAIL_BOUNDARY),
         ("compaction_notice", "First turn after a compaction", COMPACTION_NOTICE),
+        (
+            "restart_notice",
+            "Last record of main's and each revived resident's context after a session restart",
+            RESTART_NOTICE,
+        ),
         (
             "compaction_notice_without_memory",
             "Same, in a loop without the memory tool",

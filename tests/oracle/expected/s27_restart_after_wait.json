@@ -607,6 +607,12 @@
      "role": "user",
      "success": true,
      "tool": "wait"
+    },
+    {
+     "content": "⚡ The session restarted. Anything that was in progress before it was cut off and is gone: runs, background jobs, monitors, waits, requests and replies not yet delivered, and questions to the user. Nothing is owed for them and nothing more will arrive.",
+     "role": "user",
+     "success": false,
+     "tool": "interrupt"
     }
    ],
    "agents/agt-B/history.jsonl": [
@@ -617,6 +623,12 @@
     },
     {
      "content": "⚡ User interrupted. Waiting for new instructions.",
+     "role": "user",
+     "success": false,
+     "tool": "interrupt"
+    },
+    {
+     "content": "⚡ The session restarted. Anything that was in progress before it was cut off and is gone: runs, background jobs, monitors, waits, requests and replies not yet delivered, and questions to the user. Nothing is owed for them and nothing more will arrive.",
      "role": "user",
      "success": false,
      "tool": "interrupt"
@@ -648,6 +660,12 @@
     },
     {
      "role": "assistant"
+    },
+    {
+     "content": "⚡ The session restarted. Anything that was in progress before it was cut off and is gone: runs, background jobs, monitors, waits, requests and replies not yet delivered, and questions to the user. Nothing is owed for them and nothing more will arrive.",
+     "role": "user",
+     "success": false,
+     "tool": "interrupt"
     }
    ]
   }

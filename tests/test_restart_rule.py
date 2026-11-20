@@ -235,3 +235,73 @@ def test_ids_are_read_only_where_they_stand_as_ids(tmp_path):
     _new_process()
     item_ids.observe_records(tmp_path)
     assert item_ids.next_id(item_ids.MAIL) == "n-8"
+
+
+# ── 재시작 기록 — main·되살린 상주의 컨텍스트 끝에 한 줄 ──────────────────────
+
+
+def _last(ctx) -> dict | None:
+    tail = ctx.records_since(ctx.last_ordinal) if ctx.last_ordinal is not None else []
+    return tail[-1] if tail else None
+
+
+def _is_restart_record(rec) -> bool:
+    from agent_cli.constants import RESTART_NOTICE
+
+    return bool(rec) and (rec.get("tool"), rec.get("content")) == (
+        "interrupt",
+        RESTART_NOTICE,
+    )
+
+
+def test_record_restart_writes_once_on_a_context_with_history(tmp_path):
+    from agent_cli.context.manager import ContextManager
+    from agent_cli.session.records import interrupt_record, record_restart
+
+    fresh = ContextManager(tmp_path / "new", max_context_tokens=10000)
+    assert record_restart(fresh) is False and fresh.last_ordinal is None  # 새 세션
+    ctx = ContextManager(tmp_path / "old", max_context_tokens=10000)
+    ctx.add({"role": "user", "content": "before the cut"})
+    again = ContextManager(tmp_path / "old", max_context_tokens=10000, resume=True)
+    assert record_restart(again) is True and _is_restart_record(_last(again))
+    twice = ContextManager(tmp_path / "old", max_context_tokens=10000, resume=True)
+    assert record_restart(twice) is False  # 사이에 아무 런도 없던 거듭 재시작 — 한 줄
+    twice.add({"role": "user", "content": "a run in between"})
+    assert record_restart(twice) is True
+    assert interrupt_record("x") == {
+        "role": "user",
+        "tool": "interrupt",
+        "success": False,
+        "content": "x",
+    }  # Stop 의 기록과 같은 모양
+
+
+def test_a_revived_resident_reads_the_restart_record(tmp_path, renderer, regs):  # noqa: F811
+    reg1, key = _mid_run(tmp_path, regs)
+    reg1.get(key).ctx.add(
+        {"role": "user", "content": "task-1"}
+    )  # 가짜 러너는 ctx 에 쓰지 않는다 — 이력을 세운다
+    reg2, _rec = _restart(tmp_path, regs)
+    assert wait_until(lambda: reg2.get(key).state == "idle")
+    assert _is_restart_record(_last(reg2.get(key).ctx))
+
+
+def test_no_restart_record_for_a_run_agent_or_a_resident_revived_after_a_kill(
+    tmp_path,
+    renderer,  # noqa: F811
+    regs,
+):
+    made, _ = regs
+    _reg1, run_key = _mid_run(tmp_path, regs, ends_after_task=True)
+    reg2, _rec = _restart(tmp_path, regs)
+    assert reg2.get(run_key).ctx is None  # dead — 컨텍스트를 열지 않는다
+    reg3 = make_registry(tmp_path / "other", runner=_RecordingRunner())
+    made.append(reg3)
+    key, _ = reg3.spawn(name="w")
+    assert wait_until(lambda: reg3.get(key).state == "idle")
+    assert reg3.request(key, "task") == ""
+    assert wait_until(lambda: reg3.get(key).handled >= 1)
+    assert reg3.kill(key) == ""
+    assert reg3.resume_teammate(key) == ""  # ✕ 뒤 사람이 되살림 — 재시작이 아니다
+    assert wait_until(lambda: reg3.get(key).state == "idle")
+    assert not _is_restart_record(_last(reg3.get(key).ctx))

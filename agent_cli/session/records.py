@@ -11,6 +11,34 @@ from __future__ import annotations
 
 import json
 
+# ── 사실 기록 — Stop 과 재시작이 컨텍스트에 남기는 한 줄 ───────────────
+
+
+def interrupt_record(content: str) -> dict:
+    """``[interrupt]`` 머리로 보이는 사실 기록 레코드 한 개 — Stop(`AgentLoop._on_interrupt`)과 재시작
+    (`record_restart`)이 같은 모양을 쓴다."""
+    return {"role": "user", "tool": "interrupt", "success": False, "content": content}
+
+
+def record_restart(ctx) -> bool:
+    """재시작으로 디스크에서 올라온 컨텍스트 끝에 재시작 기록(`constants.RESTART_NOTICE`)을 한 줄 적는다 (5c-0).
+    적었으면 참. 적지 않는 때: history 가 비었다(새 세션 — 재시작이 아니다), 마지막 레코드가 이미 이 기록이다
+    (그 사이 아무 런도 없이 거듭 재시작)."""
+    from agent_cli.constants import RESTART_NOTICE
+
+    last = ctx.last_ordinal
+    if last is None:
+        return False
+    tail = ctx.records_since(last)
+    if tail and (tail[-1].get("tool"), tail[-1].get("content")) == (
+        "interrupt",
+        RESTART_NOTICE,
+    ):
+        return False
+    ctx.add(interrupt_record(RESTART_NOTICE))
+    return True
+
+
 # ── Defaults / constants ─────────────────────────────────
 DEFAULT_TOKEN_BUDGET = 100_000
 

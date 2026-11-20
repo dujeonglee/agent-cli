@@ -31,6 +31,7 @@ from agent_cli.loop.kind import (
     Start,
 )
 from agent_cli.main_input import CLOSED
+from agent_cli.session.records import record_restart
 from agent_cli.session_slots import get_agent_registry
 from agent_cli.subagent import agent_stop
 from agent_cli.tools.result import ToolResult
@@ -189,6 +190,8 @@ class ResidentLoop(LoopKind):
         self.binding = binding
         self.ctx = ctx
         tm.ctx = ctx
+        if tm.restarted:  # 재시작이 되살렸다 — 컨텍스트 끝에 사실 기록 한 줄(5c-0)
+            record_restart(ctx)
 
     # ── ⑫ 시작 — 받은편지함 항목 → 시작 메시지 + 회계 ──
     def start(self, items: list[dict]) -> Start:

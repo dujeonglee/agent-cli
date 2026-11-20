@@ -30,7 +30,9 @@ def _spec(**kw) -> SessionSpec:
     base = {
         "binding": MagicMock(name="binding"),
         "session": SimpleNamespace(session_id="sess-1"),
-        "ctx": SimpleNamespace(session_dir="/sess"),
+        "ctx": SimpleNamespace(
+            session_dir="/sess", last_ordinal=None
+        ),  # 새 세션 — 재시작 기록 없음
         "mcp_manager": "MCP",
         "knob_args": {"max_agents": 3},
         "hooks_config": {"PreToolUse": ["h"]},
@@ -156,6 +158,53 @@ class TestOrder:
                 )
         assert "MainLoop" in order and "schedules.start" not in order
         assert "pump" not in order
+
+
+class TestRestartRecord:
+    """재시작(5c-0): 디스크에서 올라온 main 컨텍스트 끝에 사실 기록 한 줄과 관찰 카드 — 메일 배선(복원)보다 먼저."""
+
+    def _wire(self, ctx):
+        order: list[str] = []
+        cards: list = []
+        with ExitStack() as st:
+            _patch_parts(st, order)
+            st.enter_context(
+                patch.object(
+                    R,
+                    "render_step",
+                    lambda *a, **k: (order.append("card"), cards.append((a, k))),
+                )
+            )
+            spec = _spec(ctx=ctx)
+            stores = build_session_stores(spec, main_input=MainInput())
+            owners = build_session_owners(spec, stores, renderer="R")
+            wire_session(spec, stores, owners, surface=_Surface(), policy=None)
+        return order, cards
+
+    def test_a_restored_context_gets_the_record_and_its_card_before_restore(
+        self, tmp_path
+    ):
+        from agent_cli.constants import RESTART_NOTICE
+        from agent_cli.context.manager import ContextManager
+
+        ContextManager(tmp_path, max_context_tokens=10000).add(
+            {"role": "user", "content": "before the cut"}
+        )
+        ctx = ContextManager(tmp_path, max_context_tokens=10000, resume=True)
+        order, cards = self._wire(ctx)
+        assert order.index("card") < order.index("mail")
+        ((args, kw),) = cards
+        assert args[:2] == ("observation", RESTART_NOTICE)
+        assert kw["tool_name"] == "interrupt" and kw["hidx"] == ctx.last_ordinal
+        (last,) = ctx.records_since(ctx.last_ordinal)
+        assert last["content"] == RESTART_NOTICE
+
+    def test_a_new_session_gets_neither(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path, max_context_tokens=10000)
+        order, cards = self._wire(ctx)
+        assert "card" not in order and cards == [] and ctx.last_ordinal is None
 
 
 class TestOneQueue:

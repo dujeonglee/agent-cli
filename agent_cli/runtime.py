@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any
 
-from agent_cli.constants import schedule_addr
+from agent_cli.constants import RESTART_NOTICE, schedule_addr
 from agent_cli.loop.kind import (
     WAIT_BLOCK,
     WAIT_END_RUN,
@@ -43,6 +43,8 @@ from agent_cli.loop.ports import (
     _hook_runner_port,
     _hook_unwired,
 )
+from agent_cli.render import render_step
+from agent_cli.session.records import record_restart
 from agent_cli.session_slots import (
     clear_session_slots,
     set_agent_registry,
@@ -606,6 +608,17 @@ def wire_session(
 
     registry = owners.agent_registry
     main_input = stores.main_input
+    # 재시작(5c-0): main 컨텍스트가 디스크에서 올라왔으면 끝에 사실 기록 한 줄 — 복원·펌프보다 먼저, 사람의 첫 말이나
+    # 예약이 연 런이 그것을 읽는다. Stop 처럼 화면에도 관찰 카드로(웹의 대화창 재생은 이보다 먼저 돌았다).
+    if spec.ctx is not None and record_restart(spec.ctx):
+        render_step(
+            "observation",
+            RESTART_NOTICE,
+            0,
+            tool_name="interrupt",
+            success=False,
+            hidx=spec.ctx.last_ordinal,
+        )
     revived, auto = wire_agent_mail(
         registry, on_mail_notice=on_mail_notice, parent_ctx=spec.ctx
     )
