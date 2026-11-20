@@ -125,7 +125,7 @@ def _web_active(mi, reg, side) -> bool:
         hub=SimpleNamespace(has_live_connections=lambda: False),
         worker_is_busy=lambda: False,
     )
-    server = SimpleNamespace(main_input=mi, pending_count=mi.pending_count)
+    server = SimpleNamespace(main_input=mi)
     return web_instance_is_active(renderer, server, reg, **side)
 
 
@@ -148,7 +148,7 @@ def test_table_covers_every_fact():
 def test_web_host_terms(tmp_path):
     """웹만의 항 — 접속한 뷰어와 바쁜 main 워커는 그것만으로 살아 있다."""
     mi, reg, side = _session(tmp_path, "nothing")
-    server = SimpleNamespace(main_input=mi, pending_count=mi.pending_count)
+    server = SimpleNamespace(main_input=mi)
     for conn, busy in ((True, False), (False, True)):
         renderer = SimpleNamespace(
             hub=SimpleNamespace(has_live_connections=lambda c=conn: c),
@@ -164,5 +164,5 @@ def test_web_before_the_registry_exists(tmp_path):
         hub=SimpleNamespace(has_live_connections=lambda: False),
         worker_is_busy=lambda: False,
     )
-    server = SimpleNamespace(main_input=mi, pending_count=mi.pending_count)
+    server = SimpleNamespace(main_input=mi)
     assert web_instance_is_active(renderer, server, None, **side) is True
