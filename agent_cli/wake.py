@@ -58,14 +58,15 @@ class WakeFacts(NamedTuple):
 
 
 def _debtors_owing(facts: WakeFacts, addr: str) -> list[str]:
-    """``addr`` 에게 갚지 않은 회신을 빚진 쪽들(``addr`` 자신 빼고) — 빚진 쪽의 첫 열린 줄 순서. 빚진 쪽이 죽었는지는
-    보지 않는다(죽은 빚도 근거로 남는다 — 4c 에서 바뀐다)."""
+    """``addr`` 에게 갚지 않은 회신을 빚진 쪽들(``addr`` 자신·죽은 에이전트 빼고) — 빚진 쪽의 첫 열린 줄 순서. 죽은
+    채무자는 회신을 보낼 수 없어 깨울 것이 아니다(5b 항목 8 — 그 빚은 세션 종료의 정리 단계에서만 남는다, 재현 r2)."""
+    dead = {a.addr for a in facts.agents if a.dead}
     order: list[str] = []
     for debtor, _ in facts.owing:
         if debtor not in order:
             order.append(debtor)
     owes = set(facts.owing)
-    return [d for d in order if d != addr and (d, addr) in owes]
+    return [d for d in order if d != addr and d not in dead and (d, addr) in owes]
 
 
 def _is_parked(facts: WakeFacts, debtor: str) -> bool:
