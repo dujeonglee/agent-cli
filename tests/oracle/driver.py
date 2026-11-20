@@ -1991,8 +1991,8 @@ def s36_queued_request_of_a_gone_requester(root: Path) -> dict:
     """요청한 쪽이 사라지면 그가 보낸 줄 선 요청은 빠진다: main 이 bb 에게 느린 일(통지)을 맡기고 aa 에게 bb 에게
     물어보라고(통지) 한다 → aa 가 바쁜 bb 에게 회신 기대 `message` 를 보내고 `wait` (그 요청은 bb 상자에 줄을 선다)
     → 사람이 aa 를 ✕. 그 요청은 bb 상자에서 빠지고(대기열·로스터 수가 준다) 통지는 없다 — bb 는 느린 일을 마친 뒤
-    한가해지고 그 요청으로 런을 열지 않는다. 순서: 사람의 ✕ 는 aa 가 `wait` 로 런을 끝내고 그 요청이 줄을 선 뒤, bb 의
-    느린 일은 ✕ 의 정리를 본 뒤에 끝난다."""
+    한가해지고 그 요청으로 런을 열지 않는다. 순서: aa 의 요청은 bb 가 느린 일의 첫 호출에 들고 main 의 런이 끝난 뒤,
+    사람의 ✕ 는 aa 가 `wait` 로 런을 끝내고 그 요청이 줄을 선 뒤, bb 의 느린 일은 ✕ 의 정리를 본 뒤에 끝난다."""
     box: dict = {}
     facts: dict = {}
     slow_go = threading.Event()
@@ -2013,9 +2013,15 @@ def s36_queued_request_of_a_gone_requester(root: Path) -> dict:
                 lambda m: _held_request_to(
                     box, "bb", "TASK-H1 slow job", expects_reply=False
                 ),
-                lambda m: _held_request_to(
-                    box, "aa", "TASK-H2 ask bb", expects_reply=False
-                ),
+                lambda m: (
+                    # bb 가 느린 일의 첫 호출에 든 뒤에 aa 를 깨운다 — "바쁨" 은 호출 시작보다 앞서므로, 안 잡으면
+                    # bb 의 첫 꼬리가 aa 를 [busy]/[idle] 로 갈라 읽는다(컨테이너 cpus 0.5·0.25, 750회 중 16회)
+                    until(
+                        lambda: len(box["s"].provider.calls.get("TASK-H1", [])) >= 1,
+                        "bb in its first call",
+                    ),
+                    _held_request_to(box, "aa", "TASK-H2 ask bb", expects_reply=False),
+                )[1],
                 complete_all("delegated"),
             ]
             + [complete_all("main read it")] * 10,
@@ -2026,7 +2032,19 @@ def s36_queued_request_of_a_gone_requester(root: Path) -> dict:
                 )[1],
             ],
             "TASK-H2": [
-                call("message", to="bb", text="TASK-H3 for aa"),
+                lambda m: (
+                    # bb 가 느린 일의 첫 호출에 든 뒤 — 먼저 보내면 bb 의 첫 턴 경계가 그 요청을 그 런으로 흡수한다
+                    # (줄에 서지 않는다). main 의 런이 끝난 뒤 — 먼저 보내면 main 의 마지막 꼬리가 "1 queued" 를
+                    # 본다(컨테이너 cpus 0.5·0.25 부하, 750회 중 62회)
+                    until(
+                        lambda: (
+                            len(box["s"].provider.calls.get("TASK-H1", [])) >= 1
+                            and runs_ended(box["s"]) >= 1
+                        ),
+                        "bb busy in its call, main's run over",
+                    ),
+                    call("message", to="bb", text="TASK-H3 for aa"),
+                )[1],
                 call("wait"),
             ],
             "TASK-H3": [complete_all("must not run")],
