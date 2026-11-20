@@ -1,0 +1,239 @@
+"""재시작이 무엇을 올리나 — 장면마다 한 사실 (5c-0).
+
+"강제 종료" 는 앞 레지스트리를 정리하지 않은 채 같은 세션 폴더로 새 레지스트리를 복원하는 것이다(프로세스가 죽은
+것과 같다). "새 프로세스" 는 번호 할당기를 0 으로 되돌린다. LLM 은 부르지 않는다 — 가짜 러너가 쿼리를 기록한다.
+
+``[5c-0 에서 바뀜]`` 칸은 지금 동작이다 — 재시작이 컨텍스트와 명단만 올리게 되면 이 칸이 바뀐다.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from pathlib import Path
+
+import pytest
+
+from agent_cli import item_ids
+from agent_cli.constants import RESUMED_RUN_NOTICE
+from tests.test_agents_live import (
+    _FakeLoopResult,
+    _RecordingRunner,
+    make_registry,
+    renderer,  # noqa: F401
+    wait_until,
+)
+
+OLD_SAMPLE = Path(__file__).parent / "fixtures" / "agents_state_sample.json"
+
+
+def _blocking_runner():
+    """첫 쿼리에서 막히는 러너 — 런 도중 강제 종료를 만든다."""
+    gate = threading.Event()
+    started = threading.Event()
+
+    def runner(kind, start, ctx):
+        started.set()
+        gate.wait(5)
+        return _FakeLoopResult(output=f"done:{start.query}"), 0.01
+
+    return runner, gate, started
+
+
+def _write_old_sample(tmp_path):
+    """표본은 시각을 ``"<t>"`` 로 지웠다 — 읽을 수 있게 수로 되돌려 세션 폴더에 둔다."""
+    text = OLD_SAMPLE.read_text(encoding="utf-8").replace('"<t>"', "0.0")
+    (tmp_path / "agents.json").write_text(text, encoding="utf-8")
+
+
+def _new_process():
+    item_ids._last = 0  # 할당기는 저장되지 않는다
+
+
+@pytest.fixture
+def regs():
+    made: list = []
+    gates: list = []
+    yield made, gates
+    for g in gates:
+        g.set()
+    for r in made:
+        r.shutdown_all()
+
+
+def _mid_run(tmp_path, regs, *, ends_after_task=False):
+    """reg1: 에이전트가 main 의 요청 "task-1" 을 처리하는 도중(러너가 막힘)."""
+    made, gates = regs
+    runner, gate, started = _blocking_runner()
+    gates.append(gate)
+    reg1 = make_registry(tmp_path, runner=runner)
+    made.append(reg1)
+    key, _ = reg1.spawn(name="worker")
+    assert wait_until(lambda: reg1.get(key).state == "idle")
+    if ends_after_task:
+        tm = reg1.get(key)
+        tm.ends_after_task = True
+    assert reg1.request(key, "task-1") == ""
+    assert started.wait(3)
+    if ends_after_task:
+        reg1.get(key).task_id = reg1.taken_by(f"agent:{key}")[0].id
+        reg1._save_state()
+    return reg1, key
+
+
+def _restart(tmp_path, regs, runner=None):
+    made, _ = regs
+    _new_process()
+    rec = runner or _RecordingRunner()
+    reg2 = make_registry(tmp_path, runner=rec)
+    made.append(reg2)
+    reg2.restore()
+    return reg2, rec
+
+
+# ── (a) 에이전트가 일하는 도중 강제 종료 ─────────────────────────────────
+
+
+def test_a_mid_run_agent_resumes_its_run(tmp_path, renderer, regs):  # noqa: F811
+    """[5c-0 에서 바뀜] 끊긴 런이 안내를 붙여 다시 들어가 돈다."""
+    _reg1, key = _mid_run(tmp_path, regs)
+    reg2, rec = _restart(tmp_path, regs)
+    assert wait_until(lambda: len(rec.queries()) == 1)
+    assert rec.queries() == [RESUMED_RUN_NOTICE + "task-1"]
+    assert reg2.get(key).state != "dead"
+
+
+# ── (b) main 이 회신을 기다리던 중 강제 종료 ───────────────────────────────
+
+
+def test_b_main_awaits_a_new_id_after_restart(tmp_path, renderer, regs):  # noqa: F811
+    """[5c-0 에서 바뀜] main 이 기다리던 회신은 사라지고, 다시 넣은 요청의 새 id 를 기다린다."""
+    reg1, _key = _mid_run(tmp_path, regs)
+    before = [r["id"] for r in reg1.awaited_replies("main")]
+    hold = threading.Event()
+    regs[1].append(hold)
+    reg2, _rec = _restart(
+        tmp_path,
+        regs,
+        runner=lambda kind, start, ctx: (hold.wait(5), (_FakeLoopResult(), 0.01))[1],
+    )
+    assert wait_until(lambda: reg2.awaited_replies("main") != [])
+    after = [r["id"] for r in reg2.awaited_replies("main")]
+    assert after and after != before
+
+
+# ── (c) 끝난 회신을 main 이 읽기 전 종료 ──────────────────────────────────
+
+
+def test_c_an_unread_reply_is_delivered_after_restart(tmp_path, renderer, regs):  # noqa: F811
+    """[5c-0 에서 바뀜] main 앞의 미배달 회신이 다음 세션의 main 상자에 다시 선다."""
+    made, _ = regs
+    reg1 = make_registry(tmp_path, runner=_RecordingRunner())
+    made.append(reg1)
+    key, _ = reg1.spawn(name="worker")
+    assert wait_until(lambda: reg1.get(key).state == "idle")
+    assert reg1.request(key, "task-1") == ""
+    assert wait_until(lambda: len(reg1.queued_for("main")) == 1)
+    reg2, _rec = _restart(tmp_path, regs)
+    assert len(reg2.queued_for("main")) == 1
+
+
+# ── (d) 열린 사람 질문 ─────────────────────────────────────────────────────
+
+
+def test_d_an_open_question_comes_back_to_the_tray(tmp_path, renderer, regs):  # noqa: F811
+    """[5c-0 에서 바뀜] 열린 질문이 트레이에 다시 뜬다."""
+    made, _ = regs
+    reg1 = make_registry(tmp_path, runner=_RecordingRunner())
+    made.append(reg1)
+    key, _ = reg1.spawn(name="asker")
+    assert wait_until(lambda: reg1.get(key).state == "idle")
+    qid, err = reg1.register_question(key, "v1 or v2?")
+    assert qid and not err
+    reg2, _rec = _restart(tmp_path, regs)
+    assert [q.id for q in reg2.open_human_questions()] == [qid]
+
+
+# ── (e) 일회용(run) 에이전트가 과제 도중 종료 ─────────────────────────────
+
+
+def test_e_a_run_agent_mid_task_is_revived(tmp_path, renderer, regs):  # noqa: F811
+    """[5c-0 에서 바뀜] 과제 도중이던 run 에이전트가 되살아나 과제를 다시 한다."""
+    _reg1, key = _mid_run(tmp_path, regs, ends_after_task=True)
+    reg2, rec = _restart(tmp_path, regs)
+    assert reg2.get(key).state != "dead"
+    assert wait_until(lambda: len(rec.queries()) == 1)
+    assert rec.queries() == [RESUMED_RUN_NOTICE + "task-1"]
+
+
+# ── 옛 모양의 agents.json ────────────────────────────────────────────────
+
+
+def test_an_old_shaped_file_is_read(tmp_path, renderer, regs):  # noqa: F811
+    """옛 구현이 쓴 표본(줄 선 요청·처리 중 요청·main 앞 메일 둘·열린 질문) — 깨지지 않고 명단을 세운다.
+    [5c-0 에서 바뀜] 지금은 메일·질문·줄도 되살리고 끊긴 런을 다시 돌린다."""
+    made, gates = regs
+    _write_old_sample(tmp_path)
+    _new_process()
+    seen: list = []
+    hold = threading.Event()
+    gates.append(hold)
+
+    def runner(kind, start, ctx):
+        seen.append(start.query)
+        hold.wait(5)  # 회신이 main 상자에 서지 않게 — 아래 수는 되살린 메일만
+        return _FakeLoopResult(), 0.01
+
+    reg = make_registry(tmp_path, runner=runner)
+    made.append(reg)
+    assert reg.restore() == 2
+    assert sorted(t.key for t in reg.instances()) == ["agt-A", "agt-B"]
+    assert len(reg.queued_for("main")) == 2
+    assert len(reg.open_human_questions()) == 1
+    assert wait_until(lambda: seen == [RESUMED_RUN_NOTICE + "first job"])
+
+
+# ── 번호 — 저장에 없는 id 와 겹치지 않는다 ─────────────────────────────────
+
+
+def _roster_only_session(tmp_path) -> str:
+    """명단만 든 agents.json(재시작이 올리는 모양)과, 기록 글에만 남은 id 두 개 — 에이전트 history 의 질문 ``q-30``,
+    🤝 창의 요청 ``r-40``. 에이전트 키를 돌려준다."""
+    key = "agt-K"
+    home = tmp_path / "agents" / key
+    home.mkdir(parents=True)
+    (home / "history.jsonl").write_text(
+        json.dumps({"role": "user", "content": 'asked the user "v1?" as q-30'}) + "\n",
+        encoding="utf-8",
+    )
+    (home / "conversation.jsonl").write_text(
+        json.dumps({"direction": "in", "item": "r-40", "text": "TASK queued"}) + "\n",
+        encoding="utf-8",
+    )
+    doc = json.loads(OLD_SAMPLE.read_text(encoding="utf-8"))
+    entry = {
+        k: v
+        for k, v in doc["agents"][1].items()
+        if k not in ("inbox", "in_flight", "created_at")
+    }
+    entry["key"] = key
+    (tmp_path / "agents.json").write_text(
+        json.dumps({"version": 2, "agents": [entry]}), encoding="utf-8"
+    )
+    return key
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="[5c-0 에서 바뀜] 번호는 history 의 request_id 와 agents.json 의 메일·질문·줄에서만 잇는다 — 기록 "
+    "글에만 남은 id(질문·🤝 창)와 겹친다",
+)
+def test_new_ids_do_not_reuse_ids_written_in_the_records(tmp_path, renderer):  # noqa: F811
+    from agent_cli.context.manager import ContextManager
+
+    _roster_only_session(tmp_path)
+    _new_process()
+    ContextManager(
+        tmp_path, max_context_tokens=10000, resume=True
+    )  # main ctx — 세션 폴더 전체
+    assert item_ids.number_of(item_ids.next_id(item_ids.USER)) > 40
