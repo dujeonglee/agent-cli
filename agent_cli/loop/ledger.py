@@ -80,7 +80,7 @@ def _debt_line(d: dict) -> str:
     who = str(d.get("to") or "").split(":", 1)[-1]
     text = _head(d.get("text"))
     did = d.get("id", "")
-    return f'     [{did}] ({who}) reply owed: "{text}"  → `reply` with `id` "{did}"'
+    return f'     [{did}] ({who}) reply owed: "{text}"  → when it is done, `reply` with `id` "{did}"'
 
 
 def _awaited_line(r: dict) -> str:

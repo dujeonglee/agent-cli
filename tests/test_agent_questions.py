@@ -2156,7 +2156,10 @@ class TestPerRequestDebts:
         led = Ledger()
         led.bind_questions(reg.question_port(b))
         block = led.block()
-        assert f'[3] ({a}) reply owed: "첫 요청"  → `reply` with `id` "3"' in block
+        assert (
+            f'[3] ({a}) reply owed: "첫 요청"  → when it is done, `reply` with `id` "3"'
+            in block
+        )
         assert '`reply` with `id` "5"' in block and "## Open Items" in block
         assert "agent(mode=" not in block
 
