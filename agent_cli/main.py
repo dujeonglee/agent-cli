@@ -2192,10 +2192,11 @@ def web_instance_is_active(
 
     True 조건: 라이브 뷰어 존재 ∨ main worker busy ∨ 상주 에이전트 활동
     (working / 미처리 inbox — main 유휴여도 백그라운드 작업 소실 방지)
-    ∨ 대기 메시지 큐 비어있지 않음 ∨ **살아 있는 모니터/미배달 보고**
+    ∨ 열린 사람 질문 ∨ main 앞 깨우는 봉투(사람의 말·깨우는 메일) ∨ **살아 있는 모니터**
     ∨ **켜진 예약** (v10.12.0 — 예약이 있으면 "유지" 처럼 꺼지지 않는다).
     ``agent_registry`` 는 web() 의 worker 부트스트랩이 늦게 채우는 nonlocal
-    이라 None 허용.
+    이라 None 허용. 세션 판정은 run 과 같은 하나(`runtime.session_has_live_work`), 웹만의 항은 접속한 뷰어·바쁜
+    main 워커·열린 사람 질문이다.
 
     ``monitors`` (v9.11.0): 설계 초판은 "web 은 무한 대기라 수명 문제는 run
     에만 해당"이라고 봤는데 **틀렸다** — board 가 띄운 인스턴스는 뷰어가 없으면
@@ -2207,11 +2208,13 @@ def web_instance_is_active(
     return bool(
         renderer.hub.has_live_connections()
         or renderer.worker_is_busy()
-        # any_activity (미배달 회신 제외) — run 펌프의 has_active_work 와
-        # 다른 뜻이라 공용 술어 밖에 둔다 (runtime.session_has_live_work).
-        or (agent_registry is not None and agent_registry.any_activity())
+        # 사람에게 물은 질문은 답이 올 때까지 열려 있고 상한도 없다 — 답은 웹에서만 온다(`answer_question`).
+        # 세지 않으면 질문을 든 세션을 한가함 정리가 걷는다(§3.9 가 되살리지만 걷히는 것 자체가 사고다).
+        # run 은 답할 길이 없어 세지 않는다 — 세면 끝나지 않는다.
+        or bool(agent_registry is not None and agent_registry.open_human_questions())
         or session_has_live_work(
-            pending_count=server.pending_count(),
+            post=server.main_input.post,
+            agent_registry=agent_registry,
             monitors=monitors,
             schedules=schedules,
             harness=harness,

@@ -98,6 +98,21 @@ def wait_run_done(reg, key, *, timeout: float = 3.0) -> bool:
     return wait_until(lambda: reg.get(key).current_item == "", timeout=timeout)
 
 
+def _web_room_is_live(reg) -> bool:
+    """뷰어 없고 main 이 한가한 웹 방을 한가함 정리가 걷지 않는가 — 열린 사람 질문은 웹의 호스트 항이다."""
+    from types import SimpleNamespace
+
+    from agent_cli.main import web_instance_is_active
+    from agent_cli.main_input import MainInput
+
+    renderer = SimpleNamespace(
+        hub=SimpleNamespace(has_live_connections=lambda: False),
+        worker_is_busy=lambda: False,
+    )
+    server = SimpleNamespace(main_input=MainInput(post=reg._post))
+    return web_instance_is_active(renderer, server, reg)
+
+
 class SubmitSpy:
     """``request`` 호출 인자를 기록 — 답 배달의 라우팅 인자를 고정한다."""
 
@@ -494,9 +509,9 @@ class TestSurfaces:
         질문이 묘비명이 된다."""
         reg = mkreg()
         a = spawn_idle(reg)
-        assert reg.any_activity() is False
+        assert _web_room_is_live(reg) is False
         reg.register_question(a, "배포?")
-        assert reg.any_activity() is True
+        assert _web_room_is_live(reg) is True
 
 
 # ── 웹 표면: 트레이 답 (§3.6) ───────────────────
@@ -690,7 +705,7 @@ class TestQuestionPort:
         assert not qid
         assert "blocking" in err
         assert reg.open_human_questions() == []
-        assert reg.any_activity() is False
+        assert _web_room_is_live(reg) is False
 
     def test_port_never_exposes_the_registry(self, mkreg, renderer):
         """레지스트리가 서브루프에 닿으면 '팀원 안 팀원 금지' 의 단일

@@ -674,28 +674,31 @@ def close_session(
 
 
 def session_has_live_work(
-    *, pending_count: int, monitors=None, schedules=None, harness=None, jobs=None
+    *,
+    post,
+    agent_registry=None,
+    monitors=None,
+    schedules=None,
+    harness=None,
+    jobs=None,
 ) -> bool:
-    """세션이 아직 할 일을 들고 있는가 — 큐·모니터·예약·하니스 작업 (v10.32.1).
+    """세션이 아직 할 일을 들고 있는가 — **판정 하나** (v10.32.1, 5b-1 에서 에이전트·main 상자 항까지).
 
-    `run` 의 큐 펌프 정지 판정(`pump.QuietPolicy.should_stop`)과 `web` 의 idle
-    self-reap 술어(`web_instance_is_active`)가 **같은 항을 같은 함수로** 본다.
-    종전엔 모니터(v9.11.0)·예약(v10.12.0)이 붙을 때마다 두 곳에 같은 한 줄을
-    넣어야 했고, 초판 모니터는 web 쪽 한 줄을 빠뜨려 뷰어 없는 인스턴스가
-    살아 있는 모니터를 데리고 자기를 거뒀다.
+    `run` 의 끝(`pump.QuietPolicy.should_stop`)과 `web` 의 한가함 정리(`main.web_instance_is_active`)가 같은 항을
+    이 함수로 본다. 호스트마다 다른 것은 호스트 항뿐이다(웹: 접속한 뷰어·바쁜 main 워커·열린 사람 질문 —
+    사람의 답은 웹에서만 온다, `run` 이 세면 끝나지 않는다).
 
-    에이전트 항은 **일부러 넣지 않는다** — 둘의 뜻이 다르다. run 은 미배달
-    회신을 배달하고 끝나야 하므로 `has_active_work()`(미배달 포함), web 은
-    reap 돼도 resume 이 `agents.json` 에서 회신을 복원하므로 `any_activity()`
-    (미배달 제외, 열린 사람 질문 포함). 한 함수에 넣으면 플래그가 생긴다.
-
-    run 의 예약 항은 `QuietPolicy` 가 한 번 알리는 대기 안내와 함께 든다.
-
-    ``harness`` (v10.42.0): 진행 중인 하니스 작업(감사)은 결과를 main 메일함에
-    넣어야 끝나므로 같이 기다린다 — 감사 결과가 배달되기 전에 run 이 꺼지거나
-    web 이 자기를 거두면 그 결과는 사라진다.
+    - main 상자에 깨우는 봉투 — 사람의 말과 깨우는 메일(``post`` 는 main 의 입력 큐와 레지스트리가 쓰는 창구).
+      깨우지 않는 메일("Stop everything" 의 정지 회신)은 일이 아니다 — 남아 있어도 끝나고 agents.json 미러에 남는다.
+    - 에이전트 몫(`AgentRegistry.has_agent_work` — 일하는 중이거나 할 일이 쌓였다). 레지스트리는 웹 부트스트랩이
+      늦게 채워 None 일 수 있다.
+    - 살아 있는 모니터·진행 중인 하니스 작업(감사 — 결과를 main 메일함에 넣어야 끝난다, v10.42.0)·돌고 있는
+      백그라운드 작업(v10.47.0)·켜진 예약. 종전엔 이 항이 붙을 때마다 두 곳에 한 줄씩 넣어야 했고, 초판 모니터는
+      web 쪽을 빠뜨려 뷰어 없는 인스턴스가 살아 있는 모니터를 데리고 자기를 거뒀다.
     """
-    if pending_count:
+    if post.arrived("main", waking_only=True, words=True):
+        return True
+    if agent_registry is not None and agent_registry.has_agent_work():
         return True
     if monitors is not None and monitors.has_active_work():
         return True

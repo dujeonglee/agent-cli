@@ -1,6 +1,6 @@
 """MonitorRegistry — 조건 평가 스레드 (docs/monitor/DESIGN.md §6, docs/wiring §3.2).
 
-`AgentRegistry` 의 형제다: 스레드를 소유하고 `has_active_work()` 로 런 수명에
+`AgentRegistry` 의 형제다: 스레드를 소유하고 `has_active_work()`(세션 판정 `session_has_live_work` 의 한 항)로 런 수명에
 합류한다. 보고는 **설치한 주소로** 간다 — `deliver` seam 을 통해 main 이면
 메일박스, `agent:<key>` 면 그 에이전트의 inbox(항목 1개 = 런 1개).
 

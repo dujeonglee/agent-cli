@@ -344,6 +344,7 @@ class TestLifetimeInBothRuntimes:
         """설계 초판은 "web 은 무한 대기"라 봤지만 **틀렸다** — board 가 띄운
         인스턴스는 뷰어가 없으면 자기를 거두고 모니터가 조용히 죽는다."""
         from agent_cli.main import web_instance_is_active
+        from agent_cli.main_input import MainInput
 
         class _Hub:
             def has_live_connections(self):
@@ -356,8 +357,7 @@ class TestLifetimeInBothRuntimes:
                 return False
 
         class _S:
-            def pending_count(self):
-                return 0
+            main_input = MainInput()
 
         assert not web_instance_is_active(_R(), _S(), None, None)
         _watch(reg, tmp_path)

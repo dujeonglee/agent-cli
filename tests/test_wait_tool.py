@@ -184,7 +184,7 @@ class TestWaitEndsTheRun:
         assert obs and "nothing would wake you" in obs[0]
 
     def test_agent_activity_counts_only_for_its_requester(self, tmp_path):
-        """세션 전체 `has_active_work` 로 보면 상주 에이전트 자신이 busy 라 늘 참이다
+        """세션 전체 `has_agent_work` 로 보면 상주 에이전트 자신이 busy 라 늘 참이다
         — 요청자별로 센다: 그 주소에게 빚진 회신, 그 주소의 항목."""
         from tests.test_agents_live import make_registry
 

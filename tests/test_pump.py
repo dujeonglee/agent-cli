@@ -280,7 +280,7 @@ class TestQuietPolicy:
         self, *, registry_busy=False, monitors=None, schedules=None, waits=None
     ):
         q = MainInput()
-        reg = MagicMock(has_active_work=MagicMock(return_value=registry_busy))
+        reg = MagicMock(has_agent_work=MagicMock(return_value=registry_busy))
         return (
             QuietPolicy(
                 main_input=q,
@@ -542,7 +542,7 @@ class TestQuietPolicyWaitNotice:
         waits: list[str] = []
         policy = QuietPolicy(
             main_input=MainInput(),
-            agent_registry=MagicMock(has_active_work=MagicMock(return_value=False)),
+            agent_registry=MagicMock(has_agent_work=MagicMock(return_value=False)),
             monitors=live,
             schedules=dead,
             on_wait=waits.append,
@@ -562,7 +562,7 @@ class TestQuietPolicyWaitNotice:
         q.enqueue(None, "x")
         policy = QuietPolicy(
             main_input=q,
-            agent_registry=MagicMock(has_active_work=MagicMock(return_value=False)),
+            agent_registry=MagicMock(has_agent_work=MagicMock(return_value=False)),
             monitors=MagicMock(has_active_work=MagicMock(return_value=True)),
             on_wait=waits.append,
         )

@@ -34,8 +34,8 @@ class _Renderer:
 
 
 class _Server:
-    def pending_count(self):
-        return 0
+    def __init__(self):
+        self.main_input = MainInput()
 
 
 @pytest.fixture

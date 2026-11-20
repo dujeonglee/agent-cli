@@ -23,6 +23,7 @@ from agent_cli.loop.ledger import NAG_BUDGET
 from agent_cli.main import web_instance_is_active
 from agent_cli.main_input import MainInput
 from agent_cli.monitor import MonitorRegistry
+from agent_cli.post.office import PostOffice
 from agent_cli.pump import QuietPolicy
 from agent_cli.schedule.registry import ScheduleRegistry
 from agent_cli.subagent.agents_live import AgentRegistry
@@ -135,10 +136,11 @@ class TestRunEnds:
 
 # ── (나) 세션이 끝나는가 ──────────────────────────────────────
 
-#: 대역 → 실물 클래스와 그 이름들
+#: 대역 → 실물(클래스, 또는 속성이 생성자에서 서는 것은 인스턴스)과 그 이름들
 _SURFACES = {
-    "registry": (AgentRegistry, ("has_active_work", "any_activity")),
-    "queue": (MainInput, ("pending_count",)),
+    "registry": (AgentRegistry, ("has_agent_work", "open_human_questions")),
+    "post": (PostOffice, ("arrived",)),
+    "queue": (MainInput(), ("post",)),
     "jobs": (JobRegistry, ("has_active_work",)),
     "monitors": (MonitorRegistry, ("has_active_work",)),
     "schedules": (ScheduleRegistry, ("has_active_work",)),
@@ -147,18 +149,25 @@ _SURFACES = {
 
 
 def test_the_stubs_name_only_what_the_real_classes_have():
-    for cls, names in _SURFACES.values():
+    for real, names in _SURFACES.values():
         for n in names:
-            assert hasattr(cls, n), (cls.__name__, n)
+            assert hasattr(real, n), (real, n)
 
 
 def _stubs(on: set[str]) -> dict:
+    """``queue`` — main 상자의 깨우는 봉투(사람의 말·깨우는 메일), ``agents`` — 에이전트 몫의 일,
+    ``question`` — 에이전트가 사람에게 물은 열린 질문."""
+    post = SimpleNamespace(
+        arrived=lambda addr, *, waking_only, words: (
+            1 if "queue" in on and addr == "main" else 0
+        )
+    )
     return {
         "registry": SimpleNamespace(
-            has_active_work=lambda: "agents" in on,
-            any_activity=lambda: "agents_working" in on,
+            has_agent_work=lambda: "agents" in on,
+            open_human_questions=lambda: ["q-1"] if "question" in on else [],
         ),
-        "queue": SimpleNamespace(pending_count=lambda: 1 if "queue" in on else 0),
+        "queue": SimpleNamespace(post=post),
         "jobs": SimpleNamespace(has_active_work=lambda: "jobs" in on),
         "monitors": SimpleNamespace(has_active_work=lambda: "monitors" in on),
         "schedules": SimpleNamespace(has_active_work=lambda: "schedules" in on),
@@ -166,7 +175,15 @@ def _stubs(on: set[str]) -> dict:
     }
 
 
-_RUN_TERMS = ("agents", "queue", "jobs", "monitors", "harness", "schedules")
+_RUN_TERMS = (
+    "agents",
+    "queue",
+    "question",
+    "jobs",
+    "monitors",
+    "harness",
+    "schedules",
+)
 
 
 def _policy(on: set[str], announced: list):
@@ -192,14 +209,16 @@ def _policy(on: set[str], announced: list):
     ids=lambda on: "+".join(sorted(on)) or "nothing",
 )
 def test_run_stops_only_when_every_term_is_quiet(on):
-    """run: 어느 항이든 켜져 있으면 끝나지 않는다. 에이전트·큐가 조용할 때 남은 하니스 쪽 항은 종류 하나를 한
-    번 알린다 — 작업 > 모니터 > 감사 > 예약 순."""
+    """run: 어느 항이든 켜져 있으면 끝나지 않는다 — 열린 사람 질문만은 run 의 항이 아니다(답할 길이 웹뿐이라 세면
+    끝나지 않는다, 5b-1). 에이전트·main 상자가 조용할 때 남은 하니스 쪽 항은 종류 하나를 한 번 알린다 — 작업 >
+    모니터 > 감사 > 예약 순."""
     announced: list = []
     policy = _policy(on, announced)
-    assert policy.should_stop() is (not on)
+    live = on - {"question"}
+    assert policy.should_stop() is (not live)
     policy.should_stop()  # 같은 종류는 다시 알리지 않는다
     harness_side = [t for t in ("jobs", "monitors", "harness", "schedules") if t in on]
-    if on and not ({"agents", "queue"} & on):
+    if live and not ({"agents", "queue"} & on):
         assert announced == [harness_side[0]]
     else:
         assert announced == []
@@ -208,7 +227,7 @@ def test_run_stops_only_when_every_term_is_quiet(on):
 _WEB_TERMS = (
     "viewer",
     "main_busy",
-    "agents_working",
+    "question",
     "agents",
     "queue",
     "jobs",
@@ -228,9 +247,8 @@ _WEB_TERMS = (
     ids=lambda on: "+".join(sorted(on)) or "nothing",
 )
 def test_web_instance_stays_while_any_web_term_is_on(on):
-    """web: 뷰어·main 바쁨·에이전트 활동(`any_activity` — 미배달 회신 **제외**, 열린 사람 질문 포함)·큐·작업·
-    모니터·감사·예약 — 하나라도 켜지면 걷히지 않는다. 미배달 회신만(``agents`` — `has_active_work`)은 세지
-    않는다: run 과 다른 뜻이다."""
+    """web: 뷰어·main 바쁨·열린 사람 질문(웹의 호스트 항)·에이전트 몫의 일·main 상자의 깨우는 봉투·작업·모니터·
+    감사·예약 — 하나라도 켜지면 걷히지 않는다. run 과 같은 세션 판정 위에 웹 항 셋이 더 있다(5b-1)."""
     st = _stubs(on)
     renderer = SimpleNamespace(
         hub=SimpleNamespace(has_live_connections=lambda: "viewer" in on),
@@ -238,20 +256,21 @@ def test_web_instance_stays_while_any_web_term_is_on(on):
     )
     active = web_instance_is_active(
         renderer,
-        st["queue"],
+        SimpleNamespace(main_input=st["queue"]),
         st["registry"],
         monitors=st["monitors"],
         schedules=st["schedules"],
         harness=st["harness"],
         jobs=st["jobs"],
     )
-    assert active is bool(on - {"agents"})
+    assert active is bool(on)
 
 
-def test_the_agent_term_means_different_things_on_a_real_registry(tmp_path):
-    """실물 레지스트리 한 칸 — main 앞 미배달 회신 하나: run 은 끝나지 않고(`has_active_work`), web 은 걷힐 수 있다
-    (`any_activity` — resume 이 agents.json 에서 되살린다)."""
-    reg = AgentRegistry(tmp_path, runtime={"model": "m"})
+def test_waking_mail_before_main_is_live_for_run_and_web(tmp_path):
+    """실물 한 칸 — main 앞 깨우는 메일 하나: run 은 끝나지 않고 웹도 걷히지 않는다. [5b-1] 종전엔 웹이 이 메일을
+    세지 않았다(resume 이 agents.json 에서 되살린다는 이유) — 판정이 하나가 되어 같은 사실에 같은 답이다."""
+    mi = MainInput()
+    reg = AgentRegistry(tmp_path, runtime={"model": "m"}, post=mi.post)
     try:
         reg.deliver(
             "main",
@@ -260,6 +279,12 @@ def test_the_agent_term_means_different_things_on_a_real_registry(tmp_path):
             author="",
             expects_reply=False,
         )
-        assert (reg.has_active_work(), reg.any_activity()) == (True, False)
+        renderer = SimpleNamespace(
+            hub=SimpleNamespace(has_live_connections=lambda: False),
+            worker_is_busy=lambda: False,
+        )
+        run_stops = QuietPolicy(main_input=mi, agent_registry=reg).should_stop()
+        web_live = web_instance_is_active(renderer, SimpleNamespace(main_input=mi), reg)
+        assert (run_stops, web_live) == (False, True)
     finally:
         reg.shutdown_all()

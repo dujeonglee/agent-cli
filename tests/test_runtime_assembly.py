@@ -853,19 +853,22 @@ class TestRunCommandTeardownIntegration:
 
 
 class TestSessionHasLiveWork:
-    """큐·모니터·예약 항을 run 펌프와 web self-reap 이 같은 함수로 본다
-    (v10.32.1). 초판 모니터가 web 쪽 한 줄을 빠뜨린 자리의 구조적 봉합."""
+    """main 상자·에이전트·모니터·예약 항을 run 펌프와 web self-reap 이 같은 함수로 본다
+    (v10.32.1, 5b-1). 초판 모니터가 web 쪽 한 줄을 빠뜨린 자리의 구조적 봉합."""
 
     def test_each_term_alone_is_live(self):
+        from agent_cli.main_input import MainInput
         from agent_cli.runtime import session_has_live_work
 
         live = MagicMock(has_active_work=MagicMock(return_value=True))
         dead = MagicMock(has_active_work=MagicMock(return_value=False))
-        assert session_has_live_work(pending_count=1)
-        assert session_has_live_work(pending_count=0, monitors=live)
-        assert session_has_live_work(pending_count=0, schedules=live)
-        assert not session_has_live_work(pending_count=0, monitors=dead, schedules=dead)
-        assert not session_has_live_work(pending_count=0)
+        quiet, words = MainInput(), MainInput()
+        words.enqueue(None, "x")
+        assert session_has_live_work(post=words.post)
+        assert session_has_live_work(post=quiet.post, monitors=live)
+        assert session_has_live_work(post=quiet.post, schedules=live)
+        assert not session_has_live_work(post=quiet.post, monitors=dead, schedules=dead)
+        assert not session_has_live_work(post=quiet.post)
 
     def test_both_hosts_consult_it(self):
         """구조 핀: 펌프의 `_quiet` 와 `web_instance_is_active` 둘 다 — 한쪽만

@@ -538,22 +538,14 @@ class AgentRegistry:
     #: "작업 중" 판정 — 어휘의 단일 소유는 `agents_state.state_is_active` (메일의 글도 읽는다).
     state_is_active = staticmethod(agents_state.state_is_active)
 
-    def any_activity(self) -> bool:
-        """idle-reap 가드 (v7.10.0): 에이전트가 working 이거나 inbox 에
-        미처리 요청이 있으면 True — main 유휴·무접속이어도 인스턴스를
-        자가 종료하면 진행 중 작업이 소실되므로 IdleMonitor 의 is_active
-        에 합류한다. main 앞 미배달 회신은 게이트하지 않는다 — resume
-        시 agents.json pending 미러로 복원·배달되므로 reap 안전."""
-        if self.open_human_questions():
-            # 사람 주소 질문은 답이 올 때까지 열려 있고 상한도 없다 —
-            # 활동으로 세지 않으면 작업 중인 세션을 idle-reap 이 걷는다.
-            # (§3.9 가 되살리긴 하지만 걷히는 것 자체가 사용자에겐 사고다.)
-            return True
+    def has_agent_work(self) -> bool:
+        """에이전트 몫의 살아 있는 일 — 일하는 중(`state_is_active`: 막 띄운 ``starting`` 포함)이거나, 죽지 않았고
+        깨우는 봉투가 쌓였다. 세션 판정 `runtime.session_has_live_work` 의 한 항(run 의 끝·웹의 한가함 정리).
+        죽은 이의 남은 봉투는 일이 아니다 — 런 도중 끝난(■·✕) 워커는 꺼내지 않고 나간다(세면 `run` 이 끝나지
+        않는다, v10.142.0). 읽기만 한다."""
         return any(
             self.state_is_active(t.state)
-            or (
-                t.state != "dead" and self.backlog_of(t.key) > 0
-            )  # 죽은 이의 남은 봉투는 일이 아니다
+            or (t.state != "dead" and self.backlog_of(t.key) > 0)
             for t in list(self._agents.values())
         )
 
@@ -812,23 +804,6 @@ class AgentRegistry:
         if addr == "main" or addr.startswith("agent:") or is_private_owner(addr):
             return self._post.arrived(addr, waking_only=waking_only, words=words)
         return 0
-
-    def has_active_work(self) -> bool:
-        """P5: CLI run 큐 펌프의 정지 판정 — 미배달 회신·처리 중(busy)·
-        큐잉된 요청이 하나라도 있으면 True.
-
-        비동기 질문은 아무도 막지 않으므로(§3) 여기서 뺄 상태가 없다 —
-        질문을 건 에이전트도 계속 돌고, 답은 새 항목으로 온다. main 을 깨우지 않는 메일("Stop everything"
-        의 정지 회신)은 일이 아니다 — 남아 있어도 `run` 은 끝나고 그 메일은 agents.json 미러에 남는다."""
-        # main 을 깨우는 메일만 — 사람의 말은 `run` 이 따로 센다(`QuietPolicy`)
-        if self._post.arrived("main", waking_only=True, words=False):
-            return True
-        # 죽은 에이전트의 받은편지함은 세지 않는다 — 런 도중 끝난(■·✕) 워커는 남은 봉투를 꺼내지 않고 나간다;
-        # 세면 `run` 이 끝나지 않는다 (v10.142.0)
-        return any(
-            tm.state == "busy" or (tm.state != "dead" and self.backlog_of(tm.key) > 0)
-            for tm in list(self._agents.values())
-        )
 
     def open_human_question_keys(self) -> list[str]:
         """사람 답을 기다리는 열린 질문의 asker — 종료 시 경고 표시용."""
@@ -2987,7 +2962,7 @@ class AgentRegistry:
         말까지 묶음 — 깨우지 않는 봉투는 줄에 남아 그 런의 첫 흡수가 읽는다). 올 때까지 시한 없이 기다린다: 배달이
         깨우고, 끝내기(`_stop_worker`)가 상자를 닫아 깨운다. 닫혔으면 빈 목록.
 
-        집는 순간 ``busy`` 다(P0-9b) — 그 사이 idle-reap 의 `any_activity`(상태·쌓인 일)가 "활동 없음" 으로 보지
+        집는 순간 ``busy`` 다(P0-9b) — 그 사이 세션 판정의 `has_agent_work`(상태·쌓인 일)가 "활동 없음" 으로 보지
         않게 같은 락 구간에서(창구 조건변수는 이 레지스트리의 것 — 기다리는 동안 모든 깊이가 풀린다)."""
         with self._cv:
             envs = self._post.next_run(f"agent:{tm.key}", Take.ARRIVAL, timeout=None)

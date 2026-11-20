@@ -40,9 +40,9 @@ FACTS = (
 TABLE = {
     "nothing": (True, False),
     "words": (False, True),
-    "waking_mail": (False, False),
+    "waking_mail": (False, True),  # [5b-1] 웹도 센다 — 종전 웹은 세지 않았다
     "quiet_mail": (True, False),
-    "agent_starting": (True, True),
+    "agent_starting": (False, True),  # [5b-1] run 도 센다 — 종전 run 은 `busy` 만 셌다
     "agent_busy": (False, True),
     "agent_idle": (True, False),
     "agent_backlog": (False, True),

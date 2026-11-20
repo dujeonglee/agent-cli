@@ -49,9 +49,7 @@ class ForeverPolicy:
 class QuietPolicy:
     """run: main 앞 사람의 말·에이전트·모니터·예약이 전부 조용하면 끝난다.
 
-    에이전트 항은 ``has_active_work()``(미배달 회신 **포함**) — run 은 회신을
-    배달하고 끝나야 한다(web 의 idle self-reap 은 ``any_activity`` 로 다르다,
-    ``runtime.session_has_live_work`` 참조). 모니터나 예약만 남아 기다릴 땐
+    판정은 web 과 같은 하나(``runtime.session_has_live_work``). 모니터나 예약만 남아 기다릴 땐
     ``on_wait("monitors"|"harness"|"schedules")`` 로 **한 번** 알린다 — 조용히 기다리면
     멈춘 것처럼 보인다(예약은 기한이 없어 Ctrl-C 까지, 모니터는 deadline 까지
     — v10.34.0 전엔 모니터 대기는 알리지 않는 비대칭이 있었다).
@@ -82,12 +80,14 @@ class QuietPolicy:
     def should_stop(self) -> bool:
         from agent_cli.runtime import session_has_live_work
 
-        # 깨우는 메일은 `has_active_work` 가 센다(main 상자의 메일)
-        if self.agent_registry.has_active_work() or self.main_input.pending_count():
+        post = self.main_input.post
+        # main 상자·에이전트에 일이 있으면 기다림이 아니다 — 알리지 않는다(같은 판정의 앞 두 항만)
+        if session_has_live_work(post=post, agent_registry=self.agent_registry):
             self._announced = None
             return False
         if not session_has_live_work(
-            pending_count=0,
+            post=post,
+            agent_registry=self.agent_registry,
             monitors=self.monitors,
             schedules=self.schedules,
             harness=self.harness,
