@@ -33,7 +33,7 @@ from agent_cli.session_slots import (
 )
 from agent_cli.subagent.agent_mail import build_reply_record
 from agent_cli.subagent.agents_live import AgentInstance
-from agent_cli.wake import wake_source_ids, wake_sources
+from agent_cli.wake import Mailbox, wake_source_ids
 from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
 from tests.mail_support import absorbed_mail, agent_wake_lines
@@ -177,7 +177,9 @@ class TestArmAndFire:
         from agent_cli.session_slots import set_schedule_registry
 
         set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
-        assert wake_sources("main", agents=get_agent_registry()) == ["a schedule"]
+        assert Mailbox(
+            get_agent_registry(), "main", count_words=True
+        ).wake_sources() == ["a schedule"]
         assert wake_source_ids("main", agents=get_agent_registry()) == frozenset()
         assert reg.next_checkin_s("main") is None
         assert reg.arm_checkin("main") is None and _armed(reg) is None

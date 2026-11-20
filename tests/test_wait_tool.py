@@ -196,12 +196,14 @@ class TestWaitEndsTheRun:
 
     def test_agent_scoped_jobs_do_not_wake_main(self, jobs):
         jobs.start("sleep 30", owner="agent:x")
-        from agent_cli.wake import wake_sources
+        from agent_cli.wake import Mailbox
 
-        assert wake_sources("main", agents=get_agent_registry()) == []
-        assert wake_sources("agent:x", agents=get_agent_registry()) == [
-            "job #1 (`sleep 30`)"
-        ]
+        assert (
+            Mailbox(get_agent_registry(), "main", count_words=True).wake_sources() == []
+        )
+        assert Mailbox(
+            get_agent_registry(), "agent:x", count_words=True
+        ).wake_sources() == ["job #1 (`sleep 30`)"]
 
 
 class TestAlreadyArrived:
@@ -268,18 +270,20 @@ class TestAlreadyArrived:
         return loop
 
     def test_job_and_monitor_mail_count_as_arrived_not_as_wake_sources(self, tmp_path):
-        from agent_cli.wake import arrived_mail, wake_sources
+        from agent_cli.wake import Mailbox
 
         reg = self._registry(tmp_path)
-        assert arrived_mail("main", agents=get_agent_registry()) == 0
+        assert Mailbox(get_agent_registry(), "main", count_words=False).arrived() == 0
         self._monitor_mail(reg)
         assert (
-            reg.arrived_for("main") == 1
-            and arrived_mail("main", agents=get_agent_registry()) == 1
+            reg.arrived_for("main", waking_only=False, words=False) == 1
+            and Mailbox(get_agent_registry(), "main", count_words=False).arrived() == 1
         )
         # 종전의 "a reply to you not yet delivered" 는 없다 — 도착분은 깨울 것이 아니다
-        assert wake_sources("main", agents=get_agent_registry()) == []
-        assert reg.arrived_for("agent:nobody") == 0
+        assert (
+            Mailbox(get_agent_registry(), "main", count_words=True).wake_sources() == []
+        )
+        assert reg.arrived_for("agent:nobody", waking_only=False, words=True) == 0
 
     def test_resident_inbox_items_count_for_that_agent(self, tmp_path):
         """받은편지함 미러 `inbox_items` 로 센다 — `SimpleQueue` 엔 `queue` 속성이
@@ -289,8 +293,8 @@ class TestAlreadyArrived:
         reg = self._registry(tmp_path)
         # 워커 없는 에이전트 — main 의 요청이 받은편지함에 줄 서 있다(공개 길 `request`, 보낸 쪽 기록도 적힌다)
         _fake_agent(reg, "k", inbox=[{"author": "main"}])
-        assert reg.arrived_for("agent:k") == 1
-        assert reg.arrived_for("main") == 0
+        assert reg.arrived_for("agent:k", waking_only=False, words=True) == 1
+        assert reg.arrived_for("main", waking_only=False, words=False) == 0
         assert agent_wake_lines(reg, "main") == ["agent:k has your request queued"]
 
     def test_wait_is_refused_and_the_mail_lands_in_the_next_turn(self, jobs, tmp_path):
@@ -310,7 +314,7 @@ class TestAlreadyArrived:
         assert "nothing you started is pending" not in users[i]
         # 그 통지는 거부 **뒤**, 다음 턴 경계에 배달됐다
         assert any("🔔 hit" in c for c in users[i + 1 :])
-        assert reg.arrived_for("main") == 0
+        assert reg.arrived_for("main", waking_only=False, words=False) == 0
 
     def test_two_notices_pluralize(self, tmp_path):
         reg = self._registry(tmp_path)
@@ -346,7 +350,9 @@ class TestResidentRunEndingInWait:
         assert wait_until(
             lambda: reg.get(key).state == "idle" and reg.get(key).handled >= 1
         )
-        assert not reg.arrived_for("main")  # 폴백이 main 으로 가지 않았다
+        assert not reg.arrived_for(
+            "main", waking_only=False, words=False
+        )  # 폴백이 main 으로 가지 않았다
         debts = reg.reply_debts(f"agent:{key}")
         assert [d.to for d in debts] == ["main"]  # 빚은 그대로
         # 잠든 채무자는 직접 깨울 근거가 아니다 — 그를 깨울 것이 있는지 거슬러
@@ -483,18 +489,21 @@ class TestCircularWait:
         r.note_owes(f"agent:{debtor}", f"agent:{to}", "t", id=rid)
 
     def test_two_agents_waiting_on_each_other_refuse_the_second_wait(self, reg):
-        from agent_cli.wake import wake_sources
+        from agent_cli.wake import Mailbox
 
         r, (a, b, _c) = reg
         self._owes(r, a, b, "r-1")  # a 는 b 에게 빚진 채 잠들었다(wait)
         self._owes(r, b, a, "r-2")  # b 는 a 의 요청으로 깨어 지금 wait 를 부른다
         tb = r.get(b)
         tb.state, tb.current_author = "busy", f"agent:{a}"
-        assert wake_sources(f"agent:{b}", agents=get_agent_registry()) == []
+        assert (
+            Mailbox(get_agent_registry(), f"agent:{b}", count_words=True).wake_sources()
+            == []
+        )
         assert parked_debtors(r.wake_facts(), f"agent:{b}") == [f"agent:{a}"]
 
     def test_a_chain_to_a_working_agent_still_wakes(self, reg):
-        from agent_cli.wake import wake_sources
+        from agent_cli.wake import Mailbox
 
         r, (a, b, c) = reg
         # 손으로 고른 id 는 할당기가 이 테스트에서 내지 않는 값 — 아래 `request` 가 받는 id 와 겹치지 않게
@@ -505,7 +514,9 @@ class TestCircularWait:
 
         assert r.request(c, "job", author=f"agent:{a}") == ""
         assert wait_until(lambda: r.taken_by(f"agent:{c}") != ())
-        got = wake_sources(f"agent:{b}", agents=get_agent_registry())
+        got = Mailbox(
+            get_agent_registry(), f"agent:{b}", count_words=True
+        ).wake_sources()
         assert got == [f"agent:{a} owes you a reply (it is waiting on others)"]
 
 
@@ -525,7 +536,7 @@ class TestRunEnded:
         reg.note_owes("agent:a", "main", "일감", id="r-1")
         assert reg.run_ended("agent:a", "⏸ waiting", waiting=True) == 0
         assert [d.id for d in reg.reply_debts("agent:a")] == ["r-1"]
-        assert not reg.arrived_for("main")
+        assert not reg.arrived_for("main", waking_only=False, words=False)
 
     def test_stopped_drops_the_debt_without_a_summary(self, reg):
         """끊긴 요청은 재시작이 새 id 로 다시 적는다 — 남기면 빚이 둘이 되고, 죽은
@@ -533,7 +544,7 @@ class TestRunEnded:
         reg.note_owes("agent:a", "main", "일감", id="r-1")
         assert reg.run_ended("agent:a", "끊김", stopped=True) == 0
         assert reg.reply_debts("agent:a") == []
-        assert not reg.arrived_for("main")
+        assert not reg.arrived_for("main", waking_only=False, words=False)
         assert agent_wake_lines(reg, "main") == []
 
     def test_a_normal_end_sends_the_labelled_summary_and_clears(self, reg):

@@ -858,7 +858,9 @@ class TestResume:
             assert reg.restore() == 1
             tm = reg.get("agt-run1")
             assert tm.ends_after_task and tm.task_id != "r-7"  # 새 id 로 다시 들어갔다
-            assert wait_until(lambda: reg.arrived_for("main"))
+            assert wait_until(
+                lambda: reg.arrived_for("main", waking_only=False, words=False)
+            )
             (mail,) = absorbed_mail(reg)
             assert "recounted" in mail["output"] and mail["re"] == tm.task_id
             assert wait_until(lambda: tm.state == "dead") and tm.revivable is False
@@ -887,7 +889,9 @@ class TestResume:
         reg = AgentRegistry(sdir, runner=make_runner("orphan done"))
         try:
             assert reg.restore() == 1
-            assert wait_until(lambda: reg.arrived_for("main"))
+            assert wait_until(
+                lambda: reg.arrived_for("main", waking_only=False, words=False)
+            )
             (mail,) = absorbed_mail(reg)
             assert "orphan done" in mail["output"] and mail["key"] == "agt-run2"
         finally:

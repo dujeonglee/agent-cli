@@ -455,7 +455,10 @@ class TestOnePostOfficeForReal:
             got = main.intake()
             assert [next(iter(it)) for it in got] == ["message", "mail"]
             assert got[0]["message"]["text"] == "later words"
-            assert s.main_input.pending_count() == 0 and s.reg.arrived_for("main") == 0
+            assert (
+                s.main_input.pending_count() == 0
+                and s.reg.arrived_for("main", waking_only=False, words=False) == 0
+            )
         finally:
             s.close()
             set_renderer(before)

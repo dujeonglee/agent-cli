@@ -132,7 +132,9 @@ class TestOutOfLedgerMailIsNotPersisted:
         reg = AgentRegistry(tmp_path / "reg")
         to_main(reg, dict(JOB))
         to_main(reg, {"kind": "monitor", "ledger": "none", "output": "⏰ check-in"})
-        assert reg.arrived_for("main") == 2  # 배달은 둘 다 된다
+        assert (
+            reg.arrived_for("main", waking_only=False, words=False) == 2
+        )  # 배달은 둘 다 된다
         assert [r["kind"] for r in self._mirror(reg)["pending"]] == ["job"]
 
     def test_restore_sees_only_the_items(self, tmp_path):

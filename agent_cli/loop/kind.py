@@ -391,7 +391,12 @@ class PrivateLoop(LoopKind):
             route_message=None,
             enqueue_user_message=None,
             peer_roster=None,
-            mailbox=Mailbox(get_agent_registry(), owner, take=_private_inbox(owner)),
+            mailbox=Mailbox(
+                get_agent_registry(),
+                owner,
+                count_words=True,
+                take=_private_inbox(owner),
+            ),
             unwired={
                 "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
                 "questions": _AS_BEFORE,

@@ -79,7 +79,7 @@ class TestStopEverything:
             assert [r[1] for r in _pump_rows(s, "run_starting")] == ["MAIN go"]
             (line,) = s.reg.pending_mail()
             assert line["text"].endswith("· stopped by user")
-            assert not s.reg.has_mail_that_wakes_main()
+            assert not s.reg.arrived_for("main", waking_only=True, words=False)
         finally:
             s.close()
 

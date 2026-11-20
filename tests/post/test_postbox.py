@@ -111,7 +111,7 @@ class TestTaking:
     def test_only_quiet_envelopes_open_nothing(self):
         box = Postbox()
         box.put(_r(1, wakes=False))
-        assert box.take_next() == () and box.has_waking() is False
+        assert box.take_next() == () and box.count(waking_only=True, words=True) == 0
 
     def test_take_all_keeps_arrival_order_and_human_first_moves_people_ahead(self):
         a, b = Postbox(), Postbox()
@@ -128,14 +128,14 @@ class TestCounts:
         box = Postbox()
         box.put(_r(1, wakes=False))
         box.put(_r(2))
-        assert box.arrived() == 2
+        assert box.count(waking_only=False, words=True) == 2
 
     def test_arrived_counts_a_queued_human_envelope_like_now(self):
         """에이전트 앞에 줄 선 사람의 말도 도착분이다 — 지금 `arrived_for` 가 받은편지함 미러 전부를 세는 것과
         같다(main 의 사람 입력은 상자에 들지 않으니 세지 않는다)."""
         box = Postbox()
         box.put(_h(1))
-        assert box.arrived() == 1
+        assert box.count(waking_only=False, words=True) == 1
 
     def test_backlog_skips_a_quiet_reply_queued_before_a_busy_resident(self):
         """의도된 차이 후보 (D2): 바쁜 상주 앞에 깨우지 않는 회신이 줄 서 있으면 지금(`inbox.qsize()`)은 세고
@@ -144,15 +144,18 @@ class TestCounts:
         box.put(_r(1, wakes=False))
         box.put(_r(2))
         box.put(_r(3))
-        assert box.backlog() == 2 and box.arrived() == 3
+        assert (
+            box.count(waking_only=True, words=True) == 2
+            and box.count(waking_only=False, words=True) == 3
+        )
 
-    def test_has_waking(self):
+    def test_waking_only_count(self):
         box = Postbox()
-        assert not box.has_waking()
+        assert not box.count(waking_only=True, words=True)
         box.put(_r(1, wakes=False))
-        assert not box.has_waking()
+        assert not box.count(waking_only=True, words=True)
         box.put(_r(2))
-        assert box.has_waking()
+        assert box.count(waking_only=True, words=True)
 
 
 def test_views_are_copies():

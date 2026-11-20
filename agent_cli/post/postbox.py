@@ -97,16 +97,13 @@ class Postbox:
             e.id == env_id for e in self._taken
         )
 
-    def arrived(self) -> int:
-        """이미 도착해 다음 경계에 배달될 봉투 수 — 깨우지 않는 것도 센다(`wait` 의 "도착분" 판정)."""
-        return len(self._queued)
-
-    def backlog(self) -> int:
-        """앞에 쌓인 할 일 — 깨우는 봉투만(로스터·status 의 inbox). 깨우지 않는 회신은 할 일을 열지 않는다."""
-        return sum(1 for e in self._queued if e.wakes)
-
-    def has_waking(self) -> bool:
-        return any(e.wakes for e in self._queued)
+    def count(self, *, waking_only: bool, words: bool) -> int:
+        """줄 선 봉투 수 — ``waking_only`` 면 깨우는 것만, ``words`` 가 거짓이면 사람의 말은 뺀다."""
+        return sum(
+            1
+            for e in self._queued
+            if (e.wakes or not waking_only) and (words or not is_human_words(e))
+        )
 
     def words(self) -> tuple[Envelope, ...]:
         """줄 선 사람의 말 — 도착 순서."""

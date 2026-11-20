@@ -1195,6 +1195,7 @@ class TurnDispatcher:
             return _CONTINUE
         from agent_cli.constants import format_duration
 
+        mailbox.mark_waiting()  # 받아들였다 — 기다림이 끝나는 곳에서 내린다(`PostOffice.mark_waiting`)
         in_place = policy == WAIT_BLOCK
         kept = ""
         if not in_place:
@@ -1258,6 +1259,7 @@ class TurnDispatcher:
             raise
         finally:
             mailbox.run_started()  # 체크인 해제 — 다음 wait 가 다시 건다
+            mailbox.clear_waiting()
             if awaited:
                 renderer.wait_in_place(False, [])
         if why == "input":

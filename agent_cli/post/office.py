@@ -70,6 +70,8 @@ class PostOffice:
         #: 런을 열 것을 기다리는 주소(`next_run` 안) — 타임아웃에도 내리지 않고, 꺼낼 때 내린다
         self._idle: set[str] = set()
         self._closed: set[str] = set()
+        #: 받아들여진 `wait` 로 기다리는 주소 — `mark_waiting`·`clear_waiting` (5a: 세우고 내리기만, 판정은 읽지 않는다)
+        self._waiting: set[str] = set()
 
     # ── 배달 ─────────────────────────────────────────
 
@@ -303,15 +305,21 @@ class PostOffice:
             self._idle.add(addr)
             if take is Take.ARRIVAL:
                 self.cv.wait_for(
-                    lambda: addr in self._closed or any(e.wakes for e in box.queued()),
+                    lambda: (
+                        addr in self._closed
+                        or box.count(waking_only=True, words=True) > 0
+                    ),
                     timeout,
                 )
                 if addr in self._closed:
+                    self._waiting.discard(addr)
                     return CLOSED
                 envs = box.take_next()
                 if not envs:
                     return None
                 self._idle.discard(addr)
+                # 런을 끝낸 `wait` 의 기다림이 여기서 끝난다 — 5c 에서 WAIT_END_RUN 과 함께 없어질 자리
+                self._waiting.discard(addr)
                 self._picked(envs)
                 return envs
 
@@ -319,17 +327,20 @@ class PostOffice:
                 return (
                     bool(box.words())
                     or addr in self._closed
-                    or any(e.wakes for e in box.mail())
+                    or box.count(waking_only=True, words=False) > 0
                 )
 
             self.cv.wait_for(ready, timeout)
             if addr in self._closed:
+                self._waiting.discard(addr)
                 return CLOSED  # 닫힘이 이긴다 — 줄 선 사람의 말로 런을 열지 않는다(끄는 중이다)
+            if box.words() or box.count(waking_only=True, words=False):
+                self._idle.discard(addr)
+                # 런을 끝낸 `wait` 의 기다림이 여기서 끝난다 — 5c 에서 WAIT_END_RUN 과 함께 없어질 자리
+                self._waiting.discard(addr)
             if box.words():
-                self._idle.discard(addr)
                 return (self._take_first_words(box),)
-            if any(e.wakes for e in box.mail()):
-                self._idle.discard(addr)
+            if box.count(waking_only=True, words=False):
                 return ()
             return None
 
@@ -338,6 +349,7 @@ class PostOffice:
         `CLOSED` 를 받는다). 멱등."""
         with self.cv:
             self._closed.add(addr)
+            self._waiting.discard(addr)
             self.cv.notify_all()
 
     def reopen(self, addr: str) -> None:
@@ -349,6 +361,24 @@ class PostOffice:
         """``addr`` 가 지금 런을 열 것을 기다리는 중인가(`next_run` 안)."""
         with self.cv:
             return addr in self._idle
+
+    # ── 기다림 표시 ─────────────────────────────────
+    #
+    # 받아들여진 `wait` 가 세우고(`dispatch._op_wait`), 기다림이 끝날 때 내린다 — 제자리 대기가 돌아올 때,
+    # 런을 끝낸 대기면 다음 런이 열리거나 상자가 닫힐 때(`next_run`·`close`), 주인이 사라질 때(`drop_mailbox`).
+    # 깨우지 않는다(기다리는 이가 이것을 조건으로 보지 않는다).
+
+    def mark_waiting(self, addr: str) -> None:
+        with self.cv:
+            self._waiting.add(addr)
+
+    def clear_waiting(self, addr: str) -> None:
+        with self.cv:
+            self._waiting.discard(addr)
+
+    def is_waiting(self, addr: str) -> bool:
+        with self.cv:
+            return addr in self._waiting
 
     # ── 질문 ─────────────────────────────────────────
 
@@ -425,13 +455,11 @@ class PostOffice:
         with self.cv:
             return self._box_or_empty(addr).mail()
 
-    def arrived(self, addr: str) -> int:
+    def arrived(self, addr: str, *, waking_only: bool, words: bool) -> int:
+        """``addr`` 앞에 이미 도착해 줄 선 봉투 수 — 깨우는 것만 셀지·사람의 말을 셀지는 부르는 쪽이 정한다
+        (`Postbox.count`). 런이 꺼내 든 봉투는 세지 않는다."""
         with self.cv:
-            return self._box_or_empty(addr).arrived()
-
-    def backlog(self, addr: str) -> int:
-        with self.cv:
-            return self._box_or_empty(addr).backlog()
+            return self._box_or_empty(addr).count(waking_only=waking_only, words=words)
 
     def queued_requests_from(self, addr: str, src: str) -> int:
         """``addr`` 앞에 줄 선(아직 시작 안 한) ``src`` 의 요청 수 — 회신·통지·남의 요청은 세지 않는다."""
@@ -441,10 +469,6 @@ class PostOffice:
                 for e in self._box_or_empty(addr).queued()
                 if e.src == src and e.expects_reply
             )
-
-    def has_waking(self, addr: str) -> bool:
-        with self.cv:
-            return self._box_or_empty(addr).has_waking()
 
     def owed_by(self, debtor: str) -> tuple[Row, ...]:
         with self.cv:

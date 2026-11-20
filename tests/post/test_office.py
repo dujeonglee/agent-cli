@@ -287,7 +287,7 @@ class TestStops:
         assert [(r.rid, r.state) for r in gone] == [("r-1", "queued")]
         assert [e.id for e in office.queued(A)] == ["u-2", "n-3"]
         assert _rows(office) == [("u-2", "queued", None), ("r-4", "queued", None)]
-        assert office.backlog(A) == 2  # 사람의 말·통지
+        assert office.arrived(A, waking_only=True, words=True) == 2  # 사람의 말·통지
         office.forget_requests_of("agent:b", lambda addr: "")  # 멱등
         assert [e.id for e in office.next_run(A, Take.ARRIVAL, timeout=0)] == ["u-2"]
 
@@ -390,7 +390,7 @@ class TestOneLockSection:
         """펌프는 cv 를 쥔 채 큐·우편을 부른다 — 기본 조건변수는 재진입 락이다."""
         with office.cv:
             office.deliver(E.notice("n-1", A, "main", "fyi"))
-            assert office.has_waking("main")
+            assert office.arrived("main", waking_only=True, words=True)
 
     def test_a_shared_condition_wakes_the_other_owner(self):
         """입력 큐와 같은 조건변수를 쓰면, 우편의 배달이 큐 쪽에서 기다리는 이를 깨운다."""
@@ -402,7 +402,7 @@ class TestOneLockSection:
         def queue_owner():
             with cv:
                 ready.set()
-                cv.wait_for(lambda: o.has_waking("main"))
+                cv.wait_for(lambda: o.arrived("main", waking_only=True, words=True))
                 woke.append(True)
 
         t = threading.Thread(target=queue_owner)

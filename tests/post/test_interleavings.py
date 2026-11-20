@@ -54,7 +54,7 @@ STARTED = [("deliver", {"e": REQ}), ("next_run", {"addr": A})]
 class TestOrders:
     def test_arrival_between_the_stop_check_and_entering_the_wait(self):
         """main 이 정지 판정을 하고 대기에 드는 사이에 회신이 와도 — 어느 순서든 회신은 main 앞에 깨우는 채로
-        남거나 그 런이 읽었다. 펌프는 같은 조건변수 아래서 `has_waking` 을 보고 잠든다."""
+        남거나 그 런이 읽었다. 펌프는 같은 조건변수 아래서 깨우는 봉투(`arrived` 의 깨우는 것만)를 보고 잠든다."""
         main = [
             ("absorb", {"addr": "main"}),
             (
@@ -76,7 +76,9 @@ class TestOrders:
 
         def check(twin, order, _):
             absorbed_after = order.index(("A", "absorb")) > order.index(("B", "pay"))
-            assert twin.office.has_waking("main") is not absorbed_after
+            assert (
+                twin.office.arrived("main", waking_only=True, words=True) > 0
+            ) is not absorbed_after
             assert twin.office.awaited_by("main") == ()
 
         assert run(STARTED, main, agent, check) == 3
@@ -98,7 +100,9 @@ class TestOrders:
             assert [e.id for e in twin.office.queued("main")] == (
                 ["n-1"] if late else []
             )
-            assert twin.office.has_waking("main") is late
+            assert (
+                twin.office.arrived("main", waking_only=True, words=True) > 0
+            ) is late
 
         assert run([], main, agent, check) == 4
 
@@ -176,7 +180,9 @@ class TestOrders:
         main = [("absorb", {"addr": "main"})]
 
         def check(twin, order, _):
-            assert twin.office.has_waking("main") is False
+            assert (
+                twin.office.arrived("main", waking_only=True, words=True) > 0
+            ) is False
             read = order.index(("B", "absorb")) > order.index(("A", "end_run"))
             assert [e.id for e in twin.office.taken("main")] == (
                 ["n-2"] if read else []
@@ -242,8 +248,11 @@ class TestThreads:
         def main_waits():
             with o.cv:
                 ready.set()
-                o.cv.wait_for(lambda: o.has_waking("main"), timeout=5)
-                seen.append(o.has_waking("main"))
+                o.cv.wait_for(
+                    lambda: o.arrived("main", waking_only=True, words=True) > 0,
+                    timeout=5,
+                )
+                seen.append(o.arrived("main", waking_only=True, words=True) > 0)
 
         t = threading.Thread(target=main_waits)
         t.start()
@@ -322,5 +331,7 @@ class TestThreads:
                 A, run_id="r-1", outcome="stopped", replies={"r-1": quiet}
             )
         )
-        assert o.has_waking("main") is False and o.arrived("main") == 1
+        assert (
+            o.arrived("main", waking_only=True, words=True) > 0
+        ) is False and o.arrived("main", waking_only=False, words=True) == 1
         o.check_consistency()

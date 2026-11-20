@@ -277,7 +277,9 @@ class TestLiveDelivery:
         _complete(ctx)
         text = auditor.run_ended(_req(), ok=True)
         assert text
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         (mail,) = absorbed_mail(reg)
         assert mail["kind"] == "harness" and mail["job"] == AUDITOR_NAME
         assert mail["success"] is True and mail["output"] == f"AUDIT pass:{text}"
@@ -297,7 +299,9 @@ class TestLiveDelivery:
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
         assert auditor.run_ended(_req(), ok=True)
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         (mail,) = absorbed_mail(reg)
         assert mail["success"] is False
         assert mail["output"] == "auditor did not complete: Max turns (16) reached"
@@ -308,10 +312,12 @@ class TestLiveDelivery:
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
         assert auditor.run_ended(_req(), ok=True)
-        assert auditor.in_flight == 1 and not reg.arrived_for("main")
+        assert auditor.in_flight == 1 and not reg.arrived_for(
+            "main", waking_only=False, words=False
+        )
         gate.set()
         assert wait_until(lambda: auditor.in_flight == 0)
-        assert reg.arrived_for("main")
+        assert reg.arrived_for("main", waking_only=False, words=False)
         auditor.stop()
         assert not auditor.active and auditor.jobs.stopped
 

@@ -516,7 +516,9 @@ class TestEndToEnd:
             assert wait_until(lambda: seen), "에이전트가 안 깨어났다"
             assert "빌드 끝" in seen[0], seen
             # main 메일박스는 비어 있어야 한다 — 종전의 가로채기 회귀 방지.
-            assert not agents.arrived_for("main"), "main 이 가로챘다"
+            assert not agents.arrived_for("main", waking_only=False, words=False), (
+                "main 이 가로챘다"
+            )
         finally:
             agents.shutdown_all()
 
@@ -535,7 +537,9 @@ class TestEndToEnd:
             log.write_text("X main 것\n")
             reg.tick(time.time())
 
-            assert wait_until(lambda: agents.arrived_for("main"))
+            assert wait_until(
+                lambda: agents.arrived_for("main", waking_only=False, words=False)
+            )
             (item,) = [r for r in absorbed_mail(agents) if r.get("kind") == "monitor"]
             assert "main 것" in item["output"]
             assert agents.queued_for(f"agent:{key}") == (), "에이전트가 가로챘다"

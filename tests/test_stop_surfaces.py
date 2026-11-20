@@ -366,7 +366,7 @@ class TestStopEverythingDoesNotWakeMain:
         assert mail["wakes_main"] is False and mail["mark"] == "stopped by user"
         # main 런 0회 — 한가한 펌프가 열 것이 없다
         assert main_input.wait_to_open(0) is None
-        assert not s["reg"].has_mail_that_wakes_main()
+        assert not s["reg"].arrived_for("main", waking_only=True, words=False)
         assert not s["reg"].has_active_work()  # `run` 은 조용해지면 끝난다
         # 끝나도 회신은 agents.json 미러에 남는다
         import json as _json
@@ -398,7 +398,7 @@ class TestStopEverythingDoesNotWakeMain:
         assert wait_until(lambda: tm.state == "busy")
         assert s["reg"].stop_all_runs() == [tm.key]
         assert wait_until(lambda: main_input.wait_to_open(0) == ())
-        assert s["reg"].has_mail_that_wakes_main()
+        assert s["reg"].arrived_for("main", waking_only=True, words=False)
 
 
 class TestCtrlCDuringAPrompt:
