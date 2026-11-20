@@ -445,7 +445,7 @@ class TestAgentLines:
 
 
 class TestResident:
-    def test_resident_checkin_is_an_envelope_in_its_inbox_and_not_persisted(
+    def test_resident_checkin_is_an_envelope_in_its_inbox(
         self, tmp_path, jobs, monkeypatch
     ):
         import threading
@@ -469,7 +469,7 @@ class TestResident:
             assert wait_until(lambda: r.get(key).state == "idle")
             assert r.request(key, "do X") == ""  # 워커를 묶어 둔다 — 항목이 쌓인다
             assert wait_until(lambda: r.get(key).state == "busy")
-            assert r.request(key, "do Y") == ""  # 뒤에 줄 선 보통 요청 — 미러에 남는다
+            assert r.request(key, "do Y") == ""  # 뒤에 줄 선 보통 요청
             me = f"agent:{key}"
             jobs.start("sleep 30", owner=me)
             # 에이전트 자신이 wait 로 끝났다(워커 바깥에서 같은 호출을 흉내)
@@ -478,11 +478,8 @@ class TestResident:
             text = r.fire_checkin(me)
             assert text.startswith("⏰ Check-in after 5m — still running:\njob #1")
             (item,) = [m for m in r.queued_for(me) if m.text.startswith("⏰ Check-in")]
-            # 저장하지 않고(장부 밖 알림) 회신을 빚지우지도 않는다
-            assert item.persists is False and item.expects_reply is False
-            saved = json.loads((tmp_path / "agents.json").read_text())
-            (entry,) = [e for e in saved["agents"] if e["key"] == key]
-            assert [i["text"] for i in entry["inbox"]] == ["do Y"]  # 알림은 빠졌다
+            # 회신을 빚지우지 않는다(장부 밖 알림)
+            assert item.expects_reply is False
             # 상주가 main 을 기다릴 때 — main 의 알림에 "working" 줄로 보인다
             r.arm_checkin("main")
             assert f"agent:{key}" in r.fire_checkin("main")

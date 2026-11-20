@@ -54,7 +54,6 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
             dst,
             "done",
             opens_row=rnd.random() < 0.6,
-            persists=rnd.random() < 0.8,
         )
 
     ops: list[tuple[str, dict]] = []

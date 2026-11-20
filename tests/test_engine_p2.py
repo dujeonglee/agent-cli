@@ -24,7 +24,6 @@ from agent_cli.runtime import MainLoop
 from agent_cli.session_slots import set_agent_registry
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.binding_support import make_binding
-from tests.mail_support import absorbed_mail
 
 CAPS = ModelCapabilities(
     context_window=65536, max_output_tokens=4096, supports_thinking=False
@@ -835,7 +834,9 @@ class TestResume:
             encoding="utf-8",
         )
 
-    def test_unfinished_run_agent_is_revived_and_finishes_its_reply(self, tmp_path):
+    def test_an_unfinished_run_agent_stands_dead(self, tmp_path):
+        """과제 도중 끊긴 run 에이전트는 묘비로 선다 — 되살아나지 않고 과제를 다시 하지 않는다(5c-0; 종전엔 되살아나
+        새 id 로 과제를 다시 받아 회신했다). 옛 파일의 ``in_flight`` 는 읽지 않는다."""
         from tests.test_agents_live import make_runner
 
         sdir = tmp_path / "s"
@@ -855,45 +856,11 @@ class TestResume:
         )
         reg = AgentRegistry(sdir, runner=make_runner("recounted"))
         try:
-            assert reg.restore() == 1
+            assert reg.restore() == 0
             tm = reg.get("agt-run1")
-            assert tm.ends_after_task and tm.task_id != "r-7"  # 새 id 로 다시 들어갔다
-            assert wait_until(
-                lambda: reg.arrived_for("main", waking_only=False, words=False)
-            )
-            (mail,) = absorbed_mail(reg)
-            assert "recounted" in mail["output"] and mail["re"] == tm.task_id
-            assert wait_until(lambda: tm.state == "dead") and tm.revivable is False
-        finally:
-            reg.shutdown_all()
-
-    def test_requester_gone_routes_the_reply_to_main(self, tmp_path):
-        from tests.test_agents_live import make_runner
-
-        sdir = tmp_path / "s"
-        task = {
-            "id": "r-9",
-            "text": "TASK-S orphan",
-            "author": "agent:agt-gone",
-            "expects_reply": True,
-        }
-        self._write(
-            sdir,
-            [
-                self._entry("agt-gone", state="dead"),
-                self._entry(
-                    "agt-run2", ends_after_task=True, task_id="r-9", in_flight=[task]
-                ),
-            ],
-        )
-        reg = AgentRegistry(sdir, runner=make_runner("orphan done"))
-        try:
-            assert reg.restore() == 1
-            assert wait_until(
-                lambda: reg.arrived_for("main", waking_only=False, words=False)
-            )
-            (mail,) = absorbed_mail(reg)
-            assert "orphan done" in mail["output"] and mail["key"] == "agt-run2"
+            assert tm.state == "dead" and tm.revivable is False and tm.worker is None
+            assert tm.ends_after_task and tm.task_id == "r-7"
+            assert reg.queued_for("main") == () and reg.awaited_replies("main") == []
         finally:
             reg.shutdown_all()
 

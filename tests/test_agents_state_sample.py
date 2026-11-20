@@ -1,8 +1,9 @@
-"""``agents.json`` 의 모양 — 고정 표본 (v10.145.0, 단일 구조 2단계).
+"""``agents.json`` 의 모양 — 고정 표본 (5c-0: 명단만).
 
-받은편지함·메일함·빚이 우편(`agent_cli.post`)으로 옮겨 가도 저장 파일의 모양은 그대로다(사용자 결정: 2단계는 모양
-불변). 표본 `fixtures/agents_state_sample.json` 은 옛 구현(c39747ac)이 같은 상태에서 쓴 파일이다 — 줄 선 요청·
-처리 중인 요청·main 앞 미배달 메일(요청 하나·통지 하나)·열린 질문. 시각·무작위 키만 지우고 바이트로 견준다.
+같은 상태(줄 선 요청·처리 중인 요청·main 앞 미배달 메일 둘·열린 질문)를 세워도 저장 파일은 명단뿐이다 — 재시작은
+컨텍스트와 명단만 올린다. 표본 `fixtures/agents_state_sample.json` 은 이 판이 쓴 파일이고, 옛 판(v10.158 까지 — 우편까지
+담던 것)의 표본은 `fixtures/agents_state_sample_v10_158.json` 이다(읽어도 깨지지 않는다 — `tests/test_restart_rule.py`).
+시각·무작위 키만 지우고 바이트로 견준다.
 """
 
 from __future__ import annotations
@@ -46,5 +47,5 @@ def build_state(tmp_path) -> str:
     return text + "\n"
 
 
-def test_the_saved_file_has_the_old_shape(tmp_path):
+def test_the_saved_file_is_the_roster_only(tmp_path):
     assert build_state(tmp_path) == SAMPLE.read_text(encoding="utf-8")

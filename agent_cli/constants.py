@@ -83,22 +83,6 @@ OBS_SUCCESS = "STATUS: success\nRESULT:\n{result}"
 INTERRUPT_NOTICE = "⚡ User interrupted. Waiting for new instructions."
 
 
-#: Prefixed to the request a resident agent was working on when the session
-#: restarted (v9.24.5). The run died without a ``complete``; its history is
-#: intact (the ctx resumes), but nothing told the agent to go on — board
-#: session 1zfgc2's engine sat idle after a restart with its task half-done
-#: and ``floorCeil.js`` left broken. Checking state first matters: the last
-#: edit before the cut may have been applied or not.
-RESUMED_RUN_NOTICE = (
-    "[session restarted] Your previous run was interrupted by a session "
-    "restart before you called `complete`. The request you were working on is "
-    "quoted below; your history above shows how far you got. First check the "
-    "current state of anything you changed — the last edit before the restart "
-    "may be half-done. Then finish the request and reply as you normally "
-    "would.\n\nOriginal request:\n"
-)
-
-
 def open_debts(port) -> list[dict]:
     """The run's unpaid message/ask debts through its question port — ``[]``
     without a port (v9.22.0 ledger; one reader for the ``complete`` refusal

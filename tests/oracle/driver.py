@@ -1381,15 +1381,12 @@ def s13_wait_refusals_and_wakes(root: Path) -> dict:
 
 def s14_restart_resume(root: Path, *, query: bool) -> dict:
     """§4 재시작: 세션 끝(런 도중)·미배달 메일·에이전트→main 미배달 요청 → 저장 → 새 조립이 복원 → 로스터·
-    다음 런의 모델 글·기다리는 회신. ``query`` 면 `run --resume` 처럼 첫 질의가 펌프보다 먼저 큐에 있다(질의가 먼저
-    연다), 아니면 웹 resume 처럼 질의 없이 — 복원된 메일이 한가한 펌프를 깨운다. ``agents.json`` 바이트는 담지
-    않는다. ``query`` 쪽은 사람의 말(질의)이 메일보다 먼저 런을 열고, 그 첫 턴 경계가 메일을 배달한다.
+    다음 런의 모델 글·기다리는 회신. ``query`` 면 `run --resume` 처럼 첫 질의가 펌프보다 먼저 큐에 있고, 아니면 웹
+    resume 처럼 사람이 새로 친 말이 첫 런을 연다. ``agents.json`` 바이트는 담지 않는다.
 
-    `[v10.146.6 뒤 재기록 — 메일 깨우기 항목이 없어져, 질의 런의 첫 경계에서 깨우기 문장이 사람 말풍선
-    (`push_user_message`)으로 그려지던 한 줄이 사라졌다(s28 도 같다). 모델이 읽는 글은 같다]`
-
-    `[v10.145.0 에서 재기록 — 2단계 예외 D1: 재시작 뒤 main 메일함의 요청을 보낸 쪽이 기다리는 것으로 선다. 번호는
-    정규화의 첫 등장 순서 때문에 r-1↔r-2 가 뒤바뀐다]`"""
+    `[5c-0 에서 다시 씀 — 재시작은 컨텍스트와 명단만 올린다: 둘째 세션은 메일·끊긴 런·줄 선 요청·빚을 되살리지
+    않는다. 아무것도 스스로 돌지 않고(상주는 idle, 대기열·기다리는 회신이 비었다), 질의 또는 사람의 말이 연 main 의 런
+    하나가 끝난다. 종전 대본은 되살린 worker 가 끊긴 런을 다시 집고 되살린 메일이 한가한 펌프를 깨우기를 기다렸다]`"""
     facts: dict = {}
     box: dict = {}
     # ── 첫 세션: 상주 둘을 띄우고 펌프를 닫는다(웹 서버가 내려간 것과 같다) ──
@@ -1453,65 +1450,18 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
     )
     first = s.collect()
 
-    # ── 둘째 세션: 같은 폴더로 다시 조립(`--resume`) ──
-    # 한 번에 한 배우만: main 의 첫 응답이 시작되면 되살린 worker 가 회신하고, main 은 worker 가 한가해진 뒤
-    # asker 에게 회신한다(asker 의 런이 보는 로스터가 흔들리지 않게). worker 의 회신은 main 의 다음 턴 경계에 온다.
-    box2: dict = {}
-    main_started = threading.Event()
-
-    def main_replies_to_asker(msgs):
-        main_started.set()
-        until(lambda: box2["s"].agent_state(worker) == "idle", "worker replied")
-        # 회신의 창 줄에서 main 을 asker 가 그것을 집을 때까지 잡는다 — main 의 다음 꼬리가 asker 의 "바쁨" 을 본다
-        s2 = box2["s"]
-        s2.recorder.hold(
-            "agent_message", asker, lambda: s2.agent_state(asker) == "busy"
-        )
-        return call("reply", id=owed_id(msgs), text="TASK-P use main")
-
-    def worker_replies(msgs):
-        assert main_started.wait(_PATIENCE_S)
-        return call("reply", id=owed_id(msgs), text="resumed run done")
-
-    p2 = Provider(
-        {
-            "MAIN": [
-                main_replies_to_asker,
-                _after_agents_settle(box2, complete_all("resumed and done")),
-            ],
-            # 배우는 컨텍스트의 첫 사용자 메시지로 가른다 — 되살린 worker 의 런은 TASK-O1 의 대본이다
-            "TASK-O1": [worker_replies],
-            "TASK-P": [
-                _after_main_calls(
-                    box2,
-                    2,
-                    lambda m: call("complete", result="got the branch", answers=[]),
-                )
-            ],
-        }
-    )
-    # 재시작 직후에는 main 과 되살린 에이전트가 아직 ctx 를 여는 에이전트를 `[starting]` 으로 볼 수 있다 — 사실이고
-    # (`tests/test_agent_worker_end.py` 의 `TestStartingIsVisible`), 이 시나리오는 되살림이 가라앉은 뒤를 고정한다:
-    # 되살린 worker 는 조립 도중에 끊긴 런을 다시 집어 곧바로 모델을 부르므로 그 런의 시작을 asker 가 idle 이 될 때까지
-    # 잡고(`holds` — 조립 전에 건다), 사실은 asker 도 idle 이 된 뒤 뜬다(펌프는 그 뒤에 돈다).
-    s2 = box2["s"] = Session(
+    # ── 둘째 세션: 같은 폴더로 다시 조립(`--resume`) — 아무것도 스스로 돌지 않는다 ──
+    p2 = Provider({"MAIN": [complete_all("resumed and done")]})
+    s2 = Session(
         root,
         p2,
         path="run" if query else "web",
         resume=True,
         query="MAIN resumed query" if query else None,
-        holds=[
-            (
-                "begin_agent_work",
-                worker,
-                lambda: "s" in box2 and box2["s"].agent_state(asker) == "idle",
-            )
-        ],
     )
-    # 되살린 worker 는 끊긴 런을 다시 집어 대본에서 main 의 대기를 기다린다 — 그 상태에서 사실을 뜬다
     until(
-        lambda: s2.agent_state(worker) == "busy" and s2.agent_state(asker) == "idle",
-        "worker resumed, asker settled",
+        lambda: all(s2.agent_state(k) == "idle" for k in (worker, asker)),
+        "revived agents idle",
     )
     facts["after_restore"] = {
         "revived": s2.wired.revived,
@@ -1523,9 +1473,11 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
         "awaited_asker": s2.reg.awaited_replies(f"agent:{asker}"),
         "awaited_main": s2.reg.awaited_replies("main"),
     }
+    if not query:
+        s2.say("MAIN after restart", nickname="dj")  # 웹: 사람의 말이 첫 런을 연다
 
     def done(s):
-        until(lambda: runs_ended(s) >= 1, "mail run")
+        until(lambda: runs_ended(s) >= 1, "the first run after the restart")
         until(lambda: all(s.agent_state(k) == "idle" for k in s.agent_keys()))
 
     drive(s2, path="run" if query else "web", until_done=done)

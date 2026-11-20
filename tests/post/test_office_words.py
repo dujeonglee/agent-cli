@@ -25,9 +25,9 @@ def _mail(i: int, *, wakes: bool = True) -> E.Envelope:
 
 
 class TestShape:
-    def test_words_have_no_row_and_do_not_persist(self):
+    def test_words_have_no_row(self):
         env = _words(1)
-        assert env.closes_by is None and env.persists is False and env.wakes is True
+        assert env.closes_by is None and env.wakes is True
         assert E.is_human_words(env)
 
     def test_delivering_words_opens_no_row(self):

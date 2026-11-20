@@ -684,8 +684,8 @@ class TestAQueuedRequestOfAGoneRequester:
         assert again._post.mail("main") == () and again._post.rows() == ()
         again.shutdown_all()
 
-    def test_a_session_end_keeps_it_for_resume(self, tmp_path):
-        """세션 종료는 되살릴 에이전트다 — 줄 선 요청은 디스크에 남고 재시작이 되넣는다(요청자도 돌아온다)."""
+    def test_a_session_end_drops_it(self, tmp_path):
+        """세션 종료 뒤 재시작은 명단만 올린다 — 줄 선 요청은 남지 않는다(5c-0; 종전엔 디스크에 남아 재시작이 되넣었다)."""
         gates, _calls, runner = _gated_runner("job1")
         reg = make_registry(tmp_path, runner=runner)
         aa, _ = _idle_agent(reg, "aa")
@@ -700,7 +700,6 @@ class TestAQueuedRequestOfAGoneRequester:
             tmp_path, runner=_gated_runner("job2")[2]
         )  # 되넣은 job2 는 문에 선다
         assert again.restore() == 2
-        assert [v.text for v in again.queued_for(f"agent:{bb}")] + [
-            v.text for v in again.taken_by(f"agent:{bb}")
-        ] == ["job2 for aa"]
+        assert again.queued_for(f"agent:{bb}") == ()
+        assert again.taken_by(f"agent:{bb}") == ()
         again.shutdown_all()

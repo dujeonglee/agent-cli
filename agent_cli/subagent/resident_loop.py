@@ -443,7 +443,6 @@ class AgentActor:
         return items if items else CLOSED
 
     def open(self, items: list[dict]) -> Start:
-        self.registry._begin_items(self.tm, items)
         return self.kind.start(items)
 
     def run_start(self, start: Start) -> RunEnd:

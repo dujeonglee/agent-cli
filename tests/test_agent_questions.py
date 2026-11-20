@@ -27,7 +27,6 @@ import pytest
 
 import agent_cli.render as render_mod
 from agent_cli.subagent.agent_mail import build_reply_record
-from agent_cli.subagent.agents_live import AgentRegistry, Question
 from agent_cli.subagent.question_port import QuestionPort
 from tests.loop_ports import make_ports, split_ports
 from tests.mail_support import absorbed_mail
@@ -296,132 +295,22 @@ class TestDeath:
         assert reg.answer_question(mine, "답", by="user").startswith("unknown")
         assert other in _question_ids(reg)  # 남의 질문은 그대로
 
-    def test_shutdown_all_keeps_questions(self, mkreg, tmp_path, renderer):
-        """G1: ``_worker`` finally 는 세션 종료에서도 돈다. 거기서 지우면
-        직후의 ``_save_state`` 가 빈 목록을 저장해 resume 이 알릴 열린
-        질문이 **항상 0건**이 된다."""
+    def test_a_question_does_not_survive_a_restart(self, mkreg, tmp_path, renderer):
+        """세션 종료 뒤 resume 에 열린 질문이 없다 — 재시작은 명단과 컨텍스트만 올린다(5c-0; 종전엔 agents.json 의
+        ``questions`` 로 되살렸다). 질문 글은 묻던 에이전트의 history·🤝 창에 남는다."""
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "살아남아야 한다")
+        reg.register_question(a, "살아남지 않는다")
         reg.shutdown_all()
-        assert [q.id for q in reg.open_human_questions()] == [qid]
         saved = json.loads((tmp_path / "agents.json").read_text(encoding="utf-8"))
-        assert [q["id"] for q in saved["questions"]] == [qid]
-
-
-# ── 영속 ────────────────────────────────────────
-
-
-class TestPersistence:
-    """§3.9 — resume 은 질문을 **되살린다**. ctx 가 통째로 복원되므로
-    나중에 도착한 답도 평소처럼 새 런으로 처리된다. 되살리지 못하는 것은
-    asker 가 돌아오지 않은 것뿐이다(주소는 사람이라 언제나 있다)."""
-
-    def test_human_question_comes_back_to_the_tray(self, mkreg, tmp_path, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "열린 채 종료")
-        reg.shutdown_all()
-
-        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
-        assert fresh.restore() == 1
-        assert [q.id for q in fresh.open_human_questions()] == [qid]
-        assert fresh.stale_questions == 0
-        row = next(r for r in fresh.roster_snapshot() if r["key"] == a)
-        assert [q["id"] for q in row["open_questions"]] == [qid]
-        # 답할 수 있다 — 되살리는 이유 자체다.
-        assert fresh.answer_question(qid, "네", by="user:carol") == ""
-        fresh.shutdown_all()
-
-    def test_asked_in_is_reset_on_resume(self, mkreg, tmp_path, renderer):
-        """``asked_in`` 는 그 생의 런 이름이다 — 물어본 런은 사라졌으므로 ""
-        로 되살린다(새 생의 런 결과 알림에 섞이지 않게)."""
-        reg = mkreg()
-        a = spawn_idle(reg)
-        reg.get(a).current_item = "r-4"
-        qid, _ = reg.register_question(a, "질문")
-        assert _question(reg, qid).asked_in == "r-4"
-        reg.shutdown_all()
-
-        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
+        assert "questions" not in saved
+        fresh = mkreg()
         fresh.restore()
-        assert _question(fresh, qid).asked_in == ""
-        fresh.shutdown_all()
-
-    def test_question_is_dropped_when_its_asker_did_not_come_back(
-        self, mkreg, tmp_path, renderer
-    ):
-        """asker 가 안 돌아오면 답을 받을 데가 없다 — 되살리면 영구 미결로
-        남는다.
-
-        정상 경로에서는 ``kill``/crash 가 **즉시** 정리하므로(§3.8) 이 상태가
-        잘 안 만들어진다. 그래서 파일을 직접 손봐 안전망 자체를 잰다 — 손상·
-        수동 편집·버전 엇갈림에서 나올 수 있다.
-        """
-        reg = mkreg()
-        a = spawn_idle(reg)
-        reg._save_state()
-        reg.shutdown_all()
-
-        path = tmp_path / "agents.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data["questions"] = [
-            {  # asker 가 매니페스트에 없다
-                "id": "q-orphan",
-                "asker": "agt-gone",
-                "target": "user",
-                "text": "돌아오지 않은 쪽이 물었다",
-                "asked_at": 1.0,
-                "asked_in": "r-1",
-            },
-            {  # 살아 돌아온 asker — 되살린다
-                "id": "q-kept",
-                "asker": a,
-                "target": "user",
-                "text": "남는다",
-                "asked_at": 1.0,
-                "asked_in": "r-1",
-            },
-        ]
-        path.write_text(json.dumps(data), encoding="utf-8")
-
-        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
-        fresh.restore()
-        assert _question_ids(fresh) == ["q-kept"]
-        assert fresh.stale_questions == 1
-        fresh.shutdown_all()
-
-    def test_malformed_question_entry_is_skipped(self, mkreg, tmp_path, renderer):
-        reg = mkreg()
-        spawn_idle(reg)
-        reg._save_state()
-        reg.shutdown_all()
-        path = tmp_path / "agents.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data["questions"] = [
-            {"id": "q-bad"},  # 키 부족 (KeyError)
-            "not a dict",
-            {},
-            {  # 타입이 깨졌다 (ValueError)
-                "id": "q-bad2",
-                "asker": "a",
-                "target": "main",
-                "text": "t",
-                "nags": "여섯",
-            },
-        ]
-        path.write_text(json.dumps(data), encoding="utf-8")
-
-        fresh = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
-        fresh.restore()  # 조용히 무시 — 부팅을 막지 않는다
         assert fresh.open_human_questions() == []
         fresh.shutdown_all()
 
-    def test_fresh_registry_reports_zero(self, mkreg, tmp_path, renderer):
-        reg = AgentRegistry(tmp_path, runtime={"model": "m"}, runner=make_runner())
-        reg.restore()
-        assert reg.stale_questions == 0
-        assert reg.open_human_questions() == []
+
+# ── 영속 ────────────────────────────────────────
 
 
 # ── 사람 알림 · 표면 ────────────────────────────
@@ -740,31 +629,6 @@ def port_ask(reg, key, text):
 
 
 class TestPersistShape:
-    def test_as_dict_round_trips_every_field(self, mkreg, renderer):
-        """resume 복원이 이 모양에 기댄다 — 필드가 빠지면 조용히 유실된다."""
-        q = Question(
-            id="q-shape",
-            asker="agt-x",
-            target="user",
-            text="본문",
-            asked_in="r-4",
-        )
-        d = q.as_dict()
-        assert d == {
-            "id": "q-shape",
-            "asker": "agt-x",
-            "target": "user",
-            "text": "본문",
-            "asked_at": q.asked_at,
-            "asked_in": "r-4",
-        }
-        back = Question.from_dict(d)
-        assert back is not None and (back.id, back.asker, back.text) == (
-            "q-shape",
-            "agt-x",
-            "본문",
-        )
-
     def test_unknown_asker_is_rejected(self, mkreg, renderer):
         reg = mkreg()
         qid, err = reg.register_question("agt-ghost", "질문")
@@ -2226,14 +2090,10 @@ class TestMidRunAbsorption:
         assert mail["content"] == f"[agent:{a}]: 회신 본문"
         # 장부: 시작 항목 [1] + 흡수된 요청 [2]; 회신은 빚이 아니다
         assert [d.id for d in reg.reply_debts(me)] == ["r-1", "r-2"]
-        # 영속: 받은편지함 미러는 비고, 처리 중 목록에 셋 다
+        # 받은편지함은 비고, 처리 중 목록에 셋 다
         assert reg.queued_for(me) == ()
         assert [m.id for m in reg.taken_by(me)] == ["r-1", "r-2", "n-3"]
-        saved = json.loads((reg.session_dir / "agents.json").read_text())
-        (entry,) = [e for e in saved["agents"] if e["key"] == b]
-        assert [i["id"] for i in entry["in_flight"]] == ["r-1", "r-2", "n-3"]
-        assert entry["inbox"] == []
-        # 두 번째 흡수는 빈손 — 저장도 없다
+        # 두 번째 흡수는 빈손
         assert reg.absorb_pending(tm) == []
         gate.set()
         assert wait_run_done(reg, b)
@@ -2304,24 +2164,6 @@ class TestMidRunAbsorption:
         gate.set()
         assert wait_until(lambda: tm.state == "dead")  # 끝내라는 신호가 워커에 닿았다
         assert [m.text for m in reg.queued_for(me)] == ["뒤에 온 것"]
-
-    def test_absorbed_items_survive_a_restart(self, mkreg, renderer, tmp_path):
-        from agent_cli.constants import RESUMED_RUN_NOTICE
-        from tests.test_agents_live import _RecordingRunner
-
-        reg, _a, b, gate = self._busy(mkreg)
-        tm = reg.get(b)
-        assert reg.request(b, "추가 지시", author="main") == ""
-        reg.absorb_pending(tm)
-        # 프로세스가 죽은 것과 같다 — 같은 폴더로 복원
-        rec = _RecordingRunner()
-        reg2 = make_registry(tmp_path, runner=rec)
-        assert reg2.restore() == 2
-        assert wait_until(lambda: len(rec.seen) >= 2)
-        assert rec.seen[0] == RESUMED_RUN_NOTICE + "첫 일감"
-        assert rec.seen[1] == "추가 지시"  # 흡수됐던 것도 남는다 — 별도 런으로
-        gate.set()
-        reg2.shutdown_all()
 
     # ── 실제 루프 ──
 

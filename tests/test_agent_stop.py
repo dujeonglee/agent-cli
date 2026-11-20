@@ -791,12 +791,3 @@ class TestStopEverythingAgentRequesters:
         assert reg.stop_all_runs() == [sub.key]
         # 회신이 런을 열었다(인용된 과제 글의 표지로 가짜 엔진이 그 런을 붙잡는다)
         assert until(lambda: res.state == "busy" and held_items(res) == [])
-
-    def test_held_items_survive_a_restart(self, reg, stage, tmp_path):
-        res, _sub = self._resident_with_sub_run(reg, stage)
-        reg.stop_all_runs(wakes_requesters=False)
-        assert until(lambda: len(held_items(res)) == 1)
-        reg._save_state()
-        data = json.loads((reg.session_dir / "agents.json").read_text())
-        (e,) = [x for x in data["agents"] if x["key"] == res.key]
-        assert [i.get("opens_run") for i in e["inbox"]] == [False]

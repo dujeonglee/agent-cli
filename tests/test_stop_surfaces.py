@@ -371,11 +371,11 @@ class TestStopEverythingDoesNotWakeMain:
         from agent_cli.runtime import session_has_live_work
 
         assert not session_has_live_work(post=main_input.post, agent_registry=s["reg"])
-        # 끝나도 회신은 agents.json 미러에 남는다
+        # 그 회신은 디스크에 남지 않는다 — 세션이 끝나면 버려진다(5c-0; 종전엔 agents.json 미러에 남았다)
         import json as _json
 
         saved = _json.loads((s["reg"].session_dir / "agents.json").read_text())
-        assert [m.get("wakes_main") for m in saved["pending"]] == [False]
+        assert "pending" not in saved
         assert s["reg"].awaited_replies("main") == []  # 기다리던 r- 는 닫혔다
         # 사람의 다음 입력 런이 함께 읽는다
         calls_before = len(p.calls["MAIN"])

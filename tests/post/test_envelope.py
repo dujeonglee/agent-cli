@@ -34,9 +34,9 @@ def test_each_maker_says_how_it_closes(make, kind, closes_by):
     assert env.expects_reply is (closes_by == "reply")
 
 
-def test_a_checkin_is_a_system_notice_that_neither_opens_a_row_nor_persists():
-    env = E.system("n-5", "harness", "agent:a", "⏰", opens_row=False, persists=False)
-    assert env.closes_by is None and env.persists is False and env.wakes is True
+def test_a_checkin_is_a_system_notice_that_opens_no_row():
+    env = E.system("n-5", "harness", "agent:a", "⏰", opens_row=False)
+    assert env.closes_by is None and env.wakes is True
 
 
 def test_a_quiet_reply_does_not_wake():

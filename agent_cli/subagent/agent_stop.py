@@ -11,7 +11,8 @@
 | 아직 시작 안 한 대기 요청 | 남김(다음 차례) | 원인의 회신(✕ removed · run 의 ■ stopped) |
 | 자기가 맡긴 하위 일 | 그대로 | 하위 run 은 함께 멈춤 · 하위 상주는 남음 |
 
-세션 종료(`shutdown_all`)는 사람의 정지가 아니다 — 원인이 비어 있고, 빚은 지금처럼 버려 재시작이 되넣는다.
+세션 종료(`shutdown_all`)는 사람의 정지가 아니다 — 원인이 비어 있고 아무에게도 회신하지 않는다. 재시작은 명단과
+컨텍스트만 올리고 빚·줄은 버린다(5c-0) — 되살린 쪽은 컨텍스트 끝의 재시작 기록을 읽는다.
 스스로 내려간 에이전트(과제를 끝낸 run·죽은 워커)도 사람의 정지가 아니지만 더는 상자를 읽지 않으니, 대기 요청에는
 ✕ 와 같은 길로 회신한다(`ENDED_REPLY`·`DIED_REPLY`, 표지 ``ended``·``died`` — 표 밖).
 
@@ -351,30 +352,9 @@ def close_debts_owed_to(registry, tm, label: str) -> None:
                 opens_run=False,
             )
     if gone:
-        registry._save_state()
         registry._notify_roster()
         if any(row.dst == "main" for row in gone):
             registry._pending_changed()  # 입력창 위 대기열의 메일 줄
-
-
-def live_requests(registry, items: list[dict]) -> list[dict]:
-    """재시작이 되넣을 줄 선 항목 중 요청자가 돌아오지 않은(죽었거나 명단에 없는) 에이전트의 요청을 뺀다 — 살아 있는
-    세션에서 요청자가 사라질 때(`close_debts_owed_to`)와 같은 규칙. 회신·통지·사람·main 의 것은 그대로."""
-    return [
-        it
-        for it in items
-        if it.get("kind")
-        or not it.get("expects_reply", True)
-        or registry._agent_alive(str(it.get("author") or "main"))
-    ]
-
-
-def forget_gone_requesters(registry) -> None:
-    """재시작 복원 — 명단을 다 세운 뒤, 에이전트의 항목을 되넣기 **전**(그때 줄은 main 상자에 되살린 메일뿐이다): 요청자가
-    돌아오지 않은 에이전트의 줄 선 요청을 닫는다(`live_requests` 와 같은 규칙)."""
-    for src in {r.src for r in registry._post.rows() if r.state == "queued"}:
-        if src.startswith("agent:") and not registry._agent_alive(src):
-            registry._post.forget_requests_of(src, registry._run_of)
 
 
 def stop_sub_runs(registry, tm, by: str = "") -> None:

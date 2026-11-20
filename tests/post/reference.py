@@ -1,7 +1,7 @@
 """우편함·장부의 독립 참조 모델 — 시안 v4.1 §3·§4 표와 승인된 결정(D1~D5, 수정 일곱)만 보고 따로 쓴 것.
 
 `agent_cli.post` 를 import 하지 않는다(가드 테스트). 봉투는 평범한 dict 로 받는다 — 키: id·kind·src·dst·re·
-closes_by·wakes·persists. 락도 없다. 관찰값은 구현의 공개 질문과 같은 모양으로 낸다: 주소별 queued·taken id 순서,
+closes_by·wakes. 락도 없다. 관찰값은 구현의 공개 질문과 같은 모양으로 낸다: 주소별 queued·taken id 순서,
 줄 (rid, state, how), arrived·backlog·has_waking.
 
 틀린 연산(구현이 거절해야 할 것)은 `Refused` 로 알린다 — 모델의 상태는 그대로 둔다.

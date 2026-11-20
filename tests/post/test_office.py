@@ -45,9 +45,7 @@ class TestDeliver:
     def test_notices_replies_and_checkins_open_no_row(self, office):
         office.deliver(E.notice("n-1", A, "main", "fyi"))
         office.deliver(E.reply("n-2", A, "main", "ok", re="r-0"))
-        office.deliver(
-            E.system("n-3", "harness", A, "⏰", opens_row=False, persists=False)
-        )
+        office.deliver(E.system("n-3", "harness", A, "⏰", opens_row=False))
         assert office.rows() == ()
 
     def test_a_duplicate_id_changes_nothing(self, office):

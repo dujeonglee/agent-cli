@@ -2122,13 +2122,6 @@ def run(
             )
         if _auditor_boot_line(owners.auditor):
             console.print(f"[{C['muted']}]{_auditor_boot_line(owners.auditor)}[/]")
-        if agent_registry.stale_questions:
-            # 열린 질문은 되살린다(§3.9) — 여기 세는 것은 **되살리지 못한**
-            # 것, 즉 묻거나 답할 쪽이 돌아오지 않은 질문뿐이다.
-            console.print(
-                f"[{C['muted']}]❓ {agent_registry.stale_questions} unanswered question(s) "
-                f"not restored — the asking agent did not come back[/]"
-            )
         if wired.auto:
             console.print(
                 f"[{C['muted']}]🤝 {wired.auto} auto-spawn specialist(s) now resident[/]"
@@ -2209,7 +2202,7 @@ def web_instance_is_active(
         renderer.hub.has_live_connections()
         or renderer.worker_is_busy()
         # 사람에게 물은 질문은 답이 올 때까지 열려 있고 상한도 없다 — 답은 웹에서만 온다(`answer_question`).
-        # 세지 않으면 질문을 든 세션을 한가함 정리가 걷는다(§3.9 가 되살리지만 걷히는 것 자체가 사고다).
+        # 세지 않으면 질문을 든 세션을 한가함 정리가 걷는다 — 재시작은 질문을 되살리지 않는다(5c-0).
         # run 은 답할 길이 없어 세지 않는다 — 세면 끝나지 않는다.
         or bool(agent_registry is not None and agent_registry.open_human_questions())
         or session_has_live_work(
@@ -2300,9 +2293,7 @@ def _auditor_boot_line(auditor) -> str:
     return "🔎 Session auditor on (--auditor · AGENT_CLI_AUDITOR · 🔎 chip) — every user run is audited from its own records"
 
 
-def _announce_agent_boot(
-    renderer, revived: int, auto: int, stale: int = 0, *, auditor=None
-) -> None:
+def _announce_agent_boot(renderer, revived: int, auto: int, *, auditor=None) -> None:
     """web 부트스트랩의 teammate 재생성/auto-spawn/감사자 알림.
 
     v4.60.1 사고의 재발 방지 지점: 인라인 status() 오호출(시그니처)이
@@ -2311,12 +2302,6 @@ def _announce_agent_boot(
     """
     if revived:
         renderer.status("running", f"🤝 {revived} resident agent(s) revived")
-    if stale:
-        # §3.9 — 되살리지 **못한** 건수 (묻거나 답할 쪽이 미복귀).
-        renderer.status(
-            "running",
-            f"❓ {stale} unanswered question(s) not restored — the asking agent did not come back",
-        )
     if auto:
         renderer.status("running", f"🤝 {auto} auto-spawn specialist(s) now resident")
     if _auditor_boot_line(auditor):
@@ -3292,13 +3277,9 @@ def web(
         # 미배달 메일은 입력창 위 대기열에 사용자 요청과 같은 줄로 선다(v10.51.0)
         server.mail_source = registry.pending_mail
         registry.on_pending_change = server.broadcast_queue
-        server.broadcast_queue()  # resume 이 되살린 미배달 메일도 줄을 선다
+        server.broadcast_queue()
         _announce_agent_boot(
-            renderer,
-            wired.revived,
-            wired.auto,
-            registry.stale_questions,
-            auditor=owners.auditor,
+            renderer, wired.revived, wired.auto, auditor=owners.auditor
         )
         _mon_notice = _previous_monitors_notice(spec.session_dir)
         if _mon_notice:

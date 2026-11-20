@@ -34,7 +34,6 @@ class Envelope:
     mark: str = ""
     closes_by: ClosesBy | None = None
     wakes: bool = True
-    persists: bool = True
     hop: int = 0
     answers: tuple[str, ...] = ()
     ts: float = 0.0
@@ -113,10 +112,8 @@ def words(
     payload: Mapping[str, Any] | None = None,
 ) -> Envelope:
     """사람의 말 — 줄 없이 상자에 선다(main 앞: 꺼내기 전에는 취소·명령으로 빠질 수 있고, 줄은 받는 쪽이 집을 때
-    연다). 저장하지 않는다 — 재시작하면 대기 중이던 말은 사라진다."""
-    return Envelope(
-        id, "request", src, dst, text, persists=False, ts=ts, payload=payload or _EMPTY
-    )
+    연다). 재시작하면 대기 중이던 말은 사라진다(봉투는 저장하지 않는다 — 5c-0)."""
+    return Envelope(id, "request", src, dst, text, ts=ts, payload=payload or _EMPTY)
 
 
 def notice(
@@ -174,12 +171,11 @@ def system(
     text: str,
     *,
     opens_row: bool,
-    persists: bool = True,
     ts: float = 0.0,
     payload: Mapping[str, Any] | None = None,
 ) -> Envelope:
     """하니스 통지 — 작업·모니터·감사·사망·체크인. ``opens_row`` 면 `complete` 로 닫는 줄(n-)이 선다(main 앞),
-    아니면 줄 없이 관찰로만(에이전트 앞·체크인). ``persists`` 가 거짓이면 저장하지 않는다(체크인)."""
+    아니면 줄 없이 관찰로만(에이전트 앞·체크인)."""
     return Envelope(
         id,
         "system",
@@ -187,7 +183,6 @@ def system(
         dst,
         text,
         closes_by="complete" if opens_row else None,
-        persists=persists,
         ts=ts,
         payload=payload or _EMPTY,
     )

@@ -23,7 +23,7 @@ from agent_cli.runtime import MainLoop
 from agent_cli.subagent.agents_live import AgentRegistry
 from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
-from tests.mail_support import absorbed_mail, to_main
+from tests.mail_support import to_main
 
 JOB = {
     "kind": "job",
@@ -116,34 +116,6 @@ class TestWhichMailBecomesAnItem:
             "n-4",
             "mail",
         )
-
-
-class TestOutOfLedgerMailIsNotPersisted:
-    """장부 밖 메일은 "지금" 에만 참이다 — agents.json 미러에 남기지 않는다
-    (v10.78.1, §14). 다음 세션의 첫 턴에 낡은 채 배달되면 존재하지 않는 것에 대해
-    말하게 된다. 열린 항목이 되는 메일은 종전처럼 남는다."""
-
-    def _mirror(self, reg):
-        import json
-
-        return json.loads(reg._state_path().read_text(encoding="utf-8"))
-
-    def test_pending_mirror_drops_declared_none_and_keeps_items(self, tmp_path):
-        reg = AgentRegistry(tmp_path / "reg")
-        to_main(reg, dict(JOB))
-        to_main(reg, {"kind": "monitor", "ledger": "none", "output": "⏰ check-in"})
-        assert (
-            reg.arrived_for("main", waking_only=False, words=False) == 2
-        )  # 배달은 둘 다 된다
-        assert [r["kind"] for r in self._mirror(reg)["pending"]] == ["job"]
-
-    def test_restore_sees_only_the_items(self, tmp_path):
-        reg = AgentRegistry(tmp_path / "reg")
-        to_main(reg, dict(JOB))
-        to_main(reg, {"kind": "monitor", "ledger": "none", "output": "⏰ check-in"})
-        reg2 = AgentRegistry(tmp_path / "reg")
-        reg2.restore()
-        assert [r["kind"] for r in absorbed_mail(reg2)] == ["job"]
 
 
 class TestWakeRunHasNoStarter:

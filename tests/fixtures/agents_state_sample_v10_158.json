@@ -1,0 +1,97 @@
+{
+ "agents": [
+  {
+   "agent_stack": [],
+   "allowed_tools": null,
+   "context_mode": "none",
+   "created_at": "<t>",
+   "depth": 0,
+   "description": "",
+   "error": "",
+   "handled": 0,
+   "hooks_config": null,
+   "in_flight": [
+    {
+     "answers": [],
+     "author": "main",
+     "expects_reply": true,
+     "hop": 0,
+     "id": "r-1",
+     "text": "first job",
+     "ts": "<t>"
+    }
+   ],
+   "inbox": [
+    {
+     "answers": [],
+     "author": "main",
+     "expects_reply": true,
+     "hop": 0,
+     "id": "r-2",
+     "text": "second job",
+     "ts": "<t>"
+    }
+   ],
+   "instructions": "",
+   "key": "agt-A",
+   "model": "",
+   "name": "worker",
+   "profile": "",
+   "role_prompt": "",
+   "state": "idle"
+  },
+  {
+   "agent_stack": [],
+   "allowed_tools": null,
+   "context_mode": "none",
+   "created_at": "<t>",
+   "depth": 0,
+   "description": "",
+   "error": "",
+   "handled": 0,
+   "hooks_config": null,
+   "in_flight": [],
+   "inbox": [],
+   "instructions": "",
+   "key": "agt-B",
+   "model": "",
+   "name": "asker",
+   "profile": "",
+   "role_prompt": "",
+   "state": "idle"
+  }
+ ],
+ "pending": [
+  {
+   "expects_reply": true,
+   "item_id": "r-3",
+   "key": "agt-B",
+   "kind": "peer_message",
+   "name": "",
+   "output": "which branch?",
+   "profile": "",
+   "success": true
+  },
+  {
+   "expects_reply": false,
+   "item_id": "n-4",
+   "key": "agt-B",
+   "kind": "peer_message",
+   "name": "",
+   "output": "fyi: started",
+   "profile": "",
+   "success": true
+  }
+ ],
+ "questions": [
+  {
+   "asked_at": "<t>",
+   "asked_in": "",
+   "asker": "agt-B",
+   "id": "q-5",
+   "target": "user",
+   "text": "v1 or v2?"
+  }
+ ],
+ "version": 2
+}

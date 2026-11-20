@@ -76,11 +76,11 @@ class TestMainInput:
         q.wait_to_open(0)
         assert events == [1, 0]
 
-    def test_words_are_not_saved(self):
+    def test_words_stand_without_a_row(self):
         q = MainInput()
         item = q.enqueue(None, "x")
         (queued,) = q.post.words("main")
-        assert queued.id == item["id"] and queued.persists is False
+        assert queued.id == item["id"]
         assert queued.closes_by is None  # 줄 없이 선다 — 취소·명령으로 빠질 수 있다
 
     def test_mail_in_the_same_box_is_not_words(self):
