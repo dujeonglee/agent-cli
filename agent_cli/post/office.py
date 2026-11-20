@@ -70,6 +70,8 @@ class PostOffice:
         #: 런을 열 것을 기다리는 주소(`next_run` 안) — 타임아웃에도 내리지 않고, 꺼낼 때 내린다
         self._idle: set[str] = set()
         self._closed: set[str] = set()
+        #: 받아들여진 `wait` 로 기다리는 주소 — `mark_waiting`·`clear_waiting` (5a: 세우고 내리기만, 판정은 읽지 않는다)
+        self._waiting: set[str] = set()
 
     # ── 배달 ─────────────────────────────────────────
 
@@ -310,11 +312,14 @@ class PostOffice:
                     timeout,
                 )
                 if addr in self._closed:
+                    self._waiting.discard(addr)
                     return CLOSED
                 envs = box.take_next()
                 if not envs:
                     return None
                 self._idle.discard(addr)
+                # 런을 끝낸 `wait` 의 기다림이 여기서 끝난다 — 5c 에서 WAIT_END_RUN 과 함께 없어질 자리
+                self._waiting.discard(addr)
                 self._picked(envs)
                 return envs
 
@@ -327,12 +332,15 @@ class PostOffice:
 
             self.cv.wait_for(ready, timeout)
             if addr in self._closed:
+                self._waiting.discard(addr)
                 return CLOSED  # 닫힘이 이긴다 — 줄 선 사람의 말로 런을 열지 않는다(끄는 중이다)
-            if box.words():
+            if box.words() or box.count(waking_only=True, words=False):
                 self._idle.discard(addr)
+                # 런을 끝낸 `wait` 의 기다림이 여기서 끝난다 — 5c 에서 WAIT_END_RUN 과 함께 없어질 자리
+                self._waiting.discard(addr)
+            if box.words():
                 return (self._take_first_words(box),)
             if box.count(waking_only=True, words=False):
-                self._idle.discard(addr)
                 return ()
             return None
 
@@ -341,6 +349,7 @@ class PostOffice:
         `CLOSED` 를 받는다). 멱등."""
         with self.cv:
             self._closed.add(addr)
+            self._waiting.discard(addr)
             self.cv.notify_all()
 
     def reopen(self, addr: str) -> None:
@@ -352,6 +361,24 @@ class PostOffice:
         """``addr`` 가 지금 런을 열 것을 기다리는 중인가(`next_run` 안)."""
         with self.cv:
             return addr in self._idle
+
+    # ── 기다림 표시 ─────────────────────────────────
+    #
+    # 받아들여진 `wait` 가 세우고(`dispatch._op_wait`), 기다림이 끝날 때 내린다 — 제자리 대기가 돌아올 때,
+    # 런을 끝낸 대기면 다음 런이 열리거나 상자가 닫힐 때(`next_run`·`close`), 주인이 사라질 때(`drop_mailbox`).
+    # 깨우지 않는다(기다리는 이가 이것을 조건으로 보지 않는다).
+
+    def mark_waiting(self, addr: str) -> None:
+        with self.cv:
+            self._waiting.add(addr)
+
+    def clear_waiting(self, addr: str) -> None:
+        with self.cv:
+            self._waiting.discard(addr)
+
+    def is_waiting(self, addr: str) -> bool:
+        with self.cv:
+            return addr in self._waiting
 
     # ── 질문 ─────────────────────────────────────────
 

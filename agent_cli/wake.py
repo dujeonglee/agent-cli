@@ -480,6 +480,16 @@ class Mailbox:
             return []
         return parked_debtors(self._registry.wake_facts(), self.owner)
 
+    def mark_waiting(self) -> None:
+        """받아들여진 `wait` — 창구에 이 주소의 기다림 표시를 세운다."""
+        if self._registry is not None:
+            self._registry.mark_waiting(self.owner)
+
+    def clear_waiting(self) -> None:
+        """제자리 기다림이 끝났다 — 기다림 표시를 내린다."""
+        if self._registry is not None:
+            self._registry.clear_waiting(self.owner)
+
     def drop(self) -> None:
         """메일함과 걸린 체크인을 버린다 — 런이 끝나 읽을 사람이 없다."""
         if self._registry is not None:

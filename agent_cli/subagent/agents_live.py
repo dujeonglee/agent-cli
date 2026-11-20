@@ -2250,12 +2250,20 @@ class AgentRegistry:
                     if not any(e.re == rid for e in self._post.queued("main")):
                         return None
 
+    # 기다림 표시 — 창구의 것(`PostOffice.mark_waiting`), `Mailbox` 가 엔진 대신 부른다
+    def mark_waiting(self, addr: str) -> None:
+        self._post.mark_waiting(addr)
+
+    def clear_waiting(self, addr: str) -> None:
+        self._post.clear_waiting(addr)
+
     def drop_mailbox(self, addr: str) -> int:
-        """private 주소의 루프가 끝났다 — 체크인을 풀고 메일함을 버린다(읽을 사람이
-        없다). 버린 메일 수를 돌려준다."""
+        """주소의 루프가 끝났다 — 체크인·기다림 표시를 풀고, private 이면 메일함을 버린다(읽을
+        사람이 없다). 버린 메일 수를 돌려준다."""
         self._cancel_checkins(addr)
         with self._cv:
             self._checkin_last.pop(addr, None)
+            self._post.clear_waiting(addr)
             if not is_private_owner(addr):
                 return (
                     0  # 에이전트 주소의 받은편지함은 그대로 — private 메일함만 버린다
