@@ -480,10 +480,6 @@ class Session:
         """사람의 입력 한 줄 — 입력 큐로 (CLI 의 argv 질의는 ``nickname=None``)."""
         return self.main_input.enqueue(None, text, nickname=nickname)
 
-    def pending_count(self) -> int:
-        """main 앞에 줄 선 사람의 입력 수 — 웹 idle 리퍼가 보는 값."""
-        return self.main_input.pending_count()
-
     def main_idle(self) -> bool:
         """펌프가 런을 열 것을 기다리는 중인가(한가함) — CLI 메일 대기 줄의 ``busy`` 가 이 값이다."""
         return self.main_input.idle()
@@ -1239,7 +1235,13 @@ def s11_stop_everything(root: Path) -> dict:
         )
         # 깨우지 않는 회신만 남았다 — 워커가 다 내려오면 `run` 이 끝날 수 있다(조용해짐)
         try:
-            until(lambda: not s.reg.has_active_work(), "quiet")
+            # run 의 끝 판정(공개 표면) — 이 시나리오에는 곁의 일(모니터·잡·예약·감사)이 없다
+            until(
+                lambda: QuietPolicy(
+                    main_input=s.main_input, agent_registry=s.reg
+                ).should_stop(),
+                "quiet",
+            )
             facts["becomes_quiet"] = True
         except TimeoutError:
             facts["becomes_quiet"] = False
@@ -1250,7 +1252,7 @@ def s11_stop_everything(root: Path) -> dict:
         )
         facts["web_instance_active"] = web_instance_is_active(
             quiet_renderer,
-            SimpleNamespace(pending_count=s.pending_count),
+            SimpleNamespace(main_input=s.main_input),
             s.reg,
             monitors=s.stores.monitors,
             schedules=s.stores.schedules,

@@ -367,7 +367,10 @@ class TestStopEverythingDoesNotWakeMain:
         # main 런 0회 — 한가한 펌프가 열 것이 없다
         assert main_input.wait_to_open(0) is None
         assert not s["reg"].arrived_for("main", waking_only=True, words=False)
-        assert not s["reg"].has_active_work()  # `run` 은 조용해지면 끝난다
+        # `run` 은 조용해지면 끝난다 — 세션 판정(main 상자·에이전트 몫)
+        from agent_cli.runtime import session_has_live_work
+
+        assert not session_has_live_work(post=main_input.post, agent_registry=s["reg"])
         # 끝나도 회신은 agents.json 미러에 남는다
         import json as _json
 

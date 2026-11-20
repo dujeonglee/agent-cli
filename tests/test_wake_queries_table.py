@@ -18,7 +18,7 @@ import pytest
 
 from agent_cli.loop.kind import PrivateLoop
 from agent_cli.post import envelope as E
-from agent_cli.runtime import MainLoop
+from agent_cli.runtime import MainLoop, session_has_live_work
 from agent_cli.session_slots import (
     set_agent_registry,
     set_job_registry,
@@ -158,14 +158,18 @@ class TestMainInPlaceWake:
         assert why == "mail"
 
 
-# ── 세션 수명 판정 (run 의 끝·web 의 한가함 정리) ─────────────────────────
+# ── 세션 수명 판정 (run 의 끝·web 의 한가함 정리 — 판정 하나, `runtime.session_has_live_work`) ──────
 
-#: (이름, main 앞 봉투, run 을 붙잡나)
+#: (이름, main 앞 봉투, 세션을 붙잡나)
 MAIN_WORK = [
     ("empty", [], False),
     ("waking_mail", [N(1)], True),
     ("quiet_reply", [Q(1)], False),
-    ("words_only", [W(1)], False),  # 사람의 말은 run 이 `pending_count` 로 따로 센다
+    (
+        "words_only",
+        [W(1)],
+        True,
+    ),  # [5b-1] 사람의 말도 같은 판정의 main 상자 항 — 종전엔 호스트가 따로 셌다
 ]
 
 
@@ -173,8 +177,7 @@ MAIN_WORK = [
 def test_main_box_and_run_lifetime(reg, name, envs, busy):
     for env in envs:
         reg._post.deliver(env)
-    assert reg.has_active_work() is busy
-    assert reg.any_activity() is False  # web 의 한가함 정리는 main 상자를 보지 않는다
+    assert session_has_live_work(post=reg._post, agent_registry=reg) is busy
 
 
 #: (이름, 한가한 에이전트 앞 봉투, 할 일 수)
@@ -195,8 +198,7 @@ def test_agent_backlog_and_lifetime(reg, name, envs, backlog):
     for env in envs:
         reg._post.deliver(env)
     assert reg.backlog_of("a") == backlog
-    assert reg.has_active_work() is (backlog > 0)
-    assert reg.any_activity() is (backlog > 0)
+    assert reg.has_agent_work() is (backlog > 0)
 
 
 def test_dead_agents_backlog_is_not_work(reg):
@@ -204,7 +206,7 @@ def test_dead_agents_backlog_is_not_work(reg):
     reg._post.deliver(R(1))
     tm.state = "dead"
     assert reg.backlog_of("a") == 1
-    assert reg.has_active_work() is False and reg.any_activity() is False
+    assert reg.has_agent_work() is False
 
 
 # ── 깨울 것 (`wake`) — 예약의 근거·체크인 대상 ─────────────────────────────

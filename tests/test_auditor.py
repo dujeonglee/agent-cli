@@ -382,19 +382,21 @@ class TestLiveness:
     둘 다 같은 술어(`session_has_live_work`)로 기다린다."""
 
     def test_session_has_live_work_counts_in_flight_harness_jobs(self):
+        from agent_cli.post.office import PostOffice
         from agent_cli.runtime import session_has_live_work
 
+        post = PostOffice()
         busy = SimpleNamespace(in_flight=1)
         idle = SimpleNamespace(in_flight=0)
-        assert session_has_live_work(pending_count=0, harness=busy)
-        assert not session_has_live_work(pending_count=0, harness=idle)
-        assert not session_has_live_work(pending_count=0, harness=None)
+        assert session_has_live_work(post=post, harness=busy)
+        assert not session_has_live_work(post=post, harness=idle)
+        assert not session_has_live_work(post=post, harness=None)
 
     def test_quiet_policy_waits_and_announces_once(self):
         from agent_cli.main_input import MainInput
         from agent_cli.pump import QuietPolicy
 
-        reg = SimpleNamespace(has_active_work=lambda: False)
+        reg = SimpleNamespace(has_agent_work=lambda: False)
         harness = SimpleNamespace(in_flight=1)
         waits: list[str] = []
         pol = QuietPolicy(
@@ -410,12 +412,13 @@ class TestLiveness:
 
     def test_web_instance_stays_active_while_auditing(self):
         from agent_cli.main import web_instance_is_active
+        from agent_cli.main_input import MainInput
 
         r = SimpleNamespace(
             hub=SimpleNamespace(has_live_connections=lambda: False),
             worker_is_busy=lambda: False,
         )
-        s = SimpleNamespace(pending_count=lambda: 0)
+        s = SimpleNamespace(main_input=MainInput())
         assert web_instance_is_active(r, s, None, harness=SimpleNamespace(in_flight=1))
         assert not web_instance_is_active(
             r, s, None, harness=SimpleNamespace(in_flight=0)

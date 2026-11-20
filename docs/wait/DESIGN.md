@@ -46,7 +46,7 @@
   물려받아 부모의 작업이 판정에 걸렸을 것이다).
 - **에이전트 활동은 요청자별** — `AgentRegistry.pending_for(addr)`(v10.146.0 부터 `wake.agent_relations` — 레지스트리 사본 `WakeFacts` 의 순수 함수): 그 주소에게
   빚진 회신, 그 주소의 항목을 들고 있거나 처리 중인 에이전트, 그 주소로 가는 미배달
-  회신. 세션 전체 `has_active_work` 로 보면 상주 에이전트 **자신이 busy** 라 늘
+  회신. 세션 전체(지금 `AgentRegistry.has_agent_work`)로 보면 상주 에이전트 **자신이 busy** 라 늘
   참이었다(아무것도 안 기다리는 wait 가 통과했을 것). run 모드에서도 "동료의
   일로 바쁜 에이전트" 때문에 main 의 wait 가 받아들여져 아무도 깨우지 않는 채
   펌프가 끝나는 길을 막는다.

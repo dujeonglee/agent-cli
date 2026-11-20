@@ -366,21 +366,24 @@ class TestShellToolSurface:
 
 class TestLifetime:
     def test_live_work_counts_running_jobs(self, reg):
+        from agent_cli.post.office import PostOffice
         from agent_cli.runtime import session_has_live_work
 
-        assert not session_has_live_work(pending_count=0, jobs=reg)
+        post = PostOffice()
+        assert not session_has_live_work(post=post, jobs=reg)
         job = reg.start("sleep 60", owner="main")
-        assert session_has_live_work(pending_count=0, jobs=reg)
+        assert session_has_live_work(post=post, jobs=reg)
         reg.kill(job)
-        assert not session_has_live_work(pending_count=0, jobs=reg)
+        assert not session_has_live_work(post=post, jobs=reg)
 
     def test_quiet_policy_waits_and_announces_jobs(self, reg):
+        from agent_cli.main_input import MainInput
         from agent_cli.pump import QuietPolicy
 
         waits = []
         policy = QuietPolicy(
-            main_input=SimpleNamespace(pending_count=lambda: 0),
-            agent_registry=SimpleNamespace(has_active_work=lambda: False),
+            main_input=MainInput(),
+            agent_registry=SimpleNamespace(has_agent_work=lambda: False),
             jobs=reg,
             on_wait=waits.append,
         )
@@ -393,12 +396,13 @@ class TestLifetime:
 
     def test_web_active_predicate_sees_jobs(self, reg):
         from agent_cli.main import web_instance_is_active
+        from agent_cli.main_input import MainInput
 
         renderer = SimpleNamespace(
             hub=SimpleNamespace(has_live_connections=lambda: False),
             worker_is_busy=lambda: False,
         )
-        server = SimpleNamespace(pending_count=lambda: 0)
+        server = SimpleNamespace(main_input=MainInput())
         assert not web_instance_is_active(renderer, server, None, jobs=reg)
         reg.start("sleep 60", owner="main")
         assert web_instance_is_active(renderer, server, None, jobs=reg)

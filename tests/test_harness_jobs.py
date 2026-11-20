@@ -174,7 +174,7 @@ class TestIsolationFromTheRegistry:
             assert reg.resolve_key("auditor") is None
             assert reg.kill("auditor").startswith("unknown agent")
             assert reg.request("auditor", "hi", author="main")
-            assert not reg.has_active_work() and not reg.any_activity()
+            assert not reg.has_agent_work() and not reg.open_human_questions()
             assert not (Path(tmp_path) / "agents.json").exists()
             assert not (ctx.session_dir / "agents").exists()
         finally:

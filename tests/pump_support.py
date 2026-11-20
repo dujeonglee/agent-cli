@@ -64,7 +64,7 @@ class FakeRegistry:
         self.authors: list[list[str]] = []
         self.ended: list[tuple] = []  # run_ended 호출 (owner, output, waiting)
 
-    def has_active_work(self):
+    def has_agent_work(self):
         return False
 
     def set_current_run_authors(self, authors):

@@ -193,18 +193,24 @@ class TestWebInstanceIsActive:
             return self._busy
 
     class _S:
-        def __init__(self, pending=0):
-            self._p = pending
+        """서버 — 술어는 main 의 입력 큐(``main_input`` — 그 창구의 main 상자)를 본다."""
 
-        def pending_count(self):
-            return self._p
+        def __init__(self, pending=0):
+            from agent_cli.main_input import MainInput
+
+            self.main_input = MainInput()
+            for i in range(pending):
+                self.main_input.enqueue(None, f"m{i}")
 
     class _Reg:
         def __init__(self, active):
             self._a = active
 
-        def any_activity(self):
+        def has_agent_work(self):
             return self._a
+
+        def open_human_questions(self):
+            return []
 
     def test_all_quiet_is_inactive(self):
         from agent_cli.main import web_instance_is_active

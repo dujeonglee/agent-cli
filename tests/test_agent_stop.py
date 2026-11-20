@@ -17,6 +17,7 @@ import pytest
 
 from agent_cli.loop.core import mail_item
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.runtime import session_has_live_work
 from agent_cli.session_slots import get_agent_registry, set_agent_registry
 from agent_cli.subagent import agent_stop
 from agent_cli.subagent.agent_mail import build_reply_record
@@ -381,7 +382,8 @@ class TestRemove:
         # 끝난 워커는 아무것도 들고 있지 않다(끝내라는 표식은 꺼내지 않은 채 나갔다 — 그 표식은 구현의 것)
         assert reg.taken_by(f"agent:{tm.key}") == ()
         absorbed_mail(reg)
-        assert not reg.has_active_work() and not reg.any_activity()
+        assert not session_has_live_work(post=reg._post, agent_registry=reg)
+        assert not reg.open_human_questions()
 
     def test_kill_of_a_dead_agent_and_shutdown_send_nothing(self, reg, stage):
         tm = spawn(reg)
@@ -773,7 +775,8 @@ class TestStopEverythingAgentRequesters:
             stage.ran == [] and res.handled == 0 and res.state == "idle"
         )  # 상주 런 0회
         assert [i["id"] for i in _inbox_rows(res)] == [held["id"]]  # 미러에 남는다
-        assert not reg.has_active_work()  # 들고 있는 항목은 일이 아니다
+        # 들고 있는 항목은 일이 아니다
+        assert not session_has_live_work(post=reg._post, agent_registry=reg)
         assert reg.awaited_replies(f"agent:{res.key}") == []
         # 다음 요청의 런이 함께 읽는다
         assert not reg.request(res.key, "NEXT go on", item_id="r-121")

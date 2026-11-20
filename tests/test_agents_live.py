@@ -18,6 +18,7 @@ import pytest
 
 import agent_cli.render as render_mod
 from agent_cli.resource_loader import ResourceLoader
+from agent_cli.runtime import session_has_live_work
 from agent_cli.session.records import is_format_intervention
 from agent_cli.subagent.agent_mail import build_reply_record
 from agent_cli.subagent.agent_modes import tool_agent
@@ -827,41 +828,41 @@ class TestWaitAndScope:
             "test_state_vocabulary_contract 에 active/inactive 분류를 추가하라"
         )
 
-    def test_any_activity_true_while_real_worker_busy(self, tmp_path, renderer):
+    def test_agent_work_true_while_real_worker_busy(self, tmp_path, renderer):
         """손으로 state 를 꽂지 않는 실구동 검증 — blocking runner 로
         진짜 busy 상태를 만들어 reap 가드가 실제로 발동함을 확인."""
         gate = threading.Event()
         reg = make_registry(tmp_path, runner=make_runner(block=gate))
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        assert reg.any_activity() is False
+        assert reg.has_agent_work() is False
         reg.request(key, "job")
         assert wait_until(lambda: reg.get(key).state == "busy")
-        assert reg.any_activity() is True  # ★프로덕션 버그였던 지점
+        assert reg.has_agent_work() is True  # ★프로덕션 버그였던 지점
         gate.set()
         wait_until(lambda: reg.get(key).state == "idle")
         absorbed_mail(reg)
-        assert reg.any_activity() is False
+        assert reg.has_agent_work() is False
         reg.shutdown_all()
 
-    def test_any_activity_reflects_working_and_pending(self, tmp_path, renderer):
+    def test_agent_work_reflects_working_and_pending(self, tmp_path, renderer):
         """v7.10.0: idle-reap 가드 — main 유휴·무접속이어도 에이전트가
         working 이거나 inbox 에 미처리 요청이 있으면 인스턴스를 자가
         종료하면 안 된다 (진행 중 작업 소실)."""
         gate = threading.Event()
         reg = make_registry(tmp_path, runner=make_runner(block=gate))
-        assert reg.any_activity() is False
+        assert reg.has_agent_work() is False
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        assert reg.any_activity() is False
+        assert reg.has_agent_work() is False
         reg.get(key).state = "busy"
-        assert reg.any_activity() is True
+        assert reg.has_agent_work() is True
         reg.get(key).state = "idle"
         # 미처리 요청 하나 — 워커를 첫 일감에 붙잡아 두고 그 뒤에 줄 세운다(픽업 전 창)
         _queue_behind_a_held_run(reg, key)
         reg.get(key).state = "idle"
         try:
-            assert reg.any_activity() is True
+            assert reg.has_agent_work() is True
         finally:
             gate.set()
         reg.shutdown_all()
@@ -1866,16 +1867,20 @@ class TestQuiescenceHelpers:
         reg = make_registry(tmp_path, runner=make_runner(block=gate))
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        assert not reg.has_active_work()
+
+        def live():
+            return session_has_live_work(post=reg._post, agent_registry=reg)
+
+        assert not live()
         reg.request(key, "long")
-        assert reg.has_active_work()  # busy (또는 inbox 큐잉)
+        assert live()  # busy (또는 inbox 큐잉)
         gate.set()
         assert wait_until(
             lambda: reg.arrived_for("main", waking_only=False, words=False)
         )
-        assert reg.has_active_work()  # 미배달 회신
+        assert live()  # 미배달 회신
         absorbed_mail(reg)
-        assert wait_until(lambda: not reg.has_active_work())
+        assert wait_until(lambda: not live())
         reg.shutdown_all()
 
 
@@ -1884,14 +1889,14 @@ class TestRunMessagePump:
     조용해지면 끝 / 닫힘."""
 
     class _FakeReg:
-        """레지스트리 대역 — 할 일은 일하는 에이전트(``busy``)와 main 상자의 깨우는 메일(실제 레지스트리와 같은 뜻)."""
+        """레지스트리 대역 — 에이전트 몫의 일은 ``busy`` 하나. main 상자의 깨우는 메일은 세션 판정이 창구에서 본다."""
 
         def __init__(self, main_input):
             self.main_input = main_input
             self.busy = False
 
-        def has_active_work(self):
-            return self.busy or any(e.wakes for e in self.main_input.post.mail("main"))
+        def has_agent_work(self):
+            return self.busy
 
         def set_current_run_authors(self, authors):
             pass

@@ -14,6 +14,7 @@ import pytest
 
 from agent_cli.main import web_instance_is_active
 from agent_cli.render import get_renderer, set_renderer
+from agent_cli.runtime import session_has_live_work
 from tests.oracle.driver import (
     _PATIENCE_S,
     Provider,
@@ -95,11 +96,18 @@ class TestStopEverything:
             key = s.agent_keys()[0]
             until(lambda: s.agent_state(key) == "dead")
             until(lambda: len(s.reg.pending_mail()) == 1, "quiet reply")
-            until(lambda: not s.reg.has_active_work(), "quiet")
+            until(
+                lambda: (
+                    not session_has_live_work(
+                        post=s.main_input.post, agent_registry=s.reg
+                    )
+                ),
+                "quiet",
+            )
             # 방이 걷힌다 — 뷰어 없음·main 한가·깨우는 메일 없음
             assert not web_instance_is_active(
                 _quiet_renderer(),
-                SimpleNamespace(pending_count=s.main_input.pending_count),
+                SimpleNamespace(main_input=s.main_input),
                 s.reg,
                 monitors=s.stores.monitors,
                 schedules=s.stores.schedules,
