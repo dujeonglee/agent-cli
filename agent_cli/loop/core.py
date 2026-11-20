@@ -531,9 +531,10 @@ class AgentLoop:
                 show_open_items(self._config, self._state)
                 if starterless and self.turn == 0 and len(self.messages) == seen:
                     # 시작 메시지도 첫 경계에 읽을 것도 없는 런 — 모델에게 줄 입력이 없으니 LLM 을 부르지 않는다.
-                    # 닿는 길: 인자 없이 부른 `$ARGUMENTS` 만의 스킬(빈 템플릿). main 의 메일 런은 닿지 않는다 —
-                    # 메일 런은 깨우는 메일이 줄 서 있을 때만 열리고(꺼내지 않음), main 상자를 꺼내는 곳(턴 경계
-                    # 흡수·`@agent` 명령의 답)은 모두 main 의 스레드라 그 첫 경계 전에 끼어들 수 없다.
+                    # 닿는 길: 인자 없이 부른 `$ARGUMENTS` 만의 스킬(빈 템플릿), 그리고 main 의 메일 런 — 메일 런은
+                    # 깨우는 메일이 줄 서 있을 때 열리지만(꺼내지 않음) 그 메일이 사라진 요청자의 요청뿐이었으면 첫
+                    # 경계 전에 상자에서 빠진다(`PostOffice.forget_requests_of`). main 상자를 꺼내는 다른 곳(턴 경계
+                    # 흡수·`@agent` 명령의 답)은 모두 main 의 스레드라 끼어들 수 없다.
                     return ToolResult(True, output="")
                 if self.turn == 0:
                     self._note_run_started()
