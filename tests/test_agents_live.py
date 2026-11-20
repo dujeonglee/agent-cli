@@ -352,7 +352,9 @@ class TestBuildReplyRecord:
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         reg.request(key, "first job")
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         # 두 번째 요청은 gate 에 블록 — 배달 시점 state=working 고정
         gate.clear()
         reg.request(key, "second job")
@@ -577,20 +579,26 @@ class TestRegistryLifecycle:
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         assert reg.request(key, "hello") == ""
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         replies = absorbed_mail(reg)
         assert len(replies) == 1
         r = replies[0]
         assert r["key"] == key and r["success"]
         assert _unlabel(r["output"]) == "done:hello"
-        assert not reg.arrived_for("main")  # drain 은 소비
+        assert not reg.arrived_for(
+            "main", waking_only=False, words=False
+        )  # drain 은 소비
         reg.shutdown_all()
 
     def test_reply_persisted_to_disk(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         reg.request(key, "hi")
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         reply = absorbed_mail(reg)[0]
         path = Path(reply["reply_path"])
         assert path.is_file()
@@ -690,7 +698,9 @@ class TestRegistryLifecycle:
         reg = make_registry(tmp_path, runner=make_runner(exc=RuntimeError("boom")))
         key, _ = reg.spawn()
         reg.request(key, "x")
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         r = absorbed_mail(reg)[0]
         assert not r["success"] and "boom" in r["output"]
         # worker 는 죽지 않는다 — 다음 요청도 받는다. 회신은 busy 인 채로
@@ -958,7 +968,9 @@ class TestToolTeammate:
         assert r.success
         assert 'spawned agent "agt-' in r.output
         assert "initial task queued" in r.output
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         reg.shutdown_all()
 
     def test_message_then_delivery_flow(self, tmp_path, renderer):
@@ -969,7 +981,9 @@ class TestToolTeammate:
         assert err == "" and out.startswith('delivered as request "r-')
         # 결과는 사실만("회신 표지") — "기다리는 법"은 꼬리가 말한다(agent 검토 PR B, T2).
         assert "`wait`" not in out
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         reply = absorbed_mail(reg)[0]
         assert "done:go" in reply["output"]
         reg.shutdown_all()
@@ -1092,7 +1106,9 @@ class TestLoopWiring:
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         reg.request(key, "job")
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
 
         added = []
         fake_ctx = SimpleNamespace(add=lambda rec: added.append(rec) or rec)
@@ -1126,7 +1142,7 @@ class TestLoopWiring:
         assert fake_self._state.ledger.open_requests() == ()
         assert "request_id" not in added[0] and fake_self.noted == []
         assert not is_format_intervention(added[0])
-        assert not reg.arrived_for("main")  # 소비 완료
+        assert not reg.arrived_for("main", waking_only=False, words=False)  # 소비 완료
         # 레지스트리 없는 종류는 받을 메일이 없다
         from tests.loop_kinds import make_kind
 
@@ -1173,7 +1189,7 @@ class TestFullLoopIntegration:
                     content=emit("agent", {"mode": "spawn", "task": "explore the repo"})
                 )
             # 배달을 기다렸다가 complete — 실전에선 다른 작업을 하는 턴.
-            wait_until(lambda: reg.arrived_for("main"))
+            wait_until(lambda: reg.arrived_for("main", waking_only=False, words=False))
             if n == 2:
                 return LLMResponse(content=emit("agent", {"mode": "status"}))
             # 회신은 장부 항목 [n-2] — answers 로 닫는다 (v10.55.0). 번호 공간을
@@ -1275,7 +1291,9 @@ class TestAskRouting:
         assert wait_until(lambda: reg.get(key).handled == 1)
 
         # 질문은 main 메일함이 아니라 사람에게 — 메일은 런 요약(폴백 회신) 하나
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         (mail,) = absorbed_mail(reg)
         assert mail["kind"] == "reply" and _NO_REPLY_LABEL in mail["output"]
         (q,) = reg.open_human_questions()
@@ -1284,7 +1302,9 @@ class TestAskRouting:
         assert reg.answer_question(q.id, "main branch", by="user") == ""
         assert wait_until(lambda: reg.get(key).handled == 2)
         assert reg.open_human_questions() == []
-        assert not reg.arrived_for("main")  # 사람 런 — 창이 곧 배달
+        assert not reg.arrived_for(
+            "main", waking_only=False, words=False
+        )  # 사람 런 — 창이 곧 배달
         reg.shutdown_all()
 
     def test_answer_carries_the_answerer_label(self, tmp_path, renderer):
@@ -1387,7 +1407,7 @@ class TestResumeRestore:
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         reg.request(key, "hi")
-        # ``deliver`` appends in memory (what ``arrived_for("main")`` sees)
+        # ``deliver`` appends in memory (what ``arrived_for("main", waking_only=False, words=False)`` sees)
         # and mirrors to disk a step later — wait for the mirror itself, not
         # the in-memory flag (CI Linux caught the gap once: 0 == 1).
         assert wait_until(lambda: len(self._state(tmp_path)["pending"]) == 1)
@@ -1494,7 +1514,9 @@ class TestResumeRestore:
         assert wait_until(lambda: reg1.get(key).state == "idle")
         reg1.get(key).ctx.add({"role": "user", "content": "landmark-from-session-1"})
         reg1.request(key, "hello")
-        assert wait_until(lambda: reg1.arrived_for("main"))
+        assert wait_until(
+            lambda: reg1.arrived_for("main", waking_only=False, words=False)
+        )
         reg1.shutdown_all()
 
         # 세션 2 (같은 session_dir): restore → 재생성 + 미배달 복원
@@ -1512,7 +1534,9 @@ class TestResumeRestore:
         assert [_unlabel(r["output"]) for r in restored] == ["done:hello"]
         assert tm.handled == 1
         reg2.request(key, "again")
-        assert wait_until(lambda: reg2.arrived_for("main"))
+        assert wait_until(
+            lambda: reg2.arrived_for("main", waking_only=False, words=False)
+        )
         again = absorbed_mail(reg2)[0]
         # 새 런의 이름은 새 id — 앞 생의 회신 파일(reply-r-1.md)을 덮지 않는다
         assert _unlabel(again["output"]) == "done:again" and again["run"] != "r-1"
@@ -1524,7 +1548,9 @@ class TestResumeRestore:
         key, _ = reg1.spawn()
         assert wait_until(lambda: reg1.get(key).state == "idle")
         reg1.request(key, "hello")
-        assert wait_until(lambda: reg1.arrived_for("main"))
+        assert wait_until(
+            lambda: reg1.arrived_for("main", waking_only=False, words=False)
+        )
         reg1.shutdown_all()
         return key, (tmp_path / "agents.json").read_bytes()
 
@@ -1688,7 +1714,9 @@ class TestHumanInterventionRouting:
         # v9.22.0: 배치 안내문은 없다 — 항목별 id 가 회계로 가고 꼬리·answers 가
         # "전부 답하라" 를 강제한다(main 의 QUEUED_REQUEST_NOTICE 와 같은 결정).
         assert "arrived together" not in batched
-        assert not reg.arrived_for("main")  # 전부 user:* → 창만
+        assert not reg.arrived_for(
+            "main", waking_only=False, words=False
+        )  # 전부 user:* → 창만
         assert wait_until(lambda: reg.get(key).handled == 3)  # warmup + 2건
         # v9.23.0: 배치 런의 scope_start 가 항목 id 전부를 싣는다 — 웹의 런
         # 블록이 큐에서 먼저 도착한 수신 줄 둘을 자기 머리로 끌어오는 근거.
@@ -1756,14 +1784,16 @@ class TestHumanInterventionRouting:
             c for c in renderer.named("agent_message") if c[1]["direction"] == "out"
         ]
         assert outs and outs[0][1]["text"] == "done:[user:bob]: hello from human"
-        assert not reg.arrived_for("main")
+        assert not reg.arrived_for("main", waking_only=False, words=False)
         reg.shutdown_all()
 
     def test_main_request_reply_still_delivered(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         reg.request(key, "hello")  # author 기본 main
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         reg.shutdown_all()
 
     def test_question_during_human_request_stays_in_window(self, tmp_path, renderer):
@@ -1774,7 +1804,9 @@ class TestHumanInterventionRouting:
         wait_until(lambda: reg.get(key).state == "idle")
         reg.request(key, "human task", author="user:bob")
         assert wait_until(lambda: reg.get(key).handled == 1)
-        assert not reg.arrived_for("main")  # main 비배달
+        assert not reg.arrived_for(
+            "main", waking_only=False, words=False
+        )  # main 비배달
         qs = [
             c
             for c in renderer.named("agent_message")
@@ -1787,7 +1819,7 @@ class TestHumanInterventionRouting:
         (qid,) = [q.id for q in reg.open_human_questions()]
         assert reg.answer_question(qid, "blue", by="user:bob") == ""
         assert wait_until(lambda: reg.get(key).handled == 2)
-        assert not reg.arrived_for("main")
+        assert not reg.arrived_for("main", waking_only=False, words=False)
         reg.shutdown_all()
 
     def test_question_during_main_request_goes_to_the_person(self, tmp_path, renderer):
@@ -1797,7 +1829,9 @@ class TestHumanInterventionRouting:
         key, _ = reg.spawn()
         reg.request(key, "main task")
         assert wait_until(lambda: reg.get(key).handled == 1)
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         assert [r["kind"] for r in absorbed_mail(reg)] == ["reply"]
         assert [q.target for q in reg.open_human_questions()] == ["user"]
         reg.shutdown_all()
@@ -1836,7 +1870,9 @@ class TestQuiescenceHelpers:
         reg.request(key, "long")
         assert reg.has_active_work()  # busy (또는 inbox 큐잉)
         gate.set()
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         assert reg.has_active_work()  # 미배달 회신
         absorbed_mail(reg)
         assert wait_until(lambda: not reg.has_active_work())
@@ -1958,7 +1994,9 @@ class TestWorkerDeathNotice:
         reg = make_registry(tmp_path)
         key, err = reg.spawn()
         assert err == ""
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         died = absorbed_mail(reg)[0]
         assert died["kind"] == "died" and "disk full" in died["output"]
         rec = build_reply_record(died)
@@ -1994,7 +2032,9 @@ class TestWorkerDeathNotice:
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         reg.request(key, "job")
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         kinds = {r["kind"] for r in absorbed_mail(reg)}
         assert "died" in kinds
         assert reg.get(key).state == "dead"
@@ -2007,7 +2047,9 @@ class TestWorkerDeathNotice:
         wait_until(lambda: reg.get(k2).state == "idle")
         reg.kill(k1)
         reg.shutdown_all()
-        assert not reg.arrived_for("main")  # 의도된 종료 — died mail 없음
+        assert not reg.arrived_for(
+            "main", waking_only=False, words=False
+        )  # 의도된 종료 — died mail 없음
 
 
 class TestRoleDiscovery:
@@ -3010,7 +3052,9 @@ class TestResumeMode:
         # handled 증가는 회신의 메일함 도착보다 앞선다(worker 루프 순서) —
         # drain 은 반드시 회신이 실제로 도착한 뒤에 (CI 타이밍 플레이크
         # 원인: 빈 drain → reply-1 잔류 → 부활 후 seq 1 오집기).
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         absorbed_mail(reg)
         reg.kill(key)
         assert reg.get(key).state == "dead"
@@ -3023,7 +3067,9 @@ class TestResumeMode:
         assert tm.instance_name == "ui"  # 라벨 보존
         # 부활 후 첫 회신은 새 id 의 파일 — 앞 생의 reply-r-1.md 를 덮지 않는다
         reg.request(key, "second job")
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         again = absorbed_mail(reg)[0]
         assert again["run"] != "r-1"
         assert (tm.home_dir / "replies" / "reply-r-1.md").is_file()
@@ -3108,7 +3154,9 @@ class TestResumeMode:
         # v10.85.0: resume 의 과제도 요청 id 를 달고 간다(spawn·request 와 같게)
         assert 'task queued as request "r-' in r.output
         assert "`wait`" not in r.output  # 결과는 사실만 — 기다리는 법은 꼬리
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         reg.shutdown_all()
 
     def test_tool_mode_resume_validation(self):
@@ -3524,7 +3572,7 @@ class TestAtCommand:
         assert "not mixed into the main LLM conversation" in calls[0][1]
         # user 발신 → 처리되지만 main pending 비오염 (D8)
         assert wait_until(lambda: reg.get(key).handled == 1)
-        assert not reg.arrived_for("main")
+        assert not reg.arrived_for("main", waking_only=False, words=False)
         # 회신 out 메시지에 to=user 태깅 (CLI 콘솔 수신 근거)
         outs = [
             c for c in renderer.named("agent_message") if c[1]["direction"] == "out"
@@ -4048,7 +4096,9 @@ class TestAttributionInheritance:
         wait_until(lambda: reg.get(key).state == "idle")
         reg.set_current_run_authors(["Bob"])
         reg.request(key, "fix it")
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         reply = absorbed_mail(reg)[0]
         assert reply["kind"] == "reply"
         assert reply["answers"] == ["Bob"]
@@ -4064,7 +4114,9 @@ class TestAttributionInheritance:
         reg.request(key, "bob's job")  # 워커가 gate 에 블록
         reg.set_current_run_authors(["두정"])  # 다음 런 시작 (인터리브)
         gate.set()
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         reply = absorbed_mail(reg)[0]
         assert reply["answers"] == ["Bob"]  # 두정 오염 없음
 
@@ -4079,7 +4131,7 @@ class TestAttributionInheritance:
         reg.request(k1, "peer job", author=f"agent:{k2}", expects_reply=False)
         # 처리 후 main pending 이 비어야 한다 (terminal 소비 — 재라우팅 없음)
         wait_until(lambda: reg.get(k1).state == "idle" and reg.get(k1).handled >= 1)
-        assert not reg.arrived_for("main")
+        assert not reg.arrived_for("main", waking_only=False, words=False)
 
     def test_question_reply_has_no_answers(self, tmp_path, renderer):
         # question 은 사용자 답이 아닌 내부 왕복 — 미승계 설계.
@@ -4113,9 +4165,11 @@ class TestAttributionInheritance:
         wait_until(lambda: reg.get(key).state == "idle")
         reg.set_current_run_authors(["Bob", "두정"])
         reg.request(key, "job")
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
 
-        # ``arrived_for("main")`` 는 **메모리** 상태(_pending) 라 True 가 된
+        # ``arrived_for("main", waking_only=False, words=False)`` 는 **메모리** 상태(_pending) 라 True 가 된
         # 시점에 디스크 미러(_save_state, 락 밖 후속 호출)는 아직 안 써졌을
         # 수 있다 — CI 의 느린 러너에서 이 틈이 벌어져 IndexError 로 flake
         # (2026-09-12 run 34669480281). 검증 대상이 **미러 파일**이므로
@@ -4340,7 +4394,9 @@ class TestRestartRequeue:
         reg1 = make_registry(tmp_path)
         key, _ = reg1.spawn()
         reg1.request(key, "done-task")
-        assert wait_until(lambda: reg1.arrived_for("main"))
+        assert wait_until(
+            lambda: reg1.arrived_for("main", waking_only=False, words=False)
+        )
         assert wait_until(lambda: self._entry(tmp_path, key)["in_flight"] == [])
         reg1.shutdown_all()
         rec = _RecordingRunner()

@@ -44,13 +44,8 @@ TABLE = [
 
 
 def arrived(po: PostOffice, addr: str, *, waking_only: bool, words: bool) -> int:
-    """창구의 도착 조회 한 칸 — [5a 리팩터 전] 옛 질문들로: 줄 선 것 전부·메일·할 일·깨우는 메일."""
-    if not waking_only:
-        return po.arrived(addr) if words else len(po.mail(addr))
-    if words:
-        assert po.has_waking(addr) is (po.backlog(addr) > 0)
-        return po.backlog(addr)
-    return sum(1 for e in po.mail(addr) if e.wakes)
+    """창구의 도착 조회 한 칸."""
+    return po.arrived(addr, waking_only=waking_only, words=words)
 
 
 @pytest.mark.parametrize("name,addr,envs,counts", TABLE, ids=[r[0] for r in TABLE])

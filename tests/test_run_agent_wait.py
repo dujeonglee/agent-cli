@@ -32,9 +32,9 @@ from agent_cli.session_slots import (
 )
 from agent_cli.tools.result import ToolResult
 from agent_cli.wake import (
+    Mailbox,
     mail_record,
     release_owner,
-    wake_sources,
 )
 from tests.loop_kinds import make_caller, run_task
 from tests.loop_ports import TEST_PORTS
@@ -111,11 +111,14 @@ class TestPrivateMailbox:
             )
             == ""
         )
-        assert reg.arrived_for("harness:x") == 1
+        assert reg.arrived_for("harness:x", waking_only=False, words=True) == 1
         got = reg.take_mail("harness:x")
         assert [m["output"] for m in got] == ["🧵 job #1 finished rc=0"]
         assert got[0]["item_id"].startswith("n-")  # main 메일과 같은 도장
-        assert reg.arrived_for("harness:x") == 0 and reg.take_mail("harness:x") == []
+        assert (
+            reg.arrived_for("harness:x", waking_only=False, words=True) == 0
+            and reg.take_mail("harness:x") == []
+        )
 
     def test_harness_address_is_routable_now(self, reg):
         assert (
@@ -128,7 +131,7 @@ class TestPrivateMailbox:
             )
             == ""
         )
-        assert reg.arrived_for("harness:auditor") == 1
+        assert reg.arrived_for("harness:auditor", waking_only=False, words=True) == 1
 
     def test_unknown_address_is_still_unroutable(self, reg):
         assert "unroutable" in reg.deliver(
@@ -147,25 +150,35 @@ class TestPrivateMailbox:
 
         threading.Timer(0.3, later).start()
         why = reg.wait_mail(
-            "harness:x",
+            arrived=lambda: reg.arrived_for("harness:x", waking_only=False, words=True),
             stop_event=threading.Event(),
             still_waiting=lambda: True,
             poll_s=0.05,
         )
-        assert why == "mail" and reg.arrived_for("harness:x") == 1
+        assert (
+            why == "mail"
+            and reg.arrived_for("harness:x", waking_only=False, words=True) == 1
+        )
 
     def test_wait_mail_returns_on_stop_and_on_nothing_left(self, reg):
         ev = threading.Event()
         ev.set()
         assert (
             reg.wait_mail(
-                "harness:x", stop_event=ev, still_waiting=lambda: True, poll_s=0.05
+                arrived=lambda: reg.arrived_for(
+                    "harness:x", waking_only=False, words=True
+                ),
+                stop_event=ev,
+                still_waiting=lambda: True,
+                poll_s=0.05,
             )
             == "stopped"
         )
         assert (
             reg.wait_mail(
-                "harness:x",
+                arrived=lambda: reg.arrived_for(
+                    "harness:x", waking_only=False, words=True
+                ),
                 stop_event=threading.Event(),
                 still_waiting=lambda: False,
                 poll_s=0.05,
@@ -190,7 +203,7 @@ class TestPrivateMailbox:
 
         threading.Timer(0.02, later).start()
         why = reg.wait_mail(
-            "harness:x",
+            arrived=lambda: reg.arrived_for("harness:x", waking_only=False, words=True),
             stop_event=threading.Event(),
             still_waiting=lambda: False,
             poll_s=0.2,
@@ -204,7 +217,7 @@ class TestPrivateMailbox:
             "harness:x", mail=self._mail(), text="t", author="main", expects_reply=False
         )
         assert reg.drop_mailbox("harness:x") == 1
-        assert reg.arrived_for("harness:x") == 0
+        assert reg.arrived_for("harness:x", waking_only=False, words=True) == 0
         assert reg.fire_checkin("harness:x") == ""  # 걸린 것이 풀렸다
 
     def test_checkin_lands_in_the_private_mailbox(self, reg, jobs):
@@ -322,9 +335,13 @@ class TestWakeItemsForPrivateOwners:
                 return True
 
         set_schedule_registry(Sched())
-        assert "a schedule" in wake_sources("main", agents=get_agent_registry())
         assert (
-            wake_sources("harness:x", agents=get_agent_registry()) == []
+            "a schedule"
+            in Mailbox(get_agent_registry(), "main", count_words=True).wake_sources()
+        )
+        assert (
+            Mailbox(get_agent_registry(), "harness:x", count_words=True).wake_sources()
+            == []
         )  # 빼지 않으면 잡 없이도 wait 가 영원히 막힌다
 
 
@@ -403,7 +420,10 @@ class TestReleaseOwner:
             note
             == "[1 background job still running was stopped when this agent finished: `sleep 30`]"
         )
-        assert jobs.running("harness:z") == [] and reg.arrived_for("harness:z") == 0
+        assert (
+            jobs.running("harness:z") == []
+            and reg.arrived_for("harness:z", waking_only=False, words=True) == 0
+        )
 
     def test_nothing_left_is_silent(self, jobs, reg):
         assert release_owner("harness:empty", registry=reg).note == ""

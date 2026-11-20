@@ -498,7 +498,9 @@ class TestResidentFinishIsOnePath:
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         assert reg.request(key, "do it", author="main") == ""
-        assert wait_until(lambda: reg.arrived_for("main"))
+        assert wait_until(
+            lambda: reg.arrived_for("main", waking_only=False, words=False)
+        )
         (reply,) = absorbed_mail(reg)
         assert "agent internal error: RuntimeError: boom" in reply["output"]
         assert wait_until(lambda: reg.get(key).state == "idle")

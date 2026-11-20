@@ -44,7 +44,13 @@ def make_ports(**overrides: Any) -> LoopPorts:
     if "mailbox" not in base:
         # 프로덕션 빌더처럼: 포트를 만들 때의 슬롯 레지스트리. ``inbox`` 는 받은편지함(`take`)
         # — 주면 상주·private 처럼 깨울 수 있는 루프가 된다.
-        base["mailbox"] = Mailbox(get_agent_registry(), base["owner"], take=inbox)
+        # main 은 사람의 말을 도착분으로 세지 않는다 — 프로덕션 종류들의 생성 인자와 같게
+        base["mailbox"] = Mailbox(
+            get_agent_registry(),
+            base["owner"],
+            count_words=base["owner"] != "main",
+            take=inbox,
+        )
     return LoopPorts(**base)
 
 

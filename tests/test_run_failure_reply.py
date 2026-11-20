@@ -113,7 +113,7 @@ def _ask(reg, author: str, *, run: bool) -> str:
 
 
 def _main_reply(reg) -> str:
-    assert _until(lambda: reg.arrived_for("main"))
+    assert _until(lambda: reg.arrived_for("main", waking_only=False, words=False))
     (mail,) = absorbed_mail(reg)
     return build_reply_record(mail, registry=reg)["content"]
 
@@ -152,7 +152,7 @@ class TestMainRequester:
         reg = make("reply")
         key = _ask(reg, "main", run=True)
         assert _until(lambda: reg.get(key).state == "dead")
-        assert _until(lambda: reg.arrived_for("main"))
+        assert _until(lambda: reg.arrived_for("main", waking_only=False, words=False))
         (mail,) = absorbed_mail(reg)
         assert mail["success"] is True and "error" not in mail
         assert "run ended with an error" not in build_reply_record(mail)["content"]

@@ -787,6 +787,8 @@ class MainLoop(LoopKind):
             mailbox=Mailbox(
                 agent_registry,
                 "main",
+                # 사람의 말은 도착분으로 세지 않는다 — 제자리 대기를 ``wait_input`` 이 "input" 으로 깨운다 [5b A-4: 센다]
+                count_words=False,
                 take=agent_registry.absorb_main if agent_registry is not None else None,
                 wait_input=wait_for_user_input,
             ),

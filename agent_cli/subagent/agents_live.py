@@ -780,7 +780,7 @@ class AgentRegistry:
 
     def backlog_of(self, key: str) -> int:
         """에이전트 ``key`` 앞에 쌓인 할 일 — 깨우는 봉투만 센다(런을 열지 않는 정지 회신은 일이 아니다)."""
-        return self._post.backlog(f"agent:{key}")
+        return self._post.arrived(f"agent:{key}", waking_only=True, words=True)
 
     def queued_for(self, addr: str) -> tuple[MailView, ...]:
         """``addr`` 앞에 줄 서 아직 꺼내 가지 않은 배달 — main 메일함·에이전트 받은편지함(미러)·private 메일함,
@@ -804,23 +804,14 @@ class AgentRegistry:
             return ()
         return tuple(map(view_of_inbox_item, self._taken(tm)))
 
-    def arrived_for(self, addr: str) -> int:
-        """``addr`` 앞에 **이미 도착해 다음 턴 경계에 배달될** 메일 수 (v10.66.2,
-        `wait` 의 둘째 판정 재료). main 은 상자의 메일(사람의 말은 빼고 — 그것은 제자리 대기를 "input" 으로 깨운다),
-        상주 에이전트는 자기 받은편지함. 이게 0 이 아니면 `wait` 는 받지 않는다: 런을 끝내 봐야 펌프가 바로 다시
-        깨우므로, 거부하고 다음 관찰에 배달되게 두는 쪽이 싸고 맥락도 남는다."""
+    def arrived_for(self, addr: str, *, waking_only: bool, words: bool) -> int:
+        """``addr`` 앞에 **이미 도착해 다음 턴 경계에 배달될** 봉투 수 — 창구의 `PostOffice.arrived`(거르는 법은
+        부르는 쪽). main·에이전트·private 주소만 — 명단에 없는 에이전트와 그 밖 주소는 0. 읽기만 한다."""
         if addr.startswith("agent:") and addr.split(":", 1)[1] not in self._agents:
             return 0
-        if addr == "main":
-            return len(self._post.mail(addr))
-        if addr.startswith("agent:") or is_private_owner(addr):
-            return self._post.arrived(addr)
+        if addr == "main" or addr.startswith("agent:") or is_private_owner(addr):
+            return self._post.arrived(addr, waking_only=waking_only, words=words)
         return 0
-
-    def has_mail_that_wakes_main(self) -> bool:
-        """main 메일함에 main 을 깨울 메일이 있는가 — ``wakes_main`` 이 거짓인 메일("Stop everything" 의 정지
-        회신, v10.142.0)은 빼고, 사람의 말도 뺀다. `run` 의 정지 판정이 본다. 읽기만 한다."""
-        return any(e.wakes for e in self._post.mail("main"))
 
     def has_active_work(self) -> bool:
         """P5: CLI run 큐 펌프의 정지 판정 — 미배달 회신·처리 중(busy)·
@@ -829,7 +820,8 @@ class AgentRegistry:
         비동기 질문은 아무도 막지 않으므로(§3) 여기서 뺄 상태가 없다 —
         질문을 건 에이전트도 계속 돌고, 답은 새 항목으로 온다. main 을 깨우지 않는 메일("Stop everything"
         의 정지 회신)은 일이 아니다 — 남아 있어도 `run` 은 끝나고 그 메일은 agents.json 미러에 남는다."""
-        if self.has_mail_that_wakes_main():
+        # main 을 깨우는 메일만 — 사람의 말은 `run` 이 따로 센다(`QuietPolicy`)
+        if self._post.arrived("main", waking_only=True, words=False):
             return True
         # 죽은 에이전트의 받은편지함은 세지 않는다 — 런 도중 끝난(■·✕) 워커는 남은 봉투를 꺼내지 않고 나간다;
         # 세면 `run` 이 끝나지 않는다 (v10.142.0)
@@ -2199,25 +2191,25 @@ class AgentRegistry:
 
     def wait_mail(
         self,
-        addr: str,
         *,
+        arrived,
         stop_event,
         still_waiting,
         wait_input=None,
         poll_s: float = 0.5,
     ) -> str:
-        """``addr`` 앞에 메일이 올 때까지 막는다 — 제자리 `wait` (`dispatch._wait_in_place`:
+        """``arrived()`` 가 0 이 아닐 때까지 막는다 — 제자리 `wait` (`dispatch._wait_in_place`:
         하니스 작업, 기다리는 회신을 둔 main). 돌려주는 값은 깬 이유: ``"mail"``(도착 —
-        `arrived_for`), ``"input"``(``wait_input(timeout)`` 이 참 — 사람 입력이 도착했다,
+        `Mailbox.arrived`, 창구의 조건변수 아래서 묻는다), ``"input"``(``wait_input(timeout)`` 이 참 — 사람 입력이 도착했다,
         main 만), ``"stopped"``(``stop_event``), ``"nothing"``(``still_waiting()`` 이 거짓 —
         기다리던 것이 메일 없이 사라졌다: 잡을 밖에서 죽임, 모니터 삭제, 에이전트 사망).
         상한은 없다 — 중간 깨우기가 메일로 와서 모델이 판단한다."""
         while True:
             with self._cv:
-                if self.arrived_for(addr):
+                if arrived():
                     return "mail"
                 self._cv.wait(timeout=poll_s if wait_input is None else poll_s / 2)
-                if self.arrived_for(addr):
+                if arrived():
                     return "mail"
             if wait_input is not None and wait_input(poll_s / 2):
                 return "input"
@@ -2227,9 +2219,9 @@ class AgentRegistry:
                 # 회신을 갚는 쪽은 빚을 닫은 **뒤** 배달한다 — 그 틈에 "기다릴 것 없음" 으로 보이는
                 # 회신이 곧 도착한다. 한 번 더 보고 판정한다.
                 with self._cv:
-                    if not self.arrived_for(addr):
+                    if not arrived():
                         self._cv.wait(timeout=poll_s)
-                    if self.arrived_for(addr):
+                    if arrived():
                         return "mail"
                 return "nothing"
 

@@ -15,7 +15,7 @@ import pytest
 
 from agent_cli.session_slots import set_agent_registry
 from agent_cli.subagent.agents_live import AgentRegistry
-from agent_cli.wake import wake_sources
+from agent_cli.wake import Mailbox
 from tests.binding_support import make_binding
 from tests.mail_support import absorbed_mail, agent_wake_lines
 from tests.test_agents_live import make_registry
@@ -113,7 +113,9 @@ class TestHeldResidentAndTheRequestersWait:
     )
     def test_the_requesters_wait_has_nothing_to_wake_it(self, tmp_path, cleanup):
         reg, keys = self._setup(tmp_path, cleanup)
-        assert wake_sources(f"agent:{keys['qq']}", agents=reg) == []
+        assert (
+            Mailbox(reg, f"agent:{keys['qq']}", count_words=True).wake_sources() == []
+        )
 
 
 # ── 2. 재시작 뒤 에이전트→main 미배달 요청의 보낸 쪽 기록 ────────────────────
@@ -312,7 +314,7 @@ class TestStoppedReplyOrder:
         이미 있으니 결과는 "도착" 이다. 판정 재료만 다르다."""
         _view, _key = self._run(tmp_path, cleanup, stop=True)
         reg = cleanup[-1]
-        assert reg.arrived_for("main") == 1
+        assert reg.arrived_for("main", waking_only=False, words=False) == 1
 
     def test_a_stopped_reply_is_already_paid_when_it_lands(self, tmp_path, cleanup):
         """`[v10.145.0 에서 고쳐짐 — 2단계: 정지 회신의 배달과 갚음이 한 락 구간(`pay`)]` 옛 구현은 배달한 뒤에

@@ -1,6 +1,6 @@
 """한 주소를 무엇이 깨우는가와 그 주소가 무엇을 받는가 — 세션 슬롯만 본다, 조립은 모른다.
 
-`wait` 의 판정(`wake_sources`·`wake_source_ids`·`arrived_mail`)과 중간 깨우기 알림
+`wait` 의 깨울 것 판정(`wake_items` — 도착분은 창구의 `PostOffice.arrived`)과 중간 깨우기 알림
 (`wait_checkin`), 하니스 작업 판정(`harness_work_running`), 메일 한 통 → 관찰 레코드
 (`harness_record`·`mail_record`·`_private_inbox`), 한 주소가 가진 것 거두기(`release_owner`).
 읽는 것은 세션 슬롯(`session_slots` — 잡·모니터·예약·에이전트 레지스트리)과 `constants`·`jobs`
@@ -24,7 +24,7 @@ from agent_cli.session_slots import (
 if TYPE_CHECKING:
     from agent_cli.subagent.agents_live import AgentRegistry
 
-#: 예약의 깨울 것 id — 중간 깨우기의 대상 집합에서는 뺀다 (`wake_source_ids`).
+#: 예약의 깨울 것 id
 _SCHEDULE_ID = "schedule"
 
 
@@ -97,7 +97,7 @@ def agent_relations(
 ) -> list[tuple[str, str]]:
     """``addr`` 를 깨울 에이전트들과 그 관계 — ``("owes"|"working"|"queued", 주소)`` (v10.65.0). 빚진 채 **스스로
     잠든** 쪽은 여기 없다 — `parked_debtors` 가 따로 들고 `parked_view` 가 거슬러 본다. ``exclude`` (v10.77.0):
-    순환 대기 판정에서 거슬러 온 주소들. **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `arrived_mail`.
+    순환 대기 판정에서 거슬러 온 주소들. **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `Mailbox.arrived`.
 
     한 에이전트는 한 관계로만 나온다 — working > queued > owes: 내 요청을 들고 일하는(줄 세운) 쪽은 그 요청을 빚진
     쪽이기도 하지만 더 많이 말하는 쪽 하나로 센다."""
@@ -137,21 +137,31 @@ def relation_items(
     ]
 
 
-def _wake_items(
+def wake_items(
     owner: str,
     _seen: frozenset = frozenset(),
     *,
     agents,
+    with_schedule: bool,
     facts: WakeFacts | None = None,
 ) -> list[tuple[str, str]]:
-    """`wake_sources` 의 재료 — ``(id, 사람이 읽을 줄)`` 쌍 (v10.79.0).
+    """이 소유자를 **깨울 수 있는 것** — ``(id, 사람이 읽을 줄)`` 쌍 (v10.65.0·v10.79.0, docs/wait/DESIGN.md).
+    `wait` 의 수락·제자리 대기의 "아직 기다릴 것"(`Mailbox.wake_sources`)과 체크인 대상(`wake_source_ids`)이
+    이 하나를 묻는다.
+
+    돌고 있는 백그라운드 작업·살아 있는 모니터는 소유자 것만, 에이전트 활동은 **요청자별**(`agent_relations` —
+    세션 전체 `has_active_work` 로 보면 상주 에이전트 자신이 busy 라 늘 참이 된다), 예약은 ``with_schedule`` 일
+    때(세션 것 — 근거인지는 `schedule_wakes`). 순환 대기(v10.77.0): 나에게 회신을 빚진 채 **스스로 잠든**
+    에이전트는 그를 깨울 것이 있을 때만 센다 — 거슬러 올라가며(``_seen`` 으로 순환을 자른다) A→B→A 고리면 두
+    번째로 잠들려는 쪽의 `wait` 가 거부되고, A→B→(일하는 C) 사슬이면 받아들여진다.
 
     id 는 ``"job:1"``·``"mon:mon-504d33"``·``"agent:k"``·``"schedule"`` — 중간
     깨우기가 "같은 대상을 다시 기다리는가" 를 이 집합으로 비교한다. 사람이 읽는
     줄로 비교하면 같은 에이전트라도 "queued↔working" 처럼 글이 바뀌어 헛되이
     5분으로 돌아간다.
 
-    에이전트 몫은 레지스트리의 사본(``facts`` — 없으면 맨 위에서 한 번 뜬다)을 재귀 내내 함께 쓴다."""
+    에이전트 몫은 레지스트리의 사본(``facts`` — 없으면 맨 위에서 한 번 뜬다)을 재귀 내내 함께 쓴다. ``agents`` 는
+    에이전트 레지스트리(없으면 None) — 부르는 쪽이 넘긴다(v10.133.26)."""
     out: list[tuple[str, str]] = []
     jobs = get_job_registry()
     if jobs is not None:
@@ -172,12 +182,17 @@ def _wake_items(
                 out.append(
                     (debtor, f"{debtor} owes you a reply (it is waiting on others)")
                 )
-    # 예약은 세션 것 — main 에게 발화한다. private 주소(one-shot·하니스 작업)의
-    # 깨울 것으로 세면 잡 없이도 `wait` 가 받아들여져 영원히 막힌다 (v10.84.0).
     sched = get_schedule_registry()
-    if sched is not None and sched.has_active_work() and not is_private_owner(owner):
+    if with_schedule and sched is not None and sched.has_active_work():
         out.append((_SCHEDULE_ID, "a schedule"))
     return out
+
+
+def schedule_wakes(owner: str) -> bool:
+    """켜진 예약이 이 주소의 `wait` 를 받아들일 근거인가 — private 이 아닌 주소 전부(main·에이전트). 예약은 세션
+    것이라 main 에게 발화한다. private 주소(one-shot·하니스 작업)의 근거로 세면 잡 없이도 `wait` 가 받아들여져
+    영원히 막힌다 (v10.84.0). [5b 변화 8: 에이전트도 근거가 아니다 — main 만]"""
+    return not is_private_owner(owner)
 
 
 def parked_view(
@@ -185,12 +200,21 @@ def parked_view(
 ) -> list[tuple[str, list[str]]]:
     """고리 찾기의 걸음 하나 — ``owner`` 에게 빚진 채 잠든 채무자마다 ``(주소, 그를 깨울 것의 줄)`` (v10.77.0). ``seen``
     (거슬러 온 주소들, ``owner`` 포함)에 든 채무자는 뺀다 — 고리다, 나를 기다리는 쪽은 나를 깨우지 못한다. 그를 깨울
-    것은 ``seen`` 을 뺀 채 다시 묻는다. `wait` 의 판정(`wake_sources`)과 중간 깨우기의 에이전트 줄
+    것은 ``seen`` 을 뺀 채 다시 묻는다. `wait` 의 판정(`wake_items`)과 중간 깨우기의 에이전트 줄
     (`AgentRegistry.checkin_agent_lines`)이 같은 이 걸음을 쓴다."""
     return [
         (
             debtor,
-            [text for _, text in _wake_items(debtor, seen, agents=agents, facts=facts)],
+            [
+                text
+                for _, text in wake_items(
+                    debtor,
+                    seen,
+                    agents=agents,
+                    with_schedule=schedule_wakes(debtor),
+                    facts=facts,
+                )
+            ],
         )
         for debtor in parked_debtors(facts, owner)
         if debtor not in seen
@@ -208,30 +232,12 @@ def harness_work_running(owner: str) -> bool:
     return mons is not None and any(m.owner == owner for m in mons.list_all())
 
 
-def wake_sources(owner: str, _seen: frozenset = frozenset(), *, agents) -> list[str]:
-    """이 소유자를 **깨울 수 있는 것** — `wait` 도구의 판정 (v10.65.0, docs/wait/DESIGN.md).
-
-    돌고 있는 백그라운드 작업·살아 있는 모니터는 소유자 것만, 에이전트 활동은
-    **요청자별**(`agent_relations` — 세션 전체 `has_active_work` 로 보면
-    상주 에이전트 자신이 busy 라 늘 참이 된다), 예약은 세션 것. 사람이 읽을 한 줄씩.
-
-    v10.77.0 — 순환 대기: 나에게 회신을 빚진 채 **스스로 잠든**(`wait`) 에이전트는
-    그를 깨울 것이 있을 때만 센다. 거슬러 올라가며(``_seen`` 으로 순환을 자른다)
-    A→B→A 처럼 서로를 기다리는 고리면 두 번째로 잠들려는 쪽의 `wait` 가 거부되고,
-    A→B→(일하는 C) 사슬이면 그대로 받아들여진다.
-
-    ``agents`` 는 에이전트 레지스트리(없으면 None) — 부르는 쪽이 넘긴다(v10.133.26). 슬롯을
-    읽지 않으므로 서브루프는 포트로 받은 것을, 레지스트리는 자기를 넘긴다."""
-    return [text for _, text in _wake_items(owner, _seen, agents=agents)]
-
-
 def wake_source_ids(owner: str, *, agents) -> frozenset[str]:
-    """중간 깨우기의 **대상 집합** (v10.79.0, docs/wait/DESIGN.md §6) — `wake_sources`
-    와 같은 것들의 id, 예약만 뺀다. 예약만 기다리는 `wait` 는 빈 집합이라 타이머를
-    걸지 않고, 예약과 작업을 함께 기다리면 걸되 알림에는 작업·monitor·에이전트만
-    적힌다."""
+    """중간 깨우기의 **대상 집합** (v10.79.0, docs/wait/DESIGN.md §6) — `wake_items` 의 id, 예약 없이. 예약만
+    기다리는 `wait` 는 빈 집합이라 타이머를 걸지 않고, 예약과 작업을 함께 기다리면 걸되 알림에는
+    작업·monitor·에이전트만 적힌다."""
     return frozenset(
-        i for i, _ in _wake_items(owner, agents=agents) if i != _SCHEDULE_ID
+        i for i, _ in wake_items(owner, agents=agents, with_schedule=False)
     )
 
 
@@ -329,14 +335,6 @@ def wait_checkin(
     return "\n".join([head, *lines, " ".join(closing)])
 
 
-def arrived_mail(owner: str, *, agents) -> int:
-    """이 소유자 앞에 **이미 도착해 다음 턴 경계에 배달될** 메일 수 (v10.66.2) —
-    `wait` 의 둘째 판정. 깨울 것(`wake_sources`)이 "아직 돌고 있는 것" 이라면 이건
-    "끝나서 통지가 와 있는 것": 모니터가 wait 보다 먼저 발화한 벤치 사례가 그렇다.
-    0 이 아니면 wait 는 거부되고 런이 이어져 그 통지를 바로 받는다."""
-    return agents.arrived_for(owner) if agents is not None else 0
-
-
 def harness_record(mail: dict) -> dict | None:
     """하니스 통지(잡·모니터·체크인) 한 통 → 관찰 레코드 — **한 계약** (v10.84.0 사용자 결정 C,
     v10.89.0 한 함수): 봉투 없이 보고 그대로, ``tool`` 은 `constants.HARNESS_MAIL_TOOL`
@@ -396,18 +394,21 @@ class Mailbox:
     Mailbox 다: 미연결이 아니라 "연결됐고 저쪽에 아무도 없음". 종류가 포트를 만들 때 한 번
     정해진다. ``take`` 는 턴 경계에 흡수할 받은편지함 — 있는 루프(에이전트·private)만 준다.
     ``wait_input`` 은 ``(timeout) -> bool`` — 사람 입력이 도착했는가(꺼내지 않는다). main 만
-    준다: 기다리는 회신을 둔 제자리 대기(`wait`)를 사람의 말이 깨운다 (v10.141.0)."""
+    준다: 기다리는 회신을 둔 제자리 대기(`wait`)를 사람의 말이 깨운다 (v10.141.0). ``count_words`` 는 `wait` 의
+    도착분에 사람의 말을 세는가 — 종류마다 적는다(main 은 세지 않는다: 그 말은 ``wait_input`` 이 깨운다)."""
 
     def __init__(
         self,
         registry: AgentRegistry | None,
         owner: str,
         *,
+        count_words: bool,
         take=None,
         wait_input=None,
     ) -> None:
         self._registry = registry
         self.owner = owner
+        self._count_words = count_words
         self._take = take
         self._wait_input = wait_input
 
@@ -421,10 +422,26 @@ class Mailbox:
         return self._take()
 
     def arrived(self) -> int:
-        return arrived_mail(self.owner, agents=self._registry)
+        """이 주소 앞에 **이미 도착해 다음 턴 경계에 배달될** 봉투 수 (v10.66.2) — `wait` 의 둘째 판정이자 제자리
+        대기를 "mail" 로 깨우는 것. 깨울 것이 "아직 돌고 있는 것" 이라면 이건 "끝나서 통지가 와 있는 것"(모니터가
+        `wait` 보다 먼저 발화한 벤치 사례). 0 이 아니면 `wait` 는 거부되고 런이 이어져 그것을 바로 받는다.
+        깨우지 않는 봉투도 센다 [5b: 깨우는 것만]."""
+        if self._registry is None:
+            return 0
+        return self._registry.arrived_for(
+            self.owner, waking_only=False, words=self._count_words
+        )
 
     def wake_sources(self) -> list[str]:
-        return wake_sources(self.owner, agents=self._registry)
+        """이 주소를 깨울 것 — 사람이 읽을 한 줄씩(`wake_items`, 예약은 `schedule_wakes`)."""
+        return [
+            text
+            for _, text in wake_items(
+                self.owner,
+                agents=self._registry,
+                with_schedule=schedule_wakes(self.owner),
+            )
+        ]
 
     def run_started(self) -> None:
         if self._registry is not None:
@@ -440,7 +457,7 @@ class Mailbox:
         if self._registry is None:
             return "nothing"
         return self._registry.wait_mail(
-            self.owner,
+            arrived=self.arrived,
             stop_event=stop_event,
             still_waiting=still_waiting,
             wait_input=self._wait_input,

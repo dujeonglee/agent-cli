@@ -1,7 +1,7 @@
 """구현(`PostOffice`)과 참조 모델(`reference.Model`)을 같은 연산열로 나란히 모는 도우미.
 
 연산은 ``(이름, 인자 dict)`` — 둘 다에 같은 뜻으로 보낸다. 매 걸음 구현의 `check_consistency()` 를 부르고,
-거절 여부와 공개 관찰값(주소별 queued·taken id 순서, 줄 (rid, state, how), arrived·backlog·has_waking)을
+거절 여부와 공개 관찰값(주소별 queued·taken id 순서, 줄 (rid, state, how), 도착 조회의 세 칸 — 전부·깨우는 것 수·깨우는 것 있음)을
 비교한다.
 """
 
@@ -32,9 +32,9 @@ def observe(office: PostOffice, addrs) -> dict:
             a: (
                 [e.id for e in office.queued(a)],
                 [e.id for e in office.taken(a)],
-                office.arrived(a),
-                office.backlog(a),
-                office.has_waking(a),
+                office.arrived(a, waking_only=False, words=True),
+                office.arrived(a, waking_only=True, words=True),
+                office.arrived(a, waking_only=True, words=True) > 0,
             )
             for a in addrs
         },

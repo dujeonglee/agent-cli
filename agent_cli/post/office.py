@@ -303,7 +303,10 @@ class PostOffice:
             self._idle.add(addr)
             if take is Take.ARRIVAL:
                 self.cv.wait_for(
-                    lambda: addr in self._closed or any(e.wakes for e in box.queued()),
+                    lambda: (
+                        addr in self._closed
+                        or box.count(waking_only=True, words=True) > 0
+                    ),
                     timeout,
                 )
                 if addr in self._closed:
@@ -319,7 +322,7 @@ class PostOffice:
                 return (
                     bool(box.words())
                     or addr in self._closed
-                    or any(e.wakes for e in box.mail())
+                    or box.count(waking_only=True, words=False) > 0
                 )
 
             self.cv.wait_for(ready, timeout)
@@ -328,7 +331,7 @@ class PostOffice:
             if box.words():
                 self._idle.discard(addr)
                 return (self._take_first_words(box),)
-            if any(e.wakes for e in box.mail()):
+            if box.count(waking_only=True, words=False):
                 self._idle.discard(addr)
                 return ()
             return None
@@ -425,13 +428,11 @@ class PostOffice:
         with self.cv:
             return self._box_or_empty(addr).mail()
 
-    def arrived(self, addr: str) -> int:
+    def arrived(self, addr: str, *, waking_only: bool, words: bool) -> int:
+        """``addr`` 앞에 이미 도착해 줄 선 봉투 수 — 깨우는 것만 셀지·사람의 말을 셀지는 부르는 쪽이 정한다
+        (`Postbox.count`). 런이 꺼내 든 봉투는 세지 않는다."""
         with self.cv:
-            return self._box_or_empty(addr).arrived()
-
-    def backlog(self, addr: str) -> int:
-        with self.cv:
-            return self._box_or_empty(addr).backlog()
+            return self._box_or_empty(addr).count(waking_only=waking_only, words=words)
 
     def queued_requests_from(self, addr: str, src: str) -> int:
         """``addr`` 앞에 줄 선(아직 시작 안 한) ``src`` 의 요청 수 — 회신·통지·남의 요청은 세지 않는다."""
@@ -441,10 +442,6 @@ class PostOffice:
                 for e in self._box_or_empty(addr).queued()
                 if e.src == src and e.expects_reply
             )
-
-    def has_waking(self, addr: str) -> bool:
-        with self.cv:
-            return self._box_or_empty(addr).has_waking()
 
     def owed_by(self, debtor: str) -> tuple[Row, ...]:
         with self.cv:

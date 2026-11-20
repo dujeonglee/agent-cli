@@ -17,7 +17,7 @@ import pytest
 
 from agent_cli.session_slots import set_agent_registry
 from agent_cli.subagent.agents_live import AgentInstance
-from agent_cli.wake import relation_items, wake_sources
+from agent_cli.wake import Mailbox, relation_items
 from tests import test_engine_p2
 from tests.mail_support import absorbed_mail
 from tests.test_agents_live import make_registry
@@ -107,7 +107,9 @@ class TestWhoWakesTheRequester:
         tm = _idle_agent(reg, "agt-w")
         assert reg.request("agt-w", "find callers", author=requester) == ""
         item = _pick_up(reg, tm)
-        assert wake_sources(requester, agents=reg) != []  # 일하는 동안은 근거
+        assert (
+            Mailbox(reg, requester, count_words=True).wake_sources() != []
+        )  # 일하는 동안은 근거
         (d,) = reg.reply_debts("agent:agt-w")
         assert reg.pay_debt("agent:agt-w", d, "3 callers") == ""
         assert tm.state == "busy" and reg.taken_by("agent:agt-w")[0].id == item["id"]
@@ -115,7 +117,7 @@ class TestWhoWakesTheRequester:
             absorbed_mail(reg)  # 회신은 이미 읽었다
         else:
             reg.absorb_pending(reg.get("agt-req"))  # 요청자가 회신을 읽었다
-        assert wake_sources(requester, agents=reg) == []
+        assert Mailbox(reg, requester, count_words=True).wake_sources() == []
         assert relation_items(reg.wake_facts(), requester) == []
 
     @pytest.mark.parametrize("requester", ["main", "agent:agt-req"])
@@ -132,7 +134,10 @@ class TestWhoWakesTheRequester:
         reg.pay_debt("agent:agt-w", first, "done 1")
         relations = _relations(reg, requester)
         assert relations.get("agent:agt-w") in ("owes", "working")
-        assert any("agt-w" in s for s in wake_sources(requester, agents=reg))
+        assert any(
+            "agt-w" in s
+            for s in Mailbox(reg, requester, count_words=True).wake_sources()
+        )
 
     def test_picking_a_request_is_owing_it(self, reg):
         """③ 받은편지함을 떠나는 순간이 곧 빚이다 — `[v10.145.0 에서 바뀜 — 옛 구현은 집은 뒤 빚을 적기까지 틈이
@@ -142,7 +147,7 @@ class TestWhoWakesTheRequester:
         item = _pick_up(reg, tm)
         assert [d.id for d in reg.reply_debts("agent:agt-w")] == [item["id"]]
         assert list(reg.queued_for("agent:agt-w")) == []
-        assert wake_sources("main", agents=reg) == [
+        assert Mailbox(reg, "main", count_words=True).wake_sources() == [
             "agent:agt-w working on your request"
         ]
 
@@ -158,7 +163,7 @@ class TestWhoWakesTheRequester:
         )
         _pick_up(reg, tm)
         assert tm.state == "busy" and tm.current_author == "main"
-        assert wake_sources("main", agents=reg) == []
+        assert Mailbox(reg, "main", count_words=True).wake_sources() == []
 
     def test_only_a_queued_notice_does_not_wake_the_sender(self, reg):
         """대기열의 통지는 근거가 아니다 — 받는 쪽이 읽어도 보낸 쪽에게 돌아올 것이 없다. 같은 자리의 요청은 근거."""
@@ -171,9 +176,9 @@ class TestWhoWakesTheRequester:
             kind="notice",
         )
         assert len(reg.queued_for("agent:agt-w")) == 1
-        assert wake_sources("main", agents=reg) == []
+        assert Mailbox(reg, "main", count_words=True).wake_sources() == []
         reg.request("agt-w", "and count the callers", author="main")
-        assert wake_sources("main", agents=reg) == [
+        assert Mailbox(reg, "main", count_words=True).wake_sources() == [
             "agent:agt-w has your request queued"
         ]
 
@@ -185,8 +190,8 @@ class TestWhoWakesTheRequester:
         reg.request("agt-w", "for agt-req", author="agent:agt-req")
         _pick_up(reg, tm)
         tm.current_author = "main"  # 화자 표시가 main 이어도
-        assert wake_sources("main", agents=reg) == []
-        assert wake_sources("agent:agt-req", agents=reg) == [
+        assert Mailbox(reg, "main", count_words=True).wake_sources() == []
+        assert Mailbox(reg, "agent:agt-req", count_words=True).wake_sources() == [
             "agent:agt-w working on your request"
         ]
 
@@ -218,7 +223,11 @@ class TestMainSeesIt:
         def main_wait_after_reply(msgs):
             main_second_call.set()
             # 회신이 main 메일함에 든 뒤 — 이 호출의 결과 뒤 경계가 그것을 먼저 배달한다
-            assert wait_until(lambda: holder["reg"].arrived_for("main"))
+            assert wait_until(
+                lambda: holder["reg"].arrived_for(
+                    "main", waking_only=False, words=False
+                )
+            )
             return call("shell", command="true")
 
         def main_complete(msgs):

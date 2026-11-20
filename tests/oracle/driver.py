@@ -1234,7 +1234,9 @@ def s11_stop_everything(root: Path) -> dict:
         until(lambda: s.agent_state(key) == "dead")
         until(lambda: len(s.reg.pending_mail()) == 1, "quiet reply")
         facts["queue_lines"] = s.reg.pending_mail()
-        facts["wakes_main"] = s.reg.has_mail_that_wakes_main()
+        facts["wakes_main"] = bool(
+            s.reg.arrived_for("main", waking_only=True, words=False)
+        )
         # 깨우지 않는 회신만 남았다 — 워커가 다 내려오면 `run` 이 끝날 수 있다(조용해짐)
         try:
             until(lambda: not s.reg.has_active_work(), "quiet")
