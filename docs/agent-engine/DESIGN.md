@@ -73,7 +73,7 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
   "⏳ N repl… you asked for had not arrived when this run closed" 와 목록을 적는다(회신은 그래도 메일로 온다).
   웹 📋 띠는 같은 사본(`Ledger.snapshot`, source "awaiting")을 그린다.
 - **제자리 대기.** `MainLoop.wait_policy` 는 기다리는 회신이 있으면 `WAIT_BLOCK` — `dispatch._wait_in_place` 가
-  `Mailbox.wait` → `AgentRegistry.wait_mail` 로 메일(회신·작업 통지·체크인 — `arrived_for`, main 상자의 메일만) 또는 사람 입력
+  `Mailbox.wait` → `AgentRegistry.wait_mail` 로 메일(회신·작업 통지·체크인 — `Mailbox.arrived`, main 은 사람의 말을 세지 않는다) 또는 사람 입력
   (`wait_input`: 웹은 `runtime.wait_for_human_words`, run 은 터미널 줄을 main 앞 사람의 말(`MainInput`)로 넣는 `main._terminal_steer_input` — 둘 다 대기 중
   친 명령(`/stop agt-3` 등 — 판정은 표면의 `is_command`)은 그 자리에서 라우팅하고 깨우지 않는다)이 올 때까지
   막고, 깨면 같은 런의 다음 턴 경계 흡수(`MainLoop.intake`)가 읽는다. 사람 입력에 깨면 관찰
@@ -177,8 +177,8 @@ Decide whether to continue another way or report back to the user.
 - 웹: 채널 머리(`#ov-chhead`)의 `■ Stop run` · `✕ Remove`(끝난 run 은 머리 없음). 입력창 옆 정지 버튼은 하나 — main 만 바쁘면
   `Stop`, 에이전트도 일하면 `Stop ▾`(본체 = main, ▾ = Stop main · Stop all agents · Stop everything), main 이 한가하고
   에이전트만 일하면 `Send` 그대로 + 채널 줄 끝 `■ all`. **Stop everything 의 정지 회신만은 main 을 깨우지 않는다**
-  (사용자 결정 — 메일 단위 표시 `wakes_main: false`, `MailWaker`·`run` 의 정지 판정은 `has_mail_that_wakes_main` 을
-  본다): main 메일함에 쌓였다가 사람의 다음 입력 런에 함께 배달되고, `run` 은 조용해지면 끝난다(회신은 agents.json 미러에
+  (사용자 결정 — 메일 단위 표시 `wakes_main: false`, `MailWaker`·`run` 의 정지 판정은 main 상자의 깨우는 메일(`PostOffice.arrived` 의
+  `waking_only=True, words=False`)을 본다): main 메일함에 쌓였다가 사람의 다음 입력 런에 함께 배달되고, `run` 은 조용해지면 끝난다(회신은 agents.json 미러에
   남는다). 살아 남은 상주에게 가는 그 회신도 런을 열지 않는다(받은편지함 항목 `opens_run: false` — 워커가 들고
   있다가 그 상주가 다음에 일을 받는 런의 첫 흡수에 넣는다, `_release_held`; 미러에 남아 재시작에도 산다).
   Stop all agents·채널 ■/✕ 의 회신은 main·상주를 깨운다. API: `POST /api/agent/<key>/stop`, `POST /api/stop` 의 `scope`

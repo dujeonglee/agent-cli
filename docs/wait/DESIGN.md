@@ -20,7 +20,7 @@
 
 `wait` — "더 할 게 없다, 깨워 달라". 아무것도 닫지 않고 런을 끝낸다.
 
-- **깨울 것이 있을 때만** 받는다(`wake.wake_sources(owner)`): 이 소유자의
+- **깨울 것이 있을 때만** 받는다(`wake.wake_items(owner)`): 이 소유자의
   돌고 있는 백그라운드 작업·살아 있는 모니터, 세션의 일하는 중인 상주 에이전트·
   예약. 없으면 거부 관찰("nothing would wake you — keep working or call
   `complete`") 을 남기고 런을 잇는다. 막혔을 때 wait 로 도피하는 길은 없다.
@@ -55,7 +55,7 @@
   `owed`·`end_run` 을 건너뛴다. 종전 흐름이면 요청자가 "(no explicit reply — run
   summary) ⏸ waiting on job #1" 을 답으로 받고 빚이 갚힌 것으로 처리돼, 깨어난
   뒤의 진짜 `reply` 가 "no unpaid reply" 로 거부됐을 것이다.
-- **이미 도착한 통지가 있으면 거부한다** (v10.66.2) — `wake.arrived_mail(owner)`:
+- **이미 도착한 통지가 있으면 거부한다** (v10.66.2) — `Mailbox.arrived()`(창구의 `PostOffice.arrived`, v10.158.1):
   main 의 메일함(`AgentRegistry._pending` — 작업·모니터 통지, 에이전트 회신·질문),
   상주의 받은편지함 미러(`inbox_items`). 기다리던 것이 wait 보다 **먼저 끝난**
   경우다(9과제 벤치의 once 모니터). 그 통지는 어차피 다음 턴 경계
@@ -116,9 +116,9 @@ A/B 가 필요 없는 수정이다(같은 complete 를 9번 보내는 게 옳을
 거부 1회: video 에서 모델이 파일 감시 모니터(`once`)를 걸고 바로 `wait` 했는데
 파일이 이미 있어 모니터가 즉시 발화·은퇴한 뒤였다. 거부 관찰과 그 모니터의
 통지가 같은 관찰에 함께 배달돼 런은 그대로 이어졌다 — 결과는 맞고 낭비도 없다.
-남은 틈이었던 것: `wake_sources` 는 **이미 도착해 아직 배달 안 된 통지** 를 세지
+남은 틈이었던 것: 깨울 것 판정(지금 `wake_items`)은 **이미 도착해 아직 배달 안 된 통지** 를 세지
 않았다. 거부 뒤 런이 계속되면 그 통지를 바로 받으므로 결과는 맞았지만 거부 문구
-"nothing is pending" 이 사실과 어긋났다 — v10.66.2 에서 `arrived_mail` 로 갈라
+"nothing is pending" 이 사실과 어긋났다 — v10.66.2 에서 도착분 판정(지금 `Mailbox.arrived`)으로 갈라
 "already arrived and follow in the next observation" 으로 거부한다(§2.1). 같은
 조사에서 `pending_for` 의 "has your request queued" 가지가 `SimpleQueue` 에 없는
 `queue` 속성을 읽어 늘 비어 있던 것도 받은편지함 미러로 고쳤다.
@@ -171,7 +171,7 @@ while you were thinking; delivered right below this" → 모델이 통지를 읽
    가 남긴 것이라 런 시작이 할 일이 없다 — `begin_run` 은 지웠다.
 3. **서로 기다리는 고리.** A 가 B 에게 요청(r-1)하고 `wait`, B 가 A 에게 요청(r-2)하고
    `wait` 하면 둘 다 "상대가 나에게 빚졌다" 를 깨울 근거로 보고 잠든다 — 배달할 것이 없어
-   아무도 깨지 않는다. `wake_sources` 는 이제 **스스로 잠든 채무자**(유휴·받은편지함 빔·빚
+   아무도 깨지 않는다. 깨울 것 판정(`wake_items`)은 이제 **스스로 잠든 채무자**(유휴·받은편지함 빔·빚
    남음 = 앞 런이 wait)를 직접 근거로 치지 않고, 그 채무자를 깨울 것이 있는지 거슬러 본다
    (방문 집합으로 순환을 자르고, 지금 wait 를 부르는 쪽은 바쁨 상태라 `pending_for` 의
    `exclude` 로 뺀다). A→B→A 면 두 번째 `wait` 가 "그쪽도 당신을 기다린다" 로 거부되고,
@@ -202,7 +202,7 @@ harbor 벤치 전부(trial 483)에서 받아들여진 `wait` 50번 중 **13번(2
 | 처음 wait 부터 누적 | 5분 | 15분 | 35분 | 75분 | +60분씩 |
 
 "같은 대상" 은 깨울 것의 **id 집합**(`wake.wake_source_ids`: `job:1`·`mon-…`·`agent:k`)이다 —
-사람이 읽는 줄(`wake_sources`)로 비교하면 같은 에이전트라도 "queued↔working" 처럼 글이 바뀌어
+사람이 읽는 줄(`Mailbox.wake_sources`)로 비교하면 같은 에이전트라도 "queued↔working" 처럼 글이 바뀌어
 헛되이 5분으로 돌아간다. 집합이 **직전에 발화한** 깨우기 때와 같으면 다음 단계, 다르면 5분
 (`AgentRegistry._checkin_step`). 진짜 보고로 깨면 집합이 거의 항상 바뀌므로(작업 소멸·빚 정산)
 별도 초기화가 없고, 바뀌지 않는 드문 경우(`once` false 모니터의 재발화)에 배증이 이어지는 것은
@@ -366,7 +366,7 @@ waiting on job #1` 로 받았다(v10.73 벤치 4건). 원인은 one-shot 에 자
   `agent:<key>`(상주 받은편지함, 워커가 읽음) · **private** `run:<run_dir>`(one-shot)·`harness:<job>`(하니스 작업) — 프로세스
   수명의 메일함을 그 루프 자신이 턴 경계(`absorb_inbox`)와 `wait` 에서 읽는다. 하니스 작업은 종전에도 자기 주소를 썼으나
   `deliver` 가 "unroutable" 로 떨궜다 — 같은 메일함으로 라우팅된다.
-- **메일함** (`AgentRegistry._mailboxes`, `deliver` 의 셋째 가지): `arrived_for`·`take_mail`·`wait_mail(stop_event, still_waiting)`·
+- **메일함** (`AgentRegistry._mailboxes`, `deliver` 의 셋째 가지): `arrived_for`·`take_mail`·`wait_mail(arrived, stop_event, still_waiting)`·
   `drop_mailbox`. 같은 `_cv` 로 깨운다. UI(`_pending`)·디스크 밖. 체크인(`fire_checkin`)도 여기로.
 - **포트**: `ports_for_oneshot` 이 `absorb_inbox = take_mail(owner)` 를 꽂는다 → `wakeable()` 참 → `wait` 가 광고되고 문법에도
   든다(종전의 "숨김인데 디스패치는 받음" 불일치 해소). 흡수 레코드는 `wake.mail_record` — **main 이 받는 모양과 같다**(사용자 결정 C, `constants.HARNESS_MAIL_TOOL`
@@ -381,7 +381,7 @@ waiting on job #1` 로 받았다(v10.73 벤치 4건). 원인은 one-shot 에 자
   on is running any more" 관찰로 잇는다. 깨울 길이 없는 루프(`cfg.wakeable` 거짓 = 스킬 — 호출자 턴 안의 인라인, 주소를
   **일부러** 물려받아 그 모니터가 호출자에게 보고)는 첫 판정에서 **거부**: "this loop runs inline inside its caller and
   nothing wakes it … finish with `complete` and the caller waits"(사용자 결정 D2).
-- **예약은 private 소유자를 깨우지 않는다** (`_wake_items`): 세션 예약은 main 에게 발화한다 — 빼지 않으면 one-shot 이 잡
+- **예약은 private 소유자를 깨우지 않는다** (`wake.schedule_wakes`): 세션 예약은 main 에게 발화한다 — 빼지 않으면 one-shot 이 잡
   없이도 `wait` 를 수락받아 영원히 막힌다.
 - **끝날 때** (`runtime.release_private_owner`, 사용자 결정 D1): 돌고 있는 잡은 죽이고(`jobs.drop_owner`), 모니터는 폐기
   (`monitors.drop_owner` — 재부모화하지 않는다, 상주와 같은 규칙), 체크인·메일함을 버린다. 거둔 것이 있으면 결과 끝에 한 줄

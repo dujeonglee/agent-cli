@@ -58,7 +58,7 @@ agent_cli/
 ├── __main__.py              `python -m agent_cli` 진입점
 ├── main.py                  typer CLI — `run`·`web`·`setup`·`mcp`·`knobs`·`sessions`·`stats`·`update` 명령과 `@agent`·`/skill` 디스패치
 ├── runtime.py               run/web 세션 조립(`SessionSpec`→stores→owners→`wire_session`)·정리, `MainLoop`
-├── wake.py                  한 주소를 무엇이 깨우나(`wake_sources` — 에이전트 몫은 장부·명단 사본 `WakeFacts` 의 순수 함수, 고리 찾기 `parked_view`)·체크인 알림·메일 → 레코드·`release_owner`, 루프의 우편 창구 `Mailbox`(포트 `mailbox`)
+├── wake.py                  한 주소를 무엇이 깨우나(`wake_items` — 에이전트 몫은 장부·명단 사본 `WakeFacts` 의 순수 함수, 고리 찾기 `parked_view`)·체크인 알림·메일 → 레코드·`release_owner`, 루프의 우편 창구 `Mailbox`(포트 `mailbox`)
 ├── pump.py                  세션 펌프 — main 상자에서 런을 열 것(사람의 말 먼저, 없으면 깨우는 메일)을 꺼내 라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
 ├── actor.py                 런을 여는 루프 하나 `run_actor` — 기다림·열기·런·끝 판정, main(`pump.MainActor`)과 에이전트 워커(`resident_loop.AgentActor`)가 같은 루프를 돈다
 ├── command_table.py         사용자 명령 표 하나 — 웹 `/help` 와 `run "/help"` 가 여기서 나온다
@@ -161,7 +161,7 @@ agent_cli/
 │   ├── envelope.py          봉투 `Envelope`(머리 + 불투명 payload)와 종류별 만드는 함수 — 닫는 법(`closes_by`)은 여기서만 정한다
 │   ├── request_book.py      요청 장부 `RequestBook`·줄 `Row` — 줄 전이표(`CLOSES`)와 이름 있는 질문(빚·기다림·열린 요청·질문)
 │   ├── postbox.py           주소 하나의 상자 `Postbox` — 줄 선 것·런이 든 것, 꺼내는 순서와 이름 있는 수(락 없음)
-│   └── office.py            창구 `PostOffice` — 모든 변경이 이름 있는 메서드 하나(한 락 구간), 불변식 `check_consistency`
+│   └── office.py            창구 `PostOffice` — 모든 변경이 이름 있는 메서드 하나(한 락 구간), 도착 조회 `arrived`·기다림 표시, 불변식 `check_consistency`
 ├── prompts/                 모델이 읽는 글 — 시스템 프롬프트·꼬리·압축 지침 (docs/prompt-notation/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── system_prompt.py     능력에 맞춘 시스템 프롬프트 섹션 조립, 지시사항 파일 읽기·쓰기, 도구 설명 교체
