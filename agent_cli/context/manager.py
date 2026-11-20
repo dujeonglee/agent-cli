@@ -412,6 +412,9 @@ class ContextManager:
                 self._token_ratio = _clamp_token_ratio(saved[0])
                 self._token_ratio_samples = saved[1]
             self._load_compaction_json()
+            # 새 id 가 지난 생의 id 와 겹치지 않게 (v10.77.0, 5c-0) — 이 컨텍스트 폴더 아래의 기록 글에 적힌 id 전부
+            # (main 은 세션 폴더라 에이전트 폴더까지). 겹치면 새 요청이 같은 id 를 단 옛 user 레코드를 핀으로 붙잡는다(§pin).
+            item_ids.observe_records(self.session_dir)
             if self._history_path.is_file():
                 self._restore_cache()
 
@@ -1697,9 +1700,6 @@ class ContextManager:
         """
         self._nl_cache = None  # cache rebuilt from disk → re-render on next get
         messages = store.load_records(self._history_path)
-        # 새 id 가 지난 생의 id 와 겹치지 않게 (v10.77.0) — 겹치면 새 요청이
-        # 같은 id 를 단 옛 user 레코드를 핀으로 붙잡는다(§pin).
-        item_ids.observe(*(m.get("request_id") for m in messages))
 
         use_offset = self._dynamic_start_index > 0 and self._dynamic_start_index <= len(
             messages

@@ -223,11 +223,6 @@ def _roster_only_session(tmp_path) -> str:
     return key
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="[5c-0 에서 바뀜] 번호는 history 의 request_id 와 agents.json 의 메일·질문·줄에서만 잇는다 — 기록 "
-    "글에만 남은 id(질문·🤝 창)와 겹친다",
-)
 def test_new_ids_do_not_reuse_ids_written_in_the_records(tmp_path, renderer):  # noqa: F811
     from agent_cli.context.manager import ContextManager
 
@@ -237,3 +232,13 @@ def test_new_ids_do_not_reuse_ids_written_in_the_records(tmp_path, renderer):  #
         tmp_path, max_context_tokens=10000, resume=True
     )  # main ctx — 세션 폴더 전체
     assert item_ids.number_of(item_ids.next_id(item_ids.USER)) > 40
+
+
+def test_ids_are_read_only_where_they_stand_as_ids(tmp_path):
+    """``agt-5`` 의 ``t-5``·``user-9`` 의 ``r-9`` 는 id 가 아니다 — 접두 앞이 낱말 글자이면 세지 않는다."""
+    (tmp_path / "history.jsonl").write_text(
+        '{"content": "agt-55 and user-90 but [n-7]"}\n', encoding="utf-8"
+    )
+    _new_process()
+    item_ids.observe_records(tmp_path)
+    assert item_ids.next_id(item_ids.MAIL) == "n-8"
