@@ -48,7 +48,6 @@ from agent_cli.runtime import (
     SessionSpec,
     build_session_owners,
     build_session_stores,
-    session_has_live_work,
     teardown_session,
     wire_session,
 )
@@ -1236,12 +1235,11 @@ def s11_stop_everything(root: Path) -> dict:
         )
         # 깨우지 않는 회신만 남았다 — 워커가 다 내려오면 `run` 이 끝날 수 있다(조용해짐)
         try:
+            # run 의 끝 판정(공개 표면) — 이 시나리오에는 곁의 일(모니터·잡·예약·감사)이 없다
             until(
-                lambda: (
-                    not session_has_live_work(
-                        post=s.main_input.post, agent_registry=s.reg
-                    )
-                ),
+                lambda: QuietPolicy(
+                    main_input=s.main_input, agent_registry=s.reg
+                ).should_stop(),
                 "quiet",
             )
             facts["becomes_quiet"] = True
