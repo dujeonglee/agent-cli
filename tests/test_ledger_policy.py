@@ -279,7 +279,7 @@ def test_multi_line_bodies_are_folded_to_one_item_line():
     led.add_request("u-1", "dj", "첫 줄\n둘째 줄")
     block = led.block()
     assert (
-        '[r-4] (agt-a) reply owed: "AUDIT findings [1] unmet — 다시"  → `reply` with `id` "r-4"'
+        '[r-4] (agt-a) reply owed: "AUDIT findings [1] unmet — 다시"  → when it is done, `reply` with `id` "r-4"'
         in block
     )
     assert '[u-1] (dj) "첫 줄 둘째 줄"' in block

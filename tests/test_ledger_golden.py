@@ -22,6 +22,8 @@ P1(v10.54.0, docs/ledger/DESIGN.md)은 흩어져 있던 회계(`run_requests`·�
 - v10.103.0: 꼬리 Scratch 줄 "never in /tmp … need no confirmation" → "not in /tmp …
   stay visible to the user"(봉쇄가 시스템 임시 디렉터리를 묻지 않게 되어 이유 절 교체) —
   그 치환 하나로만 달라졌다(스크립트로 대조, 나머지 바이트 동일).
+- v10.158.0: 빚 줄 "→ `reply` with `id`" → "→ when it is done, `reply` with `id`" —
+  그 치환 하나로만 달라졌다(스크립트로 대조, 나머지 바이트 동일).
 
 빈 `answers: []` 를 되돌리는 정책은 `test_request_accounting` 이 따로 고정한다.
 """

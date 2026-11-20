@@ -36,7 +36,7 @@ def call(action: str, **kw) -> str:
 
 
 def owed_id(messages) -> str:
-    """꼬리의 `## Open Items` 에서 갚을 요청 id — ``→ `reply` with `id` "r-5"``."""
+    """꼬리의 `## Open Items` 에서 갚을 요청 id — ``→ when it is done, `reply` with `id` "r-5"``."""
     text = "\n".join(str(m.get("content") or "") for m in messages[-2:])
     m = re.search(r'`reply` with `id` "(r-\d+)"', text)
     assert m, text[-800:]

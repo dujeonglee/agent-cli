@@ -705,10 +705,13 @@ class TestOpenItemsInTail:
         lines = out.splitlines()
         assert lines.index("  1. by action") < lines.index("  2. by `complete` (last)")
         assert (
-            '[r-7] (agt-orch) reply owed: "floorCeil 고쳐줘"  → `reply` with `id` "r-7"'
+            '[r-7] (agt-orch) reply owed: "floorCeil 고쳐줘"  → when it is done, `reply` with `id` "r-7"'
             in out
         )
-        assert '[r-8] (agt-a) reply owed: "포트는?"  → `reply` with `id` "r-8"' in out
+        assert (
+            '[r-8] (agt-a) reply owed: "포트는?"  → when it is done, `reply` with `id` "r-8"'
+            in out
+        )
         assert '     [u-3] (dj) "README 정리해 줘"' in out
         assert 'then `complete`, listing in `answers` the ids it covers ("u-3")' in out
         assert out.rstrip().endswith("your result is delivered either way.")
