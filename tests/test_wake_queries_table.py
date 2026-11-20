@@ -153,7 +153,8 @@ class TestMainInPlaceWake:
     def test_a_quiet_reply_wakes_it_as_mail(self, reg):  # [5b] 깨우지 않는 봉투
         reg._post.deliver(Q(1))
         mb = _mailbox("main", reg, wait_input=lambda timeout: False)
-        why = mb.wait(stop_event=threading.Event(), still_waiting=lambda: True)
+        # 기다릴 것이 없다고 답한다 — 도착분으로 보지 않으면 막히지 않고 "nothing" 으로 돌아온다
+        why = mb.wait(stop_event=threading.Event(), still_waiting=lambda: False)
         assert why == "mail"
 
 
