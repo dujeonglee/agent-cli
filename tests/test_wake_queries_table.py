@@ -4,7 +4,6 @@
 남겨 둔 한 줄(main 의 ``Mailbox`` 생성, `Mailbox.arrived`, 예약의 근거)이 바뀌면 여기서 걸린다.
 
 ``[5b]`` 표지의 칸은 알려진 어긋남을 지금 동작으로 고정한 것이다 — 5b 가 그 한 줄을 뒤집을 때 이 칸이 바뀐다:
-- 깨우지 않는 봉투도 `wait` 의 도착분이다(거절 2번·제자리 대기를 "mail" 로 깨움).
 - main 의 도착분은 사람의 말을 세지 않는다 — 회신을 기다리는 main 은 받아들인 뒤 "input" 으로 깬다(A-4).
 - 에이전트의 `wait` 도 예약을 깨울 근거로 받는다(변화 8).
 """
@@ -105,12 +104,12 @@ ARRIVED = [
     ("main_empty", "main", False, [], 0),
     ("main_words_not_counted", "main", False, [W(1)], 0),  # [5b] A-4
     ("main_waking_mail", "main", False, [N(1)], 1),
-    ("main_quiet_reply_counted", "main", False, [Q(1)], 1),  # [5b] 깨우지 않는 봉투
-    ("main_words_and_quiet", "main", False, [W(1), Q(2)], 1),
+    ("main_quiet_reply_not_counted", "main", False, [Q(1)], 0),  # 5b: 깨우는 봉투만
+    ("main_words_and_quiet", "main", False, [W(1), Q(2)], 0),
     ("agent_human_counted", A, True, [H(1)], 1),
-    ("agent_quiet_reply_counted", A, True, [S(1)], 1),  # [5b] 깨우지 않는 봉투
+    ("agent_quiet_reply_not_counted", A, True, [S(1)], 0),  # 5b: 깨우는 봉투만
     ("agent_request", A, True, [R(1)], 1),
-    ("agent_human_and_quiet", A, True, [H(1), S(2)], 2),
+    ("agent_human_and_quiet", A, True, [H(1), S(2)], 1),
     ("agent_off_roster", A, False, [S(1)], 0),
 ]
 
@@ -150,12 +149,12 @@ class TestMainInPlaceWake:
         why = mb.wait(stop_event=threading.Event(), still_waiting=lambda: True)
         assert why == "input"
 
-    def test_a_quiet_reply_wakes_it_as_mail(self, reg):  # [5b] 깨우지 않는 봉투
+    def test_a_quiet_reply_does_not_wake_it(self, reg):  # 5b: 깨우는 봉투만
         reg._post.deliver(Q(1))
         mb = _mailbox("main", reg, wait_input=lambda timeout: False)
-        # 기다릴 것이 없다고 답한다 — 도착분으로 보지 않으면 막히지 않고 "nothing" 으로 돌아온다
+        # 기다릴 것이 없다고 답한다 — 깨우지 않는 회신은 도착분이 아니므로 "nothing" 으로 돌아온다(막히지 않는다)
         why = mb.wait(stop_event=threading.Event(), still_waiting=lambda: False)
-        assert why == "mail"
+        assert why == "nothing"
 
 
 # ── 세션 수명 판정 (run 의 끝·web 의 한가함 정리 — 판정 하나, `runtime.session_has_live_work`) ──────

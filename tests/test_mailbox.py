@@ -52,9 +52,7 @@ class TestWithRegistry:
         mb.run_started()
         mb.arm_checkin()
         mb.drop()
-        reg.arrived_for.assert_called_once_with(
-            "agent:a", waking_only=False, words=True
-        )
+        reg.arrived_for.assert_called_once_with("agent:a", waking_only=True, words=True)
         reg.next_checkin_s.assert_called_once_with("agent:a")
         reg.wake_facts.assert_called_once_with()
         reg.wait_mail.assert_called_once_with(

@@ -425,11 +425,11 @@ class Mailbox:
         """이 주소 앞에 **이미 도착해 다음 턴 경계에 배달될** 봉투 수 (v10.66.2) — `wait` 의 둘째 판정이자 제자리
         대기를 "mail" 로 깨우는 것. 깨울 것이 "아직 돌고 있는 것" 이라면 이건 "끝나서 통지가 와 있는 것"(모니터가
         `wait` 보다 먼저 발화한 벤치 사례). 0 이 아니면 `wait` 는 거부되고 런이 이어져 그것을 바로 받는다.
-        깨우지 않는 봉투도 센다 [5b: 깨우는 것만]."""
+        깨우는 봉투만 센다(5b) — 깨우지 않는 봉투("Stop everything" 의 정지 회신)는 다음에 깰 때 함께 읽힌다."""
         if self._registry is None:
             return 0
         return self._registry.arrived_for(
-            self.owner, waking_only=False, words=self._count_words
+            self.owner, waking_only=True, words=self._count_words
         )
 
     def wake_sources(self) -> list[str]:
