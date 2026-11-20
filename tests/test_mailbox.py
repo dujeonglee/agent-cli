@@ -41,6 +41,7 @@ class TestWithRegistry:
             agents=(AgentFact("agent:k", False, False, (), ()),),
             owing=(("agent:k", "agent:a"),),
             awaited=frozenset(),
+            waiting=frozenset({"agent:k"}),
         )
         reg.wait_mail.return_value = "mail"
         mb = Mailbox(reg, "agent:a")

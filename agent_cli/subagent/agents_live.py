@@ -539,10 +539,9 @@ class AgentRegistry:
     state_is_active = staticmethod(agents_state.state_is_active)
 
     def has_agent_work(self) -> bool:
-        """에이전트 몫의 살아 있는 일 — 일하는 중(`state_is_active`: 막 띄운 ``starting`` 포함)이거나, 죽지 않았고
-        깨우는 봉투가 쌓였다. 세션 판정 `runtime.session_has_live_work` 의 한 항(run 의 끝·웹의 한가함 정리).
-        죽은 이의 남은 봉투는 일이 아니다 — 런 도중 끝난(■·✕) 워커는 꺼내지 않고 나간다(세면 `run` 이 끝나지
-        않는다, v10.142.0). 읽기만 한다."""
+        """에이전트 몫의 살아 있는 일 — 일하는 중(`state_is_active`, ``starting`` 포함)이거나 죽지 않았고 깨우는 봉투가
+        쌓였다(세션 판정 `runtime.session_has_live_work` 의 한 항). 죽은 이의 남은 봉투는 일이 아니다 — 런 도중 끝난
+        (■·✕) 워커는 꺼내지 않고 나간다(세면 `run` 이 끝나지 않는다, v10.142.0)."""
         return any(
             self.state_is_active(t.state)
             or (t.state != "dead" and self.backlog_of(t.key) > 0)
@@ -600,6 +599,7 @@ class AgentRegistry:
                     for r in rows
                     if r.kind == "r" and r.state != "closed"
                 ),
+                waiting=self._post.waiting_addresses(),
             )
 
     def checkin_agent_lines(

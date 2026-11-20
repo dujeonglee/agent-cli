@@ -1,7 +1,8 @@
 """ "누가 이 주소를 깨우는가" 의 에이전트 몫 — `wake` 의 순수 함수를 손으로 만든 사본(`WakeFacts`)으로 (v10.146.0).
 
 스레드도 레지스트리도 없다. 줄마다 한 사실. ``[지금 동작]`` 표지는 알려진 결함을 지금 동작으로 적은 칸이다 —
-고치는 단계에서 이 줄이 바뀐다(죽은 채무자 — 4c, main 의 제자리 대기·깨우지 않는 봉투 — 5단계).
+고치는 단계에서 이 줄이 바뀐다(죽은 채무자 — 5b 항목 8). 잠든 채무자는 창구의 기다림 표시(``waiting``)로 본다(5b) —
+main 도 잠든 쪽이 되고, 깨우지 않는 봉투를 든 채 기다리는 쪽도 잠든 쪽이다.
 """
 
 from __future__ import annotations
@@ -23,8 +24,10 @@ def agent(addr, *, active=False, dead=False, queued=(), taken=()):
     return AgentFact(addr, active, dead, tuple(queued), tuple(taken))
 
 
-def facts(agents=(), owing=(), awaited=()):
-    return WakeFacts(tuple(agents), tuple(owing), frozenset(awaited))
+def facts(agents=(), owing=(), awaited=(), waiting=()):
+    return WakeFacts(
+        tuple(agents), tuple(owing), frozenset(awaited), frozenset(waiting)
+    )
 
 
 RELATIONS = [
@@ -83,7 +86,7 @@ RELATIONS = [
     ),
     (
         "잠든 채무자는 관계가 아니다",
-        facts([agent(A)], owing=[(A, "main")]),
+        facts([agent(A)], owing=[(A, "main")], waiting=[A]),
         "main",
         frozenset(),
         [],
@@ -124,18 +127,32 @@ RELATIONS = [
         [("owes", A)],
     ),
     (
-        "[지금 동작] main 은 잠든 채무자가 아니다 — 언제나 빚진 쪽 (5단계)",
+        "기다림 표시가 없는 main 은 빚진 쪽",
         facts([], owing=[("main", A)]),
         A,
         frozenset(),
         [("owes", "main")],
     ),
     (
-        "[지금 동작] 깨우지 않는 봉투만 든 한가한 채무자도 잠들지 않은 것 (5단계)",
+        "기다리는 main 은 잠든 채무자 — 관계가 아니다 (5b N4)",
+        facts([], owing=[("main", A)], waiting=["main"]),
+        A,
+        frozenset(),
+        [],
+    ),
+    (
+        "기다림 표시가 없는 한가한 채무자는 빚진 쪽",
         facts([agent(A, queued=[(B, "n-9")])], owing=[(A, "main")]),
         "main",
         frozenset(),
         [("owes", A)],
+    ),
+    (
+        "깨우지 않는 봉투를 든 채 기다리는 채무자도 잠든 쪽 (5b D5)",
+        facts([agent(A, queued=[(B, "n-9")])], owing=[(A, "main")], waiting=[A]),
+        "main",
+        frozenset(),
+        [],
     ),
     (
         "명단에 없는 채무자",
@@ -171,20 +188,47 @@ def test_relation_items_text():
 
 
 PARKED = [
-    ("잠든 채무자", facts([agent(A)], owing=[(A, "main")]), "main", [A]),
-    ("일하는 채무자", facts([agent(A, active=True)], owing=[(A, "main")]), "main", []),
     (
-        "받은편지함이 빈 것만",
-        facts([agent(A, queued=[("x", "r-1")])], owing=[(A, "main")]),
+        "잠든 채무자",
+        facts([agent(A)], owing=[(A, "main")], waiting=[A]),
+        "main",
+        [A],
+    ),
+    (
+        "기다림 표시가 없으면 한가해도 잠든 쪽이 아니다",
+        facts([agent(A)], owing=[(A, "main")]),
         "main",
         [],
     ),
-    ("죽은 채무자", facts([agent(A, dead=True)], owing=[(A, "main")]), "main", []),
-    ("main 은 잠들지 않는다", facts([], owing=[("main", A)]), A, []),
-    ("명단에 없는 채무자", facts([], owing=[(A, "main")]), "main", []),
+    ("일하는 채무자", facts([agent(A, active=True)], owing=[(A, "main")]), "main", []),
+    (
+        "받은편지함에 무엇이 있어도 기다리면 잠든 쪽 (5b D5)",
+        facts([agent(A, queued=[("x", "r-1")])], owing=[(A, "main")], waiting=[A]),
+        "main",
+        [A],
+    ),
+    (
+        "죽은 채무자",
+        facts([agent(A, dead=True)], owing=[(A, "main")], waiting=[A]),
+        "main",
+        [],
+    ),
+    ("표시 없는 main", facts([], owing=[("main", A)]), A, []),
+    (
+        "기다리는 main 은 잠든 채무자 (5b N4)",
+        facts([], owing=[("main", A)], waiting=["main"]),
+        A,
+        ["main"],
+    ),
+    (
+        "명단에 없는 채무자",
+        facts([], owing=[(A, "main")], waiting=[A]),
+        "main",
+        [],
+    ),
     (
         "서로 빚진 둘 — 각자 상대를 잠든 채무자로 본다",
-        facts([agent(A), agent(B)], owing=[(A, B), (B, A)]),
+        facts([agent(A), agent(B)], owing=[(A, B), (B, A)], waiting=[A, B]),
         A,
         [B],
     ),

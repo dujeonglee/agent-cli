@@ -876,7 +876,9 @@ class AgentLoop:
         모델의 기다림에 깨우기가 없어진다. 배달과 이 호출 사이에 타이머가 발화하면
         그 알림은 다음 턴 경계에 배달되거나 `wait` 를 "already arrived" 로 거부시킨다
         — 사실 진술이라 어느 쪽도 거짓이 아니다."""
-        self._config.kind.ports.mailbox.run_started()
+        mailbox = self._config.kind.ports.mailbox
+        mailbox.run_started()
+        mailbox.clear_waiting()  # 런을 끝낸 `wait` 의 기다림이 여기서 끝난다 — 입력을 받은 런이 시작했다
 
     def _inject_mail(self, reply: dict) -> bool:
         """레지스트리 회신 한 통을 관찰 레코드로 (teammate P1, D2) — LLM 폴링 없이 하니스가

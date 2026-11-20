@@ -221,11 +221,12 @@ def _fake_agents(facts: WakeFacts):
 
 
 NO_AGENTS = WakeFacts((), (), frozenset())
-#: 한가한 B 가 main 에게 회신을 빚진 채 잠들었다
+#: 한가한 B 가 main 에게 회신을 빚진 채 잠들었다(받아들여진 `wait` — 기다림 표시)
 PARKED_B = WakeFacts(
     (AgentFact("agent:b", False, False, (), ()),),
     (("agent:b", "main"),),
     frozenset({("main", "r-1")}),
+    frozenset({"agent:b"}),
 )
 
 #: (이름, 주인, 사본, 예약 켜짐, `wait` 의 깨울 것, 체크인 대상)

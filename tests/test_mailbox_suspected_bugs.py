@@ -106,12 +106,9 @@ class TestHeldResidentAndTheRequestersWait:
         assert held.mark == "stopped by user" and held.wakes is False
         assert [d.to for d in reg.reply_debts(hh)] == [f"agent:{keys['qq']}"]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="받은편지함에 깨우지 않는 항목만 든 한가한 상주를 '잠들지 않았다' 로 보아 요청자의 wait 를 "
-        "받아들인다(wake._is_parked 가 받은편지함 전부를 본다) — 새 구조에서 통과해야 함",
-    )
     def test_the_requesters_wait_has_nothing_to_wake_it(self, tmp_path, cleanup):
+        """종전(5b 전)엔 받은편지함에 깨우지 않는 항목만 든 한가한 상주를 '잠들지 않았다' 로 보아 요청자의 `wait` 를
+        받아들였다 — 잠든 채무자는 이제 창구의 기다림 표시로 본다(5b D5)."""
         reg, keys = self._setup(tmp_path, cleanup)
         assert Mailbox(reg, f"agent:{keys['qq']}").wake_sources() == []
 

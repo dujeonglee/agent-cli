@@ -1172,7 +1172,7 @@ class TurnDispatcher:
                 turn=self.state.turn,
             )
             return _CONTINUE
-        sources = mailbox.wake_sources()
+        sources = mailbox.accept_wait()  # 기다림 표시를 먼저 세운다 — 거절이면 내린다
         if not sources:
             parked = mailbox.parked_debtors()
             why = (
@@ -1195,7 +1195,6 @@ class TurnDispatcher:
             return _CONTINUE
         from agent_cli.constants import format_duration
 
-        mailbox.mark_waiting()  # 받아들였다 — 기다림이 끝나는 곳에서 내린다(`PostOffice.mark_waiting`)
         in_place = policy == WAIT_BLOCK
         kept = ""
         if not in_place:

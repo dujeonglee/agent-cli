@@ -335,6 +335,8 @@ class TestResidentRunEndingInWait:
         from tests.test_agents_live import make_registry, wait_until
 
         def runner(kind, start, ctx):
+            # 받아들여진 `wait` 의 대역 — 엔진이 하듯 기다림 표시를 세운다(`Mailbox.accept_wait`)
+            reg.mark_waiting(f"agent:{key}")
             return SimpleNamespace(
                 success=True, output="⏸ waiting on job #1", waiting=True
             ), 0.01
@@ -489,6 +491,7 @@ class TestCircularWait:
 
         r, (a, b, _c) = reg
         self._owes(r, a, b, "r-1")  # a 는 b 에게 빚진 채 잠들었다(wait)
+        r.mark_waiting(f"agent:{a}")
         self._owes(r, b, a, "r-2")  # b 는 a 의 요청으로 깨어 지금 wait 를 부른다
         tb = r.get(b)
         tb.state, tb.current_author = "busy", f"agent:{a}"
@@ -501,6 +504,7 @@ class TestCircularWait:
         r, (a, b, c) = reg
         # 손으로 고른 id 는 할당기가 이 테스트에서 내지 않는 값 — 아래 `request` 가 받는 id 와 겹치지 않게
         self._owes(r, a, b, "r-901")  # a 는 b 에게 빚진 채 잠들었고
+        r.mark_waiting(f"agent:{a}")
         # c 가 a 의 요청을 처리 중이다 → a 는 깨어날 것이다. 그 요청은 아직 회신이 가지 않았다 (v10.143.0)
         self.gate.clear()
         from tests.test_agents_live import wait_until

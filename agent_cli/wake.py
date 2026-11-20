@@ -36,8 +36,8 @@ _SCHEDULE_ID = "schedule"
 
 
 class AgentFact(NamedTuple):
-    """명단의 에이전트 하나 — 사본. ``queued``·``taken`` 은 항목의 ``(author, id)`` 이고 ``queued`` 는 깨우지 않는
-    봉투도 든다(받은편지함에 무엇이든 있으면 잠들지 않은 것으로 본다)."""
+    """명단의 에이전트 하나 — 사본. ``queued``·``taken`` 은 항목의 ``(author, id)`` 이다(``queued`` 는 깨우지 않는
+    봉투도 든다 — 관계 "queued" 는 내가 보낸 갚지 않은 요청만 본다)."""
 
     addr: str
     active: bool
@@ -48,11 +48,13 @@ class AgentFact(NamedTuple):
 
 class WakeFacts(NamedTuple):
     """장부와 명단의 사본 — ``agents`` 는 명단 순서, ``owing`` 은 집힌 r 줄의 ``(빚진 쪽, 요청자)`` 장부 순서,
-    ``awaited`` 는 닫히지 않은 r 줄의 ``(요청자, id)``."""
+    ``awaited`` 는 닫히지 않은 r 줄의 ``(요청자, id)``, ``waiting`` 은 창구의 기다림 표시가 선 주소들
+    (`PostOffice.waiting_addresses` — 받아들여진 `wait` 로 기다리는 쪽)."""
 
     agents: tuple[AgentFact, ...]
     owing: tuple[tuple[str, str], ...]
     awaited: frozenset[tuple[str, str]]
+    waiting: frozenset[str] = frozenset()
 
 
 def _debtors_owing(facts: WakeFacts, addr: str) -> list[str]:
@@ -67,15 +69,15 @@ def _debtors_owing(facts: WakeFacts, addr: str) -> list[str]:
 
 
 def _is_parked(facts: WakeFacts, debtor: str) -> bool:
-    """빚진 쪽이 **스스로 잠들어 있다** — 명단에 있고 죽지 않았고 일하지 않으며 받은편지함이 빈 에이전트. 그런 채무자는
-    그 자체로는 아무도 깨우지 못한다: 그를 깨울 것이 있어야 회신이 온다. main 과 에이전트가 아닌 주소는 잠든 채무자로
-    세지 않는다(main 의 제자리 대기를 보지 못한다 — 5단계에서 창구의 기다림 표시로 바뀐다)."""
-    if debtor == "main" or not debtor.startswith("agent:"):
+    """빚진 쪽이 **스스로 잠들어 있다** — 창구의 기다림 표시가 섰고(받아들여진 `wait`), main 이거나 명단에 있는 죽지
+    않은 에이전트(5b). 그런 채무자는 그 자체로는 아무도 깨우지 못한다: 그를 깨울 것이 있어야 회신이 온다. 받은편지함에
+    깨우지 않는 봉투가 있어도 잠든 쪽이다 — 그 봉투는 그를 깨우지 않는다."""
+    if debtor not in facts.waiting:
         return False
+    if debtor == "main":
+        return True
     fact = next((a for a in facts.agents if a.addr == debtor), None)
-    if fact is None or fact.dead:
-        return False
-    return not fact.active and not fact.queued
+    return fact is not None and not fact.dead
 
 
 def parked_debtors(facts: WakeFacts, addr: str) -> list[str]:
@@ -487,13 +489,20 @@ class Mailbox:
             return []
         return parked_debtors(self._registry.wake_facts(), self.owner)
 
-    def mark_waiting(self) -> None:
-        """받아들여진 `wait` — 창구에 이 주소의 기다림 표시를 세운다."""
-        if self._registry is not None:
-            self._registry.mark_waiting(self.owner)
+    def accept_wait(self) -> list[str]:
+        """`wait` 의 받아들임 판정 — 창구에 이 주소의 기다림 표시를 **먼저** 세우고 깨울 것(`wake_sources`)을 묻는다.
+        없으면 표시를 내리고 빈 목록(거절)을 돌려준다. 표시를 판정 앞에 세우므로, 서로 빚진 둘이 같은 때 기다리려 해도
+        둘 다 받아들여지는 일이 없다 — 늦게 묻는 쪽은 먼저 표시한 쪽을 잠든 채무자로 본다(5b, 시안 §3.6)."""
+        if self._registry is None:
+            return self.wake_sources()
+        self._registry.mark_waiting(self.owner)
+        sources = self.wake_sources()
+        if not sources:
+            self._registry.clear_waiting(self.owner)
+        return sources
 
     def clear_waiting(self) -> None:
-        """제자리 기다림이 끝났다 — 기다림 표시를 내린다."""
+        """기다림이 끝났다 — 제자리 대기가 돌아왔거나, 런을 끝낸 대기 뒤 다음 런이 입력을 받아 시작했다."""
         if self._registry is not None:
             self._registry.clear_waiting(self.owner)
 

@@ -26,6 +26,7 @@ from agent_cli.session_slots import (
     set_monitor_registry,
     set_schedule_registry,
 )
+from agent_cli.subagent.agents_live import AgentInstance
 from agent_cli.subagent.resident_loop import ResidentLoop
 from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
@@ -72,10 +73,10 @@ def _provider(*replies: dict):
     return p
 
 
-def _loop(ports, provider, **attrs):
+def _loop(ports, provider, *, query="Q", **attrs):
     return make_loop(
         ports=ports,
-        query="Q",
+        query=query,
         query_request_id="",
         provider=provider,
         capabilities=ModelCapabilities(
@@ -212,7 +213,9 @@ def _resident_ports():
 
 
 class TestEndOfRun:
-    """런을 끝낸 대기(상주·main) — 받아들인 `wait` 가 그 런을 끝내고, 다음 런이 열리거나 상자가 닫힐 때 내린다."""
+    """런을 끝낸 대기(상주·main) — 받아들인 `wait` 가 그 런을 끝내고, 다음 런이 **입력을 받아 시작할 때**
+    (`_note_run_started`) 또는 상자가 닫히거나 주인이 사라질 때 내린다(5b). 봉투를 집었을 뿐 런이 시작되지 않았으면
+    (명령만 친 차례·읽을 것 없는 런) 아직 기다리는 중이다."""
 
     def _waited(self, ports):
         loop = _loop(ports, _provider(WAIT))
@@ -221,18 +224,18 @@ class TestEndOfRun:
         assert loop.turn == 1
         return res
 
-    def test_resident_until_a_waking_envelope_opens_a_run(self, reg, agent_job):
-        self._waited(_resident_ports())
+    def test_resident_until_its_next_run_starts(self, reg, agent_job):
+        ports = _resident_ports()
+        self._waited(ports)
         po = reg._post
         assert po.is_waiting(A) is True
-        assert (
-            po.next_run(A, Take.ARRIVAL, timeout=0) is None
-        )  # 열 것이 없다 — 아직 기다린다
         po.deliver(E.reply("n-1", "agent:b", A, "x", re="r-0", wakes=False))
         assert po.next_run(A, Take.ARRIVAL, timeout=0) is None
         assert po.is_waiting(A) is True  # 깨우지 않는 봉투로는 런이 열리지 않는다
         po.deliver(E.request("r-1", "main", A, "do"))
         assert [e.id for e in po.next_run(A, Take.ARRIVAL, timeout=0)] == ["r-1"]
+        assert po.is_waiting(A) is True  # 집었을 뿐 — 런은 아직 시작하지 않았다
+        _loop(ports, _provider(DONE)).run()
         assert po.is_waiting(A) is False
 
     def test_resident_box_closed(self, reg, agent_job):
@@ -245,29 +248,37 @@ class TestEndOfRun:
         reg.drop_mailbox(A)  # 워커의 끝(`release_owner`)
         assert reg._post.is_waiting(A) is False
 
-    def test_main_until_words_open_a_run(self, reg, schedule_on):
-        self._waited(make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg))
+    def _main_ports(self, reg):
+        return make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg)
+
+    def test_main_until_its_next_run_starts(self, reg, schedule_on):
+        ports = self._main_ports(reg)
+        self._waited(ports)
         po = reg._post
         assert po.is_waiting("main") is True
         assert (
             po.next_run("main", Take.WORDS_FIRST, timeout=0) is None
         )  # 펌프의 시한 만료
-        assert po.is_waiting("main") is True
-        po.deliver(E.words("u-1", "user:dj", "main", "hi"))
+        po.deliver(E.words("u-1", "user:dj", "main", "/stop agt-3"))
         assert [e.id for e in po.next_run("main", Take.WORDS_FIRST, timeout=0)] == [
             "u-1"
         ]
+        # 펌프가 꺼냈다 — 명령이었으면 런은 열리지 않는다. main 은 아직 기다리는 중이다
+        assert po.is_waiting("main") is True
+        _loop(ports, _provider(DONE)).run()
         assert po.is_waiting("main") is False
 
-    def test_main_until_waking_mail_opens_a_run(self, reg, schedule_on):
-        self._waited(make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg))
-        po = reg._post
-        po.deliver(E.notice("n-1", "job", "main", "done"))
-        assert po.next_run("main", Take.WORDS_FIRST, timeout=0) == ()
-        assert po.is_waiting("main") is False
+    def test_a_run_with_nothing_to_read_keeps_the_mark(self, reg, schedule_on):
+        """메일 런이 열렸는데 첫 경계 전에 그 메일이 빠졌다 — 모델을 부르지 않고 끝나는 런은 기다림을 끝내지 않는다."""
+        ports = self._main_ports(reg)
+        self._waited(ports)
+        silent = MagicMock()
+        silent.call.side_effect = AssertionError("the model must not be called")
+        res = _loop(ports, silent, query="").run()
+        assert res.output == "" and reg._post.is_waiting("main") is True
 
     def test_main_box_closed(self, reg, schedule_on):
-        self._waited(make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg))
+        self._waited(self._main_ports(reg))
         reg._post.close("main")
         assert reg._post.is_waiting("main") is False
 
@@ -276,5 +287,56 @@ def test_no_registry_marks_nothing():
     from agent_cli.wake import Mailbox
 
     mb = Mailbox(None, H)
-    mb.mark_waiting()
-    mb.clear_waiting()  # 레지스트리 없는 세션 — 아무것도 하지 않는다
+    assert mb.accept_wait() == []  # 레지스트리 없는 세션 — 깨울 것도 표시도 없다
+    mb.clear_waiting()
+
+
+class TestMarkBeforeJudgement:
+    """기다림 표시는 받아들임 판정 **앞에** 선다(`Mailbox.accept_wait`, 5b) — 서로 빚진 main 과 상주가 같은 때 기다리려
+    해도 둘 다 받아들여지는 일이 없다(종전엔 판정 뒤에 세워 둘 다 받아들여졌다 — 재현 r1). 스레드 없이 순서를 손으로
+    끼워 넣는다."""
+
+    def _mutual(self, reg):
+        from agent_cli.wake import Mailbox
+
+        tm = AgentInstance(
+            "a",
+            profile_name="explorer",
+            role_prompt="",
+            allowed_tools=None,
+            model="m",
+            hooks_config=None,
+            context_mode="fresh",
+            home_dir=reg.session_dir / "a",
+        )
+        tm.state = "busy"
+        reg._agents["a"] = tm
+        reg.note_owes(A, "main", "main asked", id="r-1")  # 상주가 main 에게 빚졌다
+        reg.note_owes("main", A, "a asked", id="r-2")  # main 이 상주에게 빚졌다
+        return Mailbox(reg, "main"), Mailbox(reg, A)
+
+    def test_the_second_to_wait_is_refused(self, reg):
+        main, agent = self._mutual(reg)
+        assert main.accept_wait() != []  # 상주가 아직 일한다 — 받아들여진다
+        assert agent.accept_wait() == []  # main 이 기다리는 중 — 아무도 깨우지 않는다
+        assert agent.parked_debtors() == ["main"]
+        assert reg._post.is_waiting("main") is True
+        assert reg._post.is_waiting(A) is False  # 거절이면 표시를 내린다
+
+    def test_waits_that_cross_are_never_both_accepted(self, reg):
+        main, agent = self._mutual(reg)
+        seen: dict = {}
+        own = main.wake_sources
+
+        def agent_cuts_in():
+            # main 이 표시를 세운 뒤 판정하기 전에 상주가 기다리려 한다
+            seen["agent"] = agent.accept_wait()
+            return own()
+
+        main.wake_sources = agent_cuts_in
+        seen["main"] = main.accept_wait()
+        assert not (seen["main"] and seen["agent"])
+        assert (
+            seen["agent"] == []
+        )  # 늦게 판정한 쪽이 아니라 — 먼저 표시한 main 을 잠든 채무자로 본 상주가 거절
+        assert seen["main"] != []
