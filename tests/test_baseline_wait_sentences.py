@@ -452,8 +452,9 @@ class TestResidentRefuses:
         )
         assert _wait_lines(text) == [
             (
+                # [5b] 무엇이 왔나와 먼저 할 일 — 사람의 말이면 "Answer it first"
                 "Observation: wait refused — 1 notice arrived while you were thinking; "
-                "delivered right below this. Read it, then call `wait` again only if "
-                "something is still running."
+                "it is right below. Deal with it first, then `wait` again if something is "
+                "still running."
             )
         ]

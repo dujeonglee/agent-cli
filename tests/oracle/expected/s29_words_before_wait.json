@@ -436,7 +436,7 @@
     "role": "assistant"
    },
    {
-    "content": "Observation: wait refused — 1 notice arrived while you were thinking; delivered right below this. Read it, then call `wait` again only if something is still running.",
+    "content": "Observation: wait refused — the user wrote to you while you were thinking; their message is right below. Answer it first, then `wait` again if something is still running.",
     "role": "user",
     "success": false,
     "tool": "wait"

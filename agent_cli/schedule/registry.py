@@ -37,8 +37,9 @@ SCHEDULER_PREFIX = "Scheduler-"
 _STATE = "schedules.json"
 _LOG = "schedule-log.jsonl"
 
-#: ``enqueue(prompt, nickname)`` — 프롬프트를 사용자 요청처럼 입력 큐에 넣는다.
-Enqueue = Callable[[str, str], None]
+#: ``enqueue(prompt, nickname, schedule_id)`` — 프롬프트를 사용자 요청처럼 입력 큐에 넣는다. 보낸 이는 그 예약이다
+#: (``schedule_id`` — 깸·거절 문장이 "사람이 썼다" 고 말하지 않게, 5b).
+Enqueue = Callable[[str, str, str], None]
 
 
 class ScheduleError(ValueError):
@@ -311,7 +312,7 @@ class ScheduleRegistry:
         try:
             if self.enqueue is None:
                 raise RuntimeError("no input queue is attached")
-            self.enqueue(s.prompt, s.effective_nickname)
+            self.enqueue(s.prompt, s.effective_nickname, s.id)
         except Exception as e:
             # 재시도 루프 대신 질문으로 내린다.
             self._mark_missed(s, due or now, "failed", error=str(e))

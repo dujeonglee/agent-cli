@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from agent_cli.constants import schedule_addr
 from agent_cli.main_input import MainInput
 from agent_cli.schedule.registry import ScheduleRegistry
 
@@ -74,8 +75,8 @@ class TestRunPump:
         """일회성 실행이 예약을 걸고 끝나 버리면 "매시간 확인하겠다" 는 약속이
         조용히 사라진다 — 끝나지 않고 기다리며, 발화는 다음 요청으로 돈다."""
         q, calls, waits = MainInput(), [], []
-        reg.enqueue = lambda prompt, nickname: q.enqueue(
-            None, prompt, nickname=nickname
+        reg.enqueue = lambda prompt, nickname, sid: q.enqueue(
+            None, prompt, nickname=nickname, src=schedule_addr(sid)
         )
         s = reg.add("0 9 * * *", "hourly check")
         q.enqueue(None, "task")
@@ -142,7 +143,7 @@ class TestNotices:
 
         sent = []
         again = ScheduleRegistry(tmp_path, clock=clock)
-        again.enqueue = lambda p, n: sent.append(p)
+        again.enqueue = lambda p, n, sid: sent.append(p)
         text = _missed_schedules_notice(again)
         assert "1 missed schedule(s)" in text and "아침 점검" in text
         assert sent == []

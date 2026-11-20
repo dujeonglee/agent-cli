@@ -455,11 +455,19 @@ class PostOffice:
         with self.cv:
             return self._box_or_empty(addr).mail()
 
-    def arrived(self, addr: str, *, waking_only: bool, words: bool) -> int:
-        """``addr`` 앞에 이미 도착해 줄 선 봉투 수 — 깨우는 것만 셀지·사람의 말을 셀지는 부르는 쪽이 정한다
-        (`Postbox.count`). 런이 꺼내 든 봉투는 세지 않는다."""
+    def arrivals(
+        self, addr: str, *, waking_only: bool, words: bool
+    ) -> tuple[Envelope, ...]:
+        """``addr`` 앞에 이미 도착해 줄 선 봉투 — 도착 순서. 깨우는 것만 볼지·사람의 말을 볼지는 부르는 쪽이 정한다
+        (`Postbox.arrivals`). 런이 꺼내 든 봉투는 들지 않는다."""
         with self.cv:
-            return self._box_or_empty(addr).count(waking_only=waking_only, words=words)
+            return self._box_or_empty(addr).arrivals(
+                waking_only=waking_only, words=words
+            )
+
+    def arrived(self, addr: str, *, waking_only: bool, words: bool) -> int:
+        """`arrivals` 의 수."""
+        return len(self.arrivals(addr, waking_only=waking_only, words=words))
 
     def queued_requests_from(self, addr: str, src: str) -> int:
         """``addr`` 앞에 줄 선(아직 시작 안 한) ``src`` 의 요청 수 — 회신·통지·남의 요청은 세지 않는다."""

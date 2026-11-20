@@ -271,12 +271,11 @@ class TestAlreadyArrived:
         from agent_cli.wake import Mailbox
 
         reg = self._registry(tmp_path)
-        assert Mailbox(get_agent_registry(), "main").arrived() == 0
+        assert Mailbox(get_agent_registry(), "main").arrivals() == ()
         self._monitor_mail(reg)
-        assert (
-            reg.arrived_for("main", waking_only=False, words=False) == 1
-            and Mailbox(get_agent_registry(), "main").arrived() == 1
-        )
+        assert reg.arrived_for("main", waking_only=False, words=False) == 1 and Mailbox(
+            get_agent_registry(), "main"
+        ).arrivals() == ("notice",)
         # 종전의 "a reply to you not yet delivered" 는 없다 — 도착분은 깨울 것이 아니다
         assert Mailbox(get_agent_registry(), "main").wake_sources() == []
         assert reg.arrived_for("agent:nobody", waking_only=False, words=True) == 0

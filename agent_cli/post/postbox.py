@@ -97,13 +97,17 @@ class Postbox:
             e.id == env_id for e in self._taken
         )
 
-    def count(self, *, waking_only: bool, words: bool) -> int:
-        """줄 선 봉투 수 — ``waking_only`` 면 깨우는 것만, ``words`` 가 거짓이면 사람의 말은 뺀다."""
-        return sum(
-            1
+    def arrivals(self, *, waking_only: bool, words: bool) -> tuple[Envelope, ...]:
+        """줄 선 봉투 — 도착 순서. ``waking_only`` 면 깨우는 것만, ``words`` 가 거짓이면 사람의 말은 뺀다."""
+        return tuple(
+            e
             for e in self._queued
             if (e.wakes or not waking_only) and (words or not is_human_words(e))
         )
+
+    def count(self, *, waking_only: bool, words: bool) -> int:
+        """`arrivals` 의 수."""
+        return len(self.arrivals(waking_only=waking_only, words=words))
 
     def words(self) -> tuple[Envelope, ...]:
         """줄 선 사람의 말 — 도착 순서."""

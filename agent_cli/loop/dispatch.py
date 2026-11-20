@@ -27,7 +27,12 @@ from agent_cli.loop.reroute import reroute
 from agent_cli.loop.skill_invoke import _handle_run_skill
 from agent_cli.loop.state import _CONTINUE, _NOT_HANDLED, LoopConfig, LoopState
 from agent_cli.loop.tool_bridge import ToolBridge, _normalize_input
-from agent_cli.loop.wait_sentences import mutual_wait_refusal
+from agent_cli.loop.wait_sentences import (
+    USER,
+    arrived_refusal,
+    mutual_wait_refusal,
+    wait_interrupted,
+)
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.detectors import (
     ActionLoopDetector,
@@ -1157,17 +1162,14 @@ class TurnDispatcher:
             )
             return _CONTINUE
         mailbox = self.cfg.kind.ports.mailbox
-        arrived = mailbox.arrived()
-        if arrived:
-            n = f"{arrived} notice" + ("s" if arrived > 1 else "")
+        arrivals = mailbox.arrivals()
+        if arrivals:
             _append_observation(
                 self.state.messages,
                 self.ctx,
                 self.cfg.dialect,
                 turn.record,
-                f"Observation: wait refused — {n} arrived while you were "
-                "thinking; delivered right below this. Read it, then call `wait` "
-                "again only if something is still running.",
+                f"Observation: wait refused — {arrived_refusal(arrivals)}",
                 tool_name="wait",
                 success=False,
                 turn=self.state.turn,
@@ -1261,6 +1263,8 @@ class TurnDispatcher:
             if awaited:
                 renderer.wait_in_place(False, [])
         if why == "input":
+            # `wait_input` 이 사람의 말을 보았다 — 그 사이 취소돼 상자에 없어도 사람이 쓴 것은 사실이다
+            kinds = mailbox.arrivals() or (USER,)
             left = mailbox.awaited()
             ids = ", ".join(str(r.get("id")) for r in left)
             still = (
@@ -1273,8 +1277,7 @@ class TurnDispatcher:
                 self.ctx,
                 self.cfg.dialect,
                 turn.record,
-                "Observation: the wait was interrupted — the user wrote to you; their "
-                f"message is right below{still}.",
+                f"Observation: {wait_interrupted(kinds, still)}",
                 tool_name="wait",
                 success=True,
                 turn=self.state.turn,

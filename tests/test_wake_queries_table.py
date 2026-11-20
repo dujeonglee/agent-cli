@@ -120,7 +120,7 @@ def test_wait_arrived_per_address(reg, name, owner, on_roster, envs, count):
         _workerless(reg, owner.split(":", 1)[1])
     for env in envs:
         reg._post.deliver(env)
-    assert _mailbox(owner, reg).arrived() == count
+    assert len(_mailbox(owner, reg).arrivals()) == count
 
 
 def test_private_mail_is_arrived(reg):
@@ -131,11 +131,11 @@ def test_private_mail_is_arrived(reg):
         author="main",
         expects_reply=False,
     )
-    assert _mailbox("harness:x", reg).arrived() == 1
+    assert _mailbox("harness:x", reg).arrivals() == ("notice",)
 
 
 def test_no_registry_arrives_nothing(slots):
-    assert _mailbox("harness:x", None).arrived() == 0
+    assert _mailbox("harness:x", None).arrivals() == ()
 
 
 class TestMainInPlaceWake:

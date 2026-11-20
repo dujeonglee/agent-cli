@@ -796,14 +796,17 @@ class AgentRegistry:
             return ()
         return tuple(map(view_of_inbox_item, self._taken(tm)))
 
-    def arrived_for(self, addr: str, *, waking_only: bool, words: bool) -> int:
-        """``addr`` 앞에 **이미 도착해 다음 턴 경계에 배달될** 봉투 수 — 창구의 `PostOffice.arrived`(거르는 법은
-        부르는 쪽). main·에이전트·private 주소만 — 명단에 없는 에이전트와 그 밖 주소는 0. 읽기만 한다."""
+    def arrivals_for(self, addr: str, *, waking_only: bool, words: bool) -> tuple:
+        """``addr`` 앞에 **이미 도착해 다음 턴 경계에 배달될** 봉투(도착 순서, 창구의 `PostOffice.arrivals`). main·에이전트·
+        private 주소만 — 명단에 없는 에이전트와 그 밖 주소는 비었다. 읽기만 한다."""
         if addr.startswith("agent:") and addr.split(":", 1)[1] not in self._agents:
-            return 0
+            return ()
         if addr == "main" or addr.startswith("agent:") or is_private_owner(addr):
-            return self._post.arrived(addr, waking_only=waking_only, words=words)
-        return 0
+            return self._post.arrivals(addr, waking_only=waking_only, words=words)
+        return ()
+
+    def arrived_for(self, addr: str, *, waking_only: bool, words: bool) -> int:
+        return len(self.arrivals_for(addr, waking_only=waking_only, words=words))
 
     def open_human_question_keys(self) -> list[str]:
         """사람 답을 기다리는 열린 질문의 asker — 종료 시 경고 표시용."""
@@ -2165,20 +2168,12 @@ class AgentRegistry:
         return [dict(e.payload) for e in envs]
 
     def wait_mail(
-        self,
-        *,
-        arrived,
-        stop_event,
-        still_waiting,
-        wait_input=None,
-        poll_s: float = 0.5,
+        self, *, arrived, stop_event, still_waiting, wait_input=None, poll_s=0.5
     ) -> str:
-        """``arrived()`` 가 0 이 아닐 때까지 막는다 — 제자리 `wait` (`dispatch._wait_in_place`:
-        하니스 작업, 기다리는 회신을 둔 main). 돌려주는 값은 깬 이유: ``"mail"``(도착 —
-        `Mailbox.arrived`, 창구의 조건변수 아래서 묻는다), ``"input"``(``wait_input(timeout)`` 이 참 — 사람 입력이 도착했다,
-        main 만), ``"stopped"``(``stop_event``), ``"nothing"``(``still_waiting()`` 이 거짓 —
-        기다리던 것이 메일 없이 사라졌다: 잡을 밖에서 죽임, 모니터 삭제, 에이전트 사망).
-        상한은 없다 — 중간 깨우기가 메일로 와서 모델이 판단한다."""
+        """``arrived()`` 가 0 이 아닐 때까지 막는다 — 제자리 `wait`. 돌려주는 값은 깬 이유: ``"mail"``(도착 —
+        `Mailbox._mail_arrived_while_waiting`, 창구의 조건변수 아래서 묻는다), ``"input"``(``wait_input(timeout)`` 이
+        참 — 사람 입력, main 만), ``"stopped"``(``stop_event``), ``"nothing"``(``still_waiting()`` 이 거짓 — 기다리던
+        것이 메일 없이 사라졌다). 상한은 없다 — 중간 깨우기가 메일로 와서 모델이 판단한다."""
         while True:
             with self._cv:
                 if arrived():

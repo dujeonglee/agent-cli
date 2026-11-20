@@ -12,8 +12,15 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, NamedTuple
 
-from agent_cli.constants import format_duration, harness_mail_tool
+from agent_cli.constants import (
+    ARRIVAL_NOTICE,
+    ARRIVAL_USER,
+    SCHEDULE_ADDR_PREFIX,
+    format_duration,
+    harness_mail_tool,
+)
 from agent_cli.jobs import _short
+from agent_cli.post.envelope import is_human_words
 from agent_cli.session_slots import (
     get_agent_registry,
     get_job_registry,
@@ -100,7 +107,7 @@ def agent_relations(
 ) -> list[tuple[str, str]]:
     """``addr`` 를 깨울 에이전트들과 그 관계 — ``("owes"|"working"|"queued", 주소)`` (v10.65.0). 빚진 채 **스스로
     잠든** 쪽은 여기 없다 — `parked_debtors` 가 따로 들고 `parked_view` 가 거슬러 본다. ``exclude`` (v10.77.0):
-    순환 대기 판정에서 거슬러 온 주소들. **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `Mailbox.arrived`.
+    순환 대기 판정에서 거슬러 온 주소들. **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `Mailbox.arrivals`.
 
     한 에이전트는 한 관계로만 나온다 — working > queued > owes: 내 요청을 들고 일하는(줄 세운) 쪽은 그 요청을 빚진
     쪽이기도 하지만 더 많이 말하는 쪽 하나로 센다."""
@@ -385,6 +392,18 @@ def _private_inbox(owner: str):
     return absorb
 
 
+def _arrival_kind(env) -> str:
+    """도착한 봉투 하나의 종류 — `Mailbox.arrivals`."""
+    if not is_human_words(env):
+        return ARRIVAL_NOTICE
+    if env.src.startswith(SCHEDULE_ADDR_PREFIX):
+        sid = env.src[len(SCHEDULE_ADDR_PREFIX) :]
+        sched = get_schedule_registry()
+        s = sched.get(sid) if sched is not None else None
+        return SCHEDULE_ADDR_PREFIX + ((s.label or s.id) if s is not None else sid)
+    return ARRIVAL_USER
+
+
 class Mailbox:
     """주소 하나에 묶인 에이전트 레지스트리의 좁은 창 — 루프 포트 ``mailbox`` (v10.133.27).
 
@@ -422,15 +441,17 @@ class Mailbox:
         """받은편지함을 비워 흡수 항목으로 — ``has_inbox`` 일 때만 부른다."""
         return self._take()
 
-    def arrived(self) -> int:
-        """이 주소 앞에 **이미 도착해 다음 턴 경계에 배달될** 봉투 수 (v10.66.2) — `wait` 의 둘째 판정이자 제자리
-        대기를 "mail" 로 깨우는 것. 깨울 것이 "아직 돌고 있는 것" 이라면 이건 "끝나서 통지가 와 있는 것"(모니터가
-        `wait` 보다 먼저 발화한 벤치 사례). 0 이 아니면 `wait` 는 거부되고 런이 이어져 그것을 바로 받는다.
-        깨우는 봉투만 센다(5b) — 깨우지 않는 봉투("Stop everything" 의 정지 회신)는 다음에 깰 때 함께 읽힌다.
-        사람의 말도 깨우는 봉투다 — main·에이전트가 같다(5b A-4)."""
+    def arrivals(self) -> tuple[str, ...]:
+        """이 주소 앞에 **이미 도착해 다음 턴 경계에 배달될** 깨우는 봉투가 무엇인지 — 도착 순서로 봉투마다
+        ``"user"``(사람의 말)·``"schedule:<이름>"``(예약 발화, 이름은 label 이나 id)·``"notice"``(그 밖 — 회신·요청·
+        통지·하니스 알림). `wait` 의 둘째 판정(v10.66.2): 깨울 것이 "아직 돌고 있는 것" 이라면 이건 "끝나서 와 있는
+        것"(모니터가 `wait` 보다 먼저 발화한 벤치 사례) — 비지 않았으면 `wait` 는 거부되고 런이 이어져 그것을 바로
+        받는다. 깨우는 봉투만 본다(5b) — 깨우지 않는 봉투("Stop everything" 의 정지 회신)는 다음에 깰 때 함께 읽힌다.
+        사람의 말도 깨우는 봉투다 — main·에이전트가 같다(5b A-4). 글은 `loop.wait_sentences` 가 짓는다."""
         if self._registry is None:
-            return 0
-        return self._registry.arrived_for(self.owner, waking_only=True, words=True)
+            return ()
+        envs = self._registry.arrivals_for(self.owner, waking_only=True, words=True)
+        return tuple(_arrival_kind(e) for e in envs)
 
     def _mail_arrived_while_waiting(self) -> int:
         """제자리 대기를 "mail" 로 깨우는 도착분 — `arrived` 와 같되, 사람 입력을 기다리는 루프(``wait_input``,

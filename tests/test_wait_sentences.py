@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from agent_cli.loop.wait_sentences import mutual_wait_refusal
+from agent_cli.loop.wait_sentences import (
+    arrived_refusal,
+    mutual_wait_refusal,
+    wait_interrupted,
+)
 
 A, B = "agent:a", "agent:b"
 HEAD = (
@@ -31,8 +35,8 @@ def test_mutual_wait_with_two_waiting_debtors():
     )
 
 
-def test_the_module_is_a_leaf():
-    """비교 트리가 이 파일 하나만 바꿀 수 있게 — agent_cli 의 무엇도 import 하지 않는다."""
+def test_the_module_leans_only_on_constants():
+    """비교 트리가 이 파일 하나만 바꿀 수 있게 — `constants` 의 낱말 말고는 import 하지 않는다."""
     import ast
     from pathlib import Path
 
@@ -45,4 +49,78 @@ def test_the_module_is_a_leaf():
         if isinstance(n, (ast.Import, ast.ImportFrom))
         for a in (n.names if isinstance(n, ast.Import) else [None])
     ]
-    assert all(m == "__future__" for m in imported), imported
+    assert set(imported) <= {"__future__", "agent_cli.constants"}, imported
+
+
+# ── 무엇이 왔나 (거절 2번·깸) ─────────────────────────────────────────
+
+TAIL = ", then `wait` again if something is still running."
+NIGHTLY = "schedule:nightly"
+
+REFUSALS = [
+    (
+        ("user",),
+        "the user wrote to you while you were thinking; their message is right below. Answer it first",
+    ),
+    (
+        ("user", "user"),
+        "the user wrote to you while you were thinking; their message is right below. Answer it first",
+    ),
+    (
+        ("notice",),
+        "1 notice arrived while you were thinking; it is right below. Deal with it first",
+    ),
+    (
+        ("notice", "notice"),
+        "2 notices arrived while you were thinking; they are right below. Deal with them first",
+    ),
+    (
+        ("notice", "user"),
+        "the user wrote to you and 1 notice arrived while you were thinking; they are right below. Answer the user first",
+    ),
+    (
+        (NIGHTLY,),
+        'the schedule "nightly" fired while you were thinking; its prompt is right below. Deal with it first',
+    ),
+    (
+        ("user", NIGHTLY),
+        (
+            'the user wrote to you and the schedule "nightly" fired while you were thinking; they are right below. '
+            "Answer the user first"
+        ),
+    ),
+    (
+        (NIGHTLY, "notice"),
+        (
+            'the schedule "nightly" fired and 1 notice arrived while you were thinking; they are right below. '
+            "Deal with them first"
+        ),
+    ),
+    (
+        ("user", NIGHTLY, "notice", "notice"),
+        (
+            'the user wrote to you, the schedule "nightly" fired and 2 notices arrived while you were thinking; '
+            "they are right below. Answer the user first"
+        ),
+    ),
+]
+
+
+def test_arrived_refusal_table():
+    for kinds, head in REFUSALS:
+        assert arrived_refusal(kinds) == head + TAIL, kinds
+
+
+def test_wait_interrupted_keeps_the_user_sentence_and_names_a_schedule():
+    still = " — r-1 still awaited, so `wait` again when you are done"
+    assert wait_interrupted(("user",), still) == (
+        "the wait was interrupted — the user wrote to you; their message is right below"
+        + still
+        + "."
+    )
+    assert wait_interrupted((NIGHTLY,), "") == (
+        'the wait was interrupted — the schedule "nightly" fired; its prompt is right below.'
+    )
+    assert wait_interrupted(("user", NIGHTLY), "") == (
+        'the wait was interrupted — the user wrote to you and the schedule "nightly" fired; they are right below.'
+    )
