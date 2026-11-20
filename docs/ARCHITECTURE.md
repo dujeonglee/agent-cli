@@ -102,6 +102,7 @@ agent_cli/
 │   ├── prompt.py            `SystemPromptSvc` — 이름 붙은 섹션 리스트가 진실, 시스템 프롬프트 문자열은 그 join
 │   ├── llm.py               `LLMCaller` — 스트리밍 호출·예방 압축·오버플로 재시도·압축 요약 호출
 │   ├── dispatch.py          `TurnDispatcher` — 파싱된 턴의 op 순회·가드·배치·관찰 조립·recovery, `ask`·`complete` 처리
+│   ├── wait_sentences.py    `wait` 가 모델에게 말하는 문장(이미 도착·서로 기다림·깸) — 판정 없이 글만, 의존 없는 잎
 │   ├── tool_bridge.py       `ToolBridge` — 훅·도구 실행(일반·delegate)·`RunContext`·결과→관찰
 │   ├── skill_invoke.py      `run_skill` op 처리 — 이름·인자 검사 뒤 `SkillLoop` 실행
 │   ├── reroute.py           결과가 같다고 보장될 때만 도구 호출을 다른 도구로 바꾸는 층(`read_file` 이미지 → `view_image`)

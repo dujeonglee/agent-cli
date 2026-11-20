@@ -490,6 +490,17 @@ class Mailbox:
             return []
         return parked_debtors(self._registry.wake_facts(), self.owner)
 
+    def debts_to(self, addrs: list[str]) -> list[str]:
+        """이 주소가 ``addrs`` 에게 갚지 않은 회신의 id — 장부 순서(`AgentRegistry.reply_debts`). 읽기만 한다."""
+        if self._registry is None:
+            return []
+        wanted = set(addrs)
+        return [
+            d.id
+            for d in self._registry.reply_debts(self.owner)
+            if d.to in wanted and not d.settled
+        ]
+
     def accept_wait(self) -> list[str]:
         """`wait` 의 받아들임 판정 — 창구에 이 주소의 기다림 표시를 **먼저** 세우고 깨울 것(`wake_sources`)을 묻는다.
         없으면 표시를 내리고 빈 목록(거절)을 돌려준다. 표시를 판정 앞에 세우므로, 서로 빚진 둘이 같은 때 기다리려 해도

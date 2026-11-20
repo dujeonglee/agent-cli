@@ -159,8 +159,8 @@ class TestMainRefuses:
     def test_an_agent_waiting_on_mains_answer_is_not_a_source(self, session):  # noqa: F811
         """상주가 main 에게 회신 기대 `message` 로 묻고 잠들었다 — main 이 `wait` 하면 거절된다: 상주를 깨울 것은
         main 의 회신뿐이다. `[v10.145.1 에서 바뀜 — 그 `message` 는 상주의 과제 빚을 갚지 않는다: 상주는 main 에게
-        빚진 채 main 을 기다리므로 거절 문장이 "근거 없음" 에서 고리("owes you a reply but is itself waiting — on
-        you")로 바뀐다]`"""
+        빚진 채 main 을 기다리므로 거절 문장이 "근거 없음" 에서 고리("owes you a reply but is itself waiting …")로
+        바뀐다]`"""
         holder: dict = {"waiting": threading.Event()}
 
         def asks(msgs):
@@ -176,6 +176,7 @@ class TestMainRefuses:
             assert wait_until(
                 lambda: [r["state"] for r in reg.roster_snapshot()] == ["idle"]
             )
+            holder["owed"] = [d.id for d in reg.reply_debts("main") if not d.settled]
             return call("wait")
 
         p = Provider(
@@ -206,10 +207,12 @@ class TestMainRefuses:
         s["run"]()
         lines = _wait_lines(contents(s["ctx"]))
         (key,) = [r["key"] for r in s["reg"].roster_snapshot()]
+        # [5b 항목 6] 확인한 사실만 — "on you" 대신 "그를 깨울 것이 돌고 있지 않다", main 이 진 회신의 id
+        (owed,) = holder["owed"]
         assert lines[1] == (
             f"Observation: wait refused — agent:{key} owes you a reply but is itself "
-            "waiting — on you, so if you wait too, nobody wakes. Reply to what you owe, "
-            "or keep working; call `complete` if the task is done."
+            "waiting, and nothing that would wake it is running, so if you wait too, "
+            f"nobody wakes. You owe it a reply [{owed}]: send that first."
         )
 
 

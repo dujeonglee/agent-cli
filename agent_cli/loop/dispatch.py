@@ -27,6 +27,7 @@ from agent_cli.loop.reroute import reroute
 from agent_cli.loop.skill_invoke import _handle_run_skill
 from agent_cli.loop.state import _CONTINUE, _NOT_HANDLED, LoopConfig, LoopState
 from agent_cli.loop.tool_bridge import ToolBridge, _normalize_input
+from agent_cli.loop.wait_sentences import mutual_wait_refusal
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.detectors import (
     ActionLoopDetector,
@@ -1176,9 +1177,7 @@ class TurnDispatcher:
         if not sources:
             parked = mailbox.parked_debtors()
             why = (
-                f"{', '.join(parked)} owes you a reply but is itself waiting — on "
-                "you, so if you wait too, nobody wakes. Reply to what you owe, or "
-                "keep working; call `complete` if the task is done."
+                mutual_wait_refusal(parked, mailbox.debts_to(parked))
                 if parked
                 else WAIT_NOTHING_PENDING + self.cfg.kind.wait_refused_next()
             )
