@@ -331,11 +331,26 @@ class TestResidentAccepts:
             )
         ]
 
-    def test_schedule_counts_for_a_resident(self, resident):
-        """예약은 main 에게 발화하는데 상주의 근거로 센다 `[단계 5 에서 바뀜 — 변화 8]`."""
+    def test_schedule_does_not_wake_a_resident(self, resident):
+        """예약은 main 에게 발화한다 — 상주의 깨울 것이 아니다(5b 변화 8). 예약만 켜져 있으면 깨울 것이 없는 거절이다."""
         set_schedule_registry(_schedule_stub())
-        text = resident["run"]({"TASK-R1": [call("wait")]})
-        assert _wait_lines(text) == ["Observation: waiting — will wake on: a schedule."]
+        text = resident["run"](
+            {
+                "TASK-R1": [
+                    call("wait"),
+                    lambda m: call("reply", id=owed_id(m), text="done"),
+                    call("complete", result="ok"),
+                ]
+            }
+        )
+        assert _wait_lines(text) == [
+            (
+                "Observation: wait refused — nothing would wake you: no job or monitor of "
+                "yours is running and no agent owes you a reply. You do not need `wait` to "
+                "receive messages: end this run with `complete`, and the next message to "
+                "you starts a new run with your memory intact."
+            )
+        ]
 
 
 class TestResidentRefuses:

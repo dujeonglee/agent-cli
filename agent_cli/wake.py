@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, NamedTuple
 
-from agent_cli.constants import format_duration, harness_mail_tool, is_private_owner
+from agent_cli.constants import format_duration, harness_mail_tool
 from agent_cli.jobs import _short
 from agent_cli.session_slots import (
     get_agent_registry,
@@ -189,10 +189,10 @@ def wake_items(
 
 
 def schedule_wakes(owner: str) -> bool:
-    """켜진 예약이 이 주소의 `wait` 를 받아들일 근거인가 — private 이 아닌 주소 전부(main·에이전트). 예약은 세션
-    것이라 main 에게 발화한다. private 주소(one-shot·하니스 작업)의 근거로 세면 잡 없이도 `wait` 가 받아들여져
-    영원히 막힌다 (v10.84.0). [5b 변화 8: 에이전트도 근거가 아니다 — main 만]"""
-    return not is_private_owner(owner)
+    """켜진 예약이 이 주소의 `wait` 를 받아들일 근거인가 — main 만. 예약은 세션 것이라 main 에게 발화한다(사람의
+    말로 main 앞에 선다). 에이전트·private 주소(one-shot·하니스 작업)의 근거로 세면 예약이 그를 깨우지 않는데도
+    `wait` 가 받아들여져 막힌다 (v10.84.0 private, 5b 변화 8 에이전트)."""
+    return owner == "main"
 
 
 def parked_view(

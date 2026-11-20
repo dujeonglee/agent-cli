@@ -3,8 +3,7 @@
 자리마다 제품의 종류가 만드는 포트(`MainLoop`·`ResidentLoop`·`PrivateLoop` 의 ``make_ports``)로 묻는다 — 어긋남을
 남겨 둔 한 줄(main 의 ``Mailbox`` 생성, `Mailbox.arrived`, 예약의 근거)이 바뀌면 여기서 걸린다.
 
-``[5b]`` 표지의 칸은 알려진 어긋남을 지금 동작으로 고정한 것이다 — 5b 가 그 한 줄을 뒤집을 때 이 칸이 바뀐다:
-- 에이전트의 `wait` 도 예약을 깨울 근거로 받는다(변화 8).
+5b 에서 뒤집힌 칸에는 그 근거를 단다(깨우는 봉투만·사람의 말·예약은 main 만).
 """
 
 from __future__ import annotations
@@ -233,16 +232,23 @@ PARKED_B = WakeFacts(
 WAKERS = [
     ("main_schedule", "main", NO_AGENTS, True, ["a schedule"], frozenset()),
     ("main_nothing", "main", NO_AGENTS, False, [], frozenset()),
-    ("agent_schedule", A, NO_AGENTS, True, ["a schedule"], frozenset()),  # [5b] 변화 8
+    (
+        "agent_ignores_schedule",
+        A,
+        NO_AGENTS,
+        True,
+        [],
+        frozenset(),
+    ),  # 5b 변화 8: main 만
     ("agent_nothing", A, NO_AGENTS, False, [], frozenset()),
     ("private_ignores_schedule", "harness:x", NO_AGENTS, True, [], frozenset()),
     (
-        "parked_debtor_waits_on_schedule",  # [5b] 변화 8 — 거슬러 본 에이전트도 예약을 근거로
+        "parked_debtor_does_not_wait_on_schedule",  # 5b 변화 8 — 거슬러 본 에이전트에게도 예약은 근거가 아니다
         "main",
         PARKED_B,
         True,
-        ["agent:b owes you a reply (it is waiting on others)", "a schedule"],
-        frozenset({"agent:b"}),
+        ["a schedule"],
+        frozenset(),
     ),
     ("parked_debtor_nothing", "main", PARKED_B, False, [], frozenset()),
 ]

@@ -50,8 +50,20 @@ def reg(tmp_path):
 
 @pytest.fixture
 def schedule_on():
-    """켜진 예약 하나 — main·에이전트의 `wait` 를 받아들일 근거(런을 끝내는 대기)."""
+    """켜진 예약 하나 — main 의 `wait` 를 받아들일 근거(런을 끝내는 대기)."""
     set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
+
+
+@pytest.fixture
+def agent_job():
+    """상주 ``A`` 의 돌고 있는 잡 하나 — 그 상주의 `wait` 를 받아들일 근거(예약은 main 만, 5b 변화 8)."""
+    job = SimpleNamespace(id=1, command="sleep 30")
+    set_job_registry(
+        SimpleNamespace(
+            running=lambda owner=None: [job] if owner == A else [],
+            log_size=lambda j: 0,
+        )
+    )
 
 
 def _provider(*replies: dict):
@@ -209,7 +221,7 @@ class TestEndOfRun:
         assert loop.turn == 1
         return res
 
-    def test_resident_until_a_waking_envelope_opens_a_run(self, reg, schedule_on):
+    def test_resident_until_a_waking_envelope_opens_a_run(self, reg, agent_job):
         self._waited(_resident_ports())
         po = reg._post
         assert po.is_waiting(A) is True
@@ -223,12 +235,12 @@ class TestEndOfRun:
         assert [e.id for e in po.next_run(A, Take.ARRIVAL, timeout=0)] == ["r-1"]
         assert po.is_waiting(A) is False
 
-    def test_resident_box_closed(self, reg, schedule_on):
+    def test_resident_box_closed(self, reg, agent_job):
         self._waited(_resident_ports())
         reg._post.close(A)  # ✕·세션 종료
         assert reg._post.is_waiting(A) is False
 
-    def test_resident_owner_gone(self, reg, schedule_on):
+    def test_resident_owner_gone(self, reg, agent_job):
         self._waited(_resident_ports())
         reg.drop_mailbox(A)  # 워커의 끝(`release_owner`)
         assert reg._post.is_waiting(A) is False
