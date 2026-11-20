@@ -4,7 +4,6 @@
 남겨 둔 한 줄(main 의 ``Mailbox`` 생성, `Mailbox.arrived`, 예약의 근거)이 바뀌면 여기서 걸린다.
 
 ``[5b]`` 표지의 칸은 알려진 어긋남을 지금 동작으로 고정한 것이다 — 5b 가 그 한 줄을 뒤집을 때 이 칸이 바뀐다:
-- main 의 도착분은 사람의 말을 세지 않는다 — 회신을 기다리는 main 은 받아들인 뒤 "input" 으로 깬다(A-4).
 - 에이전트의 `wait` 도 예약을 깨울 근거로 받는다(변화 8).
 """
 
@@ -102,10 +101,10 @@ S = lambda i: E.reply(f"n-{i}", "agent:b", A, "x", re="r-0", wakes=False)
 #: (이름, 주소, 명단에 올림, 넣는 봉투, 도착분)
 ARRIVED = [
     ("main_empty", "main", False, [], 0),
-    ("main_words_not_counted", "main", False, [W(1)], 0),  # [5b] A-4
+    ("main_words_counted", "main", False, [W(1)], 1),  # 5b A-4: 사람의 말도 깨우는 봉투
     ("main_waking_mail", "main", False, [N(1)], 1),
     ("main_quiet_reply_not_counted", "main", False, [Q(1)], 0),  # 5b: 깨우는 봉투만
-    ("main_words_and_quiet", "main", False, [W(1), Q(2)], 0),
+    ("main_words_and_quiet", "main", False, [W(1), Q(2)], 1),
     ("agent_human_counted", A, True, [H(1)], 1),
     ("agent_quiet_reply_not_counted", A, True, [S(1)], 0),  # 5b: 깨우는 봉투만
     ("agent_request", A, True, [R(1)], 1),
@@ -143,7 +142,8 @@ def test_no_registry_arrives_nothing(slots):
 class TestMainInPlaceWake:
     """회신을 기다리는 main 의 제자리 대기 — 무엇이 어떤 이유로 깨우나."""
 
-    def test_words_wake_it_as_input_not_mail(self, reg):  # [5b] A-4
+    def test_words_wake_it_as_input_not_mail(self, reg):
+        """기다리는 도중 온 사람의 말은 ``wait_input`` 이 맡는다 — 줄 선 명령을 그 자리에서 라우팅하려고."""
         reg._post.deliver(W(1))
         mb = _mailbox("main", reg, wait_input=lambda timeout: True)
         why = mb.wait(stop_event=threading.Event(), still_waiting=lambda: True)

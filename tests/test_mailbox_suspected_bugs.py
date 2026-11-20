@@ -113,9 +113,7 @@ class TestHeldResidentAndTheRequestersWait:
     )
     def test_the_requesters_wait_has_nothing_to_wake_it(self, tmp_path, cleanup):
         reg, keys = self._setup(tmp_path, cleanup)
-        assert (
-            Mailbox(reg, f"agent:{keys['qq']}", count_words=True).wake_sources() == []
-        )
+        assert Mailbox(reg, f"agent:{keys['qq']}").wake_sources() == []
 
 
 # ── 2. 재시작 뒤 에이전트→main 미배달 요청의 보낸 쪽 기록 ────────────────────

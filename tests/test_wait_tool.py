@@ -198,12 +198,10 @@ class TestWaitEndsTheRun:
         jobs.start("sleep 30", owner="agent:x")
         from agent_cli.wake import Mailbox
 
-        assert (
-            Mailbox(get_agent_registry(), "main", count_words=True).wake_sources() == []
-        )
-        assert Mailbox(
-            get_agent_registry(), "agent:x", count_words=True
-        ).wake_sources() == ["job #1 (`sleep 30`)"]
+        assert Mailbox(get_agent_registry(), "main").wake_sources() == []
+        assert Mailbox(get_agent_registry(), "agent:x").wake_sources() == [
+            "job #1 (`sleep 30`)"
+        ]
 
 
 class TestAlreadyArrived:
@@ -273,16 +271,14 @@ class TestAlreadyArrived:
         from agent_cli.wake import Mailbox
 
         reg = self._registry(tmp_path)
-        assert Mailbox(get_agent_registry(), "main", count_words=False).arrived() == 0
+        assert Mailbox(get_agent_registry(), "main").arrived() == 0
         self._monitor_mail(reg)
         assert (
             reg.arrived_for("main", waking_only=False, words=False) == 1
-            and Mailbox(get_agent_registry(), "main", count_words=False).arrived() == 1
+            and Mailbox(get_agent_registry(), "main").arrived() == 1
         )
         # 종전의 "a reply to you not yet delivered" 는 없다 — 도착분은 깨울 것이 아니다
-        assert (
-            Mailbox(get_agent_registry(), "main", count_words=True).wake_sources() == []
-        )
+        assert Mailbox(get_agent_registry(), "main").wake_sources() == []
         assert reg.arrived_for("agent:nobody", waking_only=False, words=True) == 0
 
     def test_resident_inbox_items_count_for_that_agent(self, tmp_path):
@@ -496,10 +492,7 @@ class TestCircularWait:
         self._owes(r, b, a, "r-2")  # b 는 a 의 요청으로 깨어 지금 wait 를 부른다
         tb = r.get(b)
         tb.state, tb.current_author = "busy", f"agent:{a}"
-        assert (
-            Mailbox(get_agent_registry(), f"agent:{b}", count_words=True).wake_sources()
-            == []
-        )
+        assert Mailbox(get_agent_registry(), f"agent:{b}").wake_sources() == []
         assert parked_debtors(r.wake_facts(), f"agent:{b}") == [f"agent:{a}"]
 
     def test_a_chain_to_a_working_agent_still_wakes(self, reg):
@@ -514,9 +507,7 @@ class TestCircularWait:
 
         assert r.request(c, "job", author=f"agent:{a}") == ""
         assert wait_until(lambda: r.taken_by(f"agent:{c}") != ())
-        got = Mailbox(
-            get_agent_registry(), f"agent:{b}", count_words=True
-        ).wake_sources()
+        got = Mailbox(get_agent_registry(), f"agent:{b}").wake_sources()
         assert got == [f"agent:{a} owes you a reply (it is waiting on others)"]
 
 

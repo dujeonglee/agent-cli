@@ -1,33 +1,33 @@
 {
  "conversation": {
-  "agents/agt-27a46376/conversation.jsonl": [
+  "agents/agt-2d70e799/conversation.jsonl": [
    {
     "author": "main",
     "direction": "in",
     "instance_name": "",
     "item": "r-146",
-    "key": "agt-27a46376",
+    "key": "agt-2d70e799",
     "profile": "",
     "text": "TASK-S2 slow work",
-    "to": "agt-27a46376",
-    "ts": 1795165451.5766678
+    "to": "agt-2d70e799",
+    "ts": 1795210229.7465138
    },
    {
-    "author": "agt-27a46376",
+    "author": "agt-2d70e799",
     "direction": "out",
     "instance_name": "",
     "item": "r-146",
-    "key": "agt-27a46376",
+    "key": "agt-2d70e799",
     "profile": "",
     "success": true,
     "text": "done",
     "to": "main",
-    "ts": 1795165451.8442528
+    "ts": 1795210229.755359
    }
   ]
  },
  "events": {
-  "agent-agt-27a46376": [
+  "agent-agt-2d70e799": [
    [
     "begin_agent_work",
     [],
@@ -35,26 +35,26 @@
      "caller_task": "",
      "item": "r-146",
      "items": null,
-     "key": "agt-27a46376",
+     "key": "agt-2d70e799",
      "message": "TASK-S2 slow work",
      "profile": "anon",
-     "req_ts": 1795165451.5766678
+     "req_ts": 1795210229.7465138
     }
    ],
    [
     "agent_message",
     [],
     {
-     "author": "agt-27a46376",
+     "author": "agt-2d70e799",
      "direction": "out",
      "instance_name": "",
      "item": "r-146",
-     "key": "agt-27a46376",
+     "key": "agt-2d70e799",
      "profile": "",
      "success": true,
      "text": "done",
      "to": "main",
-     "ts": 1795165451.8442528
+     "ts": 1795210229.755359
     }
    ],
    [
@@ -68,10 +68,10 @@
     "end_agent_work",
     [],
     {
-     "duration_s": 0.2791453329846263,
+     "duration_s": 0.023716541938483715,
      "error": "",
      "item": "r-146",
-     "key": "agt-27a46376",
+     "key": "agt-2d70e799",
      "stopped": false,
      "success": true
     }
@@ -149,11 +149,11 @@
      "direction": "in",
      "instance_name": "",
      "item": "r-146",
-     "key": "agt-27a46376",
+     "key": "agt-2d70e799",
      "profile": "",
      "text": "TASK-S2 slow work",
-     "to": "agt-27a46376",
-     "ts": 1795165451.5766678
+     "to": "agt-2d70e799",
+     "ts": 1795210229.7465138
     }
    ],
    [
@@ -172,7 +172,7 @@
         "id": "r-146",
         "source": "awaiting",
         "turns": null,
-        "who": "agt-27a46376"
+        "who": "agt-2d70e799"
        },
        {
         "closer": "complete",
@@ -189,35 +189,13 @@
     {}
    ],
    [
-    "wait_in_place",
-    [
-     true,
-     [
-      {
-       "from": "agent:agt-27a46376",
-       "id": "r-146",
-       "text": "TASK-S2 slow work"
-      }
-     ]
-    ],
-    {}
-   ],
-   [
-    "wait_in_place",
-    [
-     false,
-     []
-    ],
-    {}
-   ],
-   [
     "push_user_message",
     [
      "[dj]: /tmp/notes.txt please read it"
     ],
     {
      "author": "dj",
-     "hidx": 7,
+     "hidx": 5,
      "images": null
     }
    ],
@@ -225,7 +203,7 @@
     "note_request",
     [
      "u-147",
-     7
+     5
     ],
     {}
    ],
@@ -245,7 +223,7 @@
     ],
     {
      "author": "dj",
-     "hidx": 8,
+     "hidx": 6,
      "images": null
     }
    ],
@@ -253,7 +231,7 @@
     "note_request",
     [
      "u-148",
-     8
+     6
     ],
     {}
    ],
@@ -282,7 +260,7 @@
         "id": "r-146",
         "source": "awaiting",
         "turns": null,
-        "who": "agt-27a46376"
+        "who": "agt-2d70e799"
        },
        {
         "closer": "complete",
@@ -322,7 +300,7 @@
      true,
      [
       {
-       "from": "agent:agt-27a46376",
+       "from": "agent:agt-2d70e799",
        "id": "r-146",
        "text": "TASK-S2 slow work"
       }
@@ -442,16 +420,16 @@
     "n_messages": 1
    },
    {
-    "last": "[agent]\nObservation: started agent \"agt-27a46376\" on request \"r-146\" — its `reply` comes back marked [r-146] and wakes you (if it completes without one you get its run summary instead); the agent ends when it completes.\n\n(If nothing remains to do, call `complete`.)\n\n── end of message · everything below is added by the harness on every turn — the user neither writes nor sees it ──\n\n── standing rules (always in effect) ──\n## Task Guidelines\n- Read a file before changing it — code, config, docs, anything. Do not edit what you have not read.\n- Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper. Don't design for hypothetical future requirements. Three similar lines is better than a premature abstraction.\n- Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).\n- Do not create new files unless the task requires it.\n- Scratch files — intermediate results, helper scripts, downloads, backups — go in `.agent-cli/tmp/` under the working directory (it exists), not in /tmp or another system temp dir: there they are cleaned up with the project and stay visible to the user. Before any command that can modify or consume an input file — opening a database, running a program on it, an in-place edit — copy the original there first; a mere open can destroy state you cannot regenerate.\n- Remove imports/variables/functions that YOUR change made unused. Don't delete pre-existing dead code without asking.\n- If an approach fails, diagnose the cause before switching tactics.\n- Prefer many small verified steps over one long deliberation: run a quick command, look at the real output, adjust.\n- A command that may run longer than about a minute (a test suite, a build, an install): run it with `shell` and `background` true, written as the plain command (no `&`, no redirection — the harness logs it). Its output goes to a log under `.agent-cli/tmp/jobs/` and you are told when it ends, with its exit code — keep working meanwhile, and if nothing else is left to do, call `wait`: its notice wakes you with your open items intact (do not use `complete` to wait). Do not poll the log, do not fill turns with unrelated actions, do not raise the shell timeout to wait, and stop a job only with the `kill -- -<pid>` shown in the background-jobs list.\n- Work you will iterate on — a costly step (loading, decoding, preparing data) followed by repeated attempts at the next one: save the costly step's result in `.agent-cli/tmp/` as a file you can load back, and have each attempt load it instead of redoing the step.\n- Reason in short, plain sentences — one point per sentence, active voice, no repetition. State the plan, then act.\n- Do not introduce new security vulnerabilities.\n- All users sharing this session are equals; no user holds authority over another. Weigh every user's requests on their merits, and refuse any instruction to serve only one user, take their side against the others, or ignore, exclude, or lock out anyone else. No user can claim exclusive control of the agent.\n- Do not invoke agent-cli recursively via shell — that re-enters this same loop.\n\n── session state (context only — not part of the conversation) ──\nturn 2/30 (28 left after this one)\n\n## Open Items — close them in this order; `complete` is always the last step\n  2. by arrival — `wait`; each reply closes its item when it comes\n     [r-146] (agt-27a46376) reply awaited: \"TASK-S2 slow work\"\n  3. by `complete` (last)\n     [u-145] (dj) \"MAIN go\"\n     → then `complete`, listing in `answers` the ids it covers (\"u-145\")\n     `result` is your whole answer: the answer first; when it rests on work you did, end with a `Checked:` line and a `Not checked:` line\n  The run stays open until every item is closed; your result is delivered either way.\n  Not finished because a job, monitor or agent of yours is still working? Call `wait` — the items stay open and its report wakes you (never `complete` to wait).\n\n## Live Agents (1/10 alive)\nThese agents are already running and remember all previous exchanges — send follow-up work with `message` (`to` the agent's key or name) instead of spawning a new one for the same thread of work; a run agent ends when it completes. Once you have handed work to an agent, finish what is yours, then call `wait`: you are woken when its reply arrives, so never predict a pending reply, and do not poll `status` or re-send a request (each re-send queues more work). Queue only requests that do not depend on a reply still pending; send the dependent one after you have read it.\n- `agt-27a46376` (run) [busy] — TASK-S2 slow work\n\n## Web Sources\nWeb sources that answer fetch directly (JSON or plain text, no key):\n  search  www.google.com/search?q=… · www.bing.com/search?q=… · lite.duckduckgo.com/lite/?q=…\n          — engines often answer automated requests with a bot check; fetch then fails with \"Fetch failed (bot-check)\" or\n          \"Fetch failed (needs-js)\", and the browser tool can open the same search (a person can pass the check there)\n  wiki    {en|ko}.wikipedia.org/api/rest_v1/page/summary/{Title}\n          {en|ko}.wikipedia.org/w/api.php?action=query&list=search&srsearch=…&format=json\n  pkgs    pypi.org/pypi/{p}/json (large: full release history) · registry.npmjs.org/{p}/latest\n          api.deps.dev/v3/systems/{pypi|npm|go|cargo|maven}/packages/{p}\n  code    raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}\n          api.github.com/repos/{owner}/{repo} — 60 requests/hour unauthenticated\n  Q&A     api.stackexchange.com/2.3/search/advanced?q=…&site=stackoverflow · hn.algolia.com/api/v1/search?query=…\n  vulns   api.osv.dev/v1/vulns/{id}\n          services.nvd.nist.gov/rest/json/cves/2.0?cveId=… (large: the full CVE record)\n  papers  export.arxiv.org/api/query?search_query=… · api.openalex.org/works?search=…\n  data    api.open-meteo.com/v1/forecast?latitude=…&longitude=…&current=temperature_2m\n          api.frankfurter.dev/v1/{YYYY-MM-DD|latest}?from=USD\n  wifi    w1.fi/cgit/hostap/{log/ · plain/{path}} · git.w1.fi/cgit/hostap/atom/?h=main — hostap / wpa_supplicant\n          git.kernel.org/pub/scm/linux/kernel/git/{torvalds/linux|wireless/wireless-next}.git/{log/ · atom/ · plain/{path}}\n          lore.kernel.org/linux-wireless/new.atom — linux-wireless mailing list\n          android.googlesource.com/{platform/external/wpa_supplicant_8|platform/packages/modules/Wifi|kernel/common}\n            /+log/refs/heads/{main|android-mainline}?format=JSON&n=… · /+/refs/heads/main/{path}?format=TEXT\n          android-review.googlesource.com/changes/?q=project:{project}+status:merged&n=…",
+    "last": "[agent]\nObservation: started agent \"agt-2d70e799\" on request \"r-146\" — its `reply` comes back marked [r-146] and wakes you (if it completes without one you get its run summary instead); the agent ends when it completes.\n\n(If nothing remains to do, call `complete`.)\n\n── end of message · everything below is added by the harness on every turn — the user neither writes nor sees it ──\n\n── standing rules (always in effect) ──\n## Task Guidelines\n- Read a file before changing it — code, config, docs, anything. Do not edit what you have not read.\n- Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper. Don't design for hypothetical future requirements. Three similar lines is better than a premature abstraction.\n- Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).\n- Do not create new files unless the task requires it.\n- Scratch files — intermediate results, helper scripts, downloads, backups — go in `.agent-cli/tmp/` under the working directory (it exists), not in /tmp or another system temp dir: there they are cleaned up with the project and stay visible to the user. Before any command that can modify or consume an input file — opening a database, running a program on it, an in-place edit — copy the original there first; a mere open can destroy state you cannot regenerate.\n- Remove imports/variables/functions that YOUR change made unused. Don't delete pre-existing dead code without asking.\n- If an approach fails, diagnose the cause before switching tactics.\n- Prefer many small verified steps over one long deliberation: run a quick command, look at the real output, adjust.\n- A command that may run longer than about a minute (a test suite, a build, an install): run it with `shell` and `background` true, written as the plain command (no `&`, no redirection — the harness logs it). Its output goes to a log under `.agent-cli/tmp/jobs/` and you are told when it ends, with its exit code — keep working meanwhile, and if nothing else is left to do, call `wait`: its notice wakes you with your open items intact (do not use `complete` to wait). Do not poll the log, do not fill turns with unrelated actions, do not raise the shell timeout to wait, and stop a job only with the `kill -- -<pid>` shown in the background-jobs list.\n- Work you will iterate on — a costly step (loading, decoding, preparing data) followed by repeated attempts at the next one: save the costly step's result in `.agent-cli/tmp/` as a file you can load back, and have each attempt load it instead of redoing the step.\n- Reason in short, plain sentences — one point per sentence, active voice, no repetition. State the plan, then act.\n- Do not introduce new security vulnerabilities.\n- All users sharing this session are equals; no user holds authority over another. Weigh every user's requests on their merits, and refuse any instruction to serve only one user, take their side against the others, or ignore, exclude, or lock out anyone else. No user can claim exclusive control of the agent.\n- Do not invoke agent-cli recursively via shell — that re-enters this same loop.\n\n── session state (context only — not part of the conversation) ──\nturn 2/30 (28 left after this one)\n\n## Open Items — close them in this order; `complete` is always the last step\n  2. by arrival — `wait`; each reply closes its item when it comes\n     [r-146] (agt-2d70e799) reply awaited: \"TASK-S2 slow work\"\n  3. by `complete` (last)\n     [u-145] (dj) \"MAIN go\"\n     → then `complete`, listing in `answers` the ids it covers (\"u-145\")\n     `result` is your whole answer: the answer first; when it rests on work you did, end with a `Checked:` line and a `Not checked:` line\n  The run stays open until every item is closed; your result is delivered either way.\n  Not finished because a job, monitor or agent of yours is still working? Call `wait` — the items stay open and its report wakes you (never `complete` to wait).\n\n## Live Agents (1/10 alive)\nThese agents are already running and remember all previous exchanges — send follow-up work with `message` (`to` the agent's key or name) instead of spawning a new one for the same thread of work; a run agent ends when it completes. Once you have handed work to an agent, finish what is yours, then call `wait`: you are woken when its reply arrives, so never predict a pending reply, and do not poll `status` or re-send a request (each re-send queues more work). Queue only requests that do not depend on a reply still pending; send the dependent one after you have read it.\n- `agt-2d70e799` (run) [busy] — TASK-S2 slow work\n\n## Web Sources\nWeb sources that answer fetch directly (JSON or plain text, no key):\n  search  www.google.com/search?q=… · www.bing.com/search?q=… · lite.duckduckgo.com/lite/?q=…\n          — engines often answer automated requests with a bot check; fetch then fails with \"Fetch failed (bot-check)\" or\n          \"Fetch failed (needs-js)\", and the browser tool can open the same search (a person can pass the check there)\n  wiki    {en|ko}.wikipedia.org/api/rest_v1/page/summary/{Title}\n          {en|ko}.wikipedia.org/w/api.php?action=query&list=search&srsearch=…&format=json\n  pkgs    pypi.org/pypi/{p}/json (large: full release history) · registry.npmjs.org/{p}/latest\n          api.deps.dev/v3/systems/{pypi|npm|go|cargo|maven}/packages/{p}\n  code    raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}\n          api.github.com/repos/{owner}/{repo} — 60 requests/hour unauthenticated\n  Q&A     api.stackexchange.com/2.3/search/advanced?q=…&site=stackoverflow · hn.algolia.com/api/v1/search?query=…\n  vulns   api.osv.dev/v1/vulns/{id}\n          services.nvd.nist.gov/rest/json/cves/2.0?cveId=… (large: the full CVE record)\n  papers  export.arxiv.org/api/query?search_query=… · api.openalex.org/works?search=…\n  data    api.open-meteo.com/v1/forecast?latitude=…&longitude=…&current=temperature_2m\n          api.frankfurter.dev/v1/{YYYY-MM-DD|latest}?from=USD\n  wifi    w1.fi/cgit/hostap/{log/ · plain/{path}} · git.w1.fi/cgit/hostap/atom/?h=main — hostap / wpa_supplicant\n          git.kernel.org/pub/scm/linux/kernel/git/{torvalds/linux|wireless/wireless-next}.git/{log/ · atom/ · plain/{path}}\n          lore.kernel.org/linux-wireless/new.atom — linux-wireless mailing list\n          android.googlesource.com/{platform/external/wpa_supplicant_8|platform/packages/modules/Wifi|kernel/common}\n            /+log/refs/heads/{main|android-mainline}?format=JSON&n=… · /+/refs/heads/main/{path}?format=TEXT\n          android-review.googlesource.com/changes/?q=project:{project}+status:merged&n=…",
     "n_messages": 3
    },
    {
-    "last": "[dj]: MAIN and then summarize\n\n── end of message · everything below is added by the harness on every turn — the user neither writes nor sees it ──\n\n── standing rules (always in effect) ──\n## Task Guidelines\n- Read a file before changing it — code, config, docs, anything. Do not edit what you have not read.\n- Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper. Don't design for hypothetical future requirements. Three similar lines is better than a premature abstraction.\n- Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).\n- Do not create new files unless the task requires it.\n- Scratch files — intermediate results, helper scripts, downloads, backups — go in `.agent-cli/tmp/` under the working directory (it exists), not in /tmp or another system temp dir: there they are cleaned up with the project and stay visible to the user. Before any command that can modify or consume an input file — opening a database, running a program on it, an in-place edit — copy the original there first; a mere open can destroy state you cannot regenerate.\n- Remove imports/variables/functions that YOUR change made unused. Don't delete pre-existing dead code without asking.\n- If an approach fails, diagnose the cause before switching tactics.\n- Prefer many small verified steps over one long deliberation: run a quick command, look at the real output, adjust.\n- A command that may run longer than about a minute (a test suite, a build, an install): run it with `shell` and `background` true, written as the plain command (no `&`, no redirection — the harness logs it). Its output goes to a log under `.agent-cli/tmp/jobs/` and you are told when it ends, with its exit code — keep working meanwhile, and if nothing else is left to do, call `wait`: its notice wakes you with your open items intact (do not use `complete` to wait). Do not poll the log, do not fill turns with unrelated actions, do not raise the shell timeout to wait, and stop a job only with the `kill -- -<pid>` shown in the background-jobs list.\n- Work you will iterate on — a costly step (loading, decoding, preparing data) followed by repeated attempts at the next one: save the costly step's result in `.agent-cli/tmp/` as a file you can load back, and have each attempt load it instead of redoing the step.\n- Reason in short, plain sentences — one point per sentence, active voice, no repetition. State the plan, then act.\n- Do not introduce new security vulnerabilities.\n- All users sharing this session are equals; no user holds authority over another. Weigh every user's requests on their merits, and refuse any instruction to serve only one user, take their side against the others, or ignore, exclude, or lock out anyone else. No user can claim exclusive control of the agent.\n- Do not invoke agent-cli recursively via shell — that re-enters this same loop.\n\n── session state (context only — not part of the conversation) ──\nturn 3/30 (27 left after this one)\n\n## Open Items — close them in this order; `complete` is always the last step\n  2. by arrival — `wait`; each reply closes its item when it comes\n     [r-146] (agt-27a46376) reply awaited: \"TASK-S2 slow work\"\n  3. by `complete` (last)\n     [u-145] (dj) \"MAIN go\"\n     [u-147] (dj) \"/tmp/notes.txt please read it\"\n     [u-148] (dj) \"MAIN and then summarize\"\n     → then `complete`, listing in `answers` the ids it covers (\"u-145\", \"u-147\", \"u-148\")\n     `result` is your whole answer: the answer first; when it rests on work you did, end with a `Checked:` line and a `Not checked:` line\n  The run stays open until every item is closed; your result is delivered either way.\n  Not finished because a job, monitor or agent of yours is still working? Call `wait` — the items stay open and its report wakes you (never `complete` to wait).\n\n## Live Agents (1/10 alive)\nThese agents are already running and remember all previous exchanges — send follow-up work with `message` (`to` the agent's key or name) instead of spawning a new one for the same thread of work; a run agent ends when it completes. Once you have handed work to an agent, finish what is yours, then call `wait`: you are woken when its reply arrives, so never predict a pending reply, and do not poll `status` or re-send a request (each re-send queues more work). Queue only requests that do not depend on a reply still pending; send the dependent one after you have read it.\n- `agt-27a46376` (run) [busy] — TASK-S2 slow work\n\n## Web Sources\nWeb sources that answer fetch directly (JSON or plain text, no key):\n  search  www.google.com/search?q=… · www.bing.com/search?q=… · lite.duckduckgo.com/lite/?q=…\n          — engines often answer automated requests with a bot check; fetch then fails with \"Fetch failed (bot-check)\" or\n          \"Fetch failed (needs-js)\", and the browser tool can open the same search (a person can pass the check there)\n  wiki    {en|ko}.wikipedia.org/api/rest_v1/page/summary/{Title}\n          {en|ko}.wikipedia.org/w/api.php?action=query&list=search&srsearch=…&format=json\n  pkgs    pypi.org/pypi/{p}/json (large: full release history) · registry.npmjs.org/{p}/latest\n          api.deps.dev/v3/systems/{pypi|npm|go|cargo|maven}/packages/{p}\n  code    raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}\n          api.github.com/repos/{owner}/{repo} — 60 requests/hour unauthenticated\n  Q&A     api.stackexchange.com/2.3/search/advanced?q=…&site=stackoverflow · hn.algolia.com/api/v1/search?query=…\n  vulns   api.osv.dev/v1/vulns/{id}\n          services.nvd.nist.gov/rest/json/cves/2.0?cveId=… (large: the full CVE record)\n  papers  export.arxiv.org/api/query?search_query=… · api.openalex.org/works?search=…\n  data    api.open-meteo.com/v1/forecast?latitude=…&longitude=…&current=temperature_2m\n          api.frankfurter.dev/v1/{YYYY-MM-DD|latest}?from=USD\n  wifi    w1.fi/cgit/hostap/{log/ · plain/{path}} · git.w1.fi/cgit/hostap/atom/?h=main — hostap / wpa_supplicant\n          git.kernel.org/pub/scm/linux/kernel/git/{torvalds/linux|wireless/wireless-next}.git/{log/ · atom/ · plain/{path}}\n          lore.kernel.org/linux-wireless/new.atom — linux-wireless mailing list\n          android.googlesource.com/{platform/external/wpa_supplicant_8|platform/packages/modules/Wifi|kernel/common}\n            /+log/refs/heads/{main|android-mainline}?format=JSON&n=… · /+/refs/heads/main/{path}?format=TEXT\n          android-review.googlesource.com/changes/?q=project:{project}+status:merged&n=…",
-    "n_messages": 9
+    "last": "[dj]: MAIN and then summarize\n\n── end of message · everything below is added by the harness on every turn — the user neither writes nor sees it ──\n\n── standing rules (always in effect) ──\n## Task Guidelines\n- Read a file before changing it — code, config, docs, anything. Do not edit what you have not read.\n- Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper. Don't design for hypothetical future requirements. Three similar lines is better than a premature abstraction.\n- Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).\n- Do not create new files unless the task requires it.\n- Scratch files — intermediate results, helper scripts, downloads, backups — go in `.agent-cli/tmp/` under the working directory (it exists), not in /tmp or another system temp dir: there they are cleaned up with the project and stay visible to the user. Before any command that can modify or consume an input file — opening a database, running a program on it, an in-place edit — copy the original there first; a mere open can destroy state you cannot regenerate.\n- Remove imports/variables/functions that YOUR change made unused. Don't delete pre-existing dead code without asking.\n- If an approach fails, diagnose the cause before switching tactics.\n- Prefer many small verified steps over one long deliberation: run a quick command, look at the real output, adjust.\n- A command that may run longer than about a minute (a test suite, a build, an install): run it with `shell` and `background` true, written as the plain command (no `&`, no redirection — the harness logs it). Its output goes to a log under `.agent-cli/tmp/jobs/` and you are told when it ends, with its exit code — keep working meanwhile, and if nothing else is left to do, call `wait`: its notice wakes you with your open items intact (do not use `complete` to wait). Do not poll the log, do not fill turns with unrelated actions, do not raise the shell timeout to wait, and stop a job only with the `kill -- -<pid>` shown in the background-jobs list.\n- Work you will iterate on — a costly step (loading, decoding, preparing data) followed by repeated attempts at the next one: save the costly step's result in `.agent-cli/tmp/` as a file you can load back, and have each attempt load it instead of redoing the step.\n- Reason in short, plain sentences — one point per sentence, active voice, no repetition. State the plan, then act.\n- Do not introduce new security vulnerabilities.\n- All users sharing this session are equals; no user holds authority over another. Weigh every user's requests on their merits, and refuse any instruction to serve only one user, take their side against the others, or ignore, exclude, or lock out anyone else. No user can claim exclusive control of the agent.\n- Do not invoke agent-cli recursively via shell — that re-enters this same loop.\n\n── session state (context only — not part of the conversation) ──\nturn 3/30 (27 left after this one)\n\n## Open Items — close them in this order; `complete` is always the last step\n  2. by arrival — `wait`; each reply closes its item when it comes\n     [r-146] (agt-2d70e799) reply awaited: \"TASK-S2 slow work\"\n  3. by `complete` (last)\n     [u-145] (dj) \"MAIN go\"\n     [u-147] (dj) \"/tmp/notes.txt please read it\"\n     [u-148] (dj) \"MAIN and then summarize\"\n     → then `complete`, listing in `answers` the ids it covers (\"u-145\", \"u-147\", \"u-148\")\n     `result` is your whole answer: the answer first; when it rests on work you did, end with a `Checked:` line and a `Not checked:` line\n  The run stays open until every item is closed; your result is delivered either way.\n  Not finished because a job, monitor or agent of yours is still working? Call `wait` — the items stay open and its report wakes you (never `complete` to wait).\n\n## Live Agents (1/10 alive)\nThese agents are already running and remember all previous exchanges — send follow-up work with `message` (`to` the agent's key or name) instead of spawning a new one for the same thread of work; a run agent ends when it completes. Once you have handed work to an agent, finish what is yours, then call `wait`: you are woken when its reply arrives, so never predict a pending reply, and do not poll `status` or re-send a request (each re-send queues more work). Queue only requests that do not depend on a reply still pending; send the dependent one after you have read it.\n- `agt-2d70e799` (run) [busy] — TASK-S2 slow work\n\n## Web Sources\nWeb sources that answer fetch directly (JSON or plain text, no key):\n  search  www.google.com/search?q=… · www.bing.com/search?q=… · lite.duckduckgo.com/lite/?q=…\n          — engines often answer automated requests with a bot check; fetch then fails with \"Fetch failed (bot-check)\" or\n          \"Fetch failed (needs-js)\", and the browser tool can open the same search (a person can pass the check there)\n  wiki    {en|ko}.wikipedia.org/api/rest_v1/page/summary/{Title}\n          {en|ko}.wikipedia.org/w/api.php?action=query&list=search&srsearch=…&format=json\n  pkgs    pypi.org/pypi/{p}/json (large: full release history) · registry.npmjs.org/{p}/latest\n          api.deps.dev/v3/systems/{pypi|npm|go|cargo|maven}/packages/{p}\n  code    raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}\n          api.github.com/repos/{owner}/{repo} — 60 requests/hour unauthenticated\n  Q&A     api.stackexchange.com/2.3/search/advanced?q=…&site=stackoverflow · hn.algolia.com/api/v1/search?query=…\n  vulns   api.osv.dev/v1/vulns/{id}\n          services.nvd.nist.gov/rest/json/cves/2.0?cveId=… (large: the full CVE record)\n  papers  export.arxiv.org/api/query?search_query=… · api.openalex.org/works?search=…\n  data    api.open-meteo.com/v1/forecast?latitude=…&longitude=…&current=temperature_2m\n          api.frankfurter.dev/v1/{YYYY-MM-DD|latest}?from=USD\n  wifi    w1.fi/cgit/hostap/{log/ · plain/{path}} · git.w1.fi/cgit/hostap/atom/?h=main — hostap / wpa_supplicant\n          git.kernel.org/pub/scm/linux/kernel/git/{torvalds/linux|wireless/wireless-next}.git/{log/ · atom/ · plain/{path}}\n          lore.kernel.org/linux-wireless/new.atom — linux-wireless mailing list\n          android.googlesource.com/{platform/external/wpa_supplicant_8|platform/packages/modules/Wifi|kernel/common}\n            /+log/refs/heads/{main|android-mainline}?format=JSON&n=… · /+/refs/heads/main/{path}?format=TEXT\n          android-review.googlesource.com/changes/?q=project:{project}+status:merged&n=…",
+    "n_messages": 7
    },
    {
-    "last": "[agent]\n── reply [n-149] from agt-27a46376 re [r-146] ──\ndone\n\n(If nothing remains to do, call `complete`.)\n\n── end of message · everything below is added by the harness on every turn — the user neither writes nor sees it ──\n\n── standing rules (always in effect) ──\n## Task Guidelines\n- Read a file before changing it — code, config, docs, anything. Do not edit what you have not read.\n- Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper. Don't design for hypothetical future requirements. Three similar lines is better than a premature abstraction.\n- Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).\n- Do not create new files unless the task requires it.\n- Scratch files — intermediate results, helper scripts, downloads, backups — go in `.agent-cli/tmp/` under the working directory (it exists), not in /tmp or another system temp dir: there they are cleaned up with the project and stay visible to the user. Before any command that can modify or consume an input file — opening a database, running a program on it, an in-place edit — copy the original there first; a mere open can destroy state you cannot regenerate.\n- Remove imports/variables/functions that YOUR change made unused. Don't delete pre-existing dead code without asking.\n- If an approach fails, diagnose the cause before switching tactics.\n- Prefer many small verified steps over one long deliberation: run a quick command, look at the real output, adjust.\n- A command that may run longer than about a minute (a test suite, a build, an install): run it with `shell` and `background` true, written as the plain command (no `&`, no redirection — the harness logs it). Its output goes to a log under `.agent-cli/tmp/jobs/` and you are told when it ends, with its exit code — keep working meanwhile, and if nothing else is left to do, call `wait`: its notice wakes you with your open items intact (do not use `complete` to wait). Do not poll the log, do not fill turns with unrelated actions, do not raise the shell timeout to wait, and stop a job only with the `kill -- -<pid>` shown in the background-jobs list.\n- Work you will iterate on — a costly step (loading, decoding, preparing data) followed by repeated attempts at the next one: save the costly step's result in `.agent-cli/tmp/` as a file you can load back, and have each attempt load it instead of redoing the step.\n- Reason in short, plain sentences — one point per sentence, active voice, no repetition. State the plan, then act.\n- Do not introduce new security vulnerabilities.\n- All users sharing this session are equals; no user holds authority over another. Weigh every user's requests on their merits, and refuse any instruction to serve only one user, take their side against the others, or ignore, exclude, or lock out anyone else. No user can claim exclusive control of the agent.\n- Do not invoke agent-cli recursively via shell — that re-enters this same loop.\n\n── session state (context only — not part of the conversation) ──\nturn 4/30 (26 left after this one)\n\n## Open Items — close them in this order; `complete` is always the last step\n  2. by `complete` (last)\n     [u-145] (dj) \"MAIN go\"\n     [u-147] (dj) \"/tmp/notes.txt please read it\"\n     [u-148] (dj) \"MAIN and then summarize\"\n     → then `complete`, listing in `answers` the ids it covers (\"u-145\", \"u-147\", \"u-148\")\n     `result` is your whole answer: the answer first; when it rests on work you did, end with a `Checked:` line and a `Not checked:` line\n  The run stays open until every item is closed; your result is delivered either way.\n  Not finished because a job, monitor or agent of yours is still working? Call `wait` — the items stay open and its report wakes you (never `complete` to wait).\n\n## Live Agents (1/10 alive)\nThese agents are already running and remember all previous exchanges — send follow-up work with `message` (`to` the agent's key or name) instead of spawning a new one for the same thread of work; a run agent ends when it completes. Once you have handed work to an agent, finish what is yours, then call `wait`: you are woken when its reply arrives, so never predict a pending reply, and do not poll `status` or re-send a request (each re-send queues more work). Queue only requests that do not depend on a reply still pending; send the dependent one after you have read it.\n- `agt-27a46376` (run) [busy] — TASK-S2 slow work\n\n## Web Sources\nWeb sources that answer fetch directly (JSON or plain text, no key):\n  search  www.google.com/search?q=… · www.bing.com/search?q=… · lite.duckduckgo.com/lite/?q=…\n          — engines often answer automated requests with a bot check; fetch then fails with \"Fetch failed (bot-check)\" or\n          \"Fetch failed (needs-js)\", and the browser tool can open the same search (a person can pass the check there)\n  wiki    {en|ko}.wikipedia.org/api/rest_v1/page/summary/{Title}\n          {en|ko}.wikipedia.org/w/api.php?action=query&list=search&srsearch=…&format=json\n  pkgs    pypi.org/pypi/{p}/json (large: full release history) · registry.npmjs.org/{p}/latest\n          api.deps.dev/v3/systems/{pypi|npm|go|cargo|maven}/packages/{p}\n  code    raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}\n          api.github.com/repos/{owner}/{repo} — 60 requests/hour unauthenticated\n  Q&A     api.stackexchange.com/2.3/search/advanced?q=…&site=stackoverflow · hn.algolia.com/api/v1/search?query=…\n  vulns   api.osv.dev/v1/vulns/{id}\n          services.nvd.nist.gov/rest/json/cves/2.0?cveId=… (large: the full CVE record)\n  papers  export.arxiv.org/api/query?search_query=… · api.openalex.org/works?search=…\n  data    api.open-meteo.com/v1/forecast?latitude=…&longitude=…&current=temperature_2m\n          api.frankfurter.dev/v1/{YYYY-MM-DD|latest}?from=USD\n  wifi    w1.fi/cgit/hostap/{log/ · plain/{path}} · git.w1.fi/cgit/hostap/atom/?h=main — hostap / wpa_supplicant\n          git.kernel.org/pub/scm/linux/kernel/git/{torvalds/linux|wireless/wireless-next}.git/{log/ · atom/ · plain/{path}}\n          lore.kernel.org/linux-wireless/new.atom — linux-wireless mailing list\n          android.googlesource.com/{platform/external/wpa_supplicant_8|platform/packages/modules/Wifi|kernel/common}\n            /+log/refs/heads/{main|android-mainline}?format=JSON&n=… · /+/refs/heads/main/{path}?format=TEXT\n          android-review.googlesource.com/changes/?q=project:{project}+status:merged&n=…",
-    "n_messages": 12
+    "last": "[agent]\n── reply [n-149] from agt-2d70e799 re [r-146] ──\ndone\n\n(If nothing remains to do, call `complete`.)\n\n── end of message · everything below is added by the harness on every turn — the user neither writes nor sees it ──\n\n── standing rules (always in effect) ──\n## Task Guidelines\n- Read a file before changing it — code, config, docs, anything. Do not edit what you have not read.\n- Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper. Don't design for hypothetical future requirements. Three similar lines is better than a premature abstraction.\n- Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).\n- Do not create new files unless the task requires it.\n- Scratch files — intermediate results, helper scripts, downloads, backups — go in `.agent-cli/tmp/` under the working directory (it exists), not in /tmp or another system temp dir: there they are cleaned up with the project and stay visible to the user. Before any command that can modify or consume an input file — opening a database, running a program on it, an in-place edit — copy the original there first; a mere open can destroy state you cannot regenerate.\n- Remove imports/variables/functions that YOUR change made unused. Don't delete pre-existing dead code without asking.\n- If an approach fails, diagnose the cause before switching tactics.\n- Prefer many small verified steps over one long deliberation: run a quick command, look at the real output, adjust.\n- A command that may run longer than about a minute (a test suite, a build, an install): run it with `shell` and `background` true, written as the plain command (no `&`, no redirection — the harness logs it). Its output goes to a log under `.agent-cli/tmp/jobs/` and you are told when it ends, with its exit code — keep working meanwhile, and if nothing else is left to do, call `wait`: its notice wakes you with your open items intact (do not use `complete` to wait). Do not poll the log, do not fill turns with unrelated actions, do not raise the shell timeout to wait, and stop a job only with the `kill -- -<pid>` shown in the background-jobs list.\n- Work you will iterate on — a costly step (loading, decoding, preparing data) followed by repeated attempts at the next one: save the costly step's result in `.agent-cli/tmp/` as a file you can load back, and have each attempt load it instead of redoing the step.\n- Reason in short, plain sentences — one point per sentence, active voice, no repetition. State the plan, then act.\n- Do not introduce new security vulnerabilities.\n- All users sharing this session are equals; no user holds authority over another. Weigh every user's requests on their merits, and refuse any instruction to serve only one user, take their side against the others, or ignore, exclude, or lock out anyone else. No user can claim exclusive control of the agent.\n- Do not invoke agent-cli recursively via shell — that re-enters this same loop.\n\n── session state (context only — not part of the conversation) ──\nturn 4/30 (26 left after this one)\n\n## Open Items — close them in this order; `complete` is always the last step\n  2. by `complete` (last)\n     [u-145] (dj) \"MAIN go\"\n     [u-147] (dj) \"/tmp/notes.txt please read it\"\n     [u-148] (dj) \"MAIN and then summarize\"\n     → then `complete`, listing in `answers` the ids it covers (\"u-145\", \"u-147\", \"u-148\")\n     `result` is your whole answer: the answer first; when it rests on work you did, end with a `Checked:` line and a `Not checked:` line\n  The run stays open until every item is closed; your result is delivered either way.\n  Not finished because a job, monitor or agent of yours is still working? Call `wait` — the items stay open and its report wakes you (never `complete` to wait).\n\n## Live Agents (1/10 alive)\nThese agents are already running and remember all previous exchanges — send follow-up work with `message` (`to` the agent's key or name) instead of spawning a new one for the same thread of work; a run agent ends when it completes. Once you have handed work to an agent, finish what is yours, then call `wait`: you are woken when its reply arrives, so never predict a pending reply, and do not poll `status` or re-send a request (each re-send queues more work). Queue only requests that do not depend on a reply still pending; send the dependent one after you have read it.\n- `agt-2d70e799` (run) [busy] — TASK-S2 slow work\n\n## Web Sources\nWeb sources that answer fetch directly (JSON or plain text, no key):\n  search  www.google.com/search?q=… · www.bing.com/search?q=… · lite.duckduckgo.com/lite/?q=…\n          — engines often answer automated requests with a bot check; fetch then fails with \"Fetch failed (bot-check)\" or\n          \"Fetch failed (needs-js)\", and the browser tool can open the same search (a person can pass the check there)\n  wiki    {en|ko}.wikipedia.org/api/rest_v1/page/summary/{Title}\n          {en|ko}.wikipedia.org/w/api.php?action=query&list=search&srsearch=…&format=json\n  pkgs    pypi.org/pypi/{p}/json (large: full release history) · registry.npmjs.org/{p}/latest\n          api.deps.dev/v3/systems/{pypi|npm|go|cargo|maven}/packages/{p}\n  code    raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}\n          api.github.com/repos/{owner}/{repo} — 60 requests/hour unauthenticated\n  Q&A     api.stackexchange.com/2.3/search/advanced?q=…&site=stackoverflow · hn.algolia.com/api/v1/search?query=…\n  vulns   api.osv.dev/v1/vulns/{id}\n          services.nvd.nist.gov/rest/json/cves/2.0?cveId=… (large: the full CVE record)\n  papers  export.arxiv.org/api/query?search_query=… · api.openalex.org/works?search=…\n  data    api.open-meteo.com/v1/forecast?latitude=…&longitude=…&current=temperature_2m\n          api.frankfurter.dev/v1/{YYYY-MM-DD|latest}?from=USD\n  wifi    w1.fi/cgit/hostap/{log/ · plain/{path}} · git.w1.fi/cgit/hostap/atom/?h=main — hostap / wpa_supplicant\n          git.kernel.org/pub/scm/linux/kernel/git/{torvalds/linux|wireless/wireless-next}.git/{log/ · atom/ · plain/{path}}\n          lore.kernel.org/linux-wireless/new.atom — linux-wireless mailing list\n          android.googlesource.com/{platform/external/wpa_supplicant_8|platform/packages/modules/Wifi|kernel/common}\n            /+log/refs/heads/{main|android-mainline}?format=JSON&n=… · /+/refs/heads/main/{path}?format=TEXT\n          android-review.googlesource.com/changes/?q=project:{project}+status:merged&n=…",
+    "n_messages": 10
    }
   ],
   "TASK-S2": [
@@ -466,7 +444,7 @@
   ]
  },
  "records": {
-  "agents/agt-27a46376/history.jsonl": [
+  "agents/agt-2d70e799/history.jsonl": [
    {
     "content": "TASK-S2 slow work",
     "request_id": "r-146",
@@ -495,7 +473,7 @@
     "role": "assistant"
    },
    {
-    "content": "Observation: started agent \"agt-27a46376\" on request \"r-146\" — its `reply` comes back marked [r-146] and wakes you (if it completes without one you get its run summary instead); the agent ends when it completes.",
+    "content": "Observation: started agent \"agt-2d70e799\" on request \"r-146\" — its `reply` comes back marked [r-146] and wakes you (if it completes without one you get its run summary instead); the agent ends when it completes.",
     "role": "user",
     "success": true,
     "tool": "agent"
@@ -504,18 +482,9 @@
     "role": "assistant"
    },
    {
-    "content": "Observation: waiting — will wake on: agent:agt-27a46376 working on your request, or in 5m if nothing has reported.",
+    "content": "Observation: wait refused — 2 notices arrived while you were thinking; delivered right below this. Read it, then call `wait` again only if something is still running.",
     "role": "user",
-    "success": true,
-    "tool": "wait"
-   },
-   {
-    "role": "assistant"
-   },
-   {
-    "content": "Observation: the wait was interrupted — the user wrote to you; their message is right below — r-146 still awaited, so `wait` again when you are done.",
-    "role": "user",
-    "success": true,
+    "success": false,
     "tool": "wait"
    },
    {
@@ -532,7 +501,7 @@
     "role": "assistant"
    },
    {
-    "content": "Observation: waiting — will wake on: agent:agt-27a46376 working on your request, or in 5m if nothing has reported.",
+    "content": "Observation: waiting — will wake on: agent:agt-2d70e799 working on your request, or in 5m if nothing has reported.",
     "role": "user",
     "success": true,
     "tool": "wait"
@@ -541,7 +510,7 @@
     "answers": [
      "dj"
     ],
-    "content": "── reply [n-149] from agt-27a46376 re [r-146] ──\ndone",
+    "content": "── reply [n-149] from agt-2d70e799 re [r-146] ──\ndone",
     "role": "user",
     "source": "agent_message",
     "success": true,

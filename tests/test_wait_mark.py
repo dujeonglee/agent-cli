@@ -263,6 +263,6 @@ class TestEndOfRun:
 def test_no_registry_marks_nothing():
     from agent_cli.wake import Mailbox
 
-    mb = Mailbox(None, H, count_words=True)
+    mb = Mailbox(None, H)
     mb.mark_waiting()
     mb.clear_waiting()  # 레지스트리 없는 세션 — 아무것도 하지 않는다

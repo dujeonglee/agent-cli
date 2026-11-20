@@ -107,9 +107,7 @@ class TestWhoWakesTheRequester:
         tm = _idle_agent(reg, "agt-w")
         assert reg.request("agt-w", "find callers", author=requester) == ""
         item = _pick_up(reg, tm)
-        assert (
-            Mailbox(reg, requester, count_words=True).wake_sources() != []
-        )  # 일하는 동안은 근거
+        assert Mailbox(reg, requester).wake_sources() != []  # 일하는 동안은 근거
         (d,) = reg.reply_debts("agent:agt-w")
         assert reg.pay_debt("agent:agt-w", d, "3 callers") == ""
         assert tm.state == "busy" and reg.taken_by("agent:agt-w")[0].id == item["id"]
@@ -117,7 +115,7 @@ class TestWhoWakesTheRequester:
             absorbed_mail(reg)  # 회신은 이미 읽었다
         else:
             reg.absorb_pending(reg.get("agt-req"))  # 요청자가 회신을 읽었다
-        assert Mailbox(reg, requester, count_words=True).wake_sources() == []
+        assert Mailbox(reg, requester).wake_sources() == []
         assert relation_items(reg.wake_facts(), requester) == []
 
     @pytest.mark.parametrize("requester", ["main", "agent:agt-req"])
@@ -134,10 +132,7 @@ class TestWhoWakesTheRequester:
         reg.pay_debt("agent:agt-w", first, "done 1")
         relations = _relations(reg, requester)
         assert relations.get("agent:agt-w") in ("owes", "working")
-        assert any(
-            "agt-w" in s
-            for s in Mailbox(reg, requester, count_words=True).wake_sources()
-        )
+        assert any("agt-w" in s for s in Mailbox(reg, requester).wake_sources())
 
     def test_picking_a_request_is_owing_it(self, reg):
         """③ 받은편지함을 떠나는 순간이 곧 빚이다 — `[v10.145.0 에서 바뀜 — 옛 구현은 집은 뒤 빚을 적기까지 틈이
@@ -147,7 +142,7 @@ class TestWhoWakesTheRequester:
         item = _pick_up(reg, tm)
         assert [d.id for d in reg.reply_debts("agent:agt-w")] == [item["id"]]
         assert list(reg.queued_for("agent:agt-w")) == []
-        assert Mailbox(reg, "main", count_words=True).wake_sources() == [
+        assert Mailbox(reg, "main").wake_sources() == [
             "agent:agt-w working on your request"
         ]
 
@@ -163,7 +158,7 @@ class TestWhoWakesTheRequester:
         )
         _pick_up(reg, tm)
         assert tm.state == "busy" and tm.current_author == "main"
-        assert Mailbox(reg, "main", count_words=True).wake_sources() == []
+        assert Mailbox(reg, "main").wake_sources() == []
 
     def test_only_a_queued_notice_does_not_wake_the_sender(self, reg):
         """대기열의 통지는 근거가 아니다 — 받는 쪽이 읽어도 보낸 쪽에게 돌아올 것이 없다. 같은 자리의 요청은 근거."""
@@ -176,9 +171,9 @@ class TestWhoWakesTheRequester:
             kind="notice",
         )
         assert len(reg.queued_for("agent:agt-w")) == 1
-        assert Mailbox(reg, "main", count_words=True).wake_sources() == []
+        assert Mailbox(reg, "main").wake_sources() == []
         reg.request("agt-w", "and count the callers", author="main")
-        assert Mailbox(reg, "main", count_words=True).wake_sources() == [
+        assert Mailbox(reg, "main").wake_sources() == [
             "agent:agt-w has your request queued"
         ]
 
@@ -190,8 +185,8 @@ class TestWhoWakesTheRequester:
         reg.request("agt-w", "for agt-req", author="agent:agt-req")
         _pick_up(reg, tm)
         tm.current_author = "main"  # 화자 표시가 main 이어도
-        assert Mailbox(reg, "main", count_words=True).wake_sources() == []
-        assert Mailbox(reg, "agent:agt-req", count_words=True).wake_sources() == [
+        assert Mailbox(reg, "main").wake_sources() == []
+        assert Mailbox(reg, "agent:agt-req").wake_sources() == [
             "agent:agt-w working on your request"
         ]
 

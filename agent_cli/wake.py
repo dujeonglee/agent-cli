@@ -394,21 +394,19 @@ class Mailbox:
     Mailbox 다: 미연결이 아니라 "연결됐고 저쪽에 아무도 없음". 종류가 포트를 만들 때 한 번
     정해진다. ``take`` 는 턴 경계에 흡수할 받은편지함 — 있는 루프(에이전트·private)만 준다.
     ``wait_input`` 은 ``(timeout) -> bool`` — 사람 입력이 도착했는가(꺼내지 않는다). main 만
-    준다: 기다리는 회신을 둔 제자리 대기(`wait`)를 사람의 말이 깨운다 (v10.141.0). ``count_words`` 는 `wait` 의
-    도착분에 사람의 말을 세는가 — 종류마다 적는다(main 은 세지 않는다: 그 말은 ``wait_input`` 이 깨운다)."""
+    준다: 기다리는 회신을 둔 제자리 대기(`wait`)를 사람의 말이 깨운다 (v10.141.0) — 기다리는 **도중** 온 사람의
+    말은 그것이 맡는다(줄 선 명령은 그 자리에서 라우팅하고 깨우지 않는다, run 의 터미널 줄은 거기서만 읽힌다)."""
 
     def __init__(
         self,
         registry: AgentRegistry | None,
         owner: str,
         *,
-        count_words: bool,
         take=None,
         wait_input=None,
     ) -> None:
         self._registry = registry
         self.owner = owner
-        self._count_words = count_words
         self._take = take
         self._wait_input = wait_input
 
@@ -425,11 +423,20 @@ class Mailbox:
         """이 주소 앞에 **이미 도착해 다음 턴 경계에 배달될** 봉투 수 (v10.66.2) — `wait` 의 둘째 판정이자 제자리
         대기를 "mail" 로 깨우는 것. 깨울 것이 "아직 돌고 있는 것" 이라면 이건 "끝나서 통지가 와 있는 것"(모니터가
         `wait` 보다 먼저 발화한 벤치 사례). 0 이 아니면 `wait` 는 거부되고 런이 이어져 그것을 바로 받는다.
-        깨우는 봉투만 센다(5b) — 깨우지 않는 봉투("Stop everything" 의 정지 회신)는 다음에 깰 때 함께 읽힌다."""
+        깨우는 봉투만 센다(5b) — 깨우지 않는 봉투("Stop everything" 의 정지 회신)는 다음에 깰 때 함께 읽힌다.
+        사람의 말도 깨우는 봉투다 — main·에이전트가 같다(5b A-4)."""
+        if self._registry is None:
+            return 0
+        return self._registry.arrived_for(self.owner, waking_only=True, words=True)
+
+    def _mail_arrived_while_waiting(self) -> int:
+        """제자리 대기를 "mail" 로 깨우는 도착분 — `arrived` 와 같되, 사람 입력을 기다리는 루프(``wait_input``,
+        main)면 사람의 말은 빼고 센다: 기다리는 도중 온 사람의 말은 ``wait_input`` 이 맡는다(명령은 그 자리에서
+        라우팅하고 깨우지 않는다 — 세면 줄 선 명령이 기다림을 깨운다)."""
         if self._registry is None:
             return 0
         return self._registry.arrived_for(
-            self.owner, waking_only=True, words=self._count_words
+            self.owner, waking_only=True, words=self._wait_input is None
         )
 
     def wake_sources(self) -> list[str]:
@@ -457,7 +464,7 @@ class Mailbox:
         if self._registry is None:
             return "nothing"
         return self._registry.wait_mail(
-            arrived=self.arrived,
+            arrived=self._mail_arrived_while_waiting,
             stop_event=stop_event,
             still_waiting=still_waiting,
             wait_input=self._wait_input,

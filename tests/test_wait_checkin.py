@@ -177,9 +177,7 @@ class TestArmAndFire:
         from agent_cli.session_slots import set_schedule_registry
 
         set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
-        assert Mailbox(
-            get_agent_registry(), "main", count_words=True
-        ).wake_sources() == ["a schedule"]
+        assert Mailbox(get_agent_registry(), "main").wake_sources() == ["a schedule"]
         assert wake_source_ids("main", agents=get_agent_registry()) == frozenset()
         assert reg.next_checkin_s("main") is None
         assert reg.arm_checkin("main") is None and _armed(reg) is None

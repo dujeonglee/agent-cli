@@ -20,7 +20,7 @@ _S = object()
 
 class TestWithoutRegistry:
     def test_values_match_the_engines_none_branches(self):
-        mb = Mailbox(None, "run:x", count_words=True)
+        mb = Mailbox(None, "run:x")
         assert mb.arrived() == 0
         assert mb.next_checkin_s() is None
         assert mb.parked_debtors() == []
@@ -43,7 +43,7 @@ class TestWithRegistry:
             awaited=frozenset(),
         )
         reg.wait_mail.return_value = "mail"
-        mb = Mailbox(reg, "agent:a", count_words=True)
+        mb = Mailbox(reg, "agent:a")
         stop, still = object(), (lambda: True)
         assert mb.arrived() == 2
         assert mb.next_checkin_s() == 300
@@ -56,14 +56,17 @@ class TestWithRegistry:
         reg.next_checkin_s.assert_called_once_with("agent:a")
         reg.wake_facts.assert_called_once_with()
         reg.wait_mail.assert_called_once_with(
-            arrived=mb.arrived, stop_event=stop, still_waiting=still, wait_input=None
+            arrived=mb._mail_arrived_while_waiting,
+            stop_event=stop,
+            still_waiting=still,
+            wait_input=None,
         )
         reg.run_started.assert_called_once_with("agent:a")
         reg.arm_checkin.assert_called_once_with("agent:a")
         reg.drop_mailbox.assert_called_once_with("agent:a")
 
     def test_take_is_the_given_inbox(self):
-        mb = Mailbox(None, "agent:a", count_words=True, take=lambda: [{"record": 1}])
+        mb = Mailbox(None, "agent:a", take=lambda: [{"record": 1}])
         assert mb.has_inbox is True
         assert mb.take() == [{"record": 1}]
 
