@@ -2,7 +2,8 @@
 
 거절(이미 도착·서로 기다림)과 기다림이 깨진 까닭을 짓는 함수들이다. 판정은 하지 않는다 — 부르는 쪽
 (`dispatch._op_wait`)이 판정한 사실을 받아 글로만 바꾼다. `constants` 의 낱말 말고는 기대는 것이 없어, 문장만
-다른 비교 트리를 만들 때 이 파일 하나를 바꾸면 된다.
+다른 비교 트리를 만들 때 이 파일 하나를 바꾸면 된다. 깨울 것이 없을 때의 거절과 그 끝맺음(`WAIT_NOTHING_PENDING`·
+`WAIT_NEXT_*`)은 아직 `loop/kind.py` 에 있다 — 5d 에서 끝맺음을 하나로 줄일 때 이리 옮긴다.
 """
 
 from __future__ import annotations
@@ -35,8 +36,10 @@ NOTICE = ARRIVAL_NOTICE
 SCHEDULE = SCHEDULE_ADDR_PREFIX
 
 
-def _arrived(kinds: tuple[str, ...]) -> tuple[str, str]:
-    """``(무엇이 왔나, 어디 있나)`` — 예: ``("the user wrote to you and 1 notice arrived", "they are right below")``."""
+def arrival_clause(kinds: tuple[str, ...]) -> tuple[str, str]:
+    """무엇이 왔나의 구절 ``(무엇이 왔나, 어디 있나)`` — 예: ``("the user wrote to you and 1 notice arrived", "they are
+    right below")``. 글만 짓는다 — 거절인지 깸인지 모르고, 다음 걸음은 부르는 쪽이 붙인다. 종류가 섞이면 늘
+    "they are right below" 하나다."""
     user = USER in kinds
     schedules = [k[len(SCHEDULE) :] for k in kinds if k.startswith(SCHEDULE)]
     notices = sum(1 for k in kinds if k == NOTICE)
@@ -70,7 +73,7 @@ def _arrived(kinds: tuple[str, ...]) -> tuple[str, str]:
 
 def arrived_refusal(kinds: tuple[str, ...]) -> str:
     """거절 2번 — 생각하는 동안 깨우는 봉투가 와 있다. 사람의 말이 있으면 먼저 답하라고, 아니면 먼저 처리하라고 한다."""
-    what, where = _arrived(kinds)
+    what, where = arrival_clause(kinds)
     if USER in kinds:
         first = "Answer it first" if set(kinds) == {USER} else "Answer the user first"
     else:
@@ -84,5 +87,5 @@ def arrived_refusal(kinds: tuple[str, ...]) -> str:
 def wait_interrupted(kinds: tuple[str, ...], still: str) -> str:
     """제자리 대기가 사람 입력으로 깼다 — 무엇이 왔나(사람이 썼나, 예약이 발화했나). ``still`` 은 아직 기다리는 회신의
     꼬리(있으면 ``" — r-1 still awaited, …"``)."""
-    what, where = _arrived(kinds)
+    what, where = arrival_clause(kinds)
     return f"the wait was interrupted — {what}; {where}{still}."
