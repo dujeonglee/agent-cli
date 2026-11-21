@@ -24,7 +24,8 @@ from agent_cli.session_slots import (
 )
 from agent_cli.subagent.agents_live import AgentInstance
 from agent_cli.subagent.resident_loop import ResidentLoop
-from agent_cli.wake import AgentFact, WakeFacts, wake_source_ids
+from agent_cli.wake import AgentFact, WakeFacts
+from tests.mail_support import checkin_ids
 from tests.test_agents_live import make_registry
 
 A = "agent:a"
@@ -264,4 +265,6 @@ def test_wakers(slots, name, owner, facts, schedule_on, sources, ids):
     if schedule_on:
         set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
     assert _mailbox(owner, agents).wake_sources() == sources
-    assert wake_source_ids(owner, agents=agents) == ids
+    assert (
+        checkin_ids(owner, agents) == ids
+    )  # 받아들여진 `wait` 의 체크인 대상(`WaitingOn.checkin_ids`)

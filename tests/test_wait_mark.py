@@ -235,7 +235,7 @@ def test_no_registry_marks_nothing():
     from agent_cli.wake import Mailbox
 
     mb = Mailbox(None, H)
-    assert mb.accept_wait() == []  # 레지스트리 없는 세션 — 깨울 것도 표시도 없다
+    assert mb.accept_wait() is None  # 레지스트리 없는 세션 — 깨울 것도 표시도 없다
     mb.clear_waiting()
 
 
@@ -265,8 +265,8 @@ class TestMarkBeforeJudgement:
 
     def test_the_second_to_wait_is_refused(self, reg):
         main, agent = self._mutual(reg)
-        assert main.accept_wait() != []  # 상주가 아직 일한다 — 받아들여진다
-        assert agent.accept_wait() == []  # main 이 기다리는 중 — 아무도 깨우지 않는다
+        assert main.accept_wait() is not None  # 상주가 아직 일한다 — 받아들여진다
+        assert agent.accept_wait() is None  # main 이 기다리는 중 — 아무도 깨우지 않는다
         assert agent.parked_debtors() == ["main"]
         assert reg._post.is_waiting("main") is True
         assert reg._post.is_waiting(A) is False  # 거절이면 표시를 내린다
@@ -274,17 +274,18 @@ class TestMarkBeforeJudgement:
     def test_waits_that_cross_are_never_both_accepted(self, reg):
         main, agent = self._mutual(reg)
         seen: dict = {}
-        own = main.wake_sources
+        own = reg.wake_facts
 
         def agent_cuts_in():
-            # main 이 표시를 세운 뒤 판정하기 전에 상주가 기다리려 한다
+            # main 이 표시를 세운 뒤 판정의 사본을 뜨기 전에 상주가 기다리려 한다(4b: 판정은 그 사본 하나에서)
+            reg.wake_facts = own
             seen["agent"] = agent.accept_wait()
             return own()
 
-        main.wake_sources = agent_cuts_in
+        reg.wake_facts = agent_cuts_in
         seen["main"] = main.accept_wait()
         assert not (seen["main"] and seen["agent"])
         assert (
-            seen["agent"] == []
+            seen["agent"] is None
         )  # 늦게 판정한 쪽이 아니라 — 먼저 표시한 main 을 잠든 채무자로 본 상주가 거절
-        assert seen["main"] != []
+        assert seen["main"] is not None

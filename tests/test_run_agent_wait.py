@@ -39,6 +39,7 @@ from agent_cli.wake import (
 from tests.loop_kinds import make_caller, run_task
 from tests.loop_ports import TEST_PORTS
 from tests.loopkit import make_loop
+from tests.mail_support import checkin_ids
 from tests.test_agents_live import make_registry
 
 
@@ -212,7 +213,7 @@ class TestPrivateMailbox:
 
     def test_drop_mailbox_discards_and_cancels_checkin(self, reg, jobs):
         jobs.start("sleep 30", owner="harness:x")
-        assert reg.arm_checkin("harness:x")
+        assert reg.arm_checkin("harness:x", checkin_ids("harness:x"))
         reg.deliver(
             "harness:x", mail=self._mail(), text="t", author="main", expects_reply=False
         )
@@ -222,7 +223,7 @@ class TestPrivateMailbox:
 
     def test_checkin_lands_in_the_private_mailbox(self, reg, jobs):
         jobs.start("sleep 30", owner="harness:x")
-        assert reg.arm_checkin("harness:x")
+        assert reg.arm_checkin("harness:x", checkin_ids("harness:x"))
         text = reg.fire_checkin("harness:x")
         assert "still running" in text
         got = reg.take_mail("harness:x")

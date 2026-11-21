@@ -25,7 +25,7 @@ from agent_cli.render import get_renderer, set_renderer
 from agent_cli.session_slots import get_agent_registry, set_job_registry
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 from agent_cli.tools.virtual import WaitTool
-from agent_cli.wake import _short_wake_name, parked_debtors
+from agent_cli.wake import Mailbox, WaitingOn, _short_wake_name, parked_debtors
 from tests.loop_ports import TEST_PORTS, make_ports, queue_inbox
 from tests.loopkit import make_loop
 from tests.mail_support import absorbed_mail, agent_wake_lines
@@ -86,6 +86,35 @@ class _WaitLineSpy:
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
+
+
+class _DecidedMailbox(Mailbox):
+    """받아들일 때 무엇을 기다리기로 했나(``on``)를 돌려주고, 그 뒤에 다시 물으면 다른 답(회신이 이미 닫힘)을 주는
+    우편 창 — 대기 줄·체크인이 받아들일 때의 값 하나에서 나오는지 본다(5c-1 4b). 기다림은 곧 메일로 깬다."""
+
+    def __init__(self, on: WaitingOn):
+        super().__init__(None, "main", take=list)
+        self._on = on
+        self.checkin_ids: list = []
+
+    def accept_wait(self):
+        return self._on
+
+    def awaited(self):
+        return []  # 받아들인 뒤에 닫혔다 — 다시 읽으면 빈 목록
+
+    def wake_sources(self):
+        return []
+
+    def next_checkin_s(self, ids):
+        self.checkin_ids.append(("next", ids))
+        return 300
+
+    def arm_checkin(self, ids):
+        self.checkin_ids.append(("arm", ids))
+
+    def wait(self, *, stop_event, still_waiting):
+        return "mail"
 
 
 def _provider(*replies: dict):
@@ -251,6 +280,56 @@ class TestWaitStaysInTheRun:
             set_job_registry(None)
             set_agent_registry(None)
             reg.shutdown_all()
+
+    def test_the_wait_line_and_the_checkin_come_from_the_accepted_value(self):
+        """받아들여진 `wait` 하나는 무엇을 기다리기로 했나를 한 번 읽는다(5c-1 4b) — 수락 문장·대기 줄·체크인 대상이 그
+        값 하나에서. 받아들인 뒤 회신이 닫혀도 대기 줄은 받아들일 때의 [r-2] 를 그리고(곧 그 회신에 깬다), 체크인은
+        받아들일 때의 대상을 건다."""
+        on = WaitingOn(
+            items=(
+                ("agent:agt-3", "agent:agt-3 working on your request"),
+                ("job:1", "job #1 (`make`)"),
+            ),
+            awaited=({"id": "r-2", "from": "agent:agt-3", "text": "build"},),
+        )
+        mailbox = _DecidedMailbox(on)
+        spy = _WaitLineSpy(get_renderer())
+        set_renderer(spy)
+        try:
+            loop = make_loop(
+                ports=make_ports(mailbox=mailbox),
+                query="Q",
+                query_request_id="u-1",
+                provider=_provider(
+                    {"action": "wait"},
+                    {"action": "complete", "result": "ok", "answers": ["u-1"]},
+                ),
+                capabilities=ModelCapabilities(
+                    context_window=32768,
+                    max_output_tokens=4096,
+                    supports_thinking=False,
+                ),
+                model="m",
+                dialect=get_dialect("json_fc"),
+            )
+            assert loop.run().success
+        finally:
+            set_renderer(spy._inner)
+        ids = frozenset({"agent:agt-3", "job:1"})
+        assert spy.calls[0] == (
+            (True, [{"id": "r-2", "from": "agent:agt-3", "text": "build"}]),
+            {"others": ["job #1"]},
+        )
+        assert mailbox.checkin_ids == [("next", ids), ("arm", ids)]
+        accepted = [
+            str(m["content"])
+            for m in loop.messages
+            if "will wake on" in str(m.get("content"))
+        ]
+        assert accepted and (
+            "will wake on: agent:agt-3 working on your request; job #1 (`make`), or in 5m"
+            in accepted[0]
+        )
 
     def test_nothing_pending_is_refused_and_the_run_goes_on(self, tmp_path):
         set_job_registry(None)

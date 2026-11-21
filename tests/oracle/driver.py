@@ -727,10 +727,11 @@ def _held_request_to(box, to: str, text: str, *, expects_reply: bool = True) -> 
 
 def _waits(s: Session, addr: str) -> bool:
     """``addr`` 가 받아들여진 `wait` 로 **제자리 대기에 들었는가** — 창구의 기다림 표시가 섰고, 그 주인의 스레드가 대기
-    줄(`wait_in_place(True, awaited)`)을 그렸다. 5c-1 부터 `wait` 는 런을 끝내지 않아 기다리는 상주도 busy 다 — "한가함"
-    으로는 기다림을 알 수 없다. 표시만 보면 안 된다: 표시는 수락 판정(`Mailbox.accept_wait`)이 먼저 세우고, 대기 줄에 실을
-    기다리는 회신(`mailbox.awaited()`)은 그 뒤 `_wait_in_place` 가 읽는다 — 그 틈에 회신이 닫히면 줄의 값이 갈린다
-    (컨테이너 cpus 0.5, 750회 중 21회). 기다리는 회신이 있는 대기에만 쓴다(③ 에선 회신 없는 대기가 줄을 그리지 않는다)."""
+    줄(`wait_in_place(True, …)`)을 그렸다. 대기 줄은 받아들인 값(`Mailbox.accept_wait` → `WaitingOn`)을 제품이 알린 첫
+    자리다(5c-1 4b). 표시만 보면 안 된다: 표시는 판정 **앞**에 선다(5b — 서로 빚진 둘이 함께 받아들여지지 않게). 그 틈에
+    대본이 회신·정지·작업 종료를 하면 받아들인 값 자체가 갈린다(컨테이너 cpus 0.5, 750회 중 21회). 5c-1 부터 기다리는
+    상주도 busy 라 "한가함" 으로는 기다림을 알 수 없다. 대기 줄을 그리는 대기에만 쓴다(③ 에선 회신 없는 대기가 줄을
+    그리지 않는다)."""
     if not s.main_input.post.is_waiting(addr):
         return False
     lane = "main" if addr == "main" else f"agent-{addr.split(':', 1)[1]}"

@@ -90,11 +90,11 @@ from agent_cli.wake import (
     AgentFact,
     WakeFacts,
     agent_relations,
+    awaited_of,
     harness_record,
     parked_view,
     release_owner,
     wait_checkin,
-    wake_source_ids,
 )
 
 if TYPE_CHECKING:
@@ -574,6 +574,14 @@ class AgentRegistry:
                     if r.kind == "r" and r.state != "closed"
                 ),
                 waiting=self._post.waiting_addresses(),
+                # 받는 쪽이 죽었으면 빼다 — 회신을 보낼 이가 없다(그 죽음은 따로 메일로 온다)
+                replies=tuple(
+                    (r.src, {"id": r.rid, "from": r.dst, "text": r.text})
+                    for r in rows
+                    if r.kind == "r"
+                    and r.state != "closed"
+                    and self._agent_alive(r.dst)
+                ),
             )
 
     def checkin_agent_lines(
@@ -683,17 +691,10 @@ class AgentRegistry:
         갚음·폴백은 회신을 **배달한 뒤** 지운다: 먼저 지우면 그 틈에 요청자의 `wait` 가 기다릴
         회신도 도착한 메일도 없는 순간을 보고 제자리 대신 런을 끝낸다.
         받는 쪽에서 세면(빚 장부 + 받은편지함) 항목이 받은편지함을 떠나 빚으로 적히기까지의
-        틈에 회신 기다림이 사라진다. 받는 쪽이 죽었으면 빼다 — 회신을 보낼 이가 없다(그 죽음은
-        따로 메일로 온다). 읽기만 한다."""
+        틈에 회신 기다림이 사라진다. 받는 쪽이 죽었으면 빼다(`wake_facts` 의 ``replies``). 읽기만 한다."""
         if not addr or is_human_addr(addr):
             return []
-        with self._cv:
-            out = [
-                {"id": r.rid, "from": r.dst, "text": r.text}
-                for r in self._post.awaited_by(addr)
-                if self._agent_alive(r.dst)
-            ]
-        return sorted(out, key=lambda r: item_ids.number_of(r["id"]))
+        return awaited_of(self.wake_facts(), addr)
 
     # ── 배달과 갚기 — 한 락 구간 (v10.145.0) ────────────────────────────────────────────
     # 범용 배달(`_enqueue`·`_push_reply`·`_push_private`)은 봉투를 `_post_deliver` 로 우편에 넣는다. 갚는 자리
@@ -1051,10 +1052,9 @@ class AgentRegistry:
     # 시간 제한이 없어 끝없이 잠들 수 있었다. 알림은 기존 셋째 갈래(장부 밖 메일,
     # `ledger: "none"`)의 첫 사용자다 — 새 층이 아니다.
 
-    def next_checkin_s(self, owner: str) -> int | None:
-        """이 소유자가 지금 `wait` 하면 걸릴 간격(초) — 없으면(예약만 기다림) None.
-        `dispatch._op_wait` 가 결과 문장에 적고 `arm_checkin` 이 같은 값을 건다."""
-        ids = wake_source_ids(owner, agents=self)
+    def next_checkin_s(self, owner: str, ids: frozenset[str]) -> int | None:
+        """이 소유자가 ``ids``(받아들일 때 읽은 체크인 대상 — `WaitingOn.checkin_ids`)를 기다리면 걸릴 간격(초) —
+        없으면(예약만 기다림) None. `dispatch._op_wait` 가 결과 문장에 적고 `arm_checkin` 이 같은 값을 건다."""
         if not ids:
             return None
         return CHECKIN_STEPS_S[
@@ -1070,13 +1070,13 @@ class AgentRegistry:
             last = self._checkin_last.get(owner)
         return last[1] + 1 if last is not None and last[0] == ids else 0
 
-    def arm_checkin(self, owner: str) -> int | None:
-        """제자리 `wait` 가 기다리기 시작한다(`Mailbox.arm_checkin`) — 타이머를 건다. 걸린 간격(초) 또는 None.
+    def arm_checkin(self, owner: str, ids: frozenset[str]) -> int | None:
+        """제자리 `wait` 가 ``ids``(받아들일 때 읽은 체크인 대상)를 기다리기 시작한다(`Mailbox.arm_checkin`) — 타이머를
+        건다. 걸린 간격(초) 또는 None.
 
         기준을 함께 적는다: 작업별 로그 크기(P(a) "+N lines since your wait")와
         에이전트별 `last_ordinal`("N steps since your wait")."""
         self.run_started(owner)  # 이미 걸린 것이 있으면 푼다
-        ids = wake_source_ids(owner, agents=self)
         if not ids:
             return None
         step = self._checkin_step(owner, ids)

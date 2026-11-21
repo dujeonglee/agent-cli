@@ -20,6 +20,7 @@ from agent_cli.constants import (
     format_duration,
     harness_mail_tool,
 )
+from agent_cli.item_ids import number_of
 from agent_cli.jobs import _short
 from agent_cli.post.envelope import is_human_words
 from agent_cli.session_slots import (
@@ -57,12 +58,23 @@ class AgentFact(NamedTuple):
 class WakeFacts(NamedTuple):
     """장부와 명단의 사본 — ``agents`` 는 명단 순서, ``owing`` 은 집힌 r 줄의 ``(빚진 쪽, 요청자)`` 장부 순서,
     ``awaited`` 는 닫히지 않은 r 줄의 ``(요청자, id)``, ``waiting`` 은 창구의 기다림 표시가 선 주소들
-    (`PostOffice.waiting_addresses` — 받아들여진 `wait` 로 기다리는 쪽)."""
+    (`PostOffice.waiting_addresses` — 받아들여진 `wait` 로 기다리는 쪽). ``replies`` 는 그중 받는 쪽이 살아 있는
+    줄의 ``(요청자, {"id", "from", "text"})`` — 기다리는 회신(`awaited_of`)의 원본이다."""
 
     agents: tuple[AgentFact, ...]
     owing: tuple[tuple[str, str], ...]
     awaited: frozenset[tuple[str, str]]
     waiting: frozenset[str] = frozenset()
+    replies: tuple[tuple[str, dict], ...] = ()
+
+
+def awaited_of(facts: WakeFacts, addr: str) -> list[dict]:
+    """``addr`` 가 보내 놓고 아직 받지 못한 회신 — ``[{"id", "from", "text"}]``, 번호 순(`AgentRegistry.awaited_replies`
+    와 받아들여진 `wait` 의 대기 줄이 같은 사본에서 읽는다)."""
+    return sorted(
+        (dict(r) for src, r in facts.replies if src == addr),
+        key=lambda r: number_of(r["id"]),
+    )
 
 
 def _debtors_owing(facts: WakeFacts, addr: str) -> list[str]:
@@ -164,7 +176,7 @@ def wake_items(
     facts: WakeFacts | None = None,
 ) -> list[tuple[str, str]]:
     """이 소유자를 **깨울 수 있는 것** — ``(id, 사람이 읽을 줄)`` 쌍 (v10.65.0·v10.79.0, docs/wait/DESIGN.md).
-    `wait` 의 수락·제자리 대기의 "아직 기다릴 것"(`Mailbox.wake_sources`)과 체크인 대상(`wake_source_ids`)이
+    `wait` 의 수락·제자리 대기의 "아직 기다릴 것"(`Mailbox.wake_sources`)과 받아들여진 `wait` 의 값(`Mailbox.accept_wait` → `WaitingOn`)이
     이 하나를 묻는다.
 
     돌고 있는 백그라운드 작업·살아 있는 모니터는 소유자 것만, 에이전트 활동은 **요청자별**(`agent_relations` —
@@ -263,13 +275,30 @@ def _short_wake_name(wake_id: str) -> str:
     return ""
 
 
-def wake_source_ids(owner: str, *, agents) -> frozenset[str]:
-    """중간 깨우기의 **대상 집합** (v10.79.0, docs/wait/DESIGN.md §6) — `wake_items` 의 id, 예약 없이. 예약만
-    기다리는 `wait` 는 빈 집합이라 타이머를 걸지 않고, 예약과 작업을 함께 기다리면 걸되 알림에는
-    작업·monitor·에이전트만 적힌다."""
-    return frozenset(
-        i for i, _ in wake_items(owner, agents=agents, with_schedule=False)
-    )
+class WaitingOn(NamedTuple):
+    """받아들여진 `wait` 가 **무엇을 기다리기로 했나** — 받아들일 때 한 번 읽은 값(5c-1 4b). 수락 문장·대기 줄·체크인
+    대상이 모두 이 하나에서 나온다(규칙: 무엇을 기다리기로 했나는 받아들일 때 한 번, 아직 살아 있나는 기다리는 동안
+    매번 — `Mailbox.wake_sources`). ``items`` 는 `wake_items` 의 ``(id, 사람이 읽을 줄)``, ``awaited`` 는 같은 사본의
+    기다리는 회신(`awaited_of`)."""
+
+    items: tuple[tuple[str, str], ...]
+    awaited: tuple[dict, ...]
+
+    @property
+    def sources(self) -> list[str]:
+        """수락 문장의 "will wake on: …" 조각들."""
+        return [text for _, text in self.items]
+
+    @property
+    def others(self) -> list[str]:
+        """대기 줄의 회신 아닌 것의 짧은 이름(결정 C) — 회신은 ``awaited`` 가 말한다."""
+        return [short for wid, _ in self.items if (short := _short_wake_name(wid))]
+
+    @property
+    def checkin_ids(self) -> frozenset[str]:
+        """중간 깨우기의 **대상 집합** (v10.79.0, docs/wait/DESIGN.md §6) — 예약 없이. 예약만 기다리는 `wait` 는 빈
+        집합이라 타이머를 걸지 않고, 예약과 작업을 함께 기다리면 걸되 알림에는 작업·monitor·에이전트만 적힌다."""
+        return frozenset(wid for wid, _ in self.items if wid != _SCHEDULE_ID)
 
 
 # ── `wait` 중간 깨우기 알림 (v10.79.0, docs/wait/DESIGN.md §6) ─────────────
@@ -505,26 +534,14 @@ class Mailbox:
             )
         ]
 
-    def wake_names_besides_replies(self) -> list[str]:
-        """깨울 것 가운데 회신이 아닌 것의 짧은 이름 — 대기 줄(`renderer.wait_in_place` 의 ``others``, 5c-1 결정 C).
-        `wake_sources` 와 같은 것을 같은 순서로 본다. 회신(에이전트 몫)은 기다리는 회신(`awaited`)이 말하므로 뺀다."""
-        return [
-            short
-            for wid, _ in wake_items(
-                self.owner,
-                agents=self._registry,
-                with_schedule=schedule_wakes(self.owner),
-            )
-            if (short := _short_wake_name(wid))
-        ]
-
     def run_started(self) -> None:
         if self._registry is not None:
             self._registry.run_started(self.owner)
 
-    def arm_checkin(self) -> None:
+    def arm_checkin(self, ids: frozenset[str]) -> None:
+        """체크인 타이머를 건다 — 대상은 받아들일 때 읽은 것(`WaitingOn.checkin_ids`)."""
         if self._registry is not None:
-            self._registry.arm_checkin(self.owner)
+            self._registry.arm_checkin(self.owner, ids)
 
     def wait(self, *, stop_event, still_waiting) -> str:
         """메일함에 통지가 오거나 사람 입력이 도착할 때까지 막는다 — 깬 이유를 돌려준다
@@ -551,10 +568,10 @@ class Mailbox:
             return []
         return self._registry.awaited_replies(self.owner)
 
-    def next_checkin_s(self) -> int | None:
+    def next_checkin_s(self, ids: frozenset[str]) -> int | None:
         if self._registry is None:
             return None
-        return self._registry.next_checkin_s(self.owner)
+        return self._registry.next_checkin_s(self.owner, ids)
 
     def parked_debtors(self) -> list[str]:
         """이 주소에게 빚진 채 잠든 에이전트 — `wait` 거절 문장의 주어(`parked_debtors`)."""
@@ -573,17 +590,27 @@ class Mailbox:
             if d.to in wanted and not d.settled
         ]
 
-    def accept_wait(self) -> list[str]:
-        """`wait` 의 받아들임 판정 — 창구에 이 주소의 기다림 표시를 **먼저** 세우고 깨울 것(`wake_sources`)을 묻는다.
-        없으면 표시를 내리고 빈 목록(거절)을 돌려준다. 표시를 판정 앞에 세우므로, 서로 빚진 둘이 같은 때 기다리려 해도
-        둘 다 받아들여지는 일이 없다 — 늦게 묻는 쪽은 먼저 표시한 쪽을 잠든 채무자로 본다(5b, 시안 §3.6)."""
-        if self._registry is None:
-            return self.wake_sources()
-        self._registry.mark_waiting(self.owner)
-        sources = self.wake_sources()
-        if not sources:
-            self._registry.clear_waiting(self.owner)
-        return sources
+    def accept_wait(self) -> WaitingOn | None:
+        """`wait` 의 받아들임 판정 — 창구에 이 주소의 기다림 표시를 **먼저** 세우고 깨울 것을 묻는다. 있으면 무엇을
+        기다리기로 했나(`WaitingOn` — 깨울 것과 기다리는 회신을 레지스트리의 사본 하나에서, 5c-1 4b), 없으면 표시를
+        내리고 None(거절). 표시를 판정 앞에 세우므로, 서로 빚진 둘이 같은 때 기다리려 해도 둘 다 받아들여지는 일이
+        없다 — 늦게 묻는 쪽은 먼저 표시한 쪽을 잠든 채무자로 본다(5b, 시안 §3.6)."""
+        reg = self._registry
+        if reg is not None:
+            reg.mark_waiting(self.owner)
+        facts = reg.wake_facts() if reg is not None else None
+        items = wake_items(
+            self.owner,
+            agents=reg,
+            with_schedule=schedule_wakes(self.owner),
+            facts=facts,
+        )
+        if not items:
+            if reg is not None:
+                reg.clear_waiting(self.owner)
+            return None
+        awaited = awaited_of(facts, self.owner) if facts is not None else []
+        return WaitingOn(tuple(items), tuple(awaited))
 
     def clear_waiting(self) -> None:
         """기다림이 끝났다 — 제자리 대기가 돌아왔다(`TurnDispatcher._wait_in_place` 의 ``finally``, 5c-1 부터 내리는 곳은
