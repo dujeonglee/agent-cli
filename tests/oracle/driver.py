@@ -2558,9 +2558,9 @@ def s30_slash_words_that_are_not_a_command_while_waiting(root: Path) -> dict:
 
 
 def s31_schedule_fires_while_main_waits(root: Path) -> dict:
-    """main 이 제자리에서 기다리는 동안 예약이 발화한다 — 발화는 사람 요청과 같은 길이라 기다림이 "the user wrote to
-    you" 로 깨고, 그 프롬프트는 예약의 이름으로 다음 턴 경계에 주입된다 (web). 지금 동작 그대로 — 예약의 발화도
-    "사용자가 썼다" 고 말한다."""
+    """main 이 제자리에서 기다리는 동안 예약이 발화한다 — 발화는 사람 요청과 같은 길(main 앞 사람의 말)로 기다림을
+    깨고, 그 프롬프트는 예약의 이름으로 다음 턴 경계에 주입된다 (web). 깸 문장은 보낸 쪽을 말한다 — "the schedule
+    "nightly" fired" (5b A-2, 종전엔 예약의 발화도 "the user wrote to you")."""
     box: dict = {}
     facts: dict = {}
     main, agent = _waiting_on_a_run_agent(box, "TASK-S3", lambda s: None)

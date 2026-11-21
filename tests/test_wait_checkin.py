@@ -177,9 +177,7 @@ class TestArmAndFire:
         from agent_cli.session_slots import set_schedule_registry
 
         set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
-        assert Mailbox(
-            get_agent_registry(), "main", count_words=True
-        ).wake_sources() == ["a schedule"]
+        assert Mailbox(get_agent_registry(), "main").wake_sources() == ["a schedule"]
         assert wake_source_ids("main", agents=get_agent_registry()) == frozenset()
         assert reg.next_checkin_s("main") is None
         assert reg.arm_checkin("main") is None and _armed(reg) is None
@@ -366,7 +364,8 @@ class TestAgentLines:
         ) in text
 
     def test_parked_debtor_shows_what_it_waits_on(self, reg, jobs):
-        _fake_agent(reg, "m", profile="coder")  # idle, 받은편지함 빔 — 스스로 잠듦
+        _fake_agent(reg, "m", profile="coder")  # idle, 받은편지함 빔
+        reg.mark_waiting("agent:m")  # 받아들여진 `wait` — 스스로 잠듦(기다림 표시)
         reg.note_owes("agent:m", "main", "t", id="r-1")
         jobs.start("pytest -x tests/", owner="agent:m")
         assert wake_source_ids("main", agents=get_agent_registry()) == {"agent:m"}
@@ -382,6 +381,7 @@ class TestAgentLines:
         self, reg, jobs, monkeypatch
     ):
         _fake_agent(reg, "n", profile="reviewer")
+        reg.mark_waiting("agent:n")  # 받아들여진 `wait` — 스스로 잠듦(기다림 표시)
         reg.note_owes("agent:n", "main", "t", id="r-2")
         jobs.start("sleep 30", owner="agent:n")
         qid, err = reg.register_question("n", "?")  # 사람에게 건 질문 — 공개 길

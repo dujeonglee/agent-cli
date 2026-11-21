@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from agent_cli.constants import schedule_addr
 from agent_cli.render.web import WebRenderer
 from agent_cli.schedule.registry import ScheduleRegistry
 from agent_cli.session_slots import set_schedule_registry
@@ -35,8 +36,8 @@ def stack(tmp_path, clock):
     server = WebServer(renderer, token="t")
     reg = ScheduleRegistry(tmp_path, clock=clock)
     reg.start = lambda: None
-    reg.enqueue = lambda prompt, nickname: server.main_input.enqueue(
-        None, prompt, nickname=nickname
+    reg.enqueue = lambda prompt, nickname, sid: server.main_input.enqueue(
+        None, prompt, nickname=nickname, src=schedule_addr(sid)
     )
     set_schedule_registry(reg)
     yield server, reg, TestClient(create_app(server))

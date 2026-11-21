@@ -198,7 +198,7 @@ class TestOneQueue:
         stores = None
         try:
             stores, wired, main_loop = self._wire(q)
-            stores.schedules.enqueue("weekly", "⏰ Scheduler")
+            stores.schedules.enqueue("weekly", "⏰ Scheduler", "s-1")
             assert wired.pump.deps.main_input is q  # 펌프가 런을 열 것을 꺼내는 자리
             main_kind_ports = main_loop.ports
             main_kind_ports.enqueue_user_message("hint", "dj")

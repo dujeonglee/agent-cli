@@ -9,6 +9,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from agent_cli.loop.kind import PrivateLoop
+from agent_cli.post import envelope as E
 from agent_cli.runtime import MainLoop
 from agent_cli.session_slots import set_agent_registry
 from agent_cli.skills.executor import SkillLoop
@@ -16,12 +17,13 @@ from agent_cli.subagent.resident_loop import ResidentLoop
 from agent_cli.wake import AgentFact, Mailbox, WakeFacts
 
 _S = object()
+_NOTICE = E.notice("n-1", "agent:k", "agent:a", "done")
 
 
 class TestWithoutRegistry:
     def test_values_match_the_engines_none_branches(self):
-        mb = Mailbox(None, "run:x", count_words=True)
-        assert mb.arrived() == 0
+        mb = Mailbox(None, "run:x")
+        assert mb.arrivals() == ()
         assert mb.next_checkin_s() is None
         assert mb.parked_debtors() == []
         assert mb.wait(stop_event=None, still_waiting=lambda: True) == "nothing"
@@ -34,38 +36,42 @@ class TestWithoutRegistry:
 class TestWithRegistry:
     def test_every_call_goes_to_the_registry_with_its_own_address(self):
         reg = MagicMock()
-        reg.arrived_for.return_value = 2
+        reg.arrivals_for.return_value = (_NOTICE, _NOTICE)
         reg.next_checkin_s.return_value = 300
         # 잠든 채무자는 레지스트리의 사본에서 판정한다(`wake.parked_debtors`) — k 는 a 에게 빚진 채 잠들었다
         reg.wake_facts.return_value = WakeFacts(
             agents=(AgentFact("agent:k", False, False, (), ()),),
             owing=(("agent:k", "agent:a"),),
             awaited=frozenset(),
+            waiting=frozenset({"agent:k"}),
         )
         reg.wait_mail.return_value = "mail"
-        mb = Mailbox(reg, "agent:a", count_words=True)
+        mb = Mailbox(reg, "agent:a")
         stop, still = object(), (lambda: True)
-        assert mb.arrived() == 2
+        assert mb.arrivals() == ("notice", "notice")
         assert mb.next_checkin_s() == 300
         assert mb.parked_debtors() == ["agent:k"]
         assert mb.wait(stop_event=stop, still_waiting=still) == "mail"
         mb.run_started()
         mb.arm_checkin()
         mb.drop()
-        reg.arrived_for.assert_called_once_with(
-            "agent:a", waking_only=False, words=True
+        reg.arrivals_for.assert_called_once_with(
+            "agent:a", waking_only=True, words=True
         )
         reg.next_checkin_s.assert_called_once_with("agent:a")
         reg.wake_facts.assert_called_once_with()
         reg.wait_mail.assert_called_once_with(
-            arrived=mb.arrived, stop_event=stop, still_waiting=still, wait_input=None
+            arrived=mb._mail_arrived_while_waiting,
+            stop_event=stop,
+            still_waiting=still,
+            wait_input=None,
         )
         reg.run_started.assert_called_once_with("agent:a")
         reg.arm_checkin.assert_called_once_with("agent:a")
         reg.drop_mailbox.assert_called_once_with("agent:a")
 
     def test_take_is_the_given_inbox(self):
-        mb = Mailbox(None, "agent:a", count_words=True, take=lambda: [{"record": 1}])
+        mb = Mailbox(None, "agent:a", take=lambda: [{"record": 1}])
         assert mb.has_inbox is True
         assert mb.take() == [{"record": 1}]
 

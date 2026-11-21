@@ -57,12 +57,14 @@ class MainInput:
         *,
         nickname=None,
         images: list[dict] | None = None,
+        src: str | None = None,
     ) -> dict:
         """사람의 말 하나를 상자 끝에 — 그 항목을 돌려준다. id 는 장부 형식(``u-N``, 세션 할당기 하나)이고 그 문자열이
-        꼬리·`answers`·기록의 `request_id`·웹 취소까지 같다."""
+        꼬리·`answers`·기록의 `request_id`·웹 취소까지 같다. ``src`` 는 봉투의 보낸 이 — 없으면 그 사람(`human_addr`),
+        예약 발화는 ``schedule:<id>``(`constants.schedule_addr`)."""
         env = words(
             item_ids.next_id(item_ids.USER),
-            human_addr(nickname),
+            src or human_addr(nickname),
             MAIN,
             text,
             payload={

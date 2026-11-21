@@ -470,7 +470,7 @@
     "role": "assistant"
    },
    {
-    "content": "Observation: the wait was interrupted — the user wrote to you; their message is right below — r-1 still awaited, so `wait` again when you are done.",
+    "content": "Observation: the wait was interrupted — the schedule \"nightly\" fired; its prompt is right below — r-1 still awaited, so `wait` again when you are done.",
     "role": "user",
     "success": true,
     "tool": "wait"

@@ -105,9 +105,7 @@ class ResidentLoop(LoopKind):
             message_handler=message_handler,
             questions=questions,
             peer_roster=peer_roster,
-            mailbox=Mailbox(
-                get_agent_registry(), f"agent:{key}", count_words=True, take=inbox
-            ),
+            mailbox=Mailbox(get_agent_registry(), f"agent:{key}", take=inbox),
             # `agent` 도구의 권한 — run·spawn 이 모든 에이전트의 표면이다 (v10.141.0, 설계 §1).
             # 메일함·꼬리 로스터는 이 종류가 따로 정한다(`intake`·`tail_roster`).
             agent_registry=agent_registry,

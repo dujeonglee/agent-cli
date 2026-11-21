@@ -373,6 +373,21 @@ def harness_mail_tool(kind: str) -> str | None:
     return HARNESS_MAIL_TOOL.get(kind or "")
 
 
+#: 예약 발화의 보낸 이 — ``schedule:<id>``. 발화는 main 앞 사람의 말과 같은 길로 서지만(대화창의 작성자는 그
+#: 닉네임) 봉투의 보낸 이는 예약이다 — `wait` 의 깸·거절 문장이 "the user wrote" 가 아니라 예약을 말한다(5b A-2).
+SCHEDULE_ADDR_PREFIX = "schedule:"
+
+
+def schedule_addr(schedule_id: str) -> str:
+    return SCHEDULE_ADDR_PREFIX + schedule_id
+
+
+#: 도착한 깨우는 봉투의 종류(`wake.Mailbox.arrivals` 가 짓고 `loop.wait_sentences` 가 읽는다) — 사람의 말, 그 밖
+#: (회신·요청·통지·하니스 알림). 예약 발화는 ``schedule:<이름>``(`SCHEDULE_ADDR_PREFIX` + label 이나 id).
+ARRIVAL_USER = "user"
+ARRIVAL_NOTICE = "notice"
+
+
 def is_private_owner(addr: str) -> bool:
     """main 도 상주도 아닌 소유자 — 메일함을 루프 자신이 읽는 주소."""
     return addr.startswith(_PRIVATE_OWNER_PREFIXES)

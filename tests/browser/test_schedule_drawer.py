@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from agent_cli.constants import schedule_addr
 from agent_cli.schedule.registry import ScheduleRegistry
 from agent_cli.session_slots import set_schedule_registry
 
@@ -41,8 +42,8 @@ def clock():
 def reg(stack, tmp_path, clock):
     r = ScheduleRegistry(tmp_path, clock=clock)
     r.start = lambda: None
-    r.enqueue = lambda prompt, nickname: stack.server.main_input.enqueue(
-        None, prompt, nickname=nickname
+    r.enqueue = lambda prompt, nickname, sid: stack.server.main_input.enqueue(
+        None, prompt, nickname=nickname, src=schedule_addr(sid)
     )
     r.on_change = stack.renderer.broadcast_schedules_changed
     set_schedule_registry(r)

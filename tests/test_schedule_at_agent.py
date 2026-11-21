@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from agent_cli import runtime
+from agent_cli.constants import schedule_addr
 from agent_cli.main import _command_dispatch
 from agent_cli.main_input import MainInput
 from agent_cli.pump import ForeverPolicy
@@ -30,8 +31,8 @@ from tests.test_engine_p2 import wait_until
 
 def _wire_like_the_session(schedules, main_input):
     """예약의 발화 자리를 세션 조립(`runtime.build_session_stores`)과 같게 — 아래 테스트가 그 줄이 그대로인지 본다."""
-    schedules.enqueue = lambda prompt, nickname: main_input.enqueue(
-        None, prompt, nickname=nickname
+    schedules.enqueue = lambda prompt, nickname, schedule_id: main_input.enqueue(
+        None, prompt, nickname=nickname, src=schedule_addr(schedule_id)
     )
 
 
@@ -46,7 +47,10 @@ def test_the_session_wires_schedule_fires_into_main_words_this_way():
         and ast.unparse(n.targets[0]) == "schedules.enqueue"
     ]
     assert wired == [
-        "lambda prompt, nickname: main_input.enqueue(None, prompt, nickname=nickname)"
+        (
+            "lambda prompt, nickname, schedule_id: main_input.enqueue(None, prompt, "
+            "nickname=nickname, src=schedule_addr(schedule_id))"
+        )
     ]
 
 

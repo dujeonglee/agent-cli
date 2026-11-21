@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any
 
+from agent_cli.constants import schedule_addr
 from agent_cli.loop.kind import (
     WAIT_BLOCK,
     WAIT_END_RUN,
@@ -530,8 +531,8 @@ def build_session_stores(
     build_snapshot_store(spec.session.session_id)
     schedules = build_schedule_registry(spec.session_dir)
     # 예약 발화는 사용자 요청처럼 main 앞 사람의 말로 들어온다 (docs/schedule/DESIGN.md §5·§6.3)
-    schedules.enqueue = lambda prompt, nickname: main_input.enqueue(
-        None, prompt, nickname=nickname
+    schedules.enqueue = lambda prompt, nickname, schedule_id: main_input.enqueue(
+        None, prompt, nickname=nickname, src=schedule_addr(schedule_id)
     )
     if on_schedules_change is not None:
         schedules.on_change = on_schedules_change
@@ -790,8 +791,6 @@ class MainLoop(LoopKind):
             mailbox=Mailbox(
                 agent_registry,
                 "main",
-                # 사람의 말은 도착분으로 세지 않는다 — 제자리 대기를 ``wait_input`` 이 "input" 으로 깨운다 [5b A-4: 센다]
-                count_words=False,
                 take=agent_registry.absorb_main if agent_registry is not None else None,
                 wait_input=wait_for_user_input,
             ),

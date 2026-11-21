@@ -608,7 +608,7 @@ class TestExitPathConvergence:
         import re
 
         wiring = (
-            "schedules.enqueue = lambda prompt, nickname: main_input.enqueue(",
+            "schedules.enqueue = lambda prompt, nickname, schedule_id: main_input.enqueue(",
             "take=agent_registry.absorb_main if agent_registry is not None else None,",
             "enqueue_user_message=lambda text, nickname: main_input.enqueue(",
             "PumpDeps(main_input=main_input,",

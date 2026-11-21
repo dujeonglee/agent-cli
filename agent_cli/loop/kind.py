@@ -394,7 +394,6 @@ class PrivateLoop(LoopKind):
             mailbox=Mailbox(
                 get_agent_registry(),
                 owner,
-                count_words=True,
                 take=_private_inbox(owner),
             ),
             unwired={

@@ -335,13 +335,9 @@ class TestWakeItemsForPrivateOwners:
                 return True
 
         set_schedule_registry(Sched())
+        assert "a schedule" in Mailbox(get_agent_registry(), "main").wake_sources()
         assert (
-            "a schedule"
-            in Mailbox(get_agent_registry(), "main", count_words=True).wake_sources()
-        )
-        assert (
-            Mailbox(get_agent_registry(), "harness:x", count_words=True).wake_sources()
-            == []
+            Mailbox(get_agent_registry(), "harness:x").wake_sources() == []
         )  # 빼지 않으면 잡 없이도 wait 가 영원히 막힌다
 
 

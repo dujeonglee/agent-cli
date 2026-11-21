@@ -45,7 +45,7 @@ def sent():
 def reg(tmp_path, clock, sent):
     r = ScheduleRegistry(tmp_path, clock=clock)
     r.start = lambda: None  # 스레드 없이 — settle() 을 직접 부른다
-    r.enqueue = lambda prompt, nickname: sent.append((prompt, nickname))
+    r.enqueue = lambda prompt, nickname, sid: sent.append((prompt, nickname))
     return r
 
 
@@ -158,7 +158,7 @@ class TestSettle:
         reg.add("0 9 * * *", "x")
         clock.advance(hours=6)
         fresh = ScheduleRegistry(tmp_path, clock=clock)
-        fresh.enqueue = lambda p, n: sent.append((p, n))
+        fresh.enqueue = lambda p, n, sid: sent.append((p, n))
         fresh.settle()
         assert sent == []
         assert fresh.list_all()[0].missed_at == "2026-10-05T09:00:00"
@@ -177,7 +177,7 @@ class TestSettle:
     ):
         calls = []
 
-        def boom(prompt, nickname):
+        def boom(prompt, nickname, sid):
             calls.append(prompt)
             raise RuntimeError("queue closed")
 
@@ -271,7 +271,7 @@ class TestThread:
         fired = threading.Event()
         r = ScheduleRegistry(tmp_path, clock=clock)
 
-        def enq(prompt, nickname):
+        def enq(prompt, nickname, sid):
             sent.append(prompt)
             fired.set()
 
@@ -344,7 +344,7 @@ class TestClose:
         assert _log(tmp_path) == []
         # 미정산으로 남았다 — 다음 세션이 같은 발화를 판정한다.
         nxt = ScheduleRegistry(tmp_path, clock=clock)
-        nxt.enqueue = lambda prompt, nickname: sent.append((prompt, nickname))
+        nxt.enqueue = lambda prompt, nickname, sid: sent.append((prompt, nickname))
         nxt.settle()
         assert [r["event"] for r in _log(tmp_path)] == [verdict]
         assert len(sent) == (1 if verdict == "fired" else 0)
@@ -382,7 +382,7 @@ class TestClose:
         clock = Clock(datetime(2026, 10, 5, 8, 59, 0))
         sent: list[str] = []
         r = ScheduleRegistry(tmp_path, clock=clock)
-        r.enqueue = lambda prompt, nickname: sent.append(prompt)
+        r.enqueue = lambda prompt, nickname, sid: sent.append(prompt)
         try:
             due = r.add("0 9 * * *", "due")  # 스레드 시작, 08:59 라 발화 없음
             first = r._thread

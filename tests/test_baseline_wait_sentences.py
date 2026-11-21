@@ -159,8 +159,8 @@ class TestMainRefuses:
     def test_an_agent_waiting_on_mains_answer_is_not_a_source(self, session):  # noqa: F811
         """상주가 main 에게 회신 기대 `message` 로 묻고 잠들었다 — main 이 `wait` 하면 거절된다: 상주를 깨울 것은
         main 의 회신뿐이다. `[v10.145.1 에서 바뀜 — 그 `message` 는 상주의 과제 빚을 갚지 않는다: 상주는 main 에게
-        빚진 채 main 을 기다리므로 거절 문장이 "근거 없음" 에서 고리("owes you a reply but is itself waiting — on
-        you")로 바뀐다]`"""
+        빚진 채 main 을 기다리므로 거절 문장이 "근거 없음" 에서 고리("owes you a reply but is itself waiting …")로
+        바뀐다]`"""
         holder: dict = {"waiting": threading.Event()}
 
         def asks(msgs):
@@ -176,6 +176,7 @@ class TestMainRefuses:
             assert wait_until(
                 lambda: [r["state"] for r in reg.roster_snapshot()] == ["idle"]
             )
+            holder["owed"] = [d.id for d in reg.reply_debts("main") if not d.settled]
             return call("wait")
 
         p = Provider(
@@ -206,10 +207,12 @@ class TestMainRefuses:
         s["run"]()
         lines = _wait_lines(contents(s["ctx"]))
         (key,) = [r["key"] for r in s["reg"].roster_snapshot()]
+        # [5b 항목 6] 확인한 사실만 — "on you" 대신 "그를 깨울 것이 돌고 있지 않다", main 이 진 회신의 id
+        (owed,) = holder["owed"]
         assert lines[1] == (
             f"Observation: wait refused — agent:{key} owes you a reply but is itself "
-            "waiting — on you, so if you wait too, nobody wakes. Reply to what you owe, "
-            "or keep working; call `complete` if the task is done."
+            "waiting, and nothing that would wake it is running, so if you wait too, "
+            f"nobody wakes. You owe it a reply [{owed}]: send that first."
         )
 
 
@@ -331,11 +334,26 @@ class TestResidentAccepts:
             )
         ]
 
-    def test_schedule_counts_for_a_resident(self, resident):
-        """예약은 main 에게 발화하는데 상주의 근거로 센다 `[단계 5 에서 바뀜 — 변화 8]`."""
+    def test_schedule_does_not_wake_a_resident(self, resident):
+        """예약은 main 에게 발화한다 — 상주의 깨울 것이 아니다(5b 변화 8). 예약만 켜져 있으면 깨울 것이 없는 거절이다."""
         set_schedule_registry(_schedule_stub())
-        text = resident["run"]({"TASK-R1": [call("wait")]})
-        assert _wait_lines(text) == ["Observation: waiting — will wake on: a schedule."]
+        text = resident["run"](
+            {
+                "TASK-R1": [
+                    call("wait"),
+                    lambda m: call("reply", id=owed_id(m), text="done"),
+                    call("complete", result="ok"),
+                ]
+            }
+        )
+        assert _wait_lines(text) == [
+            (
+                "Observation: wait refused — nothing would wake you: no job or monitor of "
+                "yours is running and no agent owes you a reply. You do not need `wait` to "
+                "receive messages: end this run with `complete`, and the next message to "
+                "you starts a new run with your memory intact."
+            )
+        ]
 
 
 class TestResidentRefuses:
@@ -434,8 +452,9 @@ class TestResidentRefuses:
         )
         assert _wait_lines(text) == [
             (
+                # [5b] 무엇이 왔나와 먼저 할 일 — 사람의 말이면 "Answer now with `complete`"
                 "Observation: wait refused — 1 notice arrived while you were thinking; "
-                "delivered right below this. Read it, then call `wait` again only if "
-                "something is still running."
+                "it is right below. Deal with it first, then `wait` again if something is "
+                "still running."
             )
         ]

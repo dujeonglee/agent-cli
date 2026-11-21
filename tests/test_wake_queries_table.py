@@ -3,10 +3,7 @@
 자리마다 제품의 종류가 만드는 포트(`MainLoop`·`ResidentLoop`·`PrivateLoop` 의 ``make_ports``)로 묻는다 — 어긋남을
 남겨 둔 한 줄(main 의 ``Mailbox`` 생성, `Mailbox.arrived`, 예약의 근거)이 바뀌면 여기서 걸린다.
 
-``[5b]`` 표지의 칸은 알려진 어긋남을 지금 동작으로 고정한 것이다 — 5b 가 그 한 줄을 뒤집을 때 이 칸이 바뀐다:
-- 깨우지 않는 봉투도 `wait` 의 도착분이다(거절 2번·제자리 대기를 "mail" 로 깨움).
-- main 의 도착분은 사람의 말을 세지 않는다 — 회신을 기다리는 main 은 받아들인 뒤 "input" 으로 깬다(A-4).
-- 에이전트의 `wait` 도 예약을 깨울 근거로 받는다(변화 8).
+5b 에서 뒤집힌 칸에는 그 근거를 단다(깨우는 봉투만·사람의 말·예약은 main 만).
 """
 
 from __future__ import annotations
@@ -103,14 +100,14 @@ S = lambda i: E.reply(f"n-{i}", "agent:b", A, "x", re="r-0", wakes=False)
 #: (이름, 주소, 명단에 올림, 넣는 봉투, 도착분)
 ARRIVED = [
     ("main_empty", "main", False, [], 0),
-    ("main_words_not_counted", "main", False, [W(1)], 0),  # [5b] A-4
+    ("main_words_counted", "main", False, [W(1)], 1),  # 5b A-4: 사람의 말도 깨우는 봉투
     ("main_waking_mail", "main", False, [N(1)], 1),
-    ("main_quiet_reply_counted", "main", False, [Q(1)], 1),  # [5b] 깨우지 않는 봉투
+    ("main_quiet_reply_not_counted", "main", False, [Q(1)], 0),  # 5b: 깨우는 봉투만
     ("main_words_and_quiet", "main", False, [W(1), Q(2)], 1),
     ("agent_human_counted", A, True, [H(1)], 1),
-    ("agent_quiet_reply_counted", A, True, [S(1)], 1),  # [5b] 깨우지 않는 봉투
+    ("agent_quiet_reply_not_counted", A, True, [S(1)], 0),  # 5b: 깨우는 봉투만
     ("agent_request", A, True, [R(1)], 1),
-    ("agent_human_and_quiet", A, True, [H(1), S(2)], 2),
+    ("agent_human_and_quiet", A, True, [H(1), S(2)], 1),
     ("agent_off_roster", A, False, [S(1)], 0),
 ]
 
@@ -123,7 +120,7 @@ def test_wait_arrived_per_address(reg, name, owner, on_roster, envs, count):
         _workerless(reg, owner.split(":", 1)[1])
     for env in envs:
         reg._post.deliver(env)
-    assert _mailbox(owner, reg).arrived() == count
+    assert len(_mailbox(owner, reg).arrivals()) == count
 
 
 def test_private_mail_is_arrived(reg):
@@ -134,28 +131,29 @@ def test_private_mail_is_arrived(reg):
         author="main",
         expects_reply=False,
     )
-    assert _mailbox("harness:x", reg).arrived() == 1
+    assert _mailbox("harness:x", reg).arrivals() == ("notice",)
 
 
 def test_no_registry_arrives_nothing(slots):
-    assert _mailbox("harness:x", None).arrived() == 0
+    assert _mailbox("harness:x", None).arrivals() == ()
 
 
 class TestMainInPlaceWake:
     """회신을 기다리는 main 의 제자리 대기 — 무엇이 어떤 이유로 깨우나."""
 
-    def test_words_wake_it_as_input_not_mail(self, reg):  # [5b] A-4
+    def test_words_wake_it_as_input_not_mail(self, reg):
+        """기다리는 도중 온 사람의 말은 ``wait_input`` 이 맡는다 — 줄 선 명령을 그 자리에서 라우팅하려고."""
         reg._post.deliver(W(1))
         mb = _mailbox("main", reg, wait_input=lambda timeout: True)
         why = mb.wait(stop_event=threading.Event(), still_waiting=lambda: True)
         assert why == "input"
 
-    def test_a_quiet_reply_wakes_it_as_mail(self, reg):  # [5b] 깨우지 않는 봉투
+    def test_a_quiet_reply_does_not_wake_it(self, reg):  # 5b: 깨우는 봉투만
         reg._post.deliver(Q(1))
         mb = _mailbox("main", reg, wait_input=lambda timeout: False)
-        # 기다릴 것이 없다고 답한다 — 도착분으로 보지 않으면 막히지 않고 "nothing" 으로 돌아온다
+        # 기다릴 것이 없다고 답한다 — 깨우지 않는 회신은 도착분이 아니므로 "nothing" 으로 돌아온다(막히지 않는다)
         why = mb.wait(stop_event=threading.Event(), still_waiting=lambda: False)
-        assert why == "mail"
+        assert why == "nothing"
 
 
 # ── 세션 수명 판정 (run 의 끝·web 의 한가함 정리 — 판정 하나, `runtime.session_has_live_work`) ──────
@@ -223,27 +221,35 @@ def _fake_agents(facts: WakeFacts):
 
 
 NO_AGENTS = WakeFacts((), (), frozenset())
-#: 한가한 B 가 main 에게 회신을 빚진 채 잠들었다
+#: 한가한 B 가 main 에게 회신을 빚진 채 잠들었다(받아들여진 `wait` — 기다림 표시)
 PARKED_B = WakeFacts(
     (AgentFact("agent:b", False, False, (), ()),),
     (("agent:b", "main"),),
     frozenset({("main", "r-1")}),
+    frozenset({"agent:b"}),
 )
 
 #: (이름, 주인, 사본, 예약 켜짐, `wait` 의 깨울 것, 체크인 대상)
 WAKERS = [
     ("main_schedule", "main", NO_AGENTS, True, ["a schedule"], frozenset()),
     ("main_nothing", "main", NO_AGENTS, False, [], frozenset()),
-    ("agent_schedule", A, NO_AGENTS, True, ["a schedule"], frozenset()),  # [5b] 변화 8
+    (
+        "agent_ignores_schedule",
+        A,
+        NO_AGENTS,
+        True,
+        [],
+        frozenset(),
+    ),  # 5b 변화 8: main 만
     ("agent_nothing", A, NO_AGENTS, False, [], frozenset()),
     ("private_ignores_schedule", "harness:x", NO_AGENTS, True, [], frozenset()),
     (
-        "parked_debtor_waits_on_schedule",  # [5b] 변화 8 — 거슬러 본 에이전트도 예약을 근거로
+        "parked_debtor_does_not_wait_on_schedule",  # 5b 변화 8 — 거슬러 본 에이전트에게도 예약은 근거가 아니다
         "main",
         PARKED_B,
         True,
-        ["agent:b owes you a reply (it is waiting on others)", "a schedule"],
-        frozenset({"agent:b"}),
+        ["a schedule"],
+        frozenset(),
     ),
     ("parked_debtor_nothing", "main", PARKED_B, False, [], frozenset()),
 ]

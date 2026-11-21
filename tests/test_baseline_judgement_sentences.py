@@ -285,10 +285,10 @@ def _resident_history(reg, key) -> list[str]:
 
 
 class TestMainWaitsFirstInACycle:
-    """W-1 [3단계 기준 — 바뀌면 사용자 결정, 5단계] — main 과 상주가 서로 빚진 채 **main 이 먼저** 제자리에서
-    기다린다. 상주의 `wait` 는 "main owes you a reply" 로 받아들여지고(main 은 잠든 채무자로 세지 않는다),
-    main 은 고리 문장이 아니라 "nothing you were waiting on is running any more." 로 깬다. 반대 순서(상주가 먼저)는
-    `tests/test_baseline_wait_sentences.py::TestMainRefuses` 가 고리 문장으로 고정한다."""
+    """W-1 — main 과 상주가 서로 빚진 채 **main 이 먼저** 제자리에서 기다린다. 5b(N4): main 도 기다림 표시로 잠든
+    채무자가 되므로, 뒤에 기다리려는 상주가 고리 문장으로 거절된다 — 반대 순서(상주가 먼저,
+    `tests/test_baseline_wait_sentences.py::TestMainRefuses`)와 같은 판정이다. 종전엔 상주가 "main owes you a
+    reply" 로 받아들여져 둘 다 잠들었고, main 은 "nothing you were waiting on is running any more." 로 깼다."""
 
     def test_main_first(self, session):  # noqa: F811
         holder: dict = {}
@@ -350,15 +350,20 @@ class TestMainWaitsFirstInACycle:
             f"Observation: waiting — will wake on: agent:{key} working on your request, "
             "or in 5m if nothing has reported."
         )
-        assert main_lines == [
-            accepted,  # 첫 `wait` — 상주의 물음에 깬다
-            accepted,  # 둘째 `wait` — 상주가 아직 일한다(그 뒤 잠든다)
-            "Observation: nothing you were waiting on is running any more.",
-        ]
+        assert (
+            main_lines
+            == [
+                accepted,  # 첫 `wait` — 상주의 물음에 깬다
+                accepted,  # 둘째 `wait` — 상주가 아직 일한다. 상주는 잠들지 못하고 일을 끝내 회신한다
+            ]
+        )
         # 상주가 런을 다 끝낸 뒤에 그 기록을 읽는다 — 마지막 줄을 쓰는 도중에 읽으면 반쪽 JSON 이다(컨테이너 1회)
         assert wait_until(lambda: s["reg"].get(key).state == "idle")
         helper = "\n".join(_resident_history(s["reg"], key))
         assert (
-            "Observation: waiting — will wake on: main owes you a reply, or in 5m if "
-            "nothing has reported." in helper
+            "Observation: waiting — will wake on: main owes you a reply" not in helper
+        )
+        assert (
+            "Observation: wait refused — main owes you a reply but is itself waiting"
+            in (helper)
         )

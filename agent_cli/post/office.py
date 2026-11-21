@@ -312,14 +312,11 @@ class PostOffice:
                     timeout,
                 )
                 if addr in self._closed:
-                    self._waiting.discard(addr)
                     return CLOSED
                 envs = box.take_next()
                 if not envs:
                     return None
                 self._idle.discard(addr)
-                # 런을 끝낸 `wait` 의 기다림이 여기서 끝난다 — 5c 에서 WAIT_END_RUN 과 함께 없어질 자리
-                self._waiting.discard(addr)
                 self._picked(envs)
                 return envs
 
@@ -332,15 +329,12 @@ class PostOffice:
 
             self.cv.wait_for(ready, timeout)
             if addr in self._closed:
-                self._waiting.discard(addr)
                 return CLOSED  # 닫힘이 이긴다 — 줄 선 사람의 말로 런을 열지 않는다(끄는 중이다)
-            if box.words() or box.count(waking_only=True, words=False):
-                self._idle.discard(addr)
-                # 런을 끝낸 `wait` 의 기다림이 여기서 끝난다 — 5c 에서 WAIT_END_RUN 과 함께 없어질 자리
-                self._waiting.discard(addr)
             if box.words():
+                self._idle.discard(addr)
                 return (self._take_first_words(box),)
             if box.count(waking_only=True, words=False):
+                self._idle.discard(addr)
                 return ()
             return None
 
@@ -364,9 +358,10 @@ class PostOffice:
 
     # ── 기다림 표시 ─────────────────────────────────
     #
-    # 받아들여진 `wait` 가 세우고(`dispatch._op_wait`), 기다림이 끝날 때 내린다 — 제자리 대기가 돌아올 때,
-    # 런을 끝낸 대기면 다음 런이 열리거나 상자가 닫힐 때(`next_run`·`close`), 주인이 사라질 때(`drop_mailbox`).
-    # 깨우지 않는다(기다리는 이가 이것을 조건으로 보지 않는다).
+    # `wait` 의 받아들임 판정 앞에 세우고(`Mailbox.accept_wait` — 거절이면 내린다), 기다림이 끝날 때 내린다 — 제자리
+    # 대기가 돌아올 때, 런을 끝낸 대기면 다음 런이 입력을 받아 시작할 때(`loop.core._note_run_started` — 5c 에서
+    # WAIT_END_RUN 과 함께 없어질 자리), 상자가 닫힐 때(`close`), 주인이 사라질 때(`drop_mailbox`). 잠든 채무자 판정
+    # (`wake._is_parked`)이 읽는다. 깨우지 않는다(기다리는 이가 이것을 조건으로 보지 않는다).
 
     def mark_waiting(self, addr: str) -> None:
         with self.cv:
@@ -375,6 +370,11 @@ class PostOffice:
     def clear_waiting(self, addr: str) -> None:
         with self.cv:
             self._waiting.discard(addr)
+
+    def waiting_addresses(self) -> frozenset[str]:
+        """기다림 표시가 선 주소들의 사본 — `AgentRegistry.wake_facts` 가 같은 구간에서 함께 뜬다."""
+        with self.cv:
+            return frozenset(self._waiting)
 
     def is_waiting(self, addr: str) -> bool:
         with self.cv:
@@ -455,11 +455,19 @@ class PostOffice:
         with self.cv:
             return self._box_or_empty(addr).mail()
 
-    def arrived(self, addr: str, *, waking_only: bool, words: bool) -> int:
-        """``addr`` 앞에 이미 도착해 줄 선 봉투 수 — 깨우는 것만 셀지·사람의 말을 셀지는 부르는 쪽이 정한다
-        (`Postbox.count`). 런이 꺼내 든 봉투는 세지 않는다."""
+    def arrivals(
+        self, addr: str, *, waking_only: bool, words: bool
+    ) -> tuple[Envelope, ...]:
+        """``addr`` 앞에 이미 도착해 줄 선 봉투 — 도착 순서. 깨우는 것만 볼지·사람의 말을 볼지는 부르는 쪽이 정한다
+        (`Postbox.arrivals`). 런이 꺼내 든 봉투는 들지 않는다."""
         with self.cv:
-            return self._box_or_empty(addr).count(waking_only=waking_only, words=words)
+            return self._box_or_empty(addr).arrivals(
+                waking_only=waking_only, words=words
+            )
+
+    def arrived(self, addr: str, *, waking_only: bool, words: bool) -> int:
+        """`arrivals` 의 수."""
+        return len(self.arrivals(addr, waking_only=waking_only, words=words))
 
     def queued_requests_from(self, addr: str, src: str) -> int:
         """``addr`` 앞에 줄 선(아직 시작 안 한) ``src`` 의 요청 수 — 회신·통지·남의 요청은 세지 않는다."""
