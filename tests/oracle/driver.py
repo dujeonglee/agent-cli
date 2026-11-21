@@ -2544,6 +2544,34 @@ def s31_schedule_fires_while_main_waits(root: Path) -> dict:
 # ── 메일 런이 열리는 모양 (런을 봉투로 열기 전의 기준) ─────────────
 
 
+def s37_command_queued_before_wait(root: Path) -> dict:
+    """main 이 생각하는 동안 사람이 명령(``/noop``)을 쳤고, main 은 run 에이전트의 회신을 기다리려고 `wait` 한다 (web).
+    명령은 하니스가 처리하고 모델에게 가지 않는다.
+
+    `[5b-3 에서 바뀜]` 지금: `wait` 판정이 줄 선 명령을 사람의 말로 세어 거절한다("the user wrote to you … right
+    below") — 아래에 글은 없다. 명령은 다음 턴 경계의 흡수가 라우팅하고, main 은 다시 `wait` 한다."""
+    box: dict = {}
+
+    def type_a_command(s):
+        s.say("/noop", nickname="dj")
+
+    main, agent = _waiting_on_a_run_agent(box, "TASK-S7", type_a_command)
+    p = Provider({"MAIN": main, "TASK-S7": agent})
+    s = box["s"] = Session(root, p, path="web")
+    s.surface.commands["/noop"] = lambda: None
+    s.close_answered_awaits_before_main_reads()
+    s.reg.checkin_timer_factory = _HeldTimer  # 5분 체크인이 저절로 나가지 않게
+
+    def done(s):
+        assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        box["go"].set()
+        until(lambda: runs_ended(s) >= 1, "main finished")
+
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=done)
+    return s.collect()
+
+
 def s32_quiet_reply_then_waking_mail(root: Path) -> dict:
     """ "Stop everything" 의 깨우지 않는 정지 회신이 한가한 main 앞에 먼저 서고, 그 뒤 작업 통지(깨움)가 온다 — 메일
     런이 열리고 그 첫 턴 경계가 둘을 **도착 순서**로 읽는다 (web). s11 과 같은 정지, 다음 런을 사람 말 대신 메일이 연다."""
@@ -2662,6 +2690,7 @@ SCENARIOS = {
     "s34_parent_dies_with_its_run_agent": s34_parent_dies_with_its_run_agent,
     "s35_shutdown_with_queued_words_web": s35_shutdown_with_queued_words_web,
     "s36_queued_request_of_a_gone_requester": s36_queued_request_of_a_gone_requester,
+    "s37_command_queued_before_wait": s37_command_queued_before_wait,
 }
 
 
