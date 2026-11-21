@@ -267,7 +267,12 @@ def test_record_restart_writes_once_on_a_context_with_history(tmp_path):
     twice = ContextManager(tmp_path / "old", max_context_tokens=10000, resume=True)
     assert record_restart(twice) is False  # 사이에 아무 런도 없던 거듭 재시작 — 한 줄
     twice.add({"role": "user", "content": "a run in between"})
-    assert record_restart(twice) is True
+    third = ContextManager(tmp_path / "old", max_context_tokens=10000, resume=True)
+    assert (
+        record_restart(third) is True
+    )  # 기록 뒤에 런이 돌고 다시 재시작 — 두 번의 재시작은 두 사실이다
+    restarts = [r for r in third.records_since(0) if _is_restart_record(r)]
+    assert len(restarts) == 2 and _is_restart_record(_last(third))
     assert interrupt_record("x") == {
         "role": "user",
         "tool": "interrupt",
