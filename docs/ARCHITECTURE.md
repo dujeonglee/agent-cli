@@ -710,8 +710,9 @@ run 은 레지스트리의 에이전트다(값 `ends_after_task`, docs/agent-eng
 보내는 것은 레지스트리(`answer_debts_as_stopped` — 런의 정리에서, `_answer_after_stop` — 워커가 죽을 때).
 
 보낸 쪽 기록(`AgentRegistry._sent`)이 장부의 "기다리는 회신"(`Ledger.awaited`)이다 — 요청이 받은편지함에 들어갈 때 적히고 받는 쪽의
-빚이 끝날 때(갚음·폴백·버림) 지워진다. 남아 있으면 `complete` 가 되돌아오고, main 의 `wait` 는 런을 끝내지 않고 제자리에서
-회신·사람 입력(`runtime.wait_for_human_words`, run 은 터미널 줄 — 대기 중 친 `/`·`@` 명령은 그 자리에서 라우팅하고 깨우지 않는다)·체크인을 기다린다(`MainLoop.wait_policy`, `dispatch._wait_in_place`).
+빚이 끝날 때(갚음·폴백·버림) 지워진다. 남아 있으면 `complete` 가 되돌아온다. 받아들여진 `wait` 는 어느 루프에서나 런을 끝내지
+않고 제자리에서(`dispatch._wait_in_place` 하나) 회신·메일·작업과 모니터의 보고·체크인을, main 은 사람 입력(`runtime.wait_for_human_words`,
+run 은 터미널 줄 — 대기 중 친 `/`·`@` 명령은 그 자리에서 라우팅하고 깨우지 않는다)도 기다린다. 깨면 새 구간(`_begin_segment`)이다.
 회신·통지 메일은 장부 항목을 만들지 않는다(`loop/core.py::is_reply_or_notice` — 회신은 기다리던 항목을 닫을 뿐, 통지는 읽으면 끝);
 요청만 받는 쪽에 빚을 만든다.
 

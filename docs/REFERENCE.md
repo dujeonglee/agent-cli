@@ -490,7 +490,8 @@ v10.66.0 부터 있던 `python` 도구(호출 사이에 변수·데이터가 남
 디렉터리엔 `.git` 이 생기지 않고, 이미 git 저장소여도 그 히스토리를 건드리지 않음)에
 자동으로 커밋해 둡니다: 세션 시작 때 한 번(변경이 없어도 — 세션의 경계, 라벨에 세션 id),
 그 뒤 `shell`·`edit_file`·`write_file` 호출 **직전**마다(최소 10초 간격, 변경 없으면
-커밋 없음). 라벨은 `before shell (turn 7): sqlite3 main.db` 처럼 그 호출의 요약(명령·경로 앞
+커밋 없음), 그리고 받아들여진 `wait` 가 기다리기 직전(`before wait (turn 3)` — 간격과 무관,
+변경 없으면 커밋 없음, v10.163.0). 라벨은 `before shell (turn 7): sqlite3 main.db` 처럼 그 호출의 요약(명령·경로 앞
 60자)을 담아 목록만 보고 "망치기 직전" 을 고를 수 있습니다(v10.80.0). 모델에겐 시스템
 프롬프트로 "망쳤으면 `snapshot` 도구(mode restore)" 만 알립니다.
 
@@ -1093,7 +1094,7 @@ def on_session_end(ctx):
 - `EVENTS` 리스트로 구독할 이벤트 선언
 - 에러 시 해당 hook 건너뜀 (에이전트 루프 중단 없음)
 
-### Hook 이벤트 (11개)
+### Hook 이벤트 (12개)
 
 | 이벤트 | 시점 | Python | Shell |
 |--------|------|--------|-------|
@@ -1103,6 +1104,7 @@ def on_session_end(ctx):
 | `PreToolUse` | 도구 실행 직전 | ✓ block/modify | ✓ exit 2=block |
 | `PostToolUse` | 도구 실행 직후 | ✓ | ✓ |
 | `OnTurnEnd` | ��� 종료 후 | ✓ | |
+| `PreWait` | 받아들여진 `wait` 가 기다리기 직전 (거절된 `wait` 에서는 불리지 않음, v10.163.0) | ✓ (막을 수 없음) | |
 | `OnAgentStart` | agent run 실행 직전 | ✓ | |
 | `OnAgentEnd` | agent run 완료 후 | ✓ | |
 | `OnSkillStart` | skill 실행 직전 (`run_skill` 도구·`/skill` 명령 모두, v10.87.0) | ✓ | |
@@ -1280,7 +1282,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 9 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice` (`build` 는 v10.92.0 에 삭제 — 매 쿼리가 갱신하므로 할 일이 없었다). Python/JS/TS/C/C++/Go/Rust/Java/Markdown. v10.92.0: 모델이 보는 안내 블록(1,104 토큰, 호출 예시 11개)을 지우고 모드 설명을 `mode` 인자에 — 1,689 → 683 토큰 |
 | `view_image` | 이미지 파일(PNG/JPEG/GIF/WebP)을 모델에게 보인다 — 결과에 이미지가 붙어 압축이 요약할 때까지 남는다. 못 본다고 알려진 모델엔 없다 (v10.77.0). Pillow 가 있으면 본문까지 풀어 보고, 헤더만 멀쩡한 손상 파일은 붙이지 않고 다시 만들라는 오류로 돌려준다 (v10.113.0) |
 | `tool_help` | 한 줄로만 소개된 도구의 전문 — 그 도구가 프롬프트에 원래 실렸을 설명·인자 설명·안내를 결과로 준다. 지연 도구가 있는 루프에만 붙는다(v10.109.0 기반, v10.110.0 부터 지연 도구 11개 — docs/tool-help/DESIGN.md) |
-| `wait` | **닫지 않고 턴을 끝낸다** (v10.65.0) — 띄운 작업·모니터·에이전트의 보고를 기다릴 때. 열린 항목은 그대로 다음 깨우기 런으로 넘어간다. 깨울 것이 없으면 거부. 꼬리의 `## Open Items` 끝에 "못 닫는다면 `wait`" 한 줄이 붙는다(v10.67.1, wait 가 있는 루프에만). 깨우는 봉투(사람의 말·메일·알림)가 **이미 와 있으면** 역시 거부하되 무엇이 왔는지와 먼저 할 일을 알린다 — "the user wrote to you while you were thinking; their message is right below. Answer now with `complete`: …" / "1 notice arrived … Deal with it first, …"(v10.66.2, 문구 v10.159.0 — 런을 끝내 봐야 바로 다시 깨울 뿐; 거부 관찰과 그것은 같은 프롬프트에 연달아 들어간다). 설계: `docs/wait/DESIGN.md` |
+| `wait` | **닫지 않고 기다린다** (v10.65.0) — 띄운 작업·모니터·에이전트의 보고를 기다릴 때. 런을 끝내지 않는다: 받아들여지면 그 자리에서 기다리고, 깨면 같은 런이 같은 열린 항목으로 잇는다(v10.163.0 — 종전엔 런을 끝내고 열린 항목을 다음 깨우기 런으로 넘겼다). 깨울 것이 없으면 거부. 꼬리의 `## Open Items` 끝에 "못 닫는다면 `wait`" 한 줄이 붙는다(v10.67.1, wait 가 있는 루프에만). 깨우는 봉투(사람의 말·메일·알림)가 **이미 와 있으면** 역시 거부하되 무엇이 왔는지와 먼저 할 일을 알린다 — "the user wrote to you while you were thinking; their message is right below. Answer now with `complete`: …" / "1 notice arrived … Deal with it first, …"(v10.66.2, 문구 v10.159.0 — 런을 끝내 봐야 바로 다시 깨울 뿐; 거부 관찰과 그것은 같은 프롬프트에 연달아 들어간다). 설계: `docs/wait/DESIGN.md` |
 | `complete` | 작업 완료 신호 (최종 결과 반환). `result` 는 답으로 전달되는 유일한 글이라(사용자 또는 부른 에이전트) 답을 먼저 쓰고(사용자에게는 마크다운으로 그려진다는 것도 설명에 적는다 — v10.96.1), 한 일에 기대는 답이면 끝에 `Checked:`(무엇을 돌리거나 봤고 무엇이 나왔나)·`Not checked:`(실행 대신 읽어서 추론한 것·안 돌린 것) 두 줄을 붙이라고 설명에 적는다 — 확인할 것이 없는 답엔 두 줄 없음. 같은 틀을 꼬리 `## Open Items` 의 `complete` 줄 바로 아래에도 한 줄로 싣는다 — 35B 는 도구 설명만으로는 따르지 않았다(v10.75.0). 기다리는 용도가 아니다 — 그건 `wait` |
 | `ask` | 사용자에게 질문하고 대기 (대화형; 질문 하나=op 하나, 여러 질문은 ask op 여러 개로 배치 — read_file 식) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
@@ -1774,6 +1776,7 @@ spawn 하면 key 를 돌려받고, 그 key(또는 이름)로 `message` 를 보�
 - **런 끝의 사실이 한 모양입니다 (v10.153.0)**: 런이 어떻게 끝났는지(끝남·실패·정지·`wait`·예외)를 값 하나(`actor.RunEnd`)로 나타내고, main 의 런 끝 정리는 한 자리(`MainActor.ended`)에서 합니다. 동작은 종전과 같습니다. 알아 둘 사실 하나: 런 도중에 main 에게 회신을 보낸 에이전트는 그 런을 마치기 전까지 main 의 에이전트 목록에 `[busy]` 로 보입니다 — 종전에도 그랬습니다.
 - **main 도 사실대로 끝납니다 (v10.156.0)**: 런이 끝나는 규칙을 main 과 에이전트에 똑같이 적용합니다. ① main 을 ■(또는 Stop everything)로 멈추면, main 에게 요청하고 답을 기다리던 에이전트가 에이전트의 ■ 와 같은 정지 회신(`The user stopped main while it was working on your request [r-…] ("…").`)을 받습니다 — 종전에는 빈 런 요약이 갔습니다. Stop everything 의 것은 그 에이전트를 깨우지 않습니다(종전에는 깨웠습니다). ② main 의 런이 실패로 끝나면 회신 머리에 원인 한 줄(`(the run ended with an error: …)`)이 붙습니다. ③ 웹 main 의 런이 예외로 죽어도 그 자리에서 뒷정리합니다 — 종전에는 회신 빚이 남아, 다음 사람 말의 런에 그 빚이 먼저 나오고 상관없는 답이 그 요청의 회신으로 갔습니다(`run` 의 종료 코드·결과 파일은 그대로). ④ 요청한 에이전트가 사라지면(✕·사망) 그가 기다리던 빚을 닫고, 일하던 쪽은 다음 턴 경계에 `request [r-…] ("…") is closed — agt-… is gone; nothing is owed back.` 를 읽습니다 — 종전에는 받을 이 없는 빚을 든 채 일했습니다. ⑤ 부모 에이전트가 오류로 죽으면 그가 띄운 run 에이전트도 멈춥니다(`… was stopped because agt-… (the agent that started it) died, …`) — 종전에는 받을 이 없이 계속 일했습니다. ⑥ 꺼지는 웹 방은 줄 선 사람의 말로 새 런을 열지 않습니다 — 종전에는 종료 중에 그 말로 모델을 불렀습니다.
 - **사라진 쪽의 뒷정리 둘 (v10.157.0)**: ① 요청한 에이전트가 사라지면(✕·사망) 그가 보내 놓고 아직 아무도 시작하지 않은 요청도 받는 쪽 상자에서 빠집니다 — 종전에는 남아 있다가, 받는 쪽이 나중에 그 요청으로 런을 열어 끝까지 일한 뒤 `reply` 에서야 `not delivered — … was already gone` 을 들었습니다. 받는 쪽은 그 요청을 본 적이 없으므로 통지는 없고, 대기열·로스터의 수만 줄어듭니다. 재시작도 그런 요청을 되살리지 않습니다(세션 종료 뒤 resume 은 그대로 되살립니다). ② 부모가 죽어 하니스가 멈춘 run 이 또 run 을 띄워 두었으면, 그 손자에게 요청한 쪽이 받는 회신은 `… was stopped because … (the agent that started it) was stopped` 입니다 — 종전에는 멈춘 부모를 `died` 라고 했습니다. 죽은 부모의 자식은 그대로 `died` 입니다.
+- **`wait` 는 런을 끝내지 않습니다 (v10.163.0)**: 받아들여진 `wait` 는 main·상주·run 에이전트 모두 그 자리에서 기다리고, 깨면(회신·통지·작업과 모니터의 보고·사람의 말·체크인) 같은 런이 같은 열린 항목으로 잇습니다 — 종전에는 main 이 회신 없이 작업·모니터만 기다리거나 에이전트가 기다리면 런을 끝내고, 열린 항목을 다음 깨우기 런으로 넘겼습니다. 그래서 ① 런 카드가 하나입니다(종전에는 기다릴 때마다 하나 더). 받은 회신은 그 `wait` 의 결과로 옵니다(`[agent]` 머리). 요청과 회신의 짝(번호)과 `## Open Items` 의 글은 그대로입니다. ② 수락 관찰 끝의 ` Open items stay open for the next run: …` 가 없어졌습니다. ③ 턴 한도(`--max-turns`)·되묻기 예산·반복 감지기·제자리 고리는 깨어 있는 구간마다 새로 셉니다 — 꼬리의 `turn N/M` 도 깬 뒤 1 부터입니다. ④ main 의 대기 줄은 작업·모니터·예약만 기다려도 섭니다: CLI `⏳ waiting for job #1 — type to steer or give new work, Enter to send`, 웹 `main is waiting for job #1 — type to steer it or give new work`(회신과 섞이면 `1 reply (r-21), job #1, monitor m-2`·`agt-3, job #1, monitor m-2`; 회신만이면 종전 글자 그대로). ⑤ 새 훅 사건 `PreWait` — 받아들여진 `wait` 가 기다리기 직전에 불리고 막을 수 없습니다. 내장 스냅샷 훅이 거기서 `before wait (turn N)` 체크포인트를 찍어, "마지막으로 고친 뒤, 기다리는 동안 남이 바꾸기 전" 지점을 `snapshot` 으로 되돌릴 수 있습니다(종전에는 `wait` 로 끝난 런의 `session end` 체크포인트가 그 자리였습니다). 기다리는 run 에이전트는 런 안이라 `wait` 뒤에도 남고, `complete` 로 끝낼 때 내려옵니다. ⑥ 에이전트를 ✕(또는 run 에이전트를 ■)하면 그가 기다리던 회신을 먼저 닫고 그다음 그가 띄운 run 에이전트를 멈춥니다 — 사망과 같은 순서입니다. 그래서 그 run 은 `request [r-…] (…) is closed — agt-… is gone; nothing is owed back.` 통지를 받고 아무에게도 정지 회신을 보내지 않습니다(종전에는 사라지는 쪽에게 정지 회신을 보낼지가 순서에 따라 갈렸습니다).
 - **웹 방을 닫을 때 기다리던 main 은 모델을 다시 부르지 않습니다 (v10.162.0)**: main 이 에이전트의 회신을 제자리에서 기다리는 중에 웹 방을 닫으면(Ctrl+C·SIGTERM — 서버가 내려가며 main 앞 대기열을 닫는다), 그 기다림이 곧바로 끝나고 런은 세션 종료로 끝납니다 — 모델 호출 없음, 정지 회신·폴백 회신 없음, `[interrupt]` 기록 없음. history 의 마지막 줄은 받아들여진 `wait` 의 관찰(`Observation: waiting — will wake on: …`)이고, 다시 열면 그 뒤에 재시작 기록이 붙습니다. 종전에는 정리가 에이전트를 멈추면 기다릴 것이 사라져 `Observation: nothing you were waiting on is running any more.` 를 붙이고 닫는 도중 모델을 한 번 더 불렀습니다(그 답은 받을 이가 없이 history 에만 남았습니다). `run` 은 정리가 런이 끝난 뒤에만 돌아 이 일이 없었습니다. 닫을 때 기다리지 않고 일하던 main(모델 호출·도구 실행 중)과 에이전트의 종료는 그대로입니다.
 - **명령은 들어올 때 한 번 판정합니다 (v10.161.0)**: main 이 생각하는 동안 친 명령(`/stop agt-3`·`/help`·`@agents`·`/compact`·`/<skill>`·`@<agent> <task>` …)은 종전처럼 입력창 위 대기열에 서고, main 의 안전한 자리(한가할 때·턴 경계·제자리 대기)에서 선 순서대로 실행됩니다 — 바뀐 것은 판정의 자리입니다. 명령인지는 입력이 main 앞에 들어올 때 한 번 정하고(웹은 `/help`·`/compact`·`/sh` 를 포함, `run` 은 `/sh` 를 명령으로 보지 않음), 명령은 모델에게 가지 않으므로 `wait` 판정이 그것을 "the user wrote to you … right below" 로 세지 않습니다. 종전에는 명령만 줄에 있어도 `wait` 가 그 문장으로 거절됐고 아래에는 아무 글도 없었습니다. 지금은 명령만 있으면 `wait` 가 깨울 것대로 판정되고(기다리는 회신이 있으면 받아들여져 제자리 대기가 시작하자마자 그 명령을 실행합니다 — 대기 도중 친 명령과 같은 길), 명령과 글이 섞여 있으면 글만 셉니다(문장은 같습니다). 줄 선 명령은 그대로 일로 칩니다(`run` 은 명령을 남긴 채 끝나지 않습니다). 들어온 뒤 실행 전에 같은 이름의 경로가 생겨 명령이 받아들여지지 않으면 그 글은 사람의 말로 갑니다 — main 이 제자리에서 기다리던 중이면 그 글은 대기열 끝에 다시 서므로(새 번호), 뒤에 줄 선 말이 있으면 그 말들보다 늦게 읽힙니다.
 - **재시작은 컨텍스트와 명단만 (v10.160.0)**: 세션이 끝나면 모든 것이 멈추고, `--resume` 은 main·상주의 대화 이력과 에이전트 명단(상주는 한가하게, 과제 도중 끊긴 run 에이전트는 죽은 채로)·예약·화면 재생만 올립니다. 메일함·하던 런·줄 선 요청·빚·제자리 대기·사람에게 물은 질문은 버리고 아무것도 스스로 이어 하지 않습니다 — 종전에는 끊긴 런을 안내를 붙여 다시 돌리고 미배달 메일·질문을 되살렸습니다(v10.157.0 의 "resume 은 그대로 되살립니다" 도 이제 아닙니다). main 과 되살린 상주의 대화 끝에 `[interrupt] ⚡ The session restarted. …` 한 줄이 남고, main 은 관찰 카드로도 보입니다. 종료 경고는 `… — they are dropped when the session ends`. `agents.json` 은 명단만 쓰고(버전 2 그대로) 옛 파일도 명단만 읽습니다. 새 항목 번호는 기록 글에 쓰인 번호 다음부터. 자세히는 아래 "재시작은 컨텍스트와 명단만 올립니다".
