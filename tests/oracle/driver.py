@@ -2550,8 +2550,10 @@ def s37_command_queued_before_wait(root: Path) -> dict:
     """main 이 생각하는 동안 사람이 명령(``/noop``)을 쳤고, main 은 run 에이전트의 회신을 기다리려고 `wait` 한다 (web).
     명령은 하니스가 처리하고 모델에게 가지 않는다.
 
-    `[5b-3 에서 바뀜]` 지금: `wait` 판정이 줄 선 명령을 사람의 말로 세어 거절한다("the user wrote to you … right
-    below") — 아래에 글은 없다. 명령은 다음 턴 경계의 흡수가 라우팅하고, main 은 다시 `wait` 한다."""
+    `[5b-3 에서 바뀜]` 종전엔 `wait` 판정이 줄 선 명령을 사람의 말로 세어 거절했다("the user wrote to you … right
+    below" — 아래에 글은 없었다). 지금은 들어올 때 명령으로 표시된 말을 세지 않는다 — `wait` 는 받아들여지고, 명령은
+    제자리 대기가 시작하자마자 그 자리에서 라우팅된다(대기 도중 친 명령 s24 와 같은 길). 회신이 깨우면 main 은 남은
+    `wait`(깨울 것 없음 — 거절)를 거쳐 끝낸다."""
     box: dict = {}
 
     def type_a_command(s):
@@ -2566,6 +2568,11 @@ def s37_command_queued_before_wait(root: Path) -> dict:
 
     def done(s):
         assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        # 회신은 명령이 라우팅된 **뒤**에 — 제자리 대기가 사람 입력을 보기 전에 회신이 오면 깸이 먼저다(시점 경합)
+        until(
+            lambda: any(r[0] == "routed" for r in s.recorder.lanes.get("pump", [])),
+            "command routed in place",
+        )
         box["go"].set()
         until(lambda: runs_ended(s) >= 1, "main finished")
 
