@@ -647,6 +647,7 @@ def wire_session(
         ),
         route_message=lambda text, item: pump.route(text, item),
         wait_for_user_input=on_wait_input or wait_for_human_words(main_input, surface),
+        session_closed=main_input.closed,
         max_turns=spec.max_turns,
         max_depth=spec.max_depth,
         verbose=spec.verbose,
@@ -766,6 +767,7 @@ class MainLoop(LoopKind):
         hooks_config: dict | None,
         graceful_interrupt: bool,
         wait_for_user_input=None,
+        session_closed=None,
     ) -> None:
         self.owner = "main"
         self.binding = binding
@@ -783,6 +785,7 @@ class MainLoop(LoopKind):
             enqueue_user_message=enqueue_user_message,
             route_message=route_message,
             wait_for_user_input=wait_for_user_input,
+            session_closed=session_closed,
         )
 
     @staticmethod
@@ -793,10 +796,12 @@ class MainLoop(LoopKind):
         enqueue_user_message,
         route_message,
         wait_for_user_input=None,
+        session_closed=None,
     ) -> LoopPorts:
         """``wait_for_user_input`` (v10.141.0): ``(timeout) -> bool`` — 사람 입력이 도착했는가
         (꺼내지 않는다; 호스트의 것 — web 은 main 앞 사람의 말, run 은 터미널 줄 + 그것). 기다리는
-        회신을 둔 제자리 `wait` 를 사람의 말이 깨운다."""
+        회신을 둔 제자리 `wait` 를 사람의 말이 깨운다. ``session_closed`` (5c-pre): ``() -> bool`` — main 상자가
+        닫혔는가(`MainInput.closed`). 제자리 `wait` 가 그것을 보고 런을 세션 종료로 끝낸다."""
         return LoopPorts(
             owner="main",
             questions=_main_questions(agent_registry),
@@ -818,6 +823,7 @@ class MainLoop(LoopKind):
                 "main",
                 take=agent_registry.absorb_main if agent_registry is not None else None,
                 wait_input=wait_for_user_input,
+                closed=session_closed,
             ),
             unwired={
                 **(

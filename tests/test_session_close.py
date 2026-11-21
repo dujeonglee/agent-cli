@@ -49,6 +49,14 @@ def _main_records(s) -> list[dict]:
     ]
 
 
+def _alive_timers() -> set[threading.Timer]:
+    return {
+        t
+        for t in threading.enumerate()
+        if isinstance(t, threading.Timer) and t.is_alive()
+    }
+
+
 def _close_while_main_waits(home, *, mode: str):
     """main 이 에이전트(``mode`` "spawn" 은 상주, "run" 은 일회용)의 회신을 제자리에서 기다리는 중 세션을 닫는다.
     에이전트는 모델 호출 안에서 붙잡혀 있다가, 정리가 그를 멈추면(평생 정지) 풀린다. 돌려주는 것:
@@ -87,17 +95,57 @@ def _close_while_main_waits(home, *, mode: str):
 
 @pytest.mark.parametrize("mode", ["spawn", "run"])
 def test_closing_while_main_waits_for_a_reply(home, mode):
-    """`[5c-pre 에서 바뀜]` 지금: 정리가 에이전트를 멈추면 main 의 기다림에서 깨울 것이 사라져("nothing") 런이 이어지고,
-    닫는 도중 모델을 한 번 더 부른다 — 그 답은 아무에게도 가지 않고 history 에만 남는다."""
+    """main 상자가 닫히면 제자리 대기가 끝나고 런은 세션 종료로 끝난다 — 닫는 도중 모델을 다시 부르지 않고, 마지막 레코드는
+    받아들여진 `wait` 의 관찰이다. `[interrupt]` 기록·정지 회신·체크인 없음. (종전: 정리가 에이전트를 멈추면 깨울 것이
+    사라져 "nothing you were waiting on is running any more." 를 붙이고 모델을 한 번 더 불렀다 — 그 답은 받을 이가 없었다.)"""
+    timers_before = (
+        _alive_timers()
+    )  # 같은 프로세스의 다른 테스트가 남긴 타이머는 이 장면의 것이 아니다
     s, calls = _close_while_main_waits(home, mode=mode)
-    assert calls == 1
-    tail = [(r.get("role"), r.get("tool"), r.get("content")) for r in _main_records(s)]
+    assert calls == 0
+    records = _main_records(s)
+    last = records[-1]
+    assert last.get("tool") == "wait"
+    assert str(last.get("content")).startswith("Observation: waiting — will wake on:")
+    assert not any(r.get("tool") == "interrupt" for r in records)
+    assert "run_ended" not in [r[0] for r in s.recorder.lanes.get("pump", [])]
+    left = _alive_timers() - timers_before  # 이 세션이 건 체크인 타이머가 남지 않았다
+    assert not left, [(t.function, t.args, t.interval) for t in left]
+
+
+def test_closing_main_s_box_alone_ends_the_in_place_wait(home):
+    """정리(에이전트 멈춤) 전에 끝난다 — 상자가 닫힌 것만으로 제자리 대기가 끝나고 펌프가 끝난다. 에이전트는 아직 살아
+    모델 호출 안에 있다."""
+    hold = threading.Event()
+
+    def aa_works(m):
+        until(hold.is_set, "released")
+        return call("reply", id=owed_id(m), text="late")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="spawn", name="aa"),
+                call("message", to="aa", text="TASK-A look"),
+                call("wait"),
+            ]
+            + [complete_all("main after")] * 4,
+            "TASK-A": [aa_works],
+        }
+    )
+    s = Session(home, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    pump = s.pump_in_thread()
+    assert s.recorder.main_waiting.wait(20)
+    before = len(p.calls["MAIN"])
+    s.stop_pump()
+    until(lambda: not pump.is_alive(), "the in-place wait ended with the box")
+    assert len(p.calls["MAIN"]) == before
     assert (
-        "user",
-        "wait",
-        "Observation: nothing you were waiting on is running any more.",
-    ) in tail[-2:]
-    assert not any(tool == "interrupt" for _, tool, _ in tail)
+        s.agent_state(_agent_key(s, "aa")) == "busy"
+    )  # 정리 전 — 에이전트는 아직 일한다
+    hold.set()
+    s.close()
 
 
 def test_a_working_main_goes_on_while_the_session_closes(home):
@@ -125,3 +173,48 @@ def test_a_working_main_goes_on_while_the_session_closes(home):
     assert len(p.calls["MAIN"]) - before == 1
     tools = [r.get("tool") for r in _main_records(s) if r.get("role") == "user"]
     assert "shell" in tools and "interrupt" not in tools
+
+
+# ── 단위 — 메일함의 닫힘·런 끝의 종류·런 끝 정리 ──────────────────────────
+
+
+def test_mailbox_wait_reports_closed_only_with_a_closed_callable():
+    from unittest.mock import MagicMock
+
+    from agent_cli.wake import Mailbox
+
+    reg = MagicMock()
+    still = lambda: True
+    reg.wait_mail.return_value = "nothing"
+    assert (
+        Mailbox(reg, "agent:a").wait(stop_event=None, still_waiting=still) == "nothing"
+    )
+    assert (
+        reg.wait_mail.call_args.kwargs["still_waiting"] is still
+    )  # 닫힘이 없는 메일함은 그대로 넘긴다
+    shut = Mailbox(reg, "main", closed=lambda: True)
+    assert shut.wait(stop_event=None, still_waiting=still) == "closed"
+    assert (
+        reg.wait_mail.call_args.kwargs["still_waiting"]() is False
+    )  # 닫혔으면 더 기다리지 않는다
+    open_box = Mailbox(reg, "main", closed=lambda: False)
+    assert open_box.wait(stop_event=None, still_waiting=still) == "nothing"
+
+
+def test_a_session_ended_run_is_session_end_and_its_end_settles_nothing():
+    from unittest.mock import MagicMock
+
+    from agent_cli.actor import RunEnd
+    from agent_cli.pump import MainActor
+    from agent_cli.tools.result import ToolResult
+
+    end = RunEnd.of(ToolResult(True, session_ended=True), stopped=True)
+    assert end.outcome == "session_end" and not end.waiting
+    deps = MagicMock()
+    actor = MainActor(deps)
+    assert actor.ended(MagicMock(), end) is False
+    deps.agent_registry.answer_main_debts_as_stopped.assert_not_called()
+    deps.agent_registry.run_ended.assert_not_called()
+    deps.auditor.run_ended.assert_not_called()
+    deps.surface.run_ended.assert_not_called()
+    deps.surface.bind_stop.assert_called_once_with(None)

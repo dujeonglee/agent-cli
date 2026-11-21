@@ -2590,8 +2590,9 @@ def s38_close_while_main_waits(root: Path) -> dict:
     정지 ``stop_event`` — 제품이 판정에 쓰는 값) 풀린다. 동기 지점: main 의 제자리 대기 시작(``main_waiting``),
     aa 의 ``stop_event``.
 
-    `[5c-pre 에서 바뀜]` 지금: 정리가 aa 를 멈추면 main 의 기다림에서 깨울 것이 사라져("nothing") 런이 이어지고 닫는
-    도중 모델을 한 번 더 부른다."""
+    `[5c-pre 에서 바뀜]` main 상자가 닫히면 제자리 대기가 끝나고 런은 세션 종료로 끝난다 — 닫는 도중 호출 0, 마지막
+    레코드는 받아들여진 `wait` 의 관찰. 종전엔 정리가 aa 를 멈추면 깨울 것이 사라져("nothing") 런이 이어지고 닫는
+    도중 모델을 한 번 더 불렀다."""
     box: dict = {}
     facts: dict = {}
     hold = threading.Event()

@@ -423,7 +423,9 @@ class Mailbox:
     정해진다. ``take`` 는 턴 경계에 흡수할 받은편지함 — 있는 루프(에이전트·private)만 준다.
     ``wait_input`` 은 ``(timeout) -> bool`` — 사람 입력이 도착했는가(꺼내지 않는다). main 만
     준다: 기다리는 회신을 둔 제자리 대기(`wait`)를 사람의 말이 깨운다 (v10.141.0) — 기다리는 **도중** 온 사람의
-    말은 그것이 맡는다(줄 선 명령은 그 자리에서 라우팅하고 깨우지 않는다, run 의 터미널 줄은 거기서만 읽힌다)."""
+    말은 그것이 맡는다(줄 선 명령은 그 자리에서 라우팅하고 깨우지 않는다, run 의 터미널 줄은 거기서만 읽힌다).
+    ``closed`` 는 ``() -> bool`` — 세션이 끝나는 중인가(main 상자가 닫혔다, `MainInput.closed`). main 만 준다: 닫히면
+    제자리 대기가 곧바로 끝나고 `wait` 가 ``"closed"`` 를 돌려준다(5c-pre)."""
 
     def __init__(
         self,
@@ -432,11 +434,13 @@ class Mailbox:
         *,
         take=None,
         wait_input=None,
+        closed=None,
     ) -> None:
         self._registry = registry
         self.owner = owner
         self._take = take
         self._wait_input = wait_input
+        self._closed = closed
 
     @property
     def has_inbox(self) -> bool:
@@ -491,15 +495,22 @@ class Mailbox:
 
     def wait(self, *, stop_event, still_waiting) -> str:
         """메일함에 통지가 오거나 사람 입력이 도착할 때까지 막는다 — 깬 이유를 돌려준다
-        (`AgentRegistry.wait_mail`). 레지스트리가 없으면 기다릴 메일함이 없다."""
+        (`AgentRegistry.wait_mail`). 레지스트리가 없으면 기다릴 메일함이 없다. ``closed`` 가 있으면 세션이 끝나는 것도
+        기다림을 끝낸다 — 그때 이유는 ``"closed"``."""
         if self._registry is None:
             return "nothing"
-        return self._registry.wait_mail(
+        closed = self._closed
+        why = self._registry.wait_mail(
             arrived=self._mail_arrived_while_waiting,
             stop_event=stop_event,
-            still_waiting=still_waiting,
+            still_waiting=(
+                still_waiting
+                if closed is None
+                else (lambda: still_waiting() and not closed())
+            ),
             wait_input=self._wait_input,
         )
+        return "closed" if closed is not None and why == "nothing" and closed() else why
 
     def awaited(self) -> list[dict]:
         """이 주소가 보내 놓고 아직 받지 못한 회신 (v10.141.0) — `AgentRegistry.awaited_replies`."""

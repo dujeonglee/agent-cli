@@ -15,7 +15,8 @@ from typing import Any, Literal, Protocol
 
 from agent_cli.main_input import CLOSED
 
-#: 런이 어떻게 끝났나 — 끝 정리가 읽는 사실. ``session_end`` 는 자리만 있다(세션 종료의 런 끝 — 다음 단계의 것)
+#: 런이 어떻게 끝났나 — 끝 정리가 읽는 사실. ``session_end`` 는 세션 종료의 런 끝 — 지금은 닫힐 때 제자리에서 기다리던
+#: main 하나(5c-pre, `ToolResult.session_ended`). 일하는 중이던 런·멈춘 에이전트의 런으로 넓히는 것은 5e.
 Outcome = Literal["done", "failed", "stopped", "wait", "crashed", "session_end"]
 
 
@@ -42,10 +43,14 @@ class RunEnd:
 
     @classmethod
     def of(cls, finished: Any, *, stopped: bool = False) -> RunEnd:
-        """종류의 반환에서 — `wait` 로 끝났으면 ``wait``, 정지가 섰으면 ``stopped``, 실패면 ``failed``, 아니면 ``done``."""
+        """종류의 반환에서 — 세션 종료로 끝났으면 ``session_end``, `wait` 로 끝났으면 ``wait``, 정지가 섰으면
+        ``stopped``, 실패면 ``failed``, 아니면 ``done``."""
         result = finished[0] if isinstance(finished, tuple) else finished
-        if bool(getattr(result, "waiting", False)):
-            outcome: Outcome = "wait"
+        outcome: Outcome
+        if bool(getattr(result, "session_ended", False)):
+            outcome = "session_end"
+        elif bool(getattr(result, "waiting", False)):
+            outcome = "wait"
         elif stopped:
             outcome = "stopped"
         elif not bool(getattr(result, "success", False)):

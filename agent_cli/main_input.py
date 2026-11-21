@@ -136,6 +136,10 @@ class MainInput:
         """main 이 런을 열 것을 기다리는 중인가 — 펌프가 `wait_to_open` 안에 있다."""
         return self.post.idle(MAIN)
 
+    def closed(self) -> bool:
+        """main 상자가 닫혔는가 — 세션이 끝나는 중이다(웹 서버가 내려갈 때 `WebServer.shutdown` 이 닫는다)."""
+        return self.post.is_closed(MAIN)
+
     def close(self) -> None:
         """기다리는 펌프를 깨워 끝나게 한다 — 줄 선 사람의 말은 런을 열지 않는다(닫힘이 이긴다). 멱등."""
         self.post.close(MAIN)
