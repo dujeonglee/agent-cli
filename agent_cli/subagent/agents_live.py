@@ -2424,8 +2424,8 @@ class AgentRegistry:
         tm.stop_notified.append((to.removeprefix("agent:"), rid))
 
     def _answer_after_stop(self, tm: AgentInstance) -> None:
-        """사람(또는 모델)이 끝낸 에이전트의 남은 것을 표(`agent_stop.stop_rule`)대로 정리한다 — 워커가 죽을 때
-        한 번. 런 없이 남은 빚(스스로 잠든 빚)·대기 요청·띄운 run, 그리고 화면 한 줄."""
+        """사람(또는 모델)이 끝낸 에이전트의 남은 것을 표(`agent_stop.stop_rule`)대로 정리한다 — 워커가 죽을 때 한 번.
+        남은 빚·대기 요청과 화면 한 줄. 띄운 run 은 빚을 닫은 뒤에 멈춘다(`agent_stop.close_debts_then_stop_sub_runs`)."""
         rule = agent_stop.stop_rule(tm.stop_cause, tm.ends_after_task)
         self.answer_debts_as_stopped(tm, activity=[], notes="")
         kept = 0
@@ -2435,8 +2435,6 @@ class AgentRegistry:
             self._answer_queued(tm, agent_stop.stop_mark(cause, by), reply_of)
         else:
             kept = len(self._queued(tm))
-        if rule.stops_sub_runs:
-            agent_stop.stop_sub_runs(self, tm)
         self.report_stop(tm, kept=kept)
 
     def report_stop(self, tm: AgentInstance, *, kept: int) -> None:
@@ -2756,9 +2754,8 @@ class AgentRegistry:
                     tm, mark, partial(agent_stop.gone_reply, died=bool(crash))
                 )
             if not tm.revivable:
-                agent_stop.close_debts_owed_to(self, tm, self._who(f"agent:{tm.key}"))
-                if crash and not tm.stop_event.is_set():  # 결과를 받을 부모가 없다
-                    agent_stop.stop_sub_runs(self, tm, agent_stop.HARNESS)
+                died = bool(crash) and not tm.stop_event.is_set()
+                agent_stop.close_debts_then_stop_sub_runs(self, tm, died=died)
                 # **영구 사망(kill·crash)일 때만** 질문을 정리한다 (§3.8).
                 # 세션 종료(shutdown_all)는 revivable 을 유지하므로 여기
                 # 들어오지 않는다 — 들어오면 직후의 _save_state 가 빈 목록을

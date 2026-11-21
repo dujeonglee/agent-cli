@@ -2044,12 +2044,6 @@ def s39_kill_a_waiting_requester(root: Path) -> dict:
         s = box["s"]
         # 부모의 ✕ 와 그 정리 — 하니스가 이 run 을 멈춘 뒤에 돌아간다(s34 와 같은 이유로 stop_event)
         until(lambda: s.reg.get(kid_key()).stop_event.is_set(), "run stopped")
-        # 그리고 aa 의 워커가 끝난 뒤 — 사라진 aa 가 기다리던 회신(r-3)의 정리(`close_debts_owed_to`)는 그 끝에서 돈다. 이
-        # run 의 정지 회신(이 호출 뒤 런의 정리)이 그보다 먼저면 죽어 가는 aa 에게 r-3 회신이 "간다"(notified) — 제품의 순서
-        # 경합이다(✕ 의 정리는 `stop_sub_runs` 를 `close_debts_owed_to` 보다 먼저 부른다, 사망은 반대). 고정하는 것은 정리가
-        # 먼저인 쪽(컨테이너 cpus 0.5, 750회 중 3회가 반대)
-        aa = s.reg.get(_agent_key(s, "aa"))
-        until(lambda: not aa.worker.is_alive(), "aa's worker ended")
         return call("shell", command="true")
 
     p = Provider(
