@@ -539,13 +539,15 @@ class TestTwoEndsAtOnce:
         from agent_cli.subagent.resident_loop import ResidentLoop
 
         gate = threading.Event()
-        _calls, runner = _counting_runner(gate)
+        calls, runner = _counting_runner(gate)
         reg = make_registry(tmp_path, runner=runner)
         aa, aa_tm = _idle_agent(reg, "aa")
         bb, bb_tm = _idle_agent(reg, "bb")
         assert not reg.message_handler(f"agent:{aa}")(bb, "for bb", True)[1]
         assert not reg.message_handler(f"agent:{bb}")(aa, "for aa", True)[1]
-        assert wait_until(lambda: aa_tm.state == "busy" and bb_tm.state == "busy")
+        # 동기 지점은 실행기 진입이다 — ``busy`` 는 런 시작(`open_scope`) 전에 서서, 그것만 보고 바꿔치면 첫
+        # 런이 바꾼 것을 집어 문에 닿기 전에 죽는다. 실행기는 `open_scope` 뒤에 불린다.
+        assert wait_until(lambda: len(calls) == 2)
         real_open = ResidentLoop.open_scope
         monkeypatch.setattr(
             ResidentLoop,
