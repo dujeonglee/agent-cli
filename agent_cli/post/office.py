@@ -351,6 +351,11 @@ class PostOffice:
         with self.cv:
             self._closed.discard(addr)
 
+    def is_closed(self, addr: str) -> bool:
+        """``addr`` 의 상자가 닫혔는가(`close` — `reopen` 전까지)."""
+        with self.cv:
+            return addr in self._closed
+
     def idle(self, addr: str) -> bool:
         """``addr`` 가 지금 런을 열 것을 기다리는 중인가(`next_run` 안)."""
         with self.cv:

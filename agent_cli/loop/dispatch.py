@@ -1282,6 +1282,10 @@ class TurnDispatcher:
                 success=True,
                 turn=self.state.turn,
             )
+        if why == "closed":
+            # 세션이 닫힌다(main 상자가 닫혔다) — 런은 세션 종료로 끝난다. 관찰을 붙이지 않고 모델을 다시 부르지 않는다:
+            # 닫는 도중의 답은 받을 이가 없다(5c-pre).
+            return ToolResult(True, session_ended=True)
         if why == "nothing":
             _append_observation(
                 self.state.messages,

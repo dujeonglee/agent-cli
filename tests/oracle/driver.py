@@ -2584,6 +2584,50 @@ def s37_command_queued_before_wait(root: Path) -> dict:
     return s.collect()
 
 
+def s38_close_while_main_waits(root: Path) -> dict:
+    """웹 방을 닫을 때 main 이 상주 aa 의 회신을 제자리에서 기다리고 있다 — 웹 호스트와 같은 순서로 닫는다: main 상자를
+    닫고(`stop_pump`), 정리(`close` — 에이전트를 멈춘다). aa 는 모델 호출 안에서 붙잡혀 있다가 정리가 그를 멈추면(평생
+    정지 ``stop_event`` — 제품이 판정에 쓰는 값) 풀린다. 동기 지점: main 의 제자리 대기 시작(``main_waiting``),
+    aa 의 ``stop_event``.
+
+    `[5c-pre 에서 바뀜]` main 상자가 닫히면 제자리 대기가 끝나고 런은 세션 종료로 끝난다 — 닫는 도중 호출 0, 마지막
+    레코드는 받아들여진 `wait` 의 관찰. 종전엔 정리가 aa 를 멈추면 깨울 것이 사라져("nothing") 런이 이어지고 닫는
+    도중 모델을 한 번 더 불렀다."""
+    box: dict = {}
+    facts: dict = {}
+    hold = threading.Event()
+
+    def aa_works(msgs):
+        until(hold.is_set, "released")
+        return call("reply", id=owed_id(msgs), text="late")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="spawn", name="aa"),
+                call("message", to="aa", text="TASK-C look"),
+                call("wait"),
+            ]
+            + [complete_all("main after close")] * 4,
+            "TASK-C": [aa_works],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    t = s.pump_in_thread()
+    assert s.recorder.main_waiting.wait(_PATIENCE_S)
+    before = len(p.calls.get("MAIN", []))
+    s.stop_pump()
+    closer = threading.Thread(target=s.close, daemon=True, name="oracle-close")
+    closer.start()
+    aa = _agent_key(s, "aa")
+    until(lambda: s.reg.get(aa).stop_event.is_set(), "aa stopped by the close")
+    hold.set()
+    until(lambda: not closer.is_alive() and not t.is_alive(), "closed")
+    facts["main_calls_during_close"] = len(p.calls.get("MAIN", [])) - before
+    return s.collect(facts)
+
+
 def s32_quiet_reply_then_waking_mail(root: Path) -> dict:
     """ "Stop everything" 의 깨우지 않는 정지 회신이 한가한 main 앞에 먼저 서고, 그 뒤 작업 통지(깨움)가 온다 — 메일
     런이 열리고 그 첫 턴 경계가 둘을 **도착 순서**로 읽는다 (web). s11 과 같은 정지, 다음 런을 사람 말 대신 메일이 연다."""
@@ -2703,6 +2747,7 @@ SCENARIOS = {
     "s35_shutdown_with_queued_words_web": s35_shutdown_with_queued_words_web,
     "s36_queued_request_of_a_gone_requester": s36_queued_request_of_a_gone_requester,
     "s37_command_queued_before_wait": s37_command_queued_before_wait,
+    "s38_close_while_main_waits": s38_close_while_main_waits,
 }
 
 
