@@ -382,6 +382,10 @@ def schedule_addr(schedule_id: str) -> str:
 ARRIVAL_USER = "user"
 ARRIVAL_NOTICE = "notice"
 
+#: main 앞 사람의 말 봉투의 payload 키 — 들어올 때 한 번 판정한 "명령인가"(5b-3). `MainInput.enqueue` 가 쓰고
+#: `MainInput.item_of`·`wake.Mailbox.arrivals` 가 읽는다(둘이 같은 층이라 이름을 여기 둔다). 우편은 열지 않는다.
+INPUT_IS_COMMAND = "command"
+
 
 def is_private_owner(addr: str) -> bool:
     """main 도 상주도 아닌 소유자 — 메일함을 루프 자신이 읽는 주소."""

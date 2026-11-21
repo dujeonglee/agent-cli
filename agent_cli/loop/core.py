@@ -846,7 +846,11 @@ class AgentLoop:
             hidx=getattr(self.ctx, "next_ordinal", None),
             images=images,
         )
-        if self.route_message is not None and self.route_message(text, item):
+        if (
+            item.get("command")
+            and self.route_message is not None
+            and self.route_message(text, item)
+        ):
             # 명령으로 라우팅됐다 — 요청을 적고, ctx 가 바뀌었을 수 있다.
             self.task_log.append(labeled)
             if self.ctx:

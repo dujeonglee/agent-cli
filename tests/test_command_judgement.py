@@ -1,7 +1,8 @@
 """사람의 말이 명령인가 — 웹·CLI 표면의 `route` 가 지금 돌려주는 답을 글 묶음으로 고정한다.
 
 `route` 는 판정과 실행이 붙어 있다. 여기서는 실행을 대역으로 막고(에이전트·스킬·정지·`/sh` 실행) 반환만 본다.
-표의 값이 "명령인가" 의 정본이다 — 판정을 실행과 떼어 낸 함수도 같은 표를 지나야 한다.
+표의 값이 "명령인가" 의 정본이다 — 판정을 실행과 떼어 낸 함수(들어오는 문의 판정 `command_table.web_input_is_command`·
+`run_input_is_command`, 5b-3)도 같은 표를 지난다.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import agent_cli.main as M
+from agent_cli.command_table import run_input_is_command, web_input_is_command
 from agent_cli.main import _command_dispatch, _ConsoleSurface
 from agent_cli.web.surface import WebSurface
 
@@ -109,10 +111,11 @@ def test_cli_route_answers_as_the_table(text):
 
 
 @pytest.mark.parametrize("text", sorted(TABLE))
-def test_web_is_command_says_what_route_does(text):
-    assert _web().is_command(text) is TABLE[text][0]
+def test_the_web_door_says_what_route_does(text):
+    """들어오는 문의 판정(5b-3 — `MainInput` 이 한 번 묻는다)이 라우팅의 답과 같다."""
+    assert web_input_is_command(text) is TABLE[text][0]
 
 
 @pytest.mark.parametrize("text", sorted(TABLE))
-def test_cli_is_command_says_what_route_does(text):
-    assert _cli().is_command(text) is TABLE[text][1]
+def test_the_run_door_says_what_route_does(text):
+    assert run_input_is_command(text) is TABLE[text][1]

@@ -118,7 +118,7 @@ class TestRequestsReachTheRun:
     def test_routed_command_is_not_a_pending_request(self):
         """라우팅 명령은 **이미 처리된 것**이다 — 미답으로 남으면 안 된다."""
         loop = _drain(
-            [{"id": "r1", "nickname": "Bob", "text": "/skill x"}],
+            [{"id": "r1", "nickname": "Bob", "text": "/skill x", "command": True}],
             route=lambda text, item: True,
         )
         assert _ids(loop) == []
@@ -923,7 +923,7 @@ class TestRequestIdOnUserRecords:
     def test_routed_command_is_not_stamped(self):
         """라우팅 명령은 요청이 아니다 — 회계와 같은 문."""
         loop = _drain(
-            [{"id": "7", "nickname": "Bob", "text": "/sh ls"}],
+            [{"id": "7", "nickname": "Bob", "text": "/sh ls", "command": True}],
             route=lambda _t, _i: True,
         )
         assert _ids(loop) == []

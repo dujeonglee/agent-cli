@@ -6,8 +6,9 @@
 (`PostOffice.next_run`). 사람의 말은 줄(장부) 없이 선다 — 꺼내기 전에는 취소되거나 명령으로 빠질 수 있다.
 저장하지 않는다.
 
-화면·펌프에 내주는 항목 모양은 ``{id, conn_id, nickname, text, images}`` 하나다 — 대기열 표시·취소 소유권·
-런의 귀속이 이 필드를 읽는다. ``on_change`` 는 상자의 사람 말이 바뀔 때마다 **락 밖에서** 부른다(웹이 대기열을
+화면·펌프에 내주는 항목 모양은 ``{id, conn_id, nickname, text, images, command}`` 하나다 — 대기열 표시·취소
+소유권·런의 귀속이 이 필드를 읽는다. ``command`` 는 들어올 때 한 번 판정한 "명령인가"(5b-3) — 명령은 하니스가 main 의
+안전한 지점(펌프의 차례·턴 경계·제자리 대기)에서 선 순서대로 실행하고, 모델의 우편이 아니다. ``on_change`` 는 상자의 사람 말이 바뀔 때마다 **락 밖에서** 부른다(웹이 대기열을
 다시 그린다 — 렌더러 락과 겹치지 않게).
 """
 
@@ -16,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from agent_cli import item_ids
+from agent_cli.constants import INPUT_IS_COMMAND
 from agent_cli.post.envelope import Envelope, is_human_words, words
 from agent_cli.post.office import CLOSED, PostOffice, Take
 
@@ -37,11 +39,14 @@ class MainInput:
         post: PostOffice | None = None,
         *,
         on_change: Callable[[], None] | None = None,
+        is_command: Callable[[str], bool] | None = None,
     ) -> None:
         """``post`` 가 없으면 새로 만든다 — 세션의 에이전트 레지스트리가 이 창구를 받아 써야 메일과 사람의 말이 한
-        상자에 선다."""
+        상자에 선다. ``is_command`` 는 표면의 판정(`command_table.run_input_is_command`·`web_input_is_command`) —
+        들어오는 말마다 한 번 묻는다. None 이면 이 상자에는 명령이 없다."""
         self.post = post if post is not None else PostOffice()
         self.on_change = on_change
+        self._is_command = is_command
 
     def _changed(self) -> None:
         cb = self.on_change
@@ -61,7 +66,8 @@ class MainInput:
     ) -> dict:
         """사람의 말 하나를 상자 끝에 — 그 항목을 돌려준다. id 는 장부 형식(``u-N``, 세션 할당기 하나)이고 그 문자열이
         꼬리·`answers`·기록의 `request_id`·웹 취소까지 같다. ``src`` 는 봉투의 보낸 이 — 없으면 그 사람(`human_addr`),
-        예약 발화는 ``schedule:<id>``(`constants.schedule_addr`)."""
+        예약 발화는 ``schedule:<id>``(`constants.schedule_addr`). 명령인가는 여기서 한 번 판정해 봉투에 싣는다."""
+        command = self._is_command is not None and bool(self._is_command(text))
         env = words(
             item_ids.next_id(item_ids.USER),
             src or human_addr(nickname),
@@ -71,6 +77,7 @@ class MainInput:
                 "conn_id": conn_id or "",
                 "nickname": nickname,
                 "images": list(images or []),
+                INPUT_IS_COMMAND: command,
             },
         )
         self.post.deliver(env)
@@ -88,11 +95,11 @@ class MainInput:
         self._changed()
         return self.item_of(got[0])
 
-    def take_first_if(self, pred: Callable[[str], bool]) -> dict | None:
-        """맨 앞의 사람의 말이 ``pred(text)`` 면 꺼내 돌려준다, 아니면 None — main 이 제자리에서 기다리는 동안 친
-        명령(``/stop`` 등)을 그 자리에서 라우팅하려고."""
+    def take_first_command(self) -> dict | None:
+        """맨 앞의 사람의 말이 명령이면(들어올 때의 판정) 꺼내 돌려준다, 아니면 None — main 이 제자리에서 기다리는
+        동안 줄 선 명령(``/stop`` 등)을 그 자리에서 라우팅하려고."""
         first = next(iter(self.post.words(MAIN)), None)
-        if first is None or not pred(first.text):
+        if first is None or not first.payload.get(INPUT_IS_COMMAND):
             return None
         env = self.post.withdraw(MAIN, first.id)
         if env is None:
@@ -135,7 +142,7 @@ class MainInput:
 
     @staticmethod
     def item_of(env: Envelope) -> dict:
-        """사람의 말 봉투 → 화면·펌프의 항목 ``{id, conn_id, nickname, text, images}``."""
+        """사람의 말 봉투 → 화면·펌프의 항목 ``{id, conn_id, nickname, text, images, command}``."""
         p = env.payload
         return {
             "id": env.id,
@@ -143,6 +150,7 @@ class MainInput:
             "nickname": p.get("nickname"),
             "text": env.text,
             "images": list(p.get("images") or []),
+            "command": bool(p.get(INPUT_IS_COMMAND)),
         }
 
 

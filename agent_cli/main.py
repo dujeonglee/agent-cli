@@ -17,9 +17,9 @@ from rich.markup import escape
 
 from agent_cli.command_table import (
     IMAGES_NOT_TAKEN,
-    command_kind,
     command_takes_images,
     looks_like_slash_command,
+    run_input_is_command,
 )
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
@@ -536,10 +536,6 @@ class _ConsoleSurface:
     def bound_stop(self) -> threading.Event | None:
         """지금 런의 stop Event(한가하면 None) — Ctrl+C 처리기가 본다. 읽기만 한다."""
         return self._stop
-
-    def is_command(self, text: str) -> bool:
-        """``text`` 를 `route` 가 명령으로 받는가 — 실행하지 않고 판정만. ``/sh`` 는 run 에 없다(평범한 질의)."""
-        return not text.startswith("/sh") and command_kind(text) is not None
 
     def route(self, text: str, start=None, *, item: dict | None = None) -> bool:
         if text.startswith("/sh"):
@@ -2040,7 +2036,7 @@ def run(
 
     # main 앞 사람의 말(과 그 창구)은 저장소보다 먼저 선다 — 예약의 발화 자리를 저장소를 만드는 자리에서
     # 묶는다(web 은 서버가 이미 들고 있다, v10.130.5).
-    main_input = MainInput()
+    main_input = MainInput(is_command=run_input_is_command)
     spec = SessionSpec.for_session(
         binding=binding,
         session=session,
@@ -2339,7 +2335,8 @@ def _terminal_steer_input(main_input, surface):
     터미널 줄은 main 이 제자리에서 기다리는 동안에만 읽는다 — 그 밖의 시간엔 `ask`·확인
     프롬프트가 같은 표준입력을 쓴다.
 
-    명령(``surface.is_command``, ``/stop agt-3`` 등)은 줄 선 것이든 친 것이든 그 자리에서 ``surface.route`` 하고
+    친 줄도 main 앞에 넣는다(들어오는 문 하나 — 명령인가는 거기서 판정한다). 명령(``/stop agt-3`` 등)은 줄 선 것이든
+    친 것이든 그 자리에서 ``surface.route`` 하고
     기다림을 깨우지 않는다 — 깨우면 main 이 "사용자가 썼다" 로 깨어 그 말이 없는 관찰을 읽는다(명령은 흡수 때
     소비된다). 멈춘 에이전트의 회신이 따로 깨운다 (v10.148.0: 줄 선 명령도 — 종전엔 친 줄만)."""
     import select
@@ -2362,11 +2359,8 @@ def _terminal_steer_input(main_input, surface):
         text = sys.stdin.readline().strip()
         if not text:
             return False
-        if surface.is_command(text):
-            surface.route(text)
-            return False
         main_input.enqueue(None, text)
-        return True
+        return queued(0)
 
     return wait
 

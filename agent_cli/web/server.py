@@ -59,6 +59,7 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
 
 from agent_cli import images as _images
+from agent_cli.command_table import web_input_is_command
 from agent_cli.main_input import MainInput, human_addr
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
@@ -256,7 +257,9 @@ class WebServer:
         # Items: ``{id, conn_id, nickname, text, images}``.
         #: 미배달 메일의 대기열 줄 공급자 — web 부트가 꽂는다 (v10.51.0)
         self.mail_source = None
-        self.main_input = MainInput(on_change=self.broadcast_queue)
+        self.main_input = MainInput(
+            on_change=self.broadcast_queue, is_command=web_input_is_command
+        )
         # Stop handle for the in-flight chat turn. The worker registers a
         # fresh ``threading.Event`` per message and passes it to
         # ``run_loop(stop_event=…)``; ``/api/stop`` sets it so the loop

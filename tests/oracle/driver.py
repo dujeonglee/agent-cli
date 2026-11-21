@@ -288,6 +288,7 @@ class Surface:
         self.stop = event
 
     def is_command(self, text):
+        """들어오는 문(`MainInput`)이 묻는 판정 — 이 표면의 명령 표."""
         return text in self.commands
 
     def route(self, text, start=None, *, item=None):
@@ -363,7 +364,9 @@ class Session:
             verbose=False,
             record_turns=True,
         )
-        self.main_input = MainInput()
+        self.surface = Surface(self.recorder)
+        # 들어오는 문의 판정은 표면의 것(제품은 `command_table` 의 두 함수) — 가짜 명령 표를 그대로
+        self.main_input = MainInput(is_command=self.surface.is_command)
         if query is not None:
             self.say(query)  # argv 질의 — 큐가 조립보다 먼저 선다(`run` 과 같다)
         self.stores = build_session_stores(self.spec, main_input=self.main_input)
@@ -372,7 +375,6 @@ class Session:
         )
         self.reg = self.owners.agent_registry
         self.recorder.rules.update(self.settle_rules())
-        self.surface = Surface(self.recorder)
         if path == "run":
             policy = QuietPolicy(
                 main_input=self.main_input,

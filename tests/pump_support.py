@@ -37,9 +37,6 @@ class FakeSurface:
         self.calls.append(("bind_stop", event is not None))
         self.stop_events.append(event)
 
-    def is_command(self, text):
-        return text in self.routed
-
     def route(self, text, start=None, *, item=None):
         self.calls.append(("route", text))
         if text in self.fail_on_route:

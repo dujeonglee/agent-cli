@@ -4407,7 +4407,8 @@ class TestMessageInjection:
 
         ctx = ContextManager(session_dir=tmp_path)
         provider = _make_provider(_complete("done"))
-        pending = [{"nickname": "Otter", "text": "/sh ls -ll"}]
+        # 들어오는 문이 명령으로 표시한 항목(5b-3)
+        pending = [{"nickname": "Otter", "text": "/sh ls -ll", "command": True}]
 
         def dq():
             return pending.pop(0) if pending else None
@@ -4525,7 +4526,9 @@ class TestMessageInjection:
 
         ctx = ContextManager(session_dir=tmp_path)
         provider = _make_provider(_complete("done"))
-        pending = [{"nickname": "Otter", "text": "@explorer scan repo"}]
+        pending = [
+            {"nickname": "Otter", "text": "@explorer scan repo", "command": True}
+        ]
 
         def dq():
             return pending.pop(0) if pending else None
@@ -4950,7 +4953,7 @@ class TestRunAuthors:
 
         stub, prev = self._with_stub_renderer()
         try:
-            items = [{"text": "/compact", "nickname": "두정"}]
+            items = [{"text": "/compact", "nickname": "두정", "command": True}]
             loop = self._loop(
                 caps,
                 inbox=queue_inbox(lambda: items.pop() if items else None),

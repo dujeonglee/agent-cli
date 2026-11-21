@@ -31,6 +31,10 @@ def _opened(item: dict) -> Start:
     return MainLoop.start({"nickname": None, **item}, threading.Event())
 
 
+#: 들어오는 문의 판정 대역 — ``/`` 로 시작하면 명령(제품은 `command_table` 의 두 함수)
+_SLASH = lambda text: text.startswith("/")
+
+
 def _mail(mi: MainInput, *, wakes: bool = True) -> None:
     """main 상자에 메일 한 통 — 작업 통지(깨움) 또는 깨우지 않는 회신."""
     env = (
@@ -74,7 +78,7 @@ class TestOneItem:
             "busy",
             "echo",
             "bind_stop",
-            "route",
+            # 명령이 아닌 말은 라우팅을 묻지 않는다 — 명령인가는 들어올 때 정했다(5b-3)
             "run_starting",
             "run_ended",
             "bind_stop",
@@ -111,7 +115,7 @@ class TestOneItem:
         assert done.wait(2.0)
 
     def test_routed_command_opens_no_run_but_still_closes_the_turn(self):
-        q = MainInput()
+        q = MainInput(is_command=_SLASH)
         q.enqueue(None, "/skill x")
         surface = FakeSurface(routed={"/skill x"})
         run_main = MagicMock()
@@ -227,7 +231,7 @@ class TestFailurePolicy:
     def test_a_route_that_raises_goes_to_run_failed_and_the_pump_goes_on(self):
         """명령 라우팅의 예외도 런의 예외처럼 ``run_failed`` 로 — web 은 화면에 알리고 다음 말을 받는다(워커가 죽으면
         대기열만 쌓인다), 런은 열리지 않는다."""
-        q = MainInput()
+        q = MainInput(is_command=_SLASH)
         q.enqueue(None, "/bad x")
         q.enqueue(None, "good")
         surface = FakeSurface(swallow_errors=True, fail_on_route={"/bad x"})
@@ -242,7 +246,7 @@ class TestFailurePolicy:
         assert surface.calls.count(("bind_stop", False)) == 2  # 두 차례 다 해제
 
     def test_a_route_that_raises_propagates_on_the_run_surface(self):
-        q = MainInput()
+        q = MainInput(is_command=_SLASH)
         q.enqueue(None, "/bad x")
         surface = FakeSurface(swallow_errors=False, fail_on_route={"/bad x"})
         with pytest.raises(RuntimeError, match="route failed"):
@@ -251,7 +255,7 @@ class TestFailurePolicy:
         assert surface.calls[-1] == ("bind_stop", False)
 
     def test_routed_command_does_not_announce_a_run(self):
-        q = MainInput()
+        q = MainInput(is_command=_SLASH)
         q.enqueue(None, "/skill x")
         surface = FakeSurface(routed={"/skill x"})
         make_pump(main_input=q, run_main=MagicMock(), surface=surface).run()

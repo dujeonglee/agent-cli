@@ -1,5 +1,5 @@
 """`run` 의 제자리 대기를 깨울 사람 입력(`main._terminal_steer_input`) — main 앞에 줄 선 말도, 터미널에서 친 줄도
-같은 판정(`surface.is_command`)으로: 명령이면 그 자리에서 라우팅하고 깨우지 않는다, 아니면 깨운다.
+같은 판정(들어올 때 `MainInput` 이 한 번 — 5b-3)으로: 명령이면 그 자리에서 라우팅하고 깨우지 않는다, 아니면 깨운다.
 
 줄 선 말은 예약 발화·StaleGuard 의 Hint 처럼 터미널을 거치지 않고 온 것이다. 순서는 테스트가 쥔다 — 넣고 나서
 대기 함수를 ``timeout=0`` 으로 부른다(표준입력은 대역)."""
@@ -20,13 +20,15 @@ class _Tty(io.StringIO):
 
 
 def _setup(monkeypatch, *, tty: bool, typed: str = ""):
-    q = MainInput()
+    # 명령인가는 들어올 때 판정한다(5b-3) — 이 대역의 명령 표
+    q = MainInput(
+        is_command=lambda text: (
+            text.startswith(("/", "@")) and not text.startswith("/tmp")
+        )
+    )
     routed: list[str] = []
 
     class _Surface:
-        def is_command(self, text):
-            return text.startswith(("/", "@")) and not text.startswith("/tmp")
-
         def echo(self, item):  # run 의 표면은 말풍선이 없다
             pass
 
