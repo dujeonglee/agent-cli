@@ -60,9 +60,6 @@ class _Schedules:
 class _Surface:
     graceful_interrupt = False
 
-    def is_command(self, text):
-        return False
-
 
 def _patch_parts(st: ExitStack, order: list, *, mainloop_boom=False):
     """조립 부품을 기록하는 대역으로 — 무엇이 어떤 순서로 불리는지."""

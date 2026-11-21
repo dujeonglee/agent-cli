@@ -22,9 +22,36 @@ class TestMainInput:
             "nickname": "bob",
             "text": "first",
             "images": [{"path": "a.png"}],
+            "command": False,  # 판정이 없는 상자 — 명령이 없다
         }
         assert b["text"] == "second" and b["conn_id"] == "" and b["nickname"] is None
         assert a["id"].startswith("u-") and a["id"] != b["id"]
+
+    def test_the_door_judges_each_message_once_and_marks_it(self):
+        """명령인가는 들어올 때 한 번(5b-3) — 항목과 봉투가 그 판정을 싣는다."""
+        asked: list[str] = []
+
+        def judge(text):
+            asked.append(text)
+            return text.startswith("/")
+
+        q = MainInput(is_command=judge)
+        q.enqueue("c1", "/stop agt-3", nickname="dj")
+        q.enqueue("c1", "plain words", nickname="dj")
+        assert asked == ["/stop agt-3", "plain words"]
+        assert [i["command"] for i in q.snapshot()] == [True, False]
+        assert [e.payload["command"] for e in q.post.words("main")] == [True, False]
+        assert asked == ["/stop agt-3", "plain words"]  # 보이기·읽기는 다시 묻지 않는다
+
+    def test_take_first_command_takes_only_a_marked_first(self):
+        q = MainInput(is_command=lambda t: t.startswith("/"))
+        q.enqueue("c1", "plain words")
+        q.enqueue("c1", "/stop agt-3")
+        assert q.take_first_command() is None  # 맨 앞이 말이다 — 꺼내지 않는다
+        assert q.wait_to_open(0)["text"] == "plain words"
+        got = q.take_first_command()
+        assert got["text"] == "/stop agt-3" and got["command"] is True
+        assert q.pending_count() == 0
 
     def test_timeout_returns_none(self):
         assert MainInput().wait_to_open(0.05) is None

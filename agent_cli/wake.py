@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from agent_cli.constants import (
     ARRIVAL_NOTICE,
     ARRIVAL_USER,
+    INPUT_IS_COMMAND,
     SCHEDULE_ADDR_PREFIX,
     format_duration,
     harness_mail_tool,
@@ -392,6 +393,11 @@ def _private_inbox(owner: str):
     return absorb
 
 
+def _is_queued_command(env) -> bool:
+    """들어올 때 명령으로 표시된 사람의 말인가(`MainInput.enqueue` 의 표시) — 모델의 우편이 아니다."""
+    return is_human_words(env) and bool(env.payload.get(INPUT_IS_COMMAND))
+
+
 def _arrival_kind(env) -> str:
     """도착한 봉투 하나의 종류 — `Mailbox.arrivals`."""
     if not is_human_words(env):
@@ -447,11 +453,12 @@ class Mailbox:
         통지·하니스 알림). `wait` 의 둘째 판정(v10.66.2): 깨울 것이 "아직 돌고 있는 것" 이라면 이건 "끝나서 와 있는
         것"(모니터가 `wait` 보다 먼저 발화한 벤치 사례) — 비지 않았으면 `wait` 는 거부되고 런이 이어져 그것을 바로
         받는다. 깨우는 봉투만 본다(5b) — 깨우지 않는 봉투("Stop everything" 의 정지 회신)는 다음에 깰 때 함께 읽힌다.
-        사람의 말도 깨우는 봉투다 — main·에이전트가 같다(5b A-4). 글은 `loop.wait_sentences` 가 짓는다."""
+        사람의 말도 깨우는 봉투다 — main·에이전트가 같다(5b A-4). 들어올 때 명령으로 표시된 말은 세지 않는다(5b-3 —
+        하니스가 실행하고 모델에게 가지 않는다). 글은 `loop.wait_sentences` 가 짓는다."""
         if self._registry is None:
             return ()
         envs = self._registry.arrivals_for(self.owner, waking_only=True, words=True)
-        return tuple(_arrival_kind(e) for e in envs)
+        return tuple(_arrival_kind(e) for e in envs if not _is_queued_command(e))
 
     def _mail_arrived_while_waiting(self) -> int:
         """제자리 대기를 "mail" 로 깨우는 도착분 — `arrived` 와 같되, 사람 입력을 기다리는 루프(``wait_input``,

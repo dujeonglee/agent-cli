@@ -102,8 +102,8 @@ def looks_like_slash_command(message: str) -> bool:
 
 def command_kind(message: str) -> str | None:
     """사람의 말이 공용 명령인가 — 그 갈래(``"agent"``·``"stop"``·``"skill"``) 또는 None. 읽기만 한다(실행·출력
-    없음). `try_dispatch_agent_or_skill` 이 갈래를 고르는 규칙 그대로다 — 표면의 `is_command` 가 실행 전에 이것을
-    묻는다(제자리 대기 중 명령은 꺼내기 전에 판정해야 한다)."""
+    없음). `try_dispatch_agent_or_skill` 이 갈래를 고르는 규칙 그대로다 — 들어오는 문의 판정(`run_input_is_command`·
+    `web_input_is_command`)이 실행 전에 이것을 묻는다."""
     if message.startswith("@"):
         return "agent"
     head = message.split(maxsplit=1)
@@ -121,6 +121,18 @@ IMAGES_NOT_TAKEN = "This command does not take images — the attachment was not
 def is_web_command(message: str) -> bool:
     """웹 전용 명령(``/help``·``/compact``·``/sh``)인가 — 웹 표면이 공용 디스패치보다 먼저 받는 글 그대로. 읽기만 한다."""
     return message in ("/help", "/compact") or message.startswith(("/compact ", "/sh"))
+
+
+def run_input_is_command(message: str) -> bool:
+    """``run`` 앞 사람의 말이 명령인가 — 공용 명령(`command_kind`)이되 ``/sh`` 는 아니다(run 의 ``/sh`` 는 평범한
+    질의). 들어올 때 `MainInput` 이 한 번 묻는다. 읽기만 한다."""
+    return not message.startswith("/sh") and command_kind(message) is not None
+
+
+def web_input_is_command(message: str) -> bool:
+    """``web`` 앞 사람의 말이 명령인가 — 웹 전용 명령(`is_web_command`)이나 공용 명령. 들어올 때 `MainInput` 이 한 번
+    묻는다. 읽기만 한다."""
+    return is_web_command(message) or command_kind(message) is not None
 
 
 def command_takes_images(message: str) -> bool:

@@ -429,22 +429,25 @@ class TestCtrlCDuringAPrompt:
 class TestCommandsTypedDuringTheWait:
     """제자리 대기 중 친 명령은 그 자리에서 라우팅되고 main 을 깨우지 않는다(web 기본 — `wait_for_human_words`)."""
 
-    def _setup(self, handled=("/stop agt-5",)):
+    def _setup(self, handled=("/stop agt-5",), declines=()):
+        """``handled`` 는 들어올 때 명령으로 판정되는 글(5b-3 — 문의 판정), ``declines`` 는 그중 실행이 받지 않는 글
+        (문과 실행 사이에 같은 이름의 경로가 생긴 경우 — 그 뒤로는 문도 경로로 본다, ``paths``)."""
         from agent_cli.main_input import MainInput
         from agent_cli.runtime import wait_for_human_words
 
-        q = MainInput()
+        paths: set = set()
+        q = MainInput(is_command=lambda text: text in handled and text not in paths)
         routed: list = []
 
-        class _Surface:  # 판정은 표면의 것 — 여기서는 "라우팅이 받는 글" 그대로
-            def is_command(self, text):
-                return text in handled
-
+        class _Surface:
             def echo(self, item):
                 routed.append(("echo", item["text"]))
 
             def route(self, text, start=None, *, item=None):
                 routed.append(text)
+                if text in declines:
+                    paths.add(text)  # 실행 직전에 같은 이름의 경로가 생겼다
+                    return False
                 return text in handled
 
         return q, routed, wait_for_human_words(q, _Surface())
@@ -456,6 +459,16 @@ class TestCommandsTypedDuringTheWait:
         # 말풍선이 실행 앞에 — 펌프가 연 차례·턴 경계와 같다
         assert routed == [("echo", "/stop agt-5"), "/stop agt-5"]
         assert q.pending_count() == 0
+
+    def test_a_command_the_route_declines_becomes_words_and_wakes(self):
+        """문에서 명령이었지만 실행이 받지 않았다 — 사람의 말로 다시 서고 깨운다(다음 턴 경계가 주입한다)."""
+        q, routed, wait = self._setup(handled=("/foo x",), declines=("/foo x",))
+        q.enqueue("c", "/foo x", nickname="dj")
+        assert wait(0) is True
+        assert routed == [("echo", "/foo x"), "/foo x"]
+        (item,) = q.snapshot()
+        assert item["text"] == "/foo x" and item["command"] is False
+        assert item["nickname"] == "dj" and item["conn_id"] == "c"
 
     def test_plain_words_wake_and_stay_queued(self):
         q, routed, wait = self._setup()

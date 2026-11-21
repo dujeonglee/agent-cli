@@ -250,21 +250,33 @@ def build_schedule_registry(session_dir=None):
 def wait_for_human_words(main_input, surface):
     """main 의 제자리 대기를 깨울 사람 입력 — ``(timeout) -> bool`` (v10.142.0, web 기본).
 
-    main 앞에 사람의 말이 도착하면 깨우되, 맨 앞이 명령(``surface.is_command`` — ``/stop agt-3`` 등)이면 그
+    main 앞에 사람의 말이 도착하면 깨우되, 맨 앞이 명령(들어올 때의 표시 — ``/stop agt-3`` 등)이면 그
     자리에서 꺼내 말풍선을 내고(``surface.echo`` — 펌프가 연 차례·턴 경계와 같이 실행 앞에) 라우팅하고 깨우지
     않는다: 줄에 둔 채 깨우면 main 이 "the user wrote to you" 관찰을 읽고 그 말은 다음 흡수의 라우팅이 삼켜, 말 없는
     관찰만 남았다. 명령이 아닌 말(명령 모양의 경로 등)은 꺼내지 않고 깨운다.
-    CLI ``run`` 은 이것 위에 터미널 줄을 같은 판정으로 읽는다(`main._terminal_steer_input`)."""
+    CLI ``run`` 은 터미널에서 친 줄도 main 앞에 넣고 이것으로 읽는다(`main._terminal_steer_input`). 실행이 받지
+    않은 명령(문과 실행 사이에 같은 이름의 경로가 생겼다)은 사람의 말로 다시 넣고 깨운다."""
 
     def wait(timeout: float) -> bool:
         if not main_input.wait_for_arrival(timeout):
             return False
-        item = main_input.take_first_if(surface.is_command)
+        item = main_input.take_first_command()
         if item is None:
             return True
         surface.echo(item)
-        surface.route(str(item.get("text") or ""), item=item)
-        return False  # 명령은 처리했다 — 기다림은 계속(멈춘 에이전트의 회신이 깨운다)
+        if surface.route(str(item.get("text") or ""), item=item):
+            return (
+                False  # 명령은 처리했다 — 기다림은 계속(멈춘 에이전트의 회신이 깨운다)
+            )
+        # 실행이 받지 않았다(문과 실행 사이에 같은 이름의 경로가 생겼다) — 사람의 말로 다시 넣는다: 문이 다시 판정해
+        # (이제 경로) 말로 서고, 깨운다(다음 턴 경계가 주입한다). 상자 맨 앞에 되돌릴 길이 우편에 없어 끝에 선다.
+        main_input.enqueue(
+            item.get("conn_id") or None,
+            str(item.get("text") or ""),
+            nickname=item.get("nickname"),
+            images=item.get("images") or None,
+        )
+        return True
 
     return wait
 

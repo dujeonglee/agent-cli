@@ -143,7 +143,9 @@ def _run_node_harness(source: str, *, dom_stub: bool = False) -> str:
             ["node", script],
             capture_output=True,
             text=True,
-            timeout=10,
+            # 평소 0.4 초 미만인데 CI 기계가 멈칫한 순간 10 초에 걸려 무관한 릴리스가 실패했다(2026-11-20).
+            # 60 초도 정말로 멈춘 node 는 잡는다.
+            timeout=60,
             check=False,
         )
     if result.returncode != 0:

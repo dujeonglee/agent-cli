@@ -288,6 +288,7 @@ class Surface:
         self.stop = event
 
     def is_command(self, text):
+        """들어오는 문(`MainInput`)이 묻는 판정 — 이 표면의 명령 표."""
         return text in self.commands
 
     def route(self, text, start=None, *, item=None):
@@ -363,7 +364,9 @@ class Session:
             verbose=False,
             record_turns=True,
         )
-        self.main_input = MainInput()
+        self.surface = Surface(self.recorder)
+        # 들어오는 문의 판정은 표면의 것(제품은 `command_table` 의 두 함수) — 가짜 명령 표를 그대로
+        self.main_input = MainInput(is_command=self.surface.is_command)
         if query is not None:
             self.say(query)  # argv 질의 — 큐가 조립보다 먼저 선다(`run` 과 같다)
         self.stores = build_session_stores(self.spec, main_input=self.main_input)
@@ -372,7 +375,6 @@ class Session:
         )
         self.reg = self.owners.agent_registry
         self.recorder.rules.update(self.settle_rules())
-        self.surface = Surface(self.recorder)
         if path == "run":
             policy = QuietPolicy(
                 main_input=self.main_input,
@@ -2127,8 +2129,9 @@ def s24_commands_while_waiting(root: Path) -> dict:
     """1단계 ⑥ 기다리는 중 명령 (web).
 
     - 다리 1 `[단계 4b 에서 바뀜 — 명령 함수 하나]`: main 이 run 에이전트의 회신을 제자리에서 기다리는 중 ``@…``·
-      ``/…`` 명령은 그 자리에서 라우팅되고 깨우지 않으며 말풍선 에코(`push_user_message`)가 없다. 일반 입력은
-      깨운다(에코는 다음 턴 경계의 흡수가 낸다). 다시 기다리다 ■.
+      ``/…`` 명령은 그 자리에서 표면의 말풍선(`surface.echo` — 오라클 대역은 pump 열의 ``echo``, 웹은
+      `push_user_message`) 뒤에 라우팅되고 깨우지 않는다. 일반 입력은 깨운다(에코는 다음 턴 경계의 흡수가 낸다).
+      다시 기다리다 ■.
     - 다리 2 `[단계 5 에서 바뀜 — 결정 1]`: main 이 작업만 기다려 런이 끝난 상태(`wait` 가 런을 끝냄)에서 명령은
       런을 열지 않고, 일반 입력은 새 런을 연다."""
     box: dict = {}
@@ -2481,8 +2484,10 @@ def _second_wait_then_reply(box, p, s) -> None:
 
 
 def s29_words_already_there_when_main_waits(root: Path) -> dict:
-    """사람의 입력이 이미 줄 서 있는데 main 이 `wait` 한다 — 사람 말은 "이미 도착한 통지" 로 세지 않으므로 `wait`
-    는 받아들여지고, 곧바로 "the user wrote to you" 로 깬다. 그 말은 다음 턴 경계에 주입된다 (web)."""
+    """사람의 입력이 이미 줄 서 있는데 main 이 `wait` 한다 — 사람의 말은 깨우는 봉투라(5b A-4) `wait` 는 거절되고
+    ("the user wrote to you while you were thinking; their message is right below. Answer now with `complete`: …"),
+    그 말은 다음 턴 경계에 주입된다. main 은 다시 `wait` 한다 (web). `[5b-2 에서 바뀜]` 종전엔 사람의 말을 도착분으로
+    세지 않아 `wait` 가 받아들여지고 곧바로 "the user wrote to you" 로 깼다."""
     box: dict = {}
     main, agent = _waiting_on_a_run_agent(
         box, "TASK-S1", lambda s: s.say("MAIN also look at y", nickname="dj")
@@ -2542,6 +2547,41 @@ def s31_schedule_fires_while_main_waits(root: Path) -> dict:
 
 
 # ── 메일 런이 열리는 모양 (런을 봉투로 열기 전의 기준) ─────────────
+
+
+def s37_command_queued_before_wait(root: Path) -> dict:
+    """main 이 생각하는 동안 사람이 명령(``/noop``)을 쳤고, main 은 run 에이전트의 회신을 기다리려고 `wait` 한다 (web).
+    명령은 하니스가 처리하고 모델에게 가지 않는다.
+
+    `[5b-3 에서 바뀜]` 종전엔 `wait` 판정이 줄 선 명령을 사람의 말로 세어 거절했다("the user wrote to you … right
+    below" — 아래에 글은 없었다). 지금은 들어올 때 명령으로 표시된 말을 세지 않는다 — `wait` 는 받아들여지고, 명령은
+    제자리 대기가 시작하자마자 그 자리에서 라우팅된다(대기 도중 친 명령 s24 와 같은 길). 회신이 깨우면 main 은 남은
+    `wait`(깨울 것 없음 — 거절)를 거쳐 끝낸다."""
+    box: dict = {}
+
+    def type_a_command(s):
+        s.say("/noop", nickname="dj")
+
+    main, agent = _waiting_on_a_run_agent(box, "TASK-S7", type_a_command)
+    p = Provider({"MAIN": main, "TASK-S7": agent})
+    s = box["s"] = Session(root, p, path="web")
+    s.surface.commands["/noop"] = lambda: None
+    s.close_answered_awaits_before_main_reads()
+    s.reg.checkin_timer_factory = _HeldTimer  # 5분 체크인이 저절로 나가지 않게
+
+    def done(s):
+        assert s.recorder.main_waiting.wait(_PATIENCE_S)
+        # 회신은 명령이 라우팅된 **뒤**에 — 제자리 대기가 사람 입력을 보기 전에 회신이 오면 깸이 먼저다(시점 경합)
+        until(
+            lambda: any(r[0] == "routed" for r in s.recorder.lanes.get("pump", [])),
+            "command routed in place",
+        )
+        box["go"].set()
+        until(lambda: runs_ended(s) >= 1, "main finished")
+
+    s.say("MAIN go", nickname="dj")
+    drive(s, path="web", until_done=done)
+    return s.collect()
 
 
 def s32_quiet_reply_then_waking_mail(root: Path) -> dict:
@@ -2662,6 +2702,7 @@ SCENARIOS = {
     "s34_parent_dies_with_its_run_agent": s34_parent_dies_with_its_run_agent,
     "s35_shutdown_with_queued_words_web": s35_shutdown_with_queued_words_web,
     "s36_queued_request_of_a_gone_requester": s36_queued_request_of_a_gone_requester,
+    "s37_command_queued_before_wait": s37_command_queued_before_wait,
 }
 
 

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from agent_cli import runtime
+from agent_cli.command_table import web_input_is_command
 from agent_cli.constants import schedule_addr
 from agent_cli.main import _command_dispatch
 from agent_cli.main_input import MainInput
@@ -67,7 +68,7 @@ def test_scheduled_at_agent_goes_as_user_scheduler_name(tmp_path, renderer):  # 
     key, _ = reg.spawn(name="a")
     assert wait_until(lambda: reg.get(key).state == "idle")
 
-    main_input = MainInput()
+    main_input = MainInput(is_command=web_input_is_command)  # 웹 방의 문 판정(5b-3)
     schedules = ScheduleRegistry(tmp_path / "sched")
     _wire_like_the_session(schedules, main_input)
     s = schedules.add(

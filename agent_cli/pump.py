@@ -129,11 +129,10 @@ class PumpSurface(Protocol):
     def bind_stop(self, event: threading.Event | None) -> None:
         """이 런의 중단 핸들을 표면에 건다(None = 해제)."""
 
-    def is_command(self, text: str) -> bool:
-        """``text`` 가 이 표면의 명령인가 — 실행하지 않고 판정만(`route` 가 받는 글 그대로)."""
-
     def route(self, text: str, start: Any = None, *, item: dict | None = None) -> bool:
-        """명령이면 처리하고 True — 런을 열지 않는다. ``start`` 는 펌프가 이 차례를 열 때의 시작(`Start`)이고, 턴
+        """명령을 처리하고 True — 런을 열지 않는다. 들어올 때 명령으로 표시된 말(`MainInput` 항목의 ``command``)만
+        온다. 거짓이면 실행이 받지 않았다(문과 실행 사이에 같은 이름의 경로가 생겼다 — `looks_like_slash_command` 의
+        규칙 2) — 부르는 쪽은 그 말을 사람의 말로 다룬다. ``start`` 는 펌프가 이 차례를 열 때의 시작(`Start`)이고, 턴
         경계·제자리 대기의 라우팅은 None 이다(run 은 argv 질의였던 명령만 결과 파일·종료 코드에 쓴다). ``item`` 은 그
         글을 실어 온 사람의 말 항목(``{text, nickname, images, …}``, 없으면 None — 터미널 줄) — 그 말에 딸린 것(이미지)은
         그 말이 가는 곳으로 간다 (v10.149.3)."""
@@ -204,7 +203,8 @@ class MainActor:
         return self.deps.main_input.wait_to_open(timeout=timeout)
 
     def open(self, got):
-        """그 차례의 시작 — 사람의 말이면 말풍선을 내고, 명령이면 그 자리에서 라우팅하고 None(런을 열지 않는다)."""
+        """그 차례의 시작 — 사람의 말이면 말풍선을 내고, 명령(들어올 때의 표시)이면 그 자리에서 라우팅하고 None(런을
+        열지 않는다). 실행이 받지 않은 명령은 사람의 말로 런을 연다."""
         d = self.deps
         item = got if got else None
         d.surface.busy()
@@ -221,7 +221,7 @@ class MainActor:
             d.agent_registry.main_stop_wakes = True
         d.surface.bind_stop(stop_event)
         start = d.main.start(item, stop_event)
-        if item is None:
+        if item is None or not item.get("command"):
             return start
         # 명령의 라우팅도 런과 같은 보호 안 — 그 예외도 `run_failed` 로 간다(web 은 알리고 계속)
         try:

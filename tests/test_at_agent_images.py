@@ -15,7 +15,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_cli.command_table import IMAGES_NOT_TAKEN, command_takes_images
+from agent_cli.command_table import (
+    IMAGES_NOT_TAKEN,
+    command_takes_images,
+    web_input_is_command,
+)
 from agent_cli.images import ImageRef
 from agent_cli.main import _command_dispatch, _ConsoleSurface
 from agent_cli.main_input import MainInput
@@ -66,7 +70,14 @@ def live(tmp_path):
 
 
 def _item(text, images=(REF,)):
-    return {"id": "u-1", "text": text, "nickname": None, "images": list(images)}
+    """명령인 말의 항목 — 들어오는 문(`MainInput`)이 명령으로 표시한 모양(5b-3)."""
+    return {
+        "id": "u-1",
+        "text": text,
+        "nickname": None,
+        "images": list(images),
+        "command": True,
+    }
 
 
 class TestThreeWays:
@@ -109,7 +120,7 @@ class TestThreeWays:
         assert live.seen[-1] == ("[user]: look at this", [REF])
 
     def test_in_place_wait(self, live):
-        mi = MainInput()
+        mi = MainInput(is_command=web_input_is_command)
         mi.enqueue("c", f"@{live.key} look at this", images=[REF])
         assert wait_for_human_words(mi, live.surface)(0) is False
         assert wait_until(lambda: live.seen)

@@ -639,7 +639,10 @@ class TestExitPathConvergence:
             assert "queue=" not in body, name
             assert "server.enqueue_" not in body and "server.dequeue_" not in body
         assert "main_input = server.main_input" in self._body("web")
-        assert "main_input = MainInput()" in self._body("run")
+        # 들어오는 문의 판정은 호스트의 것(5b-3) — run 은 `/sh` 를 명령으로 보지 않는다
+        assert "main_input = MainInput(is_command=run_input_is_command)" in self._body(
+            "run"
+        )
 
     def test_run_and_web_share_assembly_helpers(self):
         """v10.131.0: 두 호스트가 같은 조립 함수 넷을 부르고, 조립 부품을 직접
