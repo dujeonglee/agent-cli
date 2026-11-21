@@ -134,20 +134,19 @@ def test_only_a_command_queued_and_nothing_to_wake(reg):
     """장면 D — 깨울 것이 없다. 명령은 도착분이 아니다 — 깨울 것이 없다는 거절(종전: "the user wrote to you …")."""
     loop = _loop(reg, _provider_that_types_a_command_then_waits(reg))
     res = loop.run()
-    assert res.success and not res.waiting
+    assert res.success
     obs = _wait_observation(loop)
     assert "wait refused — nothing would wake you:" in obs
     assert "the user wrote to you" not in obs
 
 
 def test_only_a_command_queued_while_a_job_runs(reg, jobs):
-    """장면 A′ — main 이 작업만 기다린다(런을 끝내는 `wait`). 받아들여져 런이 끝난다 — 명령은 펌프의 다음 차례가
-    라우팅한다(종전: "the user wrote to you …" 로 거절)."""
+    """장면 A′ — main 이 작업만 기다린다. 받아들여진다(종전 5b-3 전: "the user wrote to you …" 로 거절) — 제자리 대기다
+    (5c-1). 이 대역의 메일함에는 사람 입력 판정(`wait_input`)이 없어 줄 선 말이 기다림을 곧 깨우고, 같은 런이
+    `complete` 한다(제품의 main 은 `wait_for_human_words` 가 줄 선 명령을 꺼내 라우팅한다)."""
     jobs.start("sleep 30", owner="main")
-    loop = _loop(reg, _provider_that_types_a_command_then_waits(reg))
+    p = _provider_that_types_a_command_then_waits(reg)
+    loop = _loop(reg, p)
     res = loop.run()
-    assert res.success and res.waiting
+    assert res.success and p.call.call_count == 2  # 한 런
     assert "Observation: waiting — will wake on:" in _wait_observation(loop)
-    assert [i["text"] for i in _box(reg).snapshot()] == [
-        COMMAND
-    ]  # 줄에 선 채 — 펌프의 차례를 기다린다

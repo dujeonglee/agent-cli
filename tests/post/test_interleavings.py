@@ -59,7 +59,7 @@ class TestOrders:
             ("absorb", {"addr": "main"}),
             (
                 "end_run",
-                {"addr": "main", "run_id": "u-0", "outcome": "wait", "replies": {}},
+                {"addr": "main", "run_id": "u-0", "outcome": "done", "replies": {}},
             ),
         ]
         agent = [

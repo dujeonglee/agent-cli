@@ -162,13 +162,16 @@ def test_main_waiting_on_a_job_reads_each_notice_with_the_same_open_items(home):
             "[monitor]\n🔔 monitor m-1 fired (3): tick 3\n\n"
             "(If nothing remains to do, call `complete`.)"
         )
-        # [5c-1 에서 바뀜] 지금은 `wait` 가 런을 끝낸다 — 통지마다 새 런(넷), 수락 문장이 열린 항목을 다음 런으로 넘긴다
-        assert runs_ended(s) == 4
-        assert [r["content"] for r in history(s) if r.get("tool") == "wait"] == [
+        # [5c-1 에서 바뀜] `wait` 는 런을 끝내지 않는다 — 통지 셋을 한 런이 읽는다(종전: 통지마다 새 런, 넷).
+        # 수락 문장에서 "Open items stay open for the next run: …" 이 빠졌다(다음 런이 없다)
+        assert runs_ended(s) == 1
+        accepted = (
             "Observation: waiting — will wake on: job #1 (`sleep 30`), or in 5m if nothing has "
-            f"reported. Open items stay open for the next run: {ids}."
-            for ids in ("u-1", "u-1, n-2", "u-1, n-2, n-3")
-        ]
+            "reported."
+        )
+        assert [r["content"] for r in history(s) if r.get("tool") == "wait"] == [
+            accepted
+        ] * 3
     finally:
         s.close()
         pump.join(10)
@@ -232,28 +235,36 @@ def test_a_resident_waiting_on_a_peer_reads_its_reply(home):
         assert replies_main_read(s) == [
             "── reply [n-5] from agt-* (aa) re [r-2] ──\nbb says 42"
         ]  # 그대로 — 무엇에 답하는지는 번호가 정한다
-        # [5c-1 에서 바뀜] 지금은 aa 의 `wait` 가 런을 끝낸다 — bb 의 회신이 새 런(n-4)을 열고 그 첫 글이다
-        assert work_cards(s, aa) == ["r-2", "n-4"]
-        assert message_head(woke) == "── reply [n-4] from agt-* (bb) re [r-3] ──\n42"
+        # [5c-1 에서 바뀜] aa 의 `wait` 는 런을 끝내지 않는다 — bb 의 회신은 같은 런의 관찰이다(종전: 새 런 n-4 의 첫 글)
+        assert work_cards(s, aa) == ["r-2"]
+        assert message_head(woke) == (
+            "[agent]\n── reply [n-4] from agt-* (bb) re [r-3] ──\n42\n\n"
+            "(If nothing remains to do, call `complete`.)"
+        )
     finally:
         s.close()
         pump.join(10)
 
 
 def test_stop_and_stop_all_on_a_resident_that_waits(home):
-    """■ 와 Stop all — 기다리는 상주는 지금 일하는 중이 아니다."""
+    """■ 와 Stop all — 기다리는 상주는 런 안이다(일하는 중). ■ 가 그 런을 멈추고 main 에게 정지 회신이 간다."""
     release = threading.Event()
     s, _p, pump = _aa_asks_bb(home, bb_answers=release)
     try:
         until(lambda: len(s.agent_keys()) == 2, "two agents")
         aa = _agent_key(s, "aa")
-        # [5c-1 에서 바뀜] 지금은 `wait` 로 런이 끝나 idle — ■ 는 거절, Stop all 은 그를 세지 않는다
+        # [5c-1 에서 바뀜] 기다리는 aa 는 busy 다 — Stop all 이 그를 세고 ■ 가 받는다(종전: 런이 끝나 idle, ■ 는
+        # 'is not working on a request' 로 거절, Stop all 은 그를 세지 않았다)
+        until(lambda: is_waiting(s, f"agent:{aa}"), "aa waits")
+        assert s.agent_state(aa) == "busy"
+        assert aa in s.reg.working_agents()
+        assert s.reg.stop_run(aa) == ""
         until(
-            lambda: is_waiting(s, f"agent:{aa}") and s.agent_state(aa) == "idle",
-            "aa parked",
+            lambda: any("stopped by user" in r for r in replies_main_read(s)),
+            "main read the stop reply",
         )
-        assert s.reg.stop_run(aa) == f'agent "{aa}" is not working on a request'
-        assert aa not in s.reg.working_agents()
+        (stop_reply,) = [r for r in replies_main_read(s) if "stopped by user" in r]
+        assert "re [r-2] · stopped by user" in stop_reply
     finally:
         release.set()
         s.close()
@@ -333,8 +344,8 @@ def test_a_second_request_to_a_waiting_agent_is_answered_by_its_number(home):
             "── reply [n-6] from agt-* (aa) re [r-2] ──\nanswer one",
             "── reply [n-7] from agt-* (aa) re [r-4] ──\nanswer two",
         ]  # 그대로
-        # [5c-1 에서 바뀜] 지금은 런 카드 셋 — TASK-C(r-4)와 bb 의 회신(n-5)이 각각 새 런을 연다
-        assert work_cards(s, aa_key()) == ["r-2", "r-4", "n-5"]
+        # [5c-1 에서 바뀜] 런 카드 하나 — 둘째 요청과 bb 의 회신이 같은 런에 든다(종전: r-2·r-4·n-5 셋)
+        assert work_cards(s, aa_key()) == ["r-2"]
     finally:
         s.close()
         pump.join(10)
@@ -425,8 +436,7 @@ def test_the_point_before_the_wait_can_be_restored(tmp_path, monkeypatch):
     s.say("MAIN edit then wait for the job", nickname="dj")
     pump = s.pump_in_thread()
     try:
-        # [5c-1 에서 바뀜] 지금은 `wait` 가 런을 끝낸다 — 런 끝 체크포인트가 찍힌 뒤(`run_ended`)에 작업을 풀어 준다
-        until(lambda: runs_ended(s) == 1, "the waiting run ended")
+        until(lambda: is_waiting(s) and len(p.calls["MAIN"]) == 3, "main waits")
         # 기다리는 동안 작업이 a.txt 를 바꾼다
         (ws / "go").write_text("", encoding="utf-8")
         until(lambda: len(p.calls["MAIN"]) == 5 and s.main_idle(), "main done")
@@ -435,8 +445,9 @@ def test_the_point_before_the_wait_can_be_restored(tmp_path, monkeypatch):
             label: store._git("show", f"{c}:a.txt").stdout
             for c, label in store.log(limit=30)
         }
-        # [5c-1 에서 바뀜] 지금은 `wait` 가 런을 끝내 런 끝 체크포인트가 그 지점을 담는다
-        assert points.get("session end (turn 3)") == "v1 by main\n"
+        # [5c-1 에서 바뀜] `wait` 가 런을 끝내지 않으니 런 끝 체크포인트가 그 자리에 없다 — "a.txt = v1" 지점이 사라졌다
+        # (r9). 다음 커밋의 `PreWait` 체크포인트가 되살린다
+        assert "v1 by main\n" not in points.values()
     finally:
         s.close()
         pump.join(10)
@@ -510,3 +521,75 @@ def test_begin_segment_resets_what_counts_per_segment():
     assert d.state.ledger.budget == NAG_BUDGET
     assert d.loop_detector is not old_loop and d.stale_guard is not old_stale
     renderer.stale_loop.assert_called_once()  # 🔁 표시를 지웠다
+
+
+# ── run 에이전트(일회용) — 기다린 뒤에도 같은 런, `complete` 에서 내려온다 (§2.4) ─────────────
+
+
+def _provider_fails(_messages):
+    raise RuntimeError("oracle: provider down")
+
+
+def test_a_run_agent_that_waited_comes_down_when_its_run_fails(home):
+    """§2.4: run 에이전트는 런이 어떻게 끝나든 내려온다 — 기다린 뒤 깨어 그 런이 오류로 끝나도(`wait` 를 낀 런에 내려옴의
+    예외가 없다). main 은 그 런의 회신을 받는다."""
+    job = "while [ ! -f go ]; do sleep 0.05; done; echo done"
+    p = Provider(
+        {
+            "MAIN": [call("agent", mode="run", task="TASK-R build it"), call("wait")]
+            + [complete_all("main done")] * 3,
+            "TASK-R": [
+                call("shell", command=job, background=True),
+                call("wait"),
+                _provider_fails,
+            ],
+        }
+    )
+    s = Session(home, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    pump = s.pump_in_thread()
+    try:
+        until(lambda: len(s.agent_keys()) == 1, "kid up")
+        kid = s.agent_keys()[0]
+        until(lambda: is_waiting(s, f"agent:{kid}"), "kid waits")
+        (home / "go").write_text("", encoding="utf-8")
+        until(lambda: s.agent_state(kid) == "dead" and _settled(s), "kid came down")
+        assert work_cards(s, kid) == [s.reg.get(kid).task_id]  # 런 하나
+        (read,) = replies_main_read(s)
+        assert read.startswith("── reply [n-4] from agt-* re [r-2] ──")
+    finally:
+        s.close()
+        pump.join(10)
+
+
+def test_a_run_agent_waits_in_its_run_and_comes_down_at_complete(home):
+    """run 에이전트가 자기 작업을 띄우고 `wait` — 런은 끝나지 않고(살아 있다, busy), 작업 통지에 깨어 같은 런에서
+    `complete` 한다. 그때 내려온다. main 은 그 회신을 받는다."""
+    job = "while [ ! -f go ]; do sleep 0.05; done; echo done"
+    p = Provider(
+        {
+            "MAIN": [call("agent", mode="run", task="TASK-R build it"), call("wait")]
+            + [complete_all("main done")] * 3,
+            "TASK-R": [
+                call("shell", command=job, background=True),
+                call("wait"),
+                lambda m: call("reply", id=owed_id(m), text="built"),
+                lambda m: call("complete", result="built", answers=[]),
+            ],
+        }
+    )
+    s = Session(home, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    pump = s.pump_in_thread()
+    try:
+        until(lambda: len(s.agent_keys()) == 1, "kid up")
+        kid = s.agent_keys()[0]
+        until(lambda: is_waiting(s, f"agent:{kid}"), "kid waits")
+        assert s.agent_state(kid) == "busy"  # 기다리는 동안도 런 안 — 내려오지 않았다
+        (home / "go").write_text("", encoding="utf-8")
+        until(lambda: s.agent_state(kid) == "dead" and _settled(s), "kid came down")
+        assert work_cards(s, kid) == [s.reg.get(kid).task_id]  # 런 하나
+        assert replies_main_read(s) == ["── reply [n-4] from agt-* re [r-2] ──\nbuilt"]
+    finally:
+        s.close()
+        pump.join(10)

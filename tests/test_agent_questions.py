@@ -1830,43 +1830,6 @@ class TestAskKeepsTheRequesterDebt:
         (rec,) = [r for r in absorbed_mail(reg) if r.get("kind") == "reply"]
         assert rec["output"].startswith(_NO_REPLY_LABEL) and rec["re"] == "r-1"
 
-    def test_debt_left_by_a_waiting_run_carries_into_the_next_run(
-        self, mkreg, renderer
-    ):
-        """`message` 로 묻고 `wait` 로 기다린 런의 빚은 다음 런(상대의 회신이
-        연 런)으로 넘어가 거기서 `reply` 로 갚는다 (v10.77.0). 종전엔
-        런 시작(`begin_run`)이 장부를 비워 요청자가 회신도 런 요약도 못 받았다."""
-        from types import SimpleNamespace
-
-        reg = mkreg()
-        a, b = spawn_idle(reg), spawn_idle(reg)
-        me = f"agent:{b}"
-        seen = []
-
-        def runner(kind, start, ctx):
-            seen.append(start.query)
-            if start.query == "일감":  # 첫 런 — 다른 데 묻고 기다린다
-                return SimpleNamespace(
-                    success=True, output="⏸ waiting", waiting=True
-                ), 0.01
-            # 회신이 연 런 — 넘어온 빚을 갚는다
-            assert [d.id for d in reg.reply_debts(me)] == ["r-1"]
-            assert reg.question_port(b).reply("최종 답", id="r-1") == ""
-            return _FakeLoopResult(output="끝"), 0.01
-
-        reg._runner = runner
-        assert reg.request(b, "일감", author="main") == ""
-        assert wait_until(lambda: seen == ["일감"])
-        assert wait_run_done(reg, b)
-        assert [d.id for d in reg.reply_debts(me)] == ["r-1"]  # wait — 빚은 그대로
-        assert absorbed_mail(reg) == []  # 폴백도 없다
-        reg._deliver_peer_reply(b, a, "정책은 A", 0, re="r-9")
-        assert wait_until(lambda: len(seen) == 2)
-        assert wait_run_done(reg, b)
-        (mail,) = absorbed_mail(reg)
-        assert mail["output"] == "최종 답" and mail["re"] == "r-1"
-        assert reg.reply_debts(me) == []
-
 
 class TestIdleMeansTheRunIsFullyDone:
     """v9.22.4 — `state == "idle"`/`handled` 는 런 끝 정리(out 왕래 줄 · `end_run`

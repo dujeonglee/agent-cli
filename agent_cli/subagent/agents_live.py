@@ -258,7 +258,7 @@ class AgentInstance:
         self.key = key
         self.profile_name = profile_name
         #: run 에이전트(`agent` ``mode`` "run", docs/agent-engine/DESIGN.md §2) — 과제 하나의
-        #: 런이 `complete` 로 끝나면 내려온다(`wait` 로 끝난 런은 아니다 — `RunEnd.waiting`).
+        #: 런이 끝나면 내려온다.
         #: 그 밖은 spawn 과 같다:
         #: 명단·주소·상한·agents.json·채널. ``task_id`` 가 그 과제 요청의 id 다.
         self.ends_after_task = ends_after_task
@@ -1022,35 +1022,20 @@ class AgentRegistry:
         debtor: str,
         output: str,
         *,
-        waiting: bool = False,
         stopped: bool = False,
         **meta,
     ) -> int:
         """런 끝의 **유일한** 정리 (v10.77.0) — 상주 단건·사람 배치·main 펌프가
-        모두 여기로 온다. 처리한 빚 수를 돌려준다.
+        모두 여기로 온다. 처리한 빚 수를 돌려준다. `wait` 는 런을 끝내지 않는다(5c-1) — 여기 오지 않는다.
 
-        - ``waiting`` (`wait` 로 끝남): 갚을 차례가 아니다 — 열린 빚은 다음 런으로 가고 깨어난
-          런이 `reply` 로 갚는다. 폴백을 지금 보내면 요청자가 "⏸ waiting" 을 답으로 받는다. 이 런에서
-          닫힌 줄은 다른 끝과 같이 버린다(`PostOffice.end_run` 의 ``wait`` — main 은 여기서, 에이전트는
-          `_close_run` 에서).
         - ``stopped`` (정지로 끊김): 남은 빚을 버린다. 사람·모델의 정지(■·✕)는 런의 정리가
           먼저 빚진 상대 모두에게 회신했다(`answer_debts_as_stopped` — 여기 남는 것은 사람 주소의
           빚뿐). 세션 종료의 빚은 재시작이 끊긴 요청을 새 id 로 다시 넣으며 다시 적는다 — 남기면
           같은 요청에 빚이 둘이 되고, 죽은 채무자의 빚이 요청자의 `wait` 를 영원히 붙잡는다.
         - 그 밖(보통의 끝): :meth:`end_run` — 남은 빚을 라벨 붙은 런 요약으로.
 
-        종전엔 이 판정(``not waiting``·``not stop_event``)이 호출부 셋에 흩어져
-        있었고, v10.65.0 의 상주 판정이 런 시작(`begin_run` 의 비우기)을 빠뜨려
-        wait 뒤의 빚이 사라졌다.
-
-        ``waiting`` 이면 중간 깨우기 타이머를 건다 (v10.79.0, :meth:`arm_checkin`) —
-        런 끝의 유일한 자리라 main·상주·run·web 이 한 곳이다. ``meta`` 의 ``run``
-        키는 그 런을 연 배달 id 이고 `run_started`(런 **시작**)와는 무관하다."""
-        if waiting:
-            if debtor == "main":  # 에이전트는 런 정리(`_close_run`)가 든 것을 비운다
-                self._post.end_run(debtor, run_id=debtor, outcome="wait")
-            self.arm_checkin(debtor)
-            return 0
+        종전엔 이 판정(``not stop_event``)이 호출부 셋에 흩어져 있었다. ``meta`` 의 ``run`` 키는 그 런을 연 배달
+        id 이고 `run_started`(런 **시작**)와는 무관하다."""
         self.run_started(debtor)  # 끝났으니 걸린 것이 있어도 의미가 없다
         if stopped:
             # 버린 빚 — 요청자는 더 기다리지 않는다(dropped). 세션 종료도 여기다(추정 버그 3 — 5단계에서
@@ -1086,7 +1071,7 @@ class AgentRegistry:
         return last[1] + 1 if last is not None and last[0] == ids else 0
 
     def arm_checkin(self, owner: str) -> int | None:
-        """`wait` 로 끝난 런 — 타이머를 건다. 걸린 간격(초) 또는 None.
+        """제자리 `wait` 가 기다리기 시작한다(`Mailbox.arm_checkin`) — 타이머를 건다. 걸린 간격(초) 또는 None.
 
         기준을 함께 적는다: 작업별 로그 크기(P(a) "+N lines since your wait")와
         에이전트별 `last_ordinal`("N steps since your wait")."""
@@ -1799,13 +1784,7 @@ class AgentRegistry:
             # 흡수분(v9.25.0)까지 이 런이 처리했다 — 시작 항목 수보다 클 수 있다
             tm.handled += handled + tm.absorbed_in_run
             tm.absorbed_in_run = 0
-            # 든 것을 비우고 이 런에서 닫힌 줄을 버린다(열린 줄은 런 끝 정리 `run_ended` 가 이미 닫았거나,
-            # `wait` 면 그대로 — 잠든 빚)
-            self._post.end_run(
-                f"agent:{tm.key}",
-                run_id=self._run_of(f"agent:{tm.key}"),
-                outcome="wait",
-            )
+            # 든 것과 이 런에서 닫힌 줄은 런 끝 정리(`run_ended` → `end_run(done|stopped)`)가 이미 비웠다
         self._save_state()  # ``handled`` 를 싣는다 — 증가 뒤에
         tm.state = "idle"
         tm.current_author = "main"
@@ -2320,7 +2299,7 @@ class AgentRegistry:
         return ""
 
     def working_agents(self) -> list[str]:
-        """일하는 에이전트의 키 — 런 중인 것과 일을 끝내지 않은 run 에이전트(``wait`` 로 잠든 것 포함).
+        """일하는 에이전트의 키 — 런 중인 것(제자리에서 기다리는 것 포함)과 일을 끝내지 않은 run 에이전트.
         "모두 정지"·웹 ``■ all``·Ctrl+C 가 본다. 읽기만 한다."""
         return [
             tm.key

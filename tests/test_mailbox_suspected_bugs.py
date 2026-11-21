@@ -15,7 +15,6 @@ import pytest
 
 from agent_cli.session_slots import set_agent_registry
 from agent_cli.subagent.agents_live import AgentRegistry
-from agent_cli.wake import Mailbox
 from tests.binding_support import make_binding
 from tests.mail_support import absorbed_mail, agent_wake_lines
 from tests.test_agents_live import make_registry
@@ -48,69 +47,6 @@ def cleanup():
 
 
 # ── 1. 깨우지 않는 회신을 든 한가한 상주 ─────────────────────────────────────
-
-
-class TestHeldResidentAndTheRequestersWait:
-    """Q 가 H 에게 요청했고, H 는 X 에게 요청한 뒤 `wait` 로 잠들었다. "Stop everything" 이 X 를 멈추면 X 의
-    정지 회신은 H 의 런을 열지 않는 항목으로 H 에게 간다(H 는 그것을 든 채 한가하다). 이제 H 를 깨울 것은
-    아무것도 없다 — 그러니 Q 의 `wait` 는 받아들여지면 안 된다(아무도 Q 를 깨우지 않는다)."""
-
-    def _setup(self, tmp_path, cleanup):
-        x_stopped = threading.Event()
-        p = Provider(
-            {
-                "TASK-Q1": [
-                    call("message", to="hh", text="TASK-H1 needs xx"),
-                    call("wait"),
-                ],
-                "TASK-H1": [
-                    call("message", to="xx", text="TASK-X1 slow"),
-                    call("wait"),
-                ],
-                "TASK-X1": [
-                    lambda m: (
-                        x_stopped.wait(10),
-                        call("shell", command="true"),
-                    )[1]
-                ],
-            }
-        )
-        reg = _engine_registry(tmp_path, p)
-        cleanup.append(reg)
-        keys = {}
-        for name in ("hh", "xx", "qq"):
-            keys[name], err = reg.spawn(name=name)
-            assert not err
-        assert wait_until(lambda: all(_state(reg, k) == "idle" for k in keys.values()))
-        assert reg.request(keys["qq"], "TASK-Q1 ask hh") == ""
-        assert wait_until(lambda: _state(reg, keys["xx"]) == "busy")
-        assert wait_until(
-            lambda: (
-                _state(reg, keys["hh"]) == "idle" and _state(reg, keys["qq"]) == "idle"
-            )
-        )
-        assert reg.stop_all_runs(wakes_requesters=False) == [keys["xx"]]
-        x_stopped.set()
-        hh = f"agent:{keys['hh']}"
-        # ■ — 상주 X 는 남는다. 정지 회신은 H 의 런을 열지 않는 항목으로 줄에 선다
-        assert wait_until(lambda: _state(reg, keys["xx"]) == "idle")
-        assert wait_until(lambda: [m.wakes for m in reg.queued_for(hh)] == [False])
-        assert _state(reg, keys["hh"]) == "idle"
-        return reg, keys
-
-    def test_the_held_reply_does_not_wake_the_resident(self, tmp_path, cleanup):
-        """사전 조건 — 받은 회신은 줄에 남고 H 는 한가하다(빚은 열린 채)."""
-        reg, keys = self._setup(tmp_path, cleanup)
-        hh = f"agent:{keys['hh']}"
-        (held,) = reg.queued_for(hh)
-        assert held.mark == "stopped by user" and held.wakes is False
-        assert [d.to for d in reg.reply_debts(hh)] == [f"agent:{keys['qq']}"]
-
-    def test_the_requesters_wait_has_nothing_to_wake_it(self, tmp_path, cleanup):
-        """종전(5b 전)엔 받은편지함에 깨우지 않는 항목만 든 한가한 상주를 '잠들지 않았다' 로 보아 요청자의 `wait` 를
-        받아들였다 — 잠든 채무자는 이제 창구의 기다림 표시로 본다(5b D5)."""
-        reg, keys = self._setup(tmp_path, cleanup)
-        assert Mailbox(reg, f"agent:{keys['qq']}").wake_sources() == []
 
 
 # ── 2. 재시작 뒤 에이전트→main 미배달 요청의 보낸 쪽 기록 ────────────────────

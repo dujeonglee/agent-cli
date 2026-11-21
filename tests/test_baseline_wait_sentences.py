@@ -34,6 +34,7 @@ from tests.test_engine_p2 import (
     CAPS,
     Provider,
     call,
+    complete_all,
     contents,
     owed_id,
     session,  # noqa: F401 — 픽스처
@@ -97,62 +98,80 @@ def _wait_lines(text: str) -> list[str]:
 # ── main ─────────────────────────────────────────────────────
 
 
-def _main_wait(session_factory, scripts) -> tuple[list[str], object]:
+def _main_wait(session_factory, scripts, release=None) -> tuple[list[str], object]:
+    """main 의 런 하나 — ``release`` 가 있으면 main 이 제자리 대기에 든 뒤(기다림 표시) 불러 기다릴 것을 끝낸다(5c-1:
+    `wait` 는 런을 끝내지 않는다 — 깨울 것이 사라지면 깨어 같은 런이 잇는다)."""
     s = session_factory(Provider(scripts))
     s["reg"].checkin_timer_factory = FakeTimer
+    if release is not None:
+        reg = s["reg"]
+
+        def _release():
+            assert wait_until(lambda: reg._post.is_waiting("main"))
+            release()
+
+        threading.Thread(target=_release, daemon=True).start()
     result = s["run"]()
     return _wait_lines(contents(s["ctx"])), result
 
 
+#: 깬 뒤 같은 런이 닫는 대본(5c-1)
+_WAIT_THEN_DONE = {"MAIN": [call("wait"), complete_all("done")]}
+
+
 class TestMainAccepts:
-    """main 이 기다리는 회신 없이 `wait` — 받아들이고 런을 끝낸다 `[단계 5 에서 바뀜 — 결정 1]`(제자리로)."""
+    """main 이 기다리는 회신 없이 `wait` — 받아들인다. `[5c-1 에서 바뀜]` 런을 끝내지 않고 제자리에서 기다린다 — 수락
+    문장 끝의 "Open items stay open for the next run: …" 이 빠졌다(다음 런이 없다). 대본은 기다릴 것을 끝내 깨우고, 같은
+    런이 닫는다."""
 
     def test_job_only(self, session, jobs):  # noqa: F811
-        jobs.start("sleep 30", owner="main")
-        lines, result = _main_wait(session, {"MAIN": [call("wait")]})
-        assert result.waiting
-        assert lines == [
-            (
-                "Observation: waiting — will wake on: job #1 (`sleep 30`), or in 5m if "
-                "nothing has reported. Open items stay open for the next run: u-0."
-            )
-        ]
+        job = jobs.start("sleep 30", owner="main")
+        lines, result = _main_wait(session, _WAIT_THEN_DONE, lambda: jobs.kill(job))
+        assert result.success
+        assert lines[0] == (
+            "Observation: waiting — will wake on: job #1 (`sleep 30`), or in 5m if "
+            "nothing has reported."
+        )
 
     def test_monitor_only(self, session, mons, tmp_path):  # noqa: F811
         mon = _monitor(mons, tmp_path, "main")
-        lines, result = _main_wait(session, {"MAIN": [call("wait")]})
-        assert result.waiting
-        assert lines == [
-            (
-                f"Observation: waiting — will wake on: monitor {mon.id}, or in 5m if "
-                "nothing has reported. Open items stay open for the next run: u-0."
-            )
-        ]
+        lines, result = _main_wait(
+            session, _WAIT_THEN_DONE, lambda: mons.delete(mon.id)
+        )
+        assert result.success
+        assert lines[0] == (
+            f"Observation: waiting — will wake on: monitor {mon.id}, or in 5m if "
+            "nothing has reported."
+        )
 
     def test_schedule_only_has_no_timer(self, session):  # noqa: F811
-        set_schedule_registry(_schedule_stub())
-        lines, result = _main_wait(session, {"MAIN": [call("wait")]})
-        assert result.waiting
-        assert lines == [
-            (
-                "Observation: waiting — will wake on: a schedule. Open items stay open "
-                "for the next run: u-0."
-            )
-        ]
+        stub = _schedule_stub()
+        set_schedule_registry(stub)
+        lines, result = _main_wait(
+            session,
+            _WAIT_THEN_DONE,
+            lambda: setattr(stub, "has_active_work", lambda: False),
+        )
+        assert result.success
+        assert lines[0] == "Observation: waiting — will wake on: a schedule."
 
     def test_several_sources_in_registry_order(self, session, jobs, mons, tmp_path):  # noqa: F811
-        jobs.start("sleep 30", owner="main")
+        job = jobs.start("sleep 30", owner="main")
         mon = _monitor(mons, tmp_path, "main")
-        set_schedule_registry(_schedule_stub())
-        lines, result = _main_wait(session, {"MAIN": [call("wait")]})
-        assert result.waiting
-        assert lines == [
-            (
-                f"Observation: waiting — will wake on: job #1 (`sleep 30`); monitor {mon.id}; "
-                "a schedule, or in 5m if nothing has reported. Open items stay open for the "
-                "next run: u-0."
-            )
-        ]
+        stub = _schedule_stub()
+        set_schedule_registry(stub)
+
+        def end_all():
+            jobs.kill(job)
+            mons.delete(mon.id)
+            stub.has_active_work = lambda: False
+
+        lines, result = _main_wait(session, _WAIT_THEN_DONE, end_all)
+        assert result.success
+        assert lines[0] == (
+            f"Observation: waiting — will wake on: job #1 (`sleep 30`); monitor {mon.id}; "
+            "a schedule, or in 5m if nothing has reported."
+        )
 
 
 class TestMainRefuses:
@@ -173,8 +192,15 @@ class TestMainRefuses:
 
         def main_waits_after_parked(msgs):
             reg = holder["reg"]
+            # 상주가 제자리에서 기다린다(기다림 표시 — 5c-1 부터 런 안, busy)
             assert wait_until(
-                lambda: [r["state"] for r in reg.roster_snapshot()] == ["idle"]
+                lambda: (
+                    [
+                        reg._post.is_waiting(f"agent:{r['key']}")
+                        for r in reg.roster_snapshot()
+                    ]
+                    == [True]
+                )
             )
             holder["owed"] = [d.id for d in reg.reply_debts("main") if not d.settled]
             return call("wait")
@@ -235,7 +261,8 @@ def resident(tmp_path, renderer):
     history 글을 돌려준다(런이 끝나 한가해질 때까지)."""
     made: dict = {}
 
-    def run(scripts: dict, *, before=None, ends_after_task=False) -> str:
+    def run(scripts: dict, *, before=None, release=None, ends_after_task=False) -> str:
+        """``release`` — 그 상주가 제자리 대기에 든 뒤(기다림 표시) 불러 기다릴 것을 끝낸다(5c-1)."""
         p = Provider(scripts)
         binding = make_binding(provider=p, capabilities=CAPS, model="m")
         reg = AgentRegistry(
@@ -251,6 +278,9 @@ def resident(tmp_path, renderer):
         if before is not None:
             before(f"agent:{key}")
         assert reg.request(key, "TASK-R1 the job") == ""
+        if release is not None:
+            assert wait_until(lambda: reg._post.is_waiting(f"agent:{key}"))
+            release(f"agent:{key}")
         assert wait_until(lambda: _ended(renderer, key) >= 1)
         if ends_after_task:  # run 에이전트는 런 하나 뒤 내려간다
             assert wait_until(
@@ -286,15 +316,25 @@ def _ended(renderer, key) -> int:
 
 
 class TestResidentAccepts:
-    """상주의 `wait` 는 받아들이면 런을 끝낸다 `[단계 5 에서 바뀜 — 결정 1]`(제자리로) — 꼬리의 "Open items stay
-    open for the next run" 도 그 정책의 문장이다."""
+    """상주의 `wait` 는 받아들인다. `[5c-1 에서 바뀜]` 런을 끝내지 않고 제자리에서 기다린다 — 대본은 기다릴 것을 끝내
+    깨우고, 같은 런이 회신하고 닫는다."""
 
     def test_job_only_and_what_main_sees_at_the_run_boundary(
         self, resident, jobs, renderer
     ):
+        made: dict = {}
         text = resident["run"](
-            {"TASK-R1": [call("wait")]},
-            before=lambda owner: jobs.start("sleep 30", owner=owner),
+            {
+                "TASK-R1": [
+                    call("wait"),
+                    lambda m: call("reply", id=owed_id(m), text="done"),
+                    call("complete", result="ok"),
+                ]
+            },
+            before=lambda owner: made.setdefault(
+                "job", jobs.start("sleep 30", owner=owner)
+            ),
+            release=lambda owner: jobs.kill(made["job"]),
         )
         assert _wait_lines(text) == [
             (
@@ -302,8 +342,8 @@ class TestResidentAccepts:
                 "nothing has reported."
             )
         ]
-        # main 쪽에 보이는 것 — 런 하나가 열리고 닫힌다(카드 한 쌍), 성공·정지 아님, 상태는 한가함, 회신 없음.
-        # 0단계 실측의 "에이전트 런 3→2" 가 이 경계 수의 차이다 `[단계 5 에서 바뀜 — 결정 1]`.
+        # main 쪽에 보이는 것 — 런 하나가 열리고 닫힌다(카드 한 쌍, 기다림을 끼고도), 성공·정지 아님, 상태는 한가함.
+        # `[5c-1 에서 바뀜]` 깬 뒤 같은 런이 회신했다 — 빚은 닫혔다(종전: 런이 wait 로 끝나 빚이 열린 채, 회신 없음)
         key = resident["key"]
         work = [
             (name, {k: kw.get(k) for k in ("success", "stopped", "error")})
@@ -316,16 +356,22 @@ class TestResidentAccepts:
         ]
         reg = resident["reg"]
         assert [r["state"] for r in reg.roster_snapshot()] == ["idle"]
-        assert reg.pending_mail() == []
-        assert [r["id"] for r in reg.awaited_replies("main")] != []  # 빚은 열린 채
+        assert reg.awaited_replies("main") == []  # 같은 런이 갚았다
 
     def test_monitor_only(self, resident, mons, tmp_path):
         made: dict = {}
         text = resident["run"](
-            {"TASK-R1": [call("wait")]},
+            {
+                "TASK-R1": [
+                    call("wait"),
+                    lambda m: call("reply", id=owed_id(m), text="done"),
+                    call("complete", result="ok"),
+                ]
+            },
             before=lambda owner: made.setdefault(
                 "mon", _monitor(mons, tmp_path, owner)
             ),
+            release=lambda owner: mons.delete(made["mon"].id),
         )
         assert _wait_lines(text) == [
             (

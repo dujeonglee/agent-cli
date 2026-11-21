@@ -677,17 +677,6 @@ class AgentLoop:
                 ledger.add_request(
                     r["id"], r.get("author") or "", r.get("text") or "", turn=self.turn
                 )
-        # 앞선 런이 `wait` 로 넘긴 열린 요청 (v10.65.0) — 깨우기 런이 같은 항목을
-        # 들고 시작한다. 이 ctx 를 쓰는 다음 런이 무엇이든 가져간다.
-        if self.ctx is not None:
-            for r in self.ctx.take_parked_requests():
-                if r.get("id") and not ledger.has_request(str(r["id"])):
-                    ledger.add_request(
-                        r["id"],
-                        r.get("author") or "",
-                        r.get("text") or "",
-                        turn=self.turn,
-                    )
         # 시작 항목의 id (v10.56.0) — 사람 요청이면 장부에 오르고(상주는
         # `user_requests` 가 이미 올렸다), 어느 쪽이든 그 레코드에 찍혀 열려 있는
         # 동안 핀된다(동료 요청의 회신 빚 `r-…` 포함).
@@ -868,19 +857,12 @@ class AgentLoop:
         self._add_user_message(text, author, request_id=rid, images=images)
 
     def _note_run_started(self) -> None:
-        """이 소유자의 런이 **입력을 받아** 시작됐다 — `wait` 중간 깨우기 타이머를
-        푼다 (v10.79.0, docs/wait/DESIGN.md §6). main·상주·run·web 네 경로가 이 한
-        지점을 지난다. 우편 창구(`ports.mailbox`)로 간다 — 상주·private 처럼
-        `agent_registry` 가 None 인 루프도 자기 주소의 메일함은 있다(v10.133.28).
-
-        자리는 첫 배달 **뒤**, 빈 깨우기 런의 조기 반환 뒤다 — 다른 런이 메일을
-        먼저 가져가 입력 없이 끝나는 런(위의 ``output=""``)이 타이머를 풀면, 잠든
-        모델의 기다림에 깨우기가 없어진다. 배달과 이 호출 사이에 타이머가 발화하면
-        그 알림은 다음 턴 경계에 배달되거나 `wait` 를 "already arrived" 로 거부시킨다
-        — 사실 진술이라 어느 쪽도 거짓이 아니다."""
-        mailbox = self._config.kind.ports.mailbox
-        mailbox.run_started()
-        mailbox.clear_waiting()  # 런을 끝낸 `wait` 의 기다림이 여기서 끝난다 — 입력을 받은 런이 시작했다
+        """이 소유자의 런이 **입력을 받아** 시작됐다 — 이 주소의 `wait` 중간 깨우기 타이머가 걸려 있으면 푼다
+        (v10.79.0, docs/wait/DESIGN.md §6). main·상주·run·web 네 경로가 이 한 지점을 지난다. 우편 창구
+        (`ports.mailbox`)로 간다 — 상주·private 처럼 `agent_registry` 가 None 인 루프도 자기 주소의 메일함은 있다
+        (v10.133.28). 5c-1 부터 타이머를 거는 곳은 제자리 대기(`TurnDispatcher._wait_in_place`) 하나이고, 깨면 그
+        ``finally`` 가 푼다 — 런을 끝낸 `wait` 가 없어 런이 시작할 때 걸려 있는 타이머는 없다."""
+        self._config.kind.ports.mailbox.run_started()
 
     def _inject_mail(self, reply: dict) -> bool:
         """레지스트리 회신 한 통을 관찰 레코드로 (teammate P1, D2) — LLM 폴링 없이 하니스가

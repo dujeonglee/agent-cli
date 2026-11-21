@@ -122,36 +122,29 @@ class TestAdvertisedOnlyWhereAWakeExists:
         assert "wait" in self._tools(make_ports(inbox=list))
 
 
-class TestWaitEndsTheRun:
-    def test_waiting_on_a_job_ends_with_items_parked(self, jobs, tmp_path):
-        jobs.start("sleep 30", owner="main")
-        ctx = ContextManager(tmp_path / "s", max_context_tokens=10000)
-        loop = _loop(
-            _provider({"action": "wait", "reason": "install running"}), ctx=ctx
-        )
-        res = loop.run()
-        assert res.success and res.waiting
-        assert "⏸ waiting on job #1" in res.output and "install running" in res.output
-        assert loop.turn == 1
-        # 열린 요청은 닫히지 않고 다음 런으로
-        assert [r["id"] for r in ctx.take_parked_requests()] == ["u-1"]
-        # 기록: 보통의 op + 관찰 (새 카드 종류 없음)
-        recs = [
-            json.loads(line)
-            for line in (tmp_path / "s" / "history.jsonl").read_text().splitlines()
-        ]
-        obs = [r for r in recs if r.get("tool") == "wait"]
-        assert obs and obs[-1]["success"] is True
-        assert "u-1" in obs[-1]["content"] and "job #1" in obs[-1]["content"]
+class TestWaitStaysInTheRun:
+    """`wait` 는 런을 끝내지 않는다(5c-1) — 받아들여지면 그 자리에서 깨울 것을 기다리고, 깨면 같은 런이 같은 장부로
+    잇는다(종전: 런을 `waiting` 결과로 끝내고 열린 요청을 다음 런으로 넘겼다 — `park_requests`)."""
 
-    def test_next_run_on_the_same_ctx_restores_the_items(self, jobs, tmp_path):
-        jobs.start("sleep 30", owner="main")
+    def test_waiting_on_a_job_keeps_the_items_in_the_same_run(self, tmp_path):
+        from agent_cli.session_slots import set_agent_registry
+        from tests.test_agents_live import make_registry, wait_until
+
+        reg = make_registry(tmp_path / "reg")
+        set_agent_registry(reg)
+        jobs = JobRegistry(tmp_path / "jobs")
+        jobs.deliver = reg.deliver
+        set_job_registry(jobs)
+        flag = tmp_path / "go"
         ctx = ContextManager(tmp_path / "s", max_context_tokens=10000)
-        _loop(_provider({"action": "wait"}), ctx=ctx).run()
-        seen = {}
+        seen: dict = {}
 
         def _answer(*_a, **_k):
-            seen["ids"] = list(loop2._state.ledger.request_ids())
+            if p.call.call_count == 1:
+                return LLMResponse(
+                    content=json.dumps({"action": "wait", "reason": "install running"})
+                )
+            seen["ids"] = list(loop._state.ledger.request_ids())
             return LLMResponse(
                 content=json.dumps(
                     {"action": "complete", "result": "done", "answers": seen["ids"]}
@@ -160,11 +153,46 @@ class TestWaitEndsTheRun:
 
         p = MagicMock()
         p.call.side_effect = _answer
-        # 깨우기 런: 통지가 시작 메시지, 요청 id 는 없다 — 장부는 넘겨받은 것만
-        loop2 = _loop(p, ctx=ctx, query="job #1 finished", rid="")
-        res = loop2.run()
-        assert res.success and seen["ids"] == ["u-1"]
-        assert ctx.take_parked_requests() == []
+        loop = make_loop(
+            ports=make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg),
+            query="Q",
+            query_request_id="u-1",
+            provider=p,
+            capabilities=ModelCapabilities(
+                context_window=32768, max_output_tokens=4096, supports_thinking=False
+            ),
+            model="m",
+            dialect=get_dialect("json_fc"),
+            ctx=ctx,
+        )
+        try:
+            jobs.start(f"while [ ! -f {flag} ]; do sleep 0.05; done", owner="main")
+            done: list = []
+            th = threading.Thread(target=lambda: done.append(loop.run()), daemon=True)
+            th.start()
+            assert wait_until(
+                lambda: "main" in reg._checkin_armed
+            )  # 제자리 대기에 들었다
+            flag.write_text("", encoding="utf-8")
+            th.join(10)
+            (res,) = done
+            # 같은 런의 둘째 호출이 같은 장부로 닫는다 — 요청 u-1 과 깨운 작업 통지(n-)
+            assert res.success and res.output == "done"
+            assert seen["ids"][0] == "u-1" and len(seen["ids"]) == 2
+            assert seen["ids"][1].startswith("n-")
+            assert loop.turn == 2
+            recs = [
+                json.loads(line)
+                for line in (tmp_path / "s" / "history.jsonl").read_text().splitlines()
+            ]
+            obs = [r for r in recs if r.get("tool") == "wait"]
+            assert obs and obs[0]["success"] is True and "job #1" in obs[0]["content"]
+            assert "next run" not in obs[0]["content"]  # 넘길 다음 런이 없다
+        finally:
+            jobs.stop_all()
+            set_job_registry(None)
+            set_agent_registry(None)
+            reg.shutdown_all()
 
     def test_nothing_pending_is_refused_and_the_run_goes_on(self, tmp_path):
         set_job_registry(None)
@@ -175,7 +203,7 @@ class TestWaitEndsTheRun:
             )
         )
         res = loop.run()
-        assert res.success and not res.waiting and res.output == "ok"
+        assert res.success and res.output == "ok"
         obs = [
             m["content"]
             for m in loop.messages
@@ -301,7 +329,7 @@ class TestAlreadyArrived:
             self._mid_turn(reg, 1, {"action": "wait", "reason": "monitor"}),
         )
         res = loop.run()
-        assert res.success and not res.waiting and res.output == "ok"
+        assert res.success and res.output == "ok"
         assert loop.turn == 2  # 거부 턴 + 닫는 턴 — 런 경계 없이 이어졌다
         users = [str(m.get("content")) for m in loop.messages if m["role"] == "user"]
         i = next(i for i, c in enumerate(users) if "wait refused" in c)
@@ -325,50 +353,19 @@ class TestAlreadyArrived:
         )
 
 
-class TestResidentRunEndingInWait:
-    def test_no_fallback_reply_and_debt_stays_open(self, tmp_path):
-        """상주 런이 wait 로 끝나면 폴백(런 요약) 배달도 질문 닫기도 없다 — 깨운
-        뒤 갚는다. 종전 코드라면 요청자가 "⏸ waiting" 을 답으로 받았다."""
-        from types import SimpleNamespace
-
-        from tests.test_agents_live import make_registry, wait_until
-
-        def runner(kind, start, ctx):
-            # 받아들여진 `wait` 의 대역 — 엔진이 하듯 기다림 표시를 세운다(`Mailbox.accept_wait`)
-            reg.mark_waiting(f"agent:{key}")
-            return SimpleNamespace(
-                success=True, output="⏸ waiting on job #1", waiting=True
-            ), 0.01
-
-        reg = make_registry(tmp_path, runner=runner)
-        key, _ = reg.spawn()
-        assert wait_until(lambda: reg.get(key).state == "idle")
-        assert reg.request(key, "do X") == ""
-        assert wait_until(
-            lambda: reg.get(key).state == "idle" and reg.get(key).handled >= 1
-        )
-        assert not reg.arrived_for(
-            "main", waking_only=False, words=False
-        )  # 폴백이 main 으로 가지 않았다
-        debts = reg.reply_debts(f"agent:{key}")
-        assert [d.to for d in debts] == ["main"]  # 빚은 그대로
-        # 잠든 채무자는 직접 깨울 근거가 아니다 — 그를 깨울 것이 있는지 거슬러
-        # 본다(v10.77.0 순환 대기 가드). 여기선 가짜 러너라 아무것도 없다.
-        assert agent_wake_lines(reg, "main") == []
-        assert parked_debtors(reg.wake_facts(), "main") == [f"agent:{key}"]
-
-
 class TestCompleteNag:
     def test_complete_without_answers_while_a_job_runs_points_at_wait(self, jobs):
         jobs.start("sleep 30", owner="main")
+        # 이 대역에는 레지스트리가 없다 — 받아들여진 `wait` 는 기다릴 메일함이 없어 곧 깨고 같은 런이 닫는다
         loop = _loop(
             _provider(
                 {"action": "complete", "result": "waiting for the install"},
                 {"action": "wait"},
+                {"action": "complete", "result": "installed", "answers": ["u-1"]},
             )
         )
         res = loop.run()
-        assert res.waiting
+        assert res.success
         nag = [
             m["content"]
             for m in loop.messages
@@ -515,8 +512,8 @@ class TestCircularWait:
 
 
 class TestRunEnded:
-    """v10.77.0 — 런 끝의 유일한 정리 `AgentRegistry.run_ended`. 남아 있는 빚은
-    언제나 `wait` 가 남긴 것이어야 판정들(다음 런의 장부·순환 대기)이 정직하다."""
+    """v10.77.0 — 런 끝의 유일한 정리 `AgentRegistry.run_ended`. `wait` 는 런의 끝이 아니다(5c-1) — 런이 끝나면 빚은
+    회신(폴백)이나 버림으로 닫힌다."""
 
     @pytest.fixture
     def reg(self, tmp_path):
@@ -525,12 +522,6 @@ class TestRunEnded:
         r = make_registry(tmp_path)
         yield r
         r.shutdown_all()
-
-    def test_waiting_keeps_the_debt_and_sends_nothing(self, reg):
-        reg.note_owes("agent:a", "main", "일감", id="r-1")
-        assert reg.run_ended("agent:a", "⏸ waiting", waiting=True) == 0
-        assert [d.id for d in reg.reply_debts("agent:a")] == ["r-1"]
-        assert not reg.arrived_for("main", waking_only=False, words=False)
 
     def test_stopped_drops_the_debt_without_a_summary(self, reg):
         """끊긴 요청은 재시작이 새 id 로 다시 적는다 — 남기면 빚이 둘이 되고, 죽은
@@ -554,5 +545,7 @@ class TestRunEnded:
         from agent_cli.runtime import main_run_ended
 
         reg.note_owes("main", "agent:a", "결정해 줘", id="r-5")
-        assert main_run_ended(reg, "⏸ waiting", waiting=True) == 0
-        assert [d.id for d in reg.reply_debts("main")] == ["r-5"]
+        assert (
+            main_run_ended(reg, "끊김", stopped=True) == 0
+        )  # 상주와 같은 자리 — 정지면 버린다
+        assert reg.reply_debts("main") == []

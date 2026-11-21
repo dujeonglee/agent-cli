@@ -46,19 +46,17 @@ def _mail(mi: MainInput, *, wakes: bool = True) -> None:
 
 
 class TestOneItem:
-    def test_the_run_end_reaches_the_registry_with_its_waiting_flag(self):
-        """v10.77.0: main 런의 끝도 레지스트리의 `run_ended` 한 곳으로 — `wait` 로
-        끝났는지는 펌프가 판정하지 않고 넘긴다(상주와 같은 판정 자리)."""
+    def test_the_run_end_reaches_the_registry(self):
+        """v10.77.0: main 런의 끝도 레지스트리의 `run_ended` 한 곳으로(상주와 같은 판정 자리). `wait` 는 런의 끝이
+        아니다(5c-1) — 넘길 표시가 없다."""
         q = MainInput()
         q.enqueue(None, "a", nickname="dj")
         q.enqueue(None, "b", nickname="dj")
         reg = FakeRegistry()
-        outs = iter(
-            [ToolResult(True, output="x", waiting=True), ToolResult(True, output="y")]
-        )
+        outs = iter([ToolResult(True, output="x"), ToolResult(True, output="y")])
 
         make_pump(main_input=q, run_main=lambda req: next(outs), registry=reg).run()
-        assert reg.ended == [("main", "x", True), ("main", "y", False)]
+        assert reg.ended == [("main", "x"), ("main", "y")]
 
     def test_order_of_surface_calls_around_a_run(self):
         q = MainInput()
@@ -478,20 +476,6 @@ class TestConsoleExitCode:
         s.run_ended(self._res(False, "sched boom"), self._req(author="⏰ nightly"))
         s.run_ended(self._res(False, "wake boom"), self._req(wake=True))
         assert s.exit_code == 0
-
-    def test_the_last_run_of_a_waiting_chain_decides(self, tmp_path):
-        """질의가 `wait` 로 답을 미루면 깨우기 런이 사슬이다 — 마지막 판정이 코드."""
-        s, out = self._surface(tmp_path)
-        s.run_ended(self._res(True, "waiting on job", waiting=True), self._req())
-        assert s.exit_code == 0
-        s.run_ended(self._res(False, "llm error"), self._req(wake=True))
-        assert s.exit_code == 1
-        assert out.read_text(encoding="utf-8") == "waiting on job"
-        s.run_ended(self._res(True, "final"), self._req(wake=True))
-        assert s.exit_code == 0
-        assert out.read_text(encoding="utf-8") == "final"
-        s.run_ended(self._res(False, "after close"), self._req(wake=True))
-        assert s.exit_code == 0, "사슬이 닫힌 뒤의 깨우기는 판정 밖"
 
     def test_only_the_argv_query_route_decides(self, tmp_path):
         """라우팅: 질의였던 명령만 판정 — 런 도중 주입·예약 발화의 명령은 아니다."""

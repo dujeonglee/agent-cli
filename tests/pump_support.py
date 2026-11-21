@@ -59,7 +59,7 @@ class FakeSurface:
 class FakeRegistry:
     def __init__(self):
         self.authors: list[list[str]] = []
-        self.ended: list[tuple] = []  # run_ended 호출 (owner, output, waiting)
+        self.ended: list[tuple] = []  # run_ended 호출 (owner, output)
 
     def has_agent_work(self):
         return False
@@ -67,8 +67,8 @@ class FakeRegistry:
     def set_current_run_authors(self, authors):
         self.authors.append(list(authors))
 
-    def run_ended(self, owner, output="", *, waiting=False, **kw):
-        self.ended.append((owner, output, waiting))
+    def run_ended(self, owner, output="", **kw):
+        self.ended.append((owner, output))
         return 0
 
 

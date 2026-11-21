@@ -111,12 +111,19 @@ def agent_relations(
     순환 대기 판정에서 거슬러 온 주소들. **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `Mailbox.arrivals`.
 
     한 에이전트는 한 관계로만 나온다 — working > queued > owes: 내 요청을 들고 일하는(줄 세운) 쪽은 그 요청을 빚진
-    쪽이기도 하지만 더 많이 말하는 쪽 하나로 센다."""
+    쪽이기도 하지만 더 많이 말하는 쪽 하나로 센다.
+
+    기다림 표시가 선 쪽은 working 이 아니다 — 잠든 채무자 길(`_is_parked`·`parked_view`)로 간다(5c-1: 제자리에서
+    기다리는 에이전트도 런 안이라 ``active`` 다)."""
     held: dict[str, str] = {}
     for a in facts.agents:
         if a.addr == addr or a.addr in exclude:
             continue
-        if a.active and _holds_unpaid_request_from(facts, a.taken, addr):
+        if (
+            a.active
+            and a.addr not in facts.waiting
+            and _holds_unpaid_request_from(facts, a.taken, addr)
+        ):
             held[a.addr] = "working"
         elif _holds_unpaid_request_from(facts, a.queued, addr):
             held[a.addr] = "queued"  # 받은편지함에 줄 선 것으로 본다
@@ -553,7 +560,8 @@ class Mailbox:
         return sources
 
     def clear_waiting(self) -> None:
-        """기다림이 끝났다 — 제자리 대기가 돌아왔거나, 런을 끝낸 대기 뒤 다음 런이 입력을 받아 시작했다."""
+        """기다림이 끝났다 — 제자리 대기가 돌아왔다(`TurnDispatcher._wait_in_place` 의 ``finally``, 5c-1 부터 내리는 곳은
+        그 하나)."""
         if self._registry is not None:
             self._registry.clear_waiting(self.owner)
 

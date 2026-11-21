@@ -357,15 +357,13 @@ class TestWaitInPlace:
         )
         assert "wait" in loop.tools_list  # 깨울 길이 있으니 광고된다
         res = loop.run()
-        assert res.success and not getattr(res, "waiting", False)
-        assert res.output == "done" and loop.turn == 2
+        assert res.success and res.output == "done" and loop.turn == 2
         recs = _records(tmp_path)
         waits = [r for r in recs if r.get("tool") == "wait"]
         assert waits and "will wake on: job #1" in waits[0]["content"]
         assert "next run" not in waits[0]["content"]  # 장부를 넘기지 않는다
         job_mail = [r for r in recs if r.get("tool") == "job"]
         assert job_mail and "job #1 finished" in job_mail[0]["content"]
-        assert ctx.take_parked_requests() == []
 
     def test_job_killed_from_outside_ends_the_wait_with_a_fact(self, jobs, tmp_path):
         job = jobs.start("sleep 30", owner="harness:t2")

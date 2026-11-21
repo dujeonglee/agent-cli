@@ -32,31 +32,6 @@ def _two_idle_agents(tmp_path):
     return reg, a, b, door
 
 
-class TestClosedRowsGoAtEveryRunEnd:
-    def test_reply_again_after_a_wait_ended_run_is_not_in_this_run(self, tmp_path):
-        reg, a, b, door = _two_idle_agents(tmp_path)
-        try:
-            me, them = f"agent:{b}", f"agent:{a}"
-            d1 = reg.note_owes(me, them, "first request")
-            d2 = reg.note_owes(me, them, "second request")  # 열린 채 — id 길을 탄다
-            port = reg.question_port(b)
-            assert port.reply("answer", id=d1.id) == ""
-            same_run = port.reply("again", id=d1.id)
-            assert same_run.startswith(f"already replied to [{d1.id}]")
-            assert "in this run" in same_run  # 같은 런 — 참
-            # 런이 `wait` 로 끝난다 — 워커가 하는 두 단계
-            reg.run_ended(me, "", waiting=True)
-            reg._close_run(reg.get(b), 0)
-            next_run = port.reply("again", id=d1.id)
-            assert next_run == f'no unpaid request "{d1.id}" — you owe: ' + (
-                f'[{d2.id}] {a}: "second request"' + "."
-            )
-            assert [d.id for d in reg.reply_debts(me)] == [d2.id]  # 잠든 빚은 남는다
-        finally:
-            door.set()
-            reg.shutdown_all()
-
-
 def _gone(key: str, rid: str) -> str:
     return (
         f'not delivered — agent "{key}", which sent request [{rid}], was already gone. '

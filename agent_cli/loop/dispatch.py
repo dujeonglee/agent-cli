@@ -16,7 +16,7 @@ import time
 from agent_cli.dialects import try_foreign_parse
 from agent_cli.dialects.base import ParsedTurn
 from agent_cli.dialects.recovery.json import describe_json_error
-from agent_cli.loop.kind import Caller
+from agent_cli.loop.kind import WAIT_NOTHING_PENDING, Caller
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
@@ -1135,28 +1135,19 @@ class TurnDispatcher:
         return ToolResult(True, output=answer)
 
     def _op_wait(self, llm_text: str, turn, op, outcome: dict):
-        """terminal ``wait`` op (v10.65.0, docs/wait/DESIGN.md).
+        """terminal ``wait`` op (v10.65.0, docs/wait/DESIGN.md) — 런을 끝내지 않는다(5c-1).
 
-        깨울 것(`ports.mailbox.wake_sources`)이 있으면: 열린 요청을 ctx 에 넘기고
-        (`park_requests` — 다음 런의 장부로), 호출과 관찰을 기록하고(히스토리는
-        보통의 op + 관찰 모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다),
-        런을 ``waiting`` 결과로 끝낸다. 없으면: 거부 관찰을 남기고 런을 잇는다 —
-        막혔을 때 wait 로 도피하는 길은 없다. 이미 도착한 통지(`ports.mailbox.arrived`)
-        가 있어도 거부한다(v10.66.2): 다음 관찰에 그 통지가 온다고 말해 준다.
+        깨울 것(`ports.mailbox.wake_sources`)이 있으면: 호출과 관찰을 기록하고(히스토리는 보통의 op + 관찰
+        모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다) **그 자리에서** 깨울 것이 올 때까지 막는다
+        (`_wait_in_place`). 깨면 같은 런이 잇는다 — 다음 턴 경계의 흡수(`kind.intake`)가 깨운 것을 넣고, 장부는
+        그대로다(같은 런). main·상주·run 에이전트·하니스 작업, 기다리는 것이 회신·작업·모니터 무엇이든 같다.
+        없으면: 거부 관찰을 남기고 런을 잇는다 — 막혔을 때 wait 로 도피하는 길은 없다. 이미 도착한 통지가
+        있어도 거부한다(v10.66.2): 다음 관찰에 그 통지가 온다고 말해 준다.
 
-        v10.84.0 (docs/wait/DESIGN.md §7): 깨울 길이 없는 루프(스킬 — 호출자의 턴 안
-        인라인)는 첫 판정에서 거부한다 — 종전엔 광고만 안 하고 받아서 스킬 런을
-        "⏸ waiting" 결과로 끝냈다. 제자리 정책(`WAIT_BLOCK` — 하니스 작업, 기다리는 회신을
-        둔 main)은 런을 끝내지 않는다: 메일(또는 main 이면 사람 입력)이 올 때까지 **여기서
-        막고** 런을 잇는다 — 다음 턴 경계의 흡수(`kind.intake`)가 그것을 넣는다. 장부는
-        넘기지 않는다(같은 런)."""
-        from agent_cli.loop.kind import WAIT_BLOCK, WAIT_NOTHING_PENDING, WAIT_REFUSE
+        v10.84.0 (docs/wait/DESIGN.md §7): 깨울 길이 없는 루프(스킬 — 호출자의 턴 안 인라인, `ports.wakeable`
+        이 거짓)는 첫 판정에서 거부한다."""
 
-        reason = ""
-        if isinstance(op.action_input, dict):
-            reason = str(op.action_input.get("reason") or "").strip()
-        policy = self.cfg.kind.wait_policy()  # v10.88.0: 종류가 정한다
-        if policy == WAIT_REFUSE:
+        if not self.cfg.kind.ports.wakeable():
             _append_observation(
                 self.state.messages,
                 self.ctx,
@@ -1206,26 +1197,16 @@ class TurnDispatcher:
             return _CONTINUE
         from agent_cli.constants import format_duration
 
-        in_place = policy == WAIT_BLOCK
-        kept = ""
-        if not in_place:
-            ledger = self.state.ledger
-            open_ids = ledger.request_ids()
-            if self.ctx is not None:
-                self.ctx.park_requests(list(ledger.requests))
-            if open_ids:
-                kept = f" Open items stay open for the next run: {', '.join(open_ids)}."
-        # 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6): 타이머는 런이 끝날 때
-        # 레지스트리가 걸지만(`run_ended(waiting=True)`), 이번 간격은 여기서 같은
-        # 계산(`next_checkin_s`)으로 미리 적는다 — 설명엔 숫자가 없다(간격이 바뀐다).
-        # 예약만 기다려 타이머가 없으면 종전 문장 그대로.
+        # 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6): 타이머는 제자리 대기가 걸지만(`_wait_in_place` →
+        # `mailbox.arm_checkin`), 이번 간격은 여기서 같은 계산(`next_checkin_s`)으로 미리 적는다 — 설명엔 숫자가
+        # 없다(간격이 바뀐다). 예약만 기다려 타이머가 없으면 종전 문장 그대로.
         checkin_s = mailbox.next_checkin_s()
         timer = (
             f", or in {format_duration(checkin_s)} if nothing has reported"
             if checkin_s
             else ""
         )
-        obs = f"Observation: waiting — will wake on: {'; '.join(sources)}{timer}.{kept}"
+        obs = f"Observation: waiting — will wake on: {'; '.join(sources)}{timer}."
         _append_observation(
             self.state.messages,
             self.ctx,
@@ -1236,17 +1217,12 @@ class TurnDispatcher:
             success=True,
             turn=self.state.turn,
         )
-        if in_place:
-            return self._wait_in_place(turn, mailbox)
-        summary = f"⏸ waiting on {'; '.join(sources)}" + (
-            f" — {reason}" if reason else ""
-        )
-        return ToolResult(True, output=summary, waiting=True)
+        return self._wait_in_place(turn, mailbox)
 
     def _wait_in_place(self, turn, mailbox):
-        """제자리 `wait` (v10.84.0 private, v10.141.0 main): 런을 끝내지 않고 메일(회신·작업
-        통지·체크인)이 오거나, main 이면 사람 입력이 도착할 때까지 막는다 — 같은 런이라 감사
-        범위도 그 런 하나다. 체크인 타이머는 걸고(메일로 온다), 깨면 푼다. 레지스트리가
+        """제자리 `wait` — 받아들여진 `wait` 는 모두 여기다(5c-1; 종전 v10.84.0 private, v10.141.0 회신을 기다리는
+        main): 런을 끝내지 않고 메일(회신·작업 통지·모니터·체크인)이 오거나, main 이면 사람 입력이 도착할 때까지
+        막는다 — 같은 런이라 감사 범위도 그 런 하나다. 깨면 새 구간(`_begin_segment`). 체크인 타이머는 걸고(메일로 온다), 깨면 푼다. 레지스트리가
         없으면 기다릴 메일함이 없다 — 깨울 것이 사라진 것과 같이 다룬다.
 
         기다리는 동안 이 스레드가 끊기면(CLI Ctrl+C) 런의 정지를 세우고 그대로 던진다 — 이

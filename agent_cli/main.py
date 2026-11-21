@@ -585,9 +585,8 @@ class _ConsoleSurface:
         if not result.success:
             return  # 파일은 안 쓰고, 사슬 상태도 그대로
         _write_result_file(self._result_file, result.output)
-        # ``wait`` 로 끝난 런(v10.65.0)도 답을 미룬 것 — 작업뿐 아니라 모니터·
-        # 에이전트 회신을 기다릴 때도 다음 깨우기 런의 답이 질의의 답이다.
-        self._continuing = self._used_jobs() or bool(getattr(result, "waiting", False))
+        # `wait` 는 런을 끝내지 않는다(5c-1) — 기다림 뒤의 답은 같은 런의 결과다. 작업을 남긴 채 끝난 런만 사슬을 잇는다.
+        self._continuing = self._used_jobs()
 
     def _used_jobs(self) -> bool:
         """이 런이 작업을 띄웠거나(끝났어도 — 1초짜리 작업의 통지가 런 종료와

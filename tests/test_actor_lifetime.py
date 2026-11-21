@@ -31,28 +31,6 @@ def _scripted(results):
 
 
 class TestRunAgent:
-    def test_a_wait_keeps_it_and_the_next_complete_brings_it_down_once(self, tmp_path):
-        calls, runner = _scripted(
-            [
-                ToolResult(True, output="waiting", waiting=True),
-                ToolResult(True, output="final"),
-            ]
-        )
-        reg = make_registry(tmp_path, runner=runner)
-        key, err = reg.spawn(name="r", ends_after_task=True)
-        assert not err
-        tm = reg.get(key)
-        assert wait_until(lambda: tm.state == "idle")
-        ended: list = []
-        tm.on_task_end = ended.append
-        assert reg.request(key, "the task") == ""
-        assert wait_until(lambda: len(calls) == 1 and tm.state == "idle")
-        assert tm.worker.is_alive() and ended == []  # `wait` — 내려오지 않는다
-        assert reg.request(key, "the reply it waited for") == ""
-        assert wait_until(lambda: not tm.worker.is_alive())
-        assert len(calls) == 2 and [r.output for r in ended] == ["final"]
-        assert tm.state == "dead" and tm.revivable is False and tm.handled >= 1
-
     def test_a_complete_brings_it_down_without_another_run(self, tmp_path):
         calls, runner = _scripted([ToolResult(True, output="done")])
         reg = make_registry(tmp_path, runner=runner)
@@ -113,7 +91,7 @@ class TestMainRunEnd:
         t.start()
         assert done.wait(10)
         assert seen == ["boom", "fine"]
-        assert reg.ended == [("main", "", False), ("main", "ok", False)]
+        assert reg.ended == [("main", ""), ("main", "ok")]
         kinds = [c[0] for c in surface.calls]
         assert kinds.count("run_failed") == 1
         first_end = kinds.index("run_ended")
@@ -151,4 +129,4 @@ class TestMainRunEndOrder:
             "bind_stop",
             False,
         )
-        assert reg.ended == [("main", "ok", False)]  # 정리는 한 번
+        assert reg.ended == [("main", "ok")]  # 정리는 한 번

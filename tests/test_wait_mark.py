@@ -17,7 +17,6 @@ import pytest
 from agent_cli.dialects import get as get_dialect
 from agent_cli.loop.kind import PrivateLoop
 from agent_cli.post import envelope as E
-from agent_cli.post.office import Take
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.session_slots import (
@@ -212,73 +211,22 @@ def _resident_ports():
     )
 
 
-class TestEndOfRun:
-    """런을 끝낸 대기(상주·main) — 받아들인 `wait` 가 그 런을 끝내고, 다음 런이 **입력을 받아 시작할 때**
-    (`_note_run_started`) 또는 상자가 닫히거나 주인이 사라질 때 내린다(5b). 봉투를 집었을 뿐 런이 시작되지 않았으면
-    (명령만 친 차례·읽을 것 없는 런) 아직 기다리는 중이다."""
+class TestTheMarkEndsWithTheBox:
+    """상자가 닫히거나(✕·세션 종료) 주인이 사라지면(`release_owner`) 표시를 내린다 — 기다리던 런이 무엇이었든. `wait`
+    는 모두 제자리라(5c-1) 런을 끝낸 대기의 표시는 없다 — 표시는 기다림이 끝나는 자리에서 내린다(`TestInPlace`)."""
 
-    def _waited(self, ports):
-        loop = _loop(ports, _provider(WAIT))
-        res = loop.run()
-        assert res.waiting is True  # 받아들여진 `wait` 는 그 런을 끝냈다
-        assert loop.turn == 1
-        return res
-
-    def test_resident_until_its_next_run_starts(self, reg, agent_job):
-        ports = _resident_ports()
-        self._waited(ports)
-        po = reg._post
-        assert po.is_waiting(A) is True
-        po.deliver(E.reply("n-1", "agent:b", A, "x", re="r-0", wakes=False))
-        assert po.next_run(A, Take.ARRIVAL, timeout=0) is None
-        assert po.is_waiting(A) is True  # 깨우지 않는 봉투로는 런이 열리지 않는다
-        po.deliver(E.request("r-1", "main", A, "do"))
-        assert [e.id for e in po.next_run(A, Take.ARRIVAL, timeout=0)] == ["r-1"]
-        assert po.is_waiting(A) is True  # 집었을 뿐 — 런은 아직 시작하지 않았다
-        _loop(ports, _provider(DONE)).run()
-        assert po.is_waiting(A) is False
-
-    def test_resident_box_closed(self, reg, agent_job):
-        self._waited(_resident_ports())
+    def test_resident_box_closed(self, reg):
+        reg.mark_waiting(A)
         reg._post.close(A)  # ✕·세션 종료
         assert reg._post.is_waiting(A) is False
 
-    def test_resident_owner_gone(self, reg, agent_job):
-        self._waited(_resident_ports())
+    def test_resident_owner_gone(self, reg):
+        reg.mark_waiting(A)
         reg.drop_mailbox(A)  # 워커의 끝(`release_owner`)
         assert reg._post.is_waiting(A) is False
 
-    def _main_ports(self, reg):
-        return make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg)
-
-    def test_main_until_its_next_run_starts(self, reg, schedule_on):
-        ports = self._main_ports(reg)
-        self._waited(ports)
-        po = reg._post
-        assert po.is_waiting("main") is True
-        assert (
-            po.next_run("main", Take.WORDS_FIRST, timeout=0) is None
-        )  # 펌프의 시한 만료
-        po.deliver(E.words("u-1", "user:dj", "main", "/stop agt-3"))
-        assert [e.id for e in po.next_run("main", Take.WORDS_FIRST, timeout=0)] == [
-            "u-1"
-        ]
-        # 펌프가 꺼냈다 — 명령이었으면 런은 열리지 않는다. main 은 아직 기다리는 중이다
-        assert po.is_waiting("main") is True
-        _loop(ports, _provider(DONE)).run()
-        assert po.is_waiting("main") is False
-
-    def test_a_run_with_nothing_to_read_keeps_the_mark(self, reg, schedule_on):
-        """메일 런이 열렸는데 첫 경계 전에 그 메일이 빠졌다 — 모델을 부르지 않고 끝나는 런은 기다림을 끝내지 않는다."""
-        ports = self._main_ports(reg)
-        self._waited(ports)
-        silent = MagicMock()
-        silent.call.side_effect = AssertionError("the model must not be called")
-        res = _loop(ports, silent, query="").run()
-        assert res.output == "" and reg._post.is_waiting("main") is True
-
-    def test_main_box_closed(self, reg, schedule_on):
-        self._waited(self._main_ports(reg))
+    def test_main_box_closed(self, reg):
+        reg.mark_waiting("main")
         reg._post.close("main")
         assert reg._post.is_waiting("main") is False
 
