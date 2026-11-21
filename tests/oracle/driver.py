@@ -2129,8 +2129,9 @@ def s24_commands_while_waiting(root: Path) -> dict:
     """1단계 ⑥ 기다리는 중 명령 (web).
 
     - 다리 1 `[단계 4b 에서 바뀜 — 명령 함수 하나]`: main 이 run 에이전트의 회신을 제자리에서 기다리는 중 ``@…``·
-      ``/…`` 명령은 그 자리에서 라우팅되고 깨우지 않으며 말풍선 에코(`push_user_message`)가 없다. 일반 입력은
-      깨운다(에코는 다음 턴 경계의 흡수가 낸다). 다시 기다리다 ■.
+      ``/…`` 명령은 그 자리에서 표면의 말풍선(`surface.echo` — 오라클 대역은 pump 열의 ``echo``, 웹은
+      `push_user_message`) 뒤에 라우팅되고 깨우지 않는다. 일반 입력은 깨운다(에코는 다음 턴 경계의 흡수가 낸다).
+      다시 기다리다 ■.
     - 다리 2 `[단계 5 에서 바뀜 — 결정 1]`: main 이 작업만 기다려 런이 끝난 상태(`wait` 가 런을 끝냄)에서 명령은
       런을 열지 않고, 일반 입력은 새 런을 연다."""
     box: dict = {}
@@ -2483,8 +2484,10 @@ def _second_wait_then_reply(box, p, s) -> None:
 
 
 def s29_words_already_there_when_main_waits(root: Path) -> dict:
-    """사람의 입력이 이미 줄 서 있는데 main 이 `wait` 한다 — 사람 말은 "이미 도착한 통지" 로 세지 않으므로 `wait`
-    는 받아들여지고, 곧바로 "the user wrote to you" 로 깬다. 그 말은 다음 턴 경계에 주입된다 (web)."""
+    """사람의 입력이 이미 줄 서 있는데 main 이 `wait` 한다 — 사람의 말은 깨우는 봉투라(5b A-4) `wait` 는 거절되고
+    ("the user wrote to you while you were thinking; their message is right below. Answer now with `complete`: …"),
+    그 말은 다음 턴 경계에 주입된다. main 은 다시 `wait` 한다 (web). `[5b-2 에서 바뀜]` 종전엔 사람의 말을 도착분으로
+    세지 않아 `wait` 가 받아들여지고 곧바로 "the user wrote to you" 로 깼다."""
     box: dict = {}
     main, agent = _waiting_on_a_run_agent(
         box, "TASK-S1", lambda s: s.say("MAIN also look at y", nickname="dj")
