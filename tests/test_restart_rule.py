@@ -306,6 +306,9 @@ def test_no_restart_record_for_a_run_agent_or_a_resident_revived_after_a_kill(
     assert wait_until(lambda: reg3.get(key).state == "idle")
     assert reg3.request(key, "task") == ""
     assert wait_until(lambda: reg3.get(key).handled >= 1)
+    reg3.get(key).ctx.add(
+        {"role": "user", "content": "task"}
+    )  # 가짜 러너는 ctx 에 쓰지 않는다 — 이력을 세운다
     assert reg3.kill(key) == ""
     assert reg3.resume_teammate(key) == ""  # ✕ 뒤 사람이 되살림 — 재시작이 아니다
     assert wait_until(lambda: reg3.get(key).state == "idle")
