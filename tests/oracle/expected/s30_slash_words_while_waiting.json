@@ -482,7 +482,7 @@
     "role": "assistant"
    },
    {
-    "content": "Observation: wait refused — the user wrote to you while you were thinking; their message is right below. Answer it first, then `wait` again if something is still running.",
+    "content": "Observation: wait refused — the user wrote to you while you were thinking; their message is right below. Answer now with `complete`: your answer is delivered right away, and what is still running still reports to you.",
     "role": "user",
     "success": false,
     "tool": "wait"

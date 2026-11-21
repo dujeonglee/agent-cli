@@ -72,12 +72,18 @@ def arrival_clause(kinds: tuple[str, ...]) -> tuple[str, str]:
 
 
 def arrived_refusal(kinds: tuple[str, ...]) -> str:
-    """거절 2번 — 생각하는 동안 깨우는 봉투가 와 있다. 사람의 말이 있으면 먼저 답하라고, 아니면 먼저 처리하라고 한다."""
+    """거절 2번 — 생각하는 동안 깨우는 봉투가 와 있다. 사람의 말이 있으면 지금 `complete` 로 답하라고(답은 바로 전달되고
+    런은 열린 것이 있으면 이어진다 — `dispatch._op_complete`, main·에이전트 같다), 아니면 먼저 처리하라고 한다.
+    사람의 말 쪽 글은 측정으로 골랐다(GLM: "Answer it first, then `wait` again" 은 바로 답함 0/10, 이 글 9/10)."""
     what, where = arrival_clause(kinds)
     if USER in kinds:
-        first = "Answer it first" if set(kinds) == {USER} else "Answer the user first"
-    else:
-        first = "Deal with it first" if len(kinds) == 1 else "Deal with them first"
+        who = "now" if set(kinds) == {USER} else "the user now"
+        return (
+            f"{what} while you were thinking; {where}. Answer {who} with `complete`: "
+            "your answer is delivered right away, and what is still running still "
+            "reports to you."
+        )
+    first = "Deal with it first" if len(kinds) == 1 else "Deal with them first"
     return (
         f"{what} while you were thinking; {where}. {first}, then `wait` again if "
         "something is still running."

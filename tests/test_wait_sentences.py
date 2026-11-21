@@ -55,16 +55,21 @@ def test_the_module_leans_only_on_constants():
 # ── 무엇이 왔나 (거절 2번·깸) ─────────────────────────────────────────
 
 TAIL = ", then `wait` again if something is still running."
+#: 사람의 말이 있을 때의 끝 — 측정으로 고른 글(GLM 바로 답함 0/10 → 9/10)
+USER_TAIL = (
+    " with `complete`: your answer is delivered right away, and what is still running "
+    "still reports to you."
+)
 NIGHTLY = "schedule:nightly"
 
 REFUSALS = [
     (
         ("user",),
-        "the user wrote to you while you were thinking; their message is right below. Answer it first",
+        "the user wrote to you while you were thinking; their message is right below. Answer now",
     ),
     (
         ("user", "user"),
-        "the user wrote to you while you were thinking; their message is right below. Answer it first",
+        "the user wrote to you while you were thinking; their message is right below. Answer now",
     ),
     (
         ("notice",),
@@ -76,7 +81,7 @@ REFUSALS = [
     ),
     (
         ("notice", "user"),
-        "the user wrote to you and 1 notice arrived while you were thinking; they are right below. Answer the user first",
+        "the user wrote to you and 1 notice arrived while you were thinking; they are right below. Answer the user now",
     ),
     (
         (NIGHTLY,),
@@ -86,7 +91,7 @@ REFUSALS = [
         ("user", NIGHTLY),
         (
             'the user wrote to you and the schedule "nightly" fired while you were thinking; they are right below. '
-            "Answer the user first"
+            "Answer the user now"
         ),
     ),
     (
@@ -100,7 +105,7 @@ REFUSALS = [
         ("user", NIGHTLY, "notice", "notice"),
         (
             'the user wrote to you, the schedule "nightly" fired and 2 notices arrived while you were thinking; '
-            "they are right below. Answer the user first"
+            "they are right below. Answer the user now"
         ),
     ),
 ]
@@ -108,7 +113,8 @@ REFUSALS = [
 
 def test_arrived_refusal_table():
     for kinds, head in REFUSALS:
-        assert arrived_refusal(kinds) == head + TAIL, kinds
+        tail = USER_TAIL if "user" in kinds else TAIL
+        assert arrived_refusal(kinds) == head + tail, kinds
 
 
 def test_wait_interrupted_keeps_the_user_sentence_and_names_a_schedule():
