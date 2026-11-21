@@ -19,13 +19,13 @@ class _Tty(io.StringIO):
         return True
 
 
-def _setup(monkeypatch, *, tty: bool, typed: str = ""):
-    # 명령인가는 들어올 때 판정한다(5b-3) — 이 대역의 명령 표
-    q = MainInput(
-        is_command=lambda text: (
-            text.startswith(("/", "@")) and not text.startswith("/tmp")
-        )
-    )
+def _default_door(text: str) -> bool:
+    return text.startswith(("/", "@")) and not text.startswith("/tmp")
+
+
+def _setup(monkeypatch, *, tty: bool, typed: str = "", door=_default_door):
+    # 명령인가는 들어올 때 판정한다(5b-3) — 이 대역의 명령 표(``door``)
+    q = MainInput(is_command=door)
     routed: list[str] = []
 
     class _Surface:
@@ -64,6 +64,14 @@ def test_queued_words_wake_and_stay_queued(monkeypatch, tty):
 def test_a_typed_command_is_routed_in_place(monkeypatch):
     q, routed, wait = _setup(monkeypatch, tty=True, typed="@agents\n")
     assert wait(0) is False and routed == ["@agents"] and q.pending_count() == 0
+
+
+def test_a_typed_line_is_judged_at_the_door_like_a_queued_one(monkeypatch):
+    """친 줄도 main 앞 문을 지난다(5b-3) — 그 상자의 판정이 명령이라 하면 명령이다(따로 판정하지 않는다)."""
+    q, routed, wait = _setup(
+        monkeypatch, tty=True, typed="!rerun\n", door=lambda t: t.startswith("!")
+    )
+    assert wait(0) is False and routed == ["!rerun"] and q.pending_count() == 0
 
 
 def test_typed_words_are_queued_and_wake(monkeypatch):
