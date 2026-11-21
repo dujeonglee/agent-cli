@@ -74,7 +74,7 @@
 | 빚이 되는 때 | `delivered_seq` 가 찍힐 때(상주 `_handle_request`·흡수, main `drain_replies`) → `## Owed Replies` 에 `answer question {id} …` |
 | 강제 | 회신 빚과 **같은 `MAX_DEBT_NAGS` 카운터**. `_MAX_QUESTION_NAGS` 는 없다(`agents_live.py:108` 주석만 남음) |
 | 종결 | `answer_question`(원자적), 런 끝 `close_unanswered`, 사망 시 `_purge_questions_for`(부활 불가일 때만) |
-| 재시작 | `agents.json` `questions` → `_adopt_questions`: 상대 없으면 STALE, 배달됐던 빚엔 `kind:"reminder"` 1회 |
+| 재시작 | 질문·빚은 재시작을 넘지 않는다(v10.160.0, 5c-0 — 종전엔 `agents.json` `questions` → `_adopt_questions` 로 되살려 상대 없으면 STALE) |
 | 사람 질문 | 상한·종결 없음. ❓ 트레이, 상주 결과 말미 `_with_human_notice` |
 | 압축 | **핀 없음** |
 
@@ -372,8 +372,8 @@ main 앞 메일의 세 갈래(§2) 중 회신 빚은 처음부터 필드(`expect
 
 - `expects_reply: true` — 회신 빚(`r-`). 종전과 같다.
 - `ledger: "none"` — 장부 밖. 이미 열린 것의 재알림처럼 "지금" 에만 참인 메일. `mail_item` 이 None 을 돌려주고,
-  `_save_state` 가 agents.json 미러(main `pending`·상주 `inbox`)에서 뺀다 — 다음 세션 첫 턴에 낡은 채 배달되면
-  존재하지 않는 것에 대해 말하게 된다.
+  종전엔 `_save_state` 가 agents.json 미러(main `pending`·상주 `inbox`)에서 뺐다 — v10.160.0(5c-0)부터는 어떤 메일도
+  저장하지 않아 따로 뺄 것이 없다.
 - 둘 다 없으면 열린 항목(`n-`). 종전의 기본과 같다 — 작업·모니터·회신·사망·하니스 보고는 아무것도 적지 않는다.
 
 `build_reply_record` 의 머리줄 분기는 그대로다 — 종류마다 머리줄이 다른 것은 정당한 분기다.

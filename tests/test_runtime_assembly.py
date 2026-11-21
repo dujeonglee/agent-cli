@@ -251,6 +251,22 @@ class TestAgentRuntimeEquivalence:
             teardown_session(session, None, agent_registry=registry, warn_stuck=True)
             registry.open_human_question_keys.assert_called_once()
 
+    def test_the_stuck_warning_says_the_questions_are_dropped(self):
+        """질문은 재시작을 넘지 않는다(5c-0) — 경고가 그렇게 말한다(종전: "they reappear in the tray next session")."""
+        registry, _mcp, session = self._mocks(stuck=["agt-1"])
+        printed: list[str] = []
+        with (
+            patch("agent_cli.render.render_spinner_stop"),
+            patch("agent_cli.session.store.finalize_session"),
+            patch(
+                "agent_cli.render.console.print",
+                lambda t, *a, **k: printed.append(str(t)),
+            ),
+        ):
+            teardown_session(session, None, agent_registry=registry, warn_stuck=True)
+        (line,) = [t for t in printed if "unanswered questions" in t]
+        assert "agt-1 — they are dropped when the session ends" in line
+
     def test_none_tolerance(self):
         """registry/mcp/session 이 None 이어도 무사 통과 — 세션 None 이면
         저장 생략 (종전 _finalize_run 의 session None 조기 반환과 동형)."""

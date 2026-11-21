@@ -361,7 +361,7 @@ def teardown_session(
 
             console.print(
                 f"[{C['accent']}]❓ Exiting with unanswered questions from "
-                f"{', '.join(stuck)} — they reappear in the tray next session[/]"
+                f"{', '.join(stuck)} — they are dropped when the session ends[/]"
             )
     if monitors is not None:
         # **에이전트 종료보다 먼저.** 폴링 스레드는 종전에 아무도 안 멈췄고
