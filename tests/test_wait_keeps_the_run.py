@@ -440,3 +440,73 @@ def test_the_point_before_the_wait_can_be_restored(tmp_path, monkeypatch):
     finally:
         s.close()
         pump.join(10)
+
+
+# ── 구간 — 제자리 `wait` 에서 깰 때마다 새로 세는 것 (main 이 회신을 기다리는 길 — 지금도 제자리) ──────────
+
+
+def _main_asks_aa_twice(home, *, max_turns: int, between):
+    """main: aa 를 띄우고 요청 → 제자리에서 기다림 → 회신에 깨어 ``between`` 한 번 → 둘째 요청 → 기다림 → 끝.
+    돌려주는 것 ``(s, p, pump)`` — 끝까지 기다린 뒤."""
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="spawn", name="aa"),
+                call("message", to="aa", text="TASK-Q1 first"),
+                between,
+                call("wait"),
+                between,
+                call("message", to="aa", text="TASK-Q2 second"),
+                call("wait"),
+                complete_all("main done"),
+            ],
+            "TASK-Q1": [lambda m: call("reply", id=owed_id(m), text="one")],
+            "TASK-Q2": [lambda m: call("reply", id=owed_id(m), text="two")],
+        }
+    )
+    s = Session(home, p, path="web")
+    s.wired.pump.deps.main.max_turns = max_turns
+    s.say("MAIN ask twice", nickname="dj")
+    pump = s.pump_in_thread()
+    until(lambda: len(p.calls["MAIN"]) == 8 and _settled(s), "main done")
+    return s, p, pump
+
+
+def test_the_turn_limit_counts_each_segment_of_an_in_place_wait(home):
+    """턴 상한 4 — 런 전체는 여덟 턴이지만 깨어 있는 토막마다 넷 이하다. 상한에 닿지 않고 끝난다."""
+    s, p, pump = _main_asks_aa_twice(
+        home, max_turns=4, between=call("shell", command="true")
+    )
+    try:
+        ends = [r for r in s.recorder.lanes.get("pump", []) if r[0] == "run_ended"]
+        assert [r[2] for r in ends] == ["main done"]
+        # 꼬리의 턴 줄도 토막의 턴이다 — 깬 뒤 첫 호출은 "turn 1/4"
+        tails = [str(c["last"]) for c in p.calls["MAIN"]]
+        assert "turn 4/4 (0 left after this one)" in tails[3]  # 첫 토막의 넷째(wait)
+        assert "turn 1/4 (3 left after this one)" in tails[4]  # 깬 뒤 첫 호출
+    finally:
+        s.close()
+        pump.join(10)
+
+
+def test_begin_segment_resets_what_counts_per_segment():
+    from unittest.mock import MagicMock
+
+    from agent_cli.loop.ledger import NAG_BUDGET
+    from agent_cli.render import set_renderer
+    from tests.loop_ports import TEST_PORTS
+    from tests.loopkit import make_loop
+
+    loop = make_loop(query="Q", provider=MagicMock(), ports=TEST_PORTS)
+    d = loop._dispatch
+    d.state.turn = 7
+    d.state.ledger.spend()
+    old_loop, old_stale = d.loop_detector, d.stale_guard
+    renderer = MagicMock()
+    set_renderer(renderer)
+    d._stale_shown = True  # 🔁 표시가 떠 있었다
+    d._begin_segment()
+    assert d.state.segment_turn0 == 7
+    assert d.state.ledger.budget == NAG_BUDGET
+    assert d.loop_detector is not old_loop and d.stale_guard is not old_stale
+    renderer.stale_loop.assert_called_once()  # 🔁 표시를 지웠다

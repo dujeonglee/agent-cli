@@ -91,6 +91,9 @@ class LoopState:
     query_author: str | None = None
     messages: list = field(default_factory=list)
     turn: int = 0
+    #: 지금 구간(깨어 있는 토막)이 시작한 턴 — 런이 시작할 때 0, 제자리 `wait` 에서 깰 때마다 그때의 ``turn``
+    #: (`TurnDispatcher._begin_segment`, 5c-1). 턴 상한·꼬리의 턴 줄은 ``turn - segment_turn0`` 을 센다.
+    segment_turn0: int = 0
     task_log: list = field(default_factory=list)
     #: 이 런의 열린 항목 장부 — 사용자 요청·되묻기·독촉·빚 카운터 (P1, v10.54.0,
     #: `loop/ledger.py`). 종전엔 필드 넷(`run_requests`·`answers_prompted`·

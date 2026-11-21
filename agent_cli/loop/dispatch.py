@@ -559,8 +559,18 @@ class TurnDispatcher:
         if asking:
             self._ask_stale(calls)
 
+    def _begin_segment(self) -> None:
+        """구간(깨어 있는 토막)을 새로 시작한다 — 제자리 `wait` 에서 깰 때(5c-1). 구간마다 새로 세는 것이 여기 다 있다:
+        턴(상한·꼬리의 턴 줄이 세는 기준), 되돌림 예산, 같은 호출 반복(`ActionLoopDetector`), 제자리 고리(`StaleGuard`)와
+        그 🔁 표시. 런 시작은 이 객체가 새로 서므로 부르지 않는다. 열린 항목·기록의 턴 번호는 그대로다."""
+        self.state.segment_turn0 = self.state.turn
+        self.state.ledger.new_segment()
+        self.loop_detector = ActionLoopDetector(threshold=2)
+        self.stale_guard = StaleGuard()
+        self.clear_stale()
+
     def clear_stale(self) -> None:
-        """런 끝 — 떠 있는 🔁 표시를 지운다(엔진의 ``run`` finally)."""
+        """떠 있는 🔁 표시를 지운다 — 런 끝(엔진의 ``run`` finally)과 구간의 시작(`_begin_segment`)."""
         if not self._stale_shown:
             return
         self._stale_shown = False
@@ -1297,6 +1307,7 @@ class TurnDispatcher:
                 success=True,
                 turn=self.state.turn,
             )
+        self._begin_segment()  # 깼다 — 새 구간(세션 종료의 "closed" 는 위에서 런을 끝냈다)
         return _CONTINUE
 
     def _terminal_record(self, turn, answer: str, claimed, still_open) -> dict:

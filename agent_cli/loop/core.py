@@ -808,7 +808,11 @@ class AgentLoop:
         if self.stop_event and self.stop_event.is_set():
             self._interrupted = True
             return False
-        return self.max_turns <= 0 or self.turn < self.max_turns
+        # 턴 상한은 구간마다 센다(5c-1) — 제자리 `wait` 에서 깰 때마다 새로
+        return (
+            self.max_turns <= 0
+            or self.turn - self._state.segment_turn0 < self.max_turns
+        )
 
     def _intake(self) -> None:
         """턴 경계 흡수 (v10.88.0): **어디서 받을지**는 종류가 정하고(`kind.intake` — main 은

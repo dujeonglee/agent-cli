@@ -179,6 +179,10 @@ class Ledger:
             ]
         return list(self.requests)
 
+    def new_segment(self) -> None:
+        """구간(깨어 있는 토막)이 새로 시작한다 — 되돌림 예산을 다시 :data:`NAG_BUDGET` 으로(5c-1). 항목은 그대로다."""
+        self.budget = NAG_BUDGET
+
     def spend(self) -> bool:
         """되돌림 한 번을 쓴다 — 남았으면 True."""
         if self.budget <= 0:

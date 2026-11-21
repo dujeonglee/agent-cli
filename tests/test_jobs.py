@@ -201,7 +201,7 @@ class TestTail:
                 kind=make_kind(ports=make_ports(owner="agent:k"), depth=1),
             ),
             ctx=None,
-            state=SimpleNamespace(turn=1, ledger=Ledger()),
+            state=SimpleNamespace(turn=1, segment_turn0=0, ledger=Ledger()),
             _compaction_armed=set(),
         )
         llm_mod.LLMCaller._build_session_state(self_, 1000)
