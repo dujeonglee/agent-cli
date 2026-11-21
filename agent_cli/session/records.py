@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 
+from agent_cli.constants import RESTART_NOTICE
+
 # ── 사실 기록 — Stop 과 재시작이 컨텍스트에 남기는 한 줄 ───────────────
 
 
@@ -24,8 +26,6 @@ def record_restart(ctx) -> bool:
     """재시작으로 디스크에서 올라온 컨텍스트 끝에 재시작 기록(`constants.RESTART_NOTICE`)을 한 줄 적는다 (5c-0).
     적었으면 참. 적지 않는 때: history 가 비었다(새 세션 — 재시작이 아니다), 마지막 레코드가 이미 이 기록이다
     (그 사이 아무 런도 없이 거듭 재시작)."""
-    from agent_cli.constants import RESTART_NOTICE
-
     last = ctx.last_ordinal
     if last is None:
         return False
