@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any
 
-from agent_cli.constants import schedule_addr
+from agent_cli.constants import RESTART_NOTICE, schedule_addr
 from agent_cli.loop.kind import (
     WAIT_BLOCK,
     WAIT_END_RUN,
@@ -43,6 +43,8 @@ from agent_cli.loop.ports import (
     _hook_runner_port,
     _hook_unwired,
 )
+from agent_cli.render import render_step
+from agent_cli.session.records import record_restart
 from agent_cli.session_slots import (
     clear_session_slots,
     set_agent_registry,
@@ -359,7 +361,7 @@ def teardown_session(
 
             console.print(
                 f"[{C['accent']}]❓ Exiting with unanswered questions from "
-                f"{', '.join(stuck)} — they reappear in the tray next session[/]"
+                f"{', '.join(stuck)} — they are dropped when the session ends[/]"
             )
     if monitors is not None:
         # **에이전트 종료보다 먼저.** 폴링 스레드는 종전에 아무도 안 멈췄고
@@ -606,6 +608,17 @@ def wire_session(
 
     registry = owners.agent_registry
     main_input = stores.main_input
+    # 재시작(5c-0): main 컨텍스트가 디스크에서 올라왔으면 끝에 사실 기록 한 줄 — 복원·펌프보다 먼저, 사람의 첫 말이나
+    # 예약이 연 런이 그것을 읽는다. Stop 처럼 화면에도 관찰 카드로(웹의 대화창 재생은 이보다 먼저 돌았다).
+    if spec.ctx is not None and record_restart(spec.ctx):
+        render_step(
+            "observation",
+            RESTART_NOTICE,
+            0,
+            tool_name="interrupt",
+            success=False,
+            hidx=spec.ctx.last_ordinal,
+        )
     revived, auto = wire_agent_mail(
         registry, on_mail_notice=on_mail_notice, parent_ctx=spec.ctx
     )
@@ -690,7 +703,7 @@ def session_has_live_work(
     사람의 답은 웹에서만 온다, `run` 이 세면 끝나지 않는다).
 
     - main 상자에 깨우는 봉투 — 사람의 말과 깨우는 메일(``post`` 는 main 의 입력 큐와 레지스트리가 쓰는 창구).
-      깨우지 않는 메일("Stop everything" 의 정지 회신)은 일이 아니다 — 남아 있어도 끝나고 agents.json 미러에 남는다.
+      깨우지 않는 메일("Stop everything" 의 정지 회신)은 일이 아니다 — 남아 있어도 끝나고, 세션이 끝나면 버려진다.
     - 에이전트 몫(`AgentRegistry.has_agent_work` — 일하는 중이거나 할 일이 쌓였다). 레지스트리는 웹 부트스트랩이
       늦게 채워 None 일 수 있다.
     - 살아 있는 모니터·진행 중인 하니스 작업(감사 — 결과를 main 메일함에 넣어야 끝난다, v10.42.0)·돌고 있는

@@ -27,16 +27,9 @@ def state_is_active(state: str) -> bool:
     return state not in ("idle", "dead")
 
 
-def persists(mail: dict) -> bool:
-    """이 메일이 agents.json 미러에 남을 것인가 — 장부 밖(``ledger: "none"``) 메일은
-    "지금" 에만 참인 재알림이라 남기지 않는다. 다음 세션의 첫 턴에 낡은 채 배달되면
-    존재하지 않는 것에 대해 말하게 된다 (docs/ledger/DESIGN.md §14)."""
-    return mail.get("ledger") != "none"
-
-
-def agent_entry(tm, *, inbox, in_flight) -> dict:
-    """에이전트 하나(`AgentInstance`) → ``agents`` 목록의 한 항목. 읽기만 한다. ``inbox``·``in_flight`` 는 그
-    에이전트 앞에 줄 선 항목과 지금 런이 든 항목(옛 dict 모양)이다."""
+def agent_entry(tm) -> dict:
+    """에이전트 하나(`AgentInstance`) → ``agents`` 목록의 한 항목 — 명단 칸만(5c-0: 재시작은 컨텍스트와 명단만
+    올린다 — 받은편지함·하던 일·빚·메일·질문은 남기지 않는다). 읽기만 한다."""
     return {
         "key": tm.key,
         "profile": tm.profile_name,
@@ -56,17 +49,12 @@ def agent_entry(tm, *, inbox, in_flight) -> dict:
         # 세션 종료로 멈춘 teammate 는 idle 로 남아 resume 대상.
         "state": "dead" if (not tm.revivable or tm.error) else "idle",
         "error": tm.error,
-        # v9.24.5: 줄 선 요청과 처리 중이던 요청 — 재시작이 되살린다.
-        # 장부 밖 메일(``ledger: "none"``)은 "지금" 에만 참이라 남기지
-        # 않는다 (docs/ledger/DESIGN.md §14).
-        "inbox": [dict(i) for i in list(inbox) if persists(i)],
-        "in_flight": [dict(i) for i in list(in_flight)],
         # 띄운 쪽의 깊이·스택 — 복원된 에이전트가 같은 자리에서 다시 선다
         "depth": int((tm.caller_runtime or {}).get("depth", 0) or 0),
         "agent_stack": list(tm.agent_stack),
         # 띄운 쪽 — ✕ 가 그 run 을 함께 멈춘다 (v10.142.0, 더해진 키)
         **({"parent": tm.parent} if tm.parent else {}),
-        # run 에이전트: 과제 하나 — 못 끝냈으면 resume 이 되살려 회신을 마친다
+        # run 에이전트: 과제 하나 — 살아 있는 run 은 과제 도중이라 resume 이 dead 로 세운다(5c-0)
         **(
             {"ends_after_task": True, "task_id": tm.task_id}
             if tm.ends_after_task
@@ -75,32 +63,10 @@ def agent_entry(tm, *, inbox, in_flight) -> dict:
     }
 
 
-def state_document(
-    entries: list[dict], pending: list[dict], questions: list[dict]
-) -> dict:
-    """파일 한 장 — 명단·미배달 메일·열린 질문에 버전을 단다."""
-    return {
-        "version": AGENTS_STATE_VERSION,
-        "agents": entries,
-        "pending": pending,
-        "questions": questions,
-    }
-
-
-def document_from_post(tms, post) -> dict:
-    """우편(`agent_cli.post.PostOffice`)에서 지은 파일 한 장 — 옛 저장소에서 짓던 것과 같은 모양(2단계: 모양 불변).
-    봉투의 ``payload`` 가 옛 항목·메일 dict 이고, 질문 줄의 ``meta`` 가 `Question` 이다. 읽기만 한다."""
-    entries = [
-        agent_entry(
-            tm,
-            inbox=[e.payload for e in post.queued(f"agent:{tm.key}")],
-            in_flight=[e.payload for e in post.taken(f"agent:{tm.key}")],
-        )
-        for tm in tms
-    ]
-    pending = [dict(e.payload) for e in post.queued("main") if e.persists]
-    questions = [r.meta.as_dict() for r in post.open_questions()]
-    return state_document(entries, pending, questions)
+def roster_document(tms) -> dict:
+    """파일 한 장 — 명단에 버전을 단다. 옛 파일(v10.158 까지)의 ``pending``·``questions``·``inbox``·``in_flight`` 칸은
+    쓰지도 읽지도 않는다(같은 버전 2 — 명단 칸의 모양이 같다)."""
+    return {"version": AGENTS_STATE_VERSION, "agents": [agent_entry(tm) for tm in tms]}
 
 
 def read_state(path: Path) -> dict | None:

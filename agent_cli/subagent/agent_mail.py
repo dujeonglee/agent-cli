@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from agent_cli.post import envelope as post_envelope
 from agent_cli.post.envelope import Envelope
 from agent_cli.subagent.agent_stop import one_line
-from agent_cli.subagent.agents_state import persists, state_is_active
+from agent_cli.subagent.agents_state import state_is_active
 from agent_cli.token_estimator import estimate_tokens
 from agent_cli.wake import harness_record
 
@@ -91,7 +91,6 @@ class MailView:
 
     - ``src``: 보낸 주소 — ``"main"``·``"agent:<key>"``·``"user:<nick>"``, 하니스 통지는 그 종류(``"job"`` 등).
     - ``wakes``: 받는 쪽을 깨우는가 — "Stop everything" 의 정지 회신만 거짓.
-    - ``persists``: ``agents.json`` 에 남는가 — 체크인 같은 장부 밖 알림은 거짓.
     - ``expects_reply``: 받는 쪽이 이것으로 `reply` 를 빚지는가 — 사람의 말·통지·회신은 거짓."""
 
     id: str
@@ -100,7 +99,6 @@ class MailView:
     re: str = ""
     mark: str = ""
     wakes: bool = True
-    persists: bool = True
     expects_reply: bool = False
 
 
@@ -114,7 +112,6 @@ def view_of_main_mail(mail: dict) -> MailView:
         re=str(mail.get("re") or ""),
         mark=str(mail.get("mark") or ""),
         wakes=bool(mail.get("wakes_main", True)),
-        persists=persists(mail),
         expects_reply=bool(mail.get("expects_reply")),
     )
 
@@ -130,7 +127,6 @@ def view_of_inbox_item(item: dict) -> MailView:
         re=str(item.get("re") or ""),
         mark=str(item.get("mark") or ""),
         wakes=bool(item.get("opens_run", True)),
-        persists=persists(item),
         expects_reply=bool(item.get("expects_reply", True))
         and not is_human_addr(author),
     )
@@ -147,11 +143,11 @@ def view_of_inbox_item(item: dict) -> MailView:
 #   expects_reply=True). 봉투 재료 없는 회신 기대 요청 → `request` — `_enqueue`(:1738-1744)가 보낸 쪽 기록을,
 #   시작·흡수가 빚을 적는다. ``kind`` reply → `reply`, notice 또는 회신 기대 없음 → `notice`, 그 밖의 종류
 #   (job·monitor·checkin) → `system`(줄 없음 — 하니스 통지는 에이전트에서 항목이 아니다, :1900-1909).
-#   ``opens_run`` 거짓 → 깨우지 않음, ``ledger: "none"`` → 저장 안 함.
+#   ``opens_run`` 거짓 → 깨우지 않음.
 # - main·private 메일: peer_message 의 ``expects_reply`` → `request` — main 이 빚을 적는다(loop/core.py:891-901);
 #   ``notice`` → `notice`; ``re`` 가 있으면(명시 회신·정지 회신) 또는 kind reply(폴백) → `reply`; 그 밖
 #   (job·monitor·harness·died·checkin) → `system`, 줄 없음 — main 앞 메일의 n- 항목은 루프 장부(`Ledger`)가 들고
-#   있다(4c 에서 옮긴다). ``wakes_main`` 거짓 → 깨우지 않음, ``ledger: "none"`` → 저장 안 함.
+#   있다(4c 에서 옮긴다). ``wakes_main`` 거짓 → 깨우지 않음.
 
 
 def envelope_of_item(item: dict, dst: str) -> Envelope:
@@ -189,7 +185,7 @@ def envelope_of_item(item: dict, dst: str) -> Envelope:
         env = post_envelope.notice(**common, hop=int(item.get("hop", 0) or 0))
     else:
         env = post_envelope.system(**common, opens_row=False)
-    return replace(env, wakes=wakes and env.wakes, persists=persists(item))
+    return replace(env, wakes=wakes and env.wakes)
 
 
 def envelope_of_main_mail(mail: dict, dst: str = "main") -> Envelope:
@@ -217,7 +213,7 @@ def envelope_of_main_mail(mail: dict, dst: str = "main") -> Envelope:
         )
     else:
         env = post_envelope.system(**common, opens_row=False)
-    return replace(env, wakes=wakes and env.wakes, persists=persists(mail))
+    return replace(env, wakes=wakes and env.wakes)
 
 
 def mail_queue_item(reply: dict) -> dict:

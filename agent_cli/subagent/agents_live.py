@@ -158,32 +158,6 @@ class Question:
     def to_human(self) -> bool:
         return is_human_addr(self.target)
 
-    @classmethod
-    def from_dict(cls, d: dict) -> Question | None:
-        """``agents.json`` 의 한 항목 → Question. 모양이 깨졌으면 None."""
-        try:
-            return cls(
-                id=str(d["id"]),
-                asker=str(d["asker"]),
-                target=str(d["target"]),
-                text=str(d["text"]),
-                asked_at=float(d.get("asked_at") or time.time()),
-                # 물어본 런은 사라졌다 — "" 는 상주 런 이름과 안 겹친다.
-                asked_in="",
-            )
-        except (KeyError, TypeError, ValueError):
-            return None
-
-    def as_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "asker": self.asker,
-            "target": self.target,
-            "text": self.text,
-            "asked_at": self.asked_at,
-            "asked_in": self.asked_in,
-        }
-
 
 def _debt_view(row) -> ReplyDebt:
     """장부의 빚 줄 → 옛 공개 모양(`ReplyDebt`). 갚은 줄(런 안에서 닫혀 남은 것)은 ``settled``."""
@@ -318,7 +292,7 @@ class AgentInstance:
         self.home_dir = home_dir
 
         # 받은편지함·지금 런이 든 항목은 레지스트리의 우편(`AgentRegistry._post`)에 있다 — 주소 ``agent:<key>``
-        # (v10.145.0). 재시작이 되살릴 것은 저장 파일의 ``inbox``·``in_flight`` 로 간다(모양 그대로).
+        # (v10.145.0). 저장하지 않는다 — 재시작은 명단과 컨텍스트만 올린다(5c-0).
         #: 지금 런이 턴 경계에서 흡수한 항목 수 — 런 정리(`_close_run`)가 ``handled`` 에 더하고 비운다(런 끝
         #: 정리가 우편의 든 것을 먼저 비우므로 거기서는 셀 수 없다)
         self.absorbed_in_run = 0
@@ -348,6 +322,8 @@ class AgentInstance:
         # 세션 종료로 죽은 teammate 는 revivable 유지 → resume 시 재생성.
         self.revivable = True
         self.revive = False  # restore 가 세움 — worker 가 ctx 를 resume 모드로
+        #: 재시작이 되살렸다(`restore`) — 첫 ctx 에 재시작 기록 한 줄(`ResidentLoop.open`). ✕ 뒤 되살림은 아니다
+        self.restarted = False
         # P4: 지금 처리 중인 request 의 화자 — "main" 이 아니면(웹 인간 개입)
         # 그 회신/질문을 main mailbox 에 넣지 않는다 (D8: 컨텍스트 비오염).
         self.current_author = "main"
@@ -453,8 +429,6 @@ class AgentRegistry:
         # 열린 질문(비동기 ask/answer, DESIGN.md §3)은 우편 장부의 q 줄이다 — ``meta`` 가 `Question`(v10.145.0).
         # 답은 줄을 닫는 것과 배달이 한 락 구간이라(`PostOffice.answer`) 동시 답변자 둘 중 하나만 답이 된다.
         # 빚·보낸 쪽 기록·받은편지함·main 메일함은 우편 하나다(`self._post` — 약속 장부와 상자, v10.145.0).
-        # resume 이 버린 열린 질문 수 — 부트스트랩이 사람에게 알린다(§3.9).
-        self.stale_questions = 0
         # `wait` 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6) — 소유자별 걸린
         # 타이머와, 직전에 **발화한** 깨우기의 (대상 id 집합, 단계). 둘 다 ``_cv``
         # 아래. 배증이 치르는 유일한 상태다. 영속하지 않는다 — 프로세스가 죽으면
@@ -850,7 +824,6 @@ class AgentRegistry:
             lines = self._question_line(q)
             self._lines_in_section(lines)
         self._lines_after_section(lines)
-        self._save_state()
         # 트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
         # 질문이 다음 로스터 브로드캐스트까지 화면에 안 뜬다.
         self._notify_roster()
@@ -909,7 +882,6 @@ class AgentRegistry:
         if refused:  # 묻는 쪽이 멈췄거나 사라져 받지 못한다 — 그 질문들을 닫고 명단에 알린다 (v10.149.1)
             self._purge_questions_for(q.asker)
             return f'the agent that asked "{qid}" has stopped — the question is closed'
-        self._save_state()
         return ""
 
     # ── 회신 빚 장부 (v9.22.1 — main·상주 공통) ──────
@@ -1175,8 +1147,7 @@ class AgentRegistry:
         알림은 사실 진술("still running: …")이라 진짜 보고와 같은 순간에 와도
         거짓이 아니다 — 그래서 "런 진행 중" 상태도, 락 안의 확인+추가도 없다.
         main 이면 메일함(`_push_reply` — 한가한 펌프가 런을 연다), 상주면 받은편지함
-        (`request`, 봉투 ``checkin``). 둘 다 ``ledger: "none"`` — 장부 항목이 되지
-        않고 영속되지 않는다(`agents_state.persists`)."""
+        (`request`, 봉투 ``checkin``). 둘 다 ``ledger: "none"`` — 장부 항목이 되지 않는다."""
         with self._cv:
             ck = self._checkin_armed.pop(owner, None)
         if ck is None:
@@ -1315,7 +1286,6 @@ class AgentRegistry:
         """
         outgoing = self._post.forget_questions_of(f"agent:{key}")
         if outgoing:
-            self._save_state()
             self._notify_roster()
 
     # ── spawn ───────────────────────────────────
@@ -1524,7 +1494,6 @@ class AgentRegistry:
         hop: int = 0,
         expects_reply: bool = True,
         answers: list | None = None,
-        resumed: bool = False,
         images: list[dict] | None = None,
         item_id: str = "",
         kind: str = "",
@@ -1541,9 +1510,8 @@ class AgentRegistry:
         ``settles`` (v10.145.0): 이 배달이 닫는 줄 — 갚는 빚·답하는 질문의 id. 갚는 자리만 준다(`_post_deliver`).
         항목에 실리지 않는다. ``lines``: 이 배달의 다른 창 줄(보낸 쪽 out, `_outbound_line`) — in 과 함께 기록.
 
-        ``ledger`` (v10.79.0): ``"none"`` 이면 장부 밖 메일 — agents.json 미러에
-        남지 않는다(`agents_state.persists`). 첫 사용자는 `wait` 의 중간 깨우기(``checkin``):
-        "지금" 에만 참인 알림이 다음 세션 첫 턴에 낡은 채 배달되면 안 된다.
+        ``ledger`` (v10.79.0): ``"none"`` 이면 장부 밖 메일 — 장부 항목이 되지 않는다. 첫 사용자는 `wait` 의 중간
+        깨우기(``checkin``).
 
         ``item_id`` (v10.77.0): 이 배달의 id — 보낸 쪽이 미리 받아 두면(그
         id 를 결과에 실어 회신과 짝짓는다) 그대로 쓴다. 없으면 종류대로 새로
@@ -1629,10 +1597,8 @@ class AgentRegistry:
             item["ledger"] = ledger
         if not opens_run:
             # 런을 열지 않는 항목 (v10.142.0, "Stop everything" 의 정지 회신) — 워커가 들고 있다가 다음 런의
-            # 첫 흡수에 넣는다(`_release_held`). 받은편지함 미러에는 남아 재시작에도 산다.
+            # 첫 흡수에 넣는다(`_release_held`). 재시작은 버린다(5c-0).
             item["opens_run"] = False
-        if resumed:
-            item["resumed"] = True  # 재시작 계속하기 — 다시 끊겨도 또 감싸지 않는다
         if images:
             item["images"] = [dict(r) for r in images]
         if answers is not None:
@@ -1669,7 +1635,7 @@ class AgentRegistry:
     def _enqueue(
         self, tm: AgentInstance, item: dict, *, settles: str = "", lines=()
     ) -> None:
-        """받은편지함(우편의 그 주소 상자)에 넣고 ``agents.json`` 에 남긴다 (v9.24.5). 회신을 기다리는 요청이면
+        """받은편지함(우편의 그 주소 상자)에 넣는다. 회신을 기다리는 요청이면
         그 줄이 보낸 쪽의 "기다리는 회신" 이다(v10.141.0 — 넣는 것과 한 락 구간). ``lines`` 는 이 배달의 대화
         줄(받는 쪽 in·보낸 쪽 out) — 넣기가 성공한 같은 구간에서 `_lines_in_section`, 그 뒤 `_lines_after_section`."""
         with self._cv:
@@ -1678,11 +1644,6 @@ class AgentRegistry:
             )
             self._lines_in_section(lines)
         self._lines_after_section(lines)
-        self._save_state()
-
-    def _begin_items(self, tm: AgentInstance, items: list[dict]) -> None:
-        """이 항목들로 런을 시작한다 — 우편은 `_next_run_items` 가 이미 집었다(처리 중). 그 상태를 저장한다."""
-        self._save_state()
 
     def _who(self, author: str) -> str:
         """봉투의 ``from`` — 에이전트는 이름표(`format_agent_label`), 사람은
@@ -1825,7 +1786,6 @@ class AgentRegistry:
                     "source": "agent_mail",
                 }
                 out.append({"record": rec})
-        self._save_state()
         self._notify_roster()
         return out
 
@@ -1913,7 +1873,6 @@ class AgentRegistry:
             idle_at_delivery = self._post.idle("main")
             self._lines_in_section(lines)
         self._lines_after_section(lines)
-        self._save_state()  # P3: 미배달분 디스크 미러 — resume 시 유실 없음
         cb = self.on_reply
         if cb is not None:
             try:
@@ -2144,10 +2103,8 @@ class AgentRegistry:
 
     def absorb_main(self) -> list[dict]:
         """main 의 턴 경계 — 상자의 줄 선 것 전부를 지금 런의 흡수 항목으로(사람의 말 먼저, 메일 뒤, `intake_item`).
-        메일을 꺼냈으면 디스크 미러도 소비하고, 무엇이든 꺼냈으면 대기열을 다시 그린다."""
+        무엇이든 꺼냈으면 대기열을 다시 그린다."""
         out = [intake_item(e) for e in self._post.absorb("main", human_first=True)]
-        if any("mail" in it for it in out):
-            self._save_state()
         if out:
             self._pending_changed()
         return out
@@ -2210,7 +2167,6 @@ class AgentRegistry:
                     mail = None
                     self._cv.wait(timeout=poll_s)
             if mail is not None:
-                self._save_state()
                 self._pending_changed()
                 return mail
             if stop_event is not None and stop_event.is_set():
@@ -2617,36 +2573,26 @@ class AgentRegistry:
         return self.session_dir / "agents.json" if self.session_dir else None
 
     def _save_state(self) -> None:
-        """agents.json 원자 저장 (fsio) — manifest + 미배달 pending 미러.
-
-        갱신 시점: spawn/kill/worker 종료(상태) + push/drain(pending).
-        상태 파일은 best-effort — 디스크 문제로 세션 진행을 막지 않는다.
-        """
+        """agents.json 원자 저장 (fsio) — 명단만(5c-0). 갱신 시점: 명단이 바뀔 때(spawn·kill·런 끝의 ``handled``·
+        워커 종료·되살림). 상태 파일은 best-effort — 디스크 문제로 세션 진행을 막지 않는다."""
         path = self._state_path()
         if path is None:
             return
-        # 읽지 않은 파일은 덮어쓰지 않는다 (v10.131.1). 복원 전의 명단은 비어 있어서,
-        # 그때 쓰면 resume 세션의 상주 에이전트와 미배달 메일이 지워진다 — 조립 도중
-        # 죽어 `shutdown_all` 만 불린 길. 건너뛴 저장은
-        # 잃지 않는다: `restore` 는 메모리의 pending 에 덧붙이고, 그 뒤 첫 저장이 다 쓴다.
-        # 뜨기와 쓰기를 한 락 아래에서 (v10.133.2) — 따로 두면 워커가 뜬 옛 사본이
-        # main 의 새 저장 **뒤에** 써져, 이미 꺼낸 회신이 디스크에 되살아난다.
+        # 읽지 않은 파일은 덮어쓰지 않는다 (v10.131.1). 복원 전의 명단은 비어 있어서, 그때 쓰면 resume 세션의 상주
+        # 에이전트가 지워진다 — 조립 도중 죽어 `shutdown_all` 만 불린 길. 뜨기와 쓰기를 한 락 아래에서 (v10.133.2) —
+        # 따로 두면 워커가 뜬 옛 사본이 새 저장 **뒤에** 써진다.
         with self._save_lock:
             if not self._state_owned and path.is_file():
                 return
             self._write_state(path)
 
     def _write_state(self, path: Path) -> None:
-        """명단·미배달분·열린 질문을 떠서 쓴다 — ``_save_lock`` 을 쥔 채로만 부른다."""
+        """명단을 떠서 쓴다 — ``_save_lock`` 을 쥔 채로만 부른다."""
         # Snapshot under the GIL — ``_save_state`` runs on worker threads while
         # the main thread mutates ``_agents``; iterating the live view raced a
         # spawn and killed an UNRELATED agent via the worker's except-handler
         # (AUDIT S-1). ``list(...)`` can't raise mid-iteration.
-        tms = list(self._agents.values())
-        # 열린 질문은 resume 이 **되살린다**(§3.9) — 그러려면 남아야 한다. 되살리지 못한 것만 `stale_questions` 로
-        # 알린다. 파일 모양은 옛 저장소에서 짓던 것과 같다(2단계 — `agents_state.document_from_post`).
-        with self._cv:
-            doc = agents_state.document_from_post(tms, self._post)
+        doc = agents_state.roster_document(list(self._agents.values()))
         try:
             from agent_cli.fsio import atomic_write_json
 
@@ -2656,15 +2602,13 @@ class AgentRegistry:
             pass
 
     def restore(self, parent_ctx=None) -> int:
-        """세션 resume 시 agents.json 에서 재생성 — 되살린 수 반환.
+        """세션 resume 시 agents.json 의 명단으로 재생성 — 되살린 수 반환 (5c-0: 재시작은 컨텍스트와 명단만 올린다).
 
-        - 살아있던(revivable) teammate: 자기 history 를 resume 한 ctx 로
-          worker 재기동 (이전 문답 전부 기억). kill 된 것은 dead 툼스톤으로
-          만 복원 (status 가시성).
-        - 미배달 pending 은 그대로 복원 → 첫 턴 경계에 정상 배달.
-        - 열린 질문도 **되살린다**(§3.9): ctx 가 통째로 resume 되므로 나중에
-          도착한 답도 평소처럼 새 런으로 처리된다 — 못 할 기술적 이유가
-          없다. 되살리지 못하는 것은 asker 나 target 이 돌아오지 않은 것뿐.
+        - 살아 있던 상주: 자기 history 를 resume 한 ctx 로 워커 재기동(이전 문답 전부 기억), idle 로 선다. 첫 ctx 에
+          재시작 기록 한 줄(`restarted`). 아무것도 스스로 이어 하지 않는다 — 다음 요청이 런을 연다.
+        - kill 된 것과 과제 도중이던 run 에이전트(``ends_after_task`` — 살아 있는 run 은 늘 과제 도중이다)는 dead
+          툼스톤(status 가시성).
+        - 받은편지함·하던 일·main 앞 메일·빚·열린 질문은 버린다 — 저장하지 않는다(옛 파일의 그 칸은 읽지 않는다).
         - 파일 부재/파손/버전 불일치는 조용히 no-op (fresh 세션과 동일).
         """
         self._state_owned = True  # 읽으려 했다 — 이제부터 이 파일은 이 레지스트리의 것
@@ -2672,32 +2616,7 @@ class AgentRegistry:
         data = agents_state.read_state(path) if path is not None else None
         if data is None:
             return 0
-
-        with self._cv:
-            for item in data.get("pending", []):
-                if not isinstance(item, dict):
-                    continue
-                self._stamp_mail(item)
-                self._post.deliver(envelope_of_main_mail(item))
-            # 열린 질문 복원 — 살릴 수 있는 것만. asker/target 판정은 에이전트
-            # 복원 뒤에 해야 하므로 여기서는 담아만 둔다.
-            restored = [
-                q
-                for q in (
-                    Question.from_dict(d)
-                    for d in data.get("questions", [])
-                    if isinstance(d, dict)
-                )
-                if q is not None
-            ]
-            # 번호 잇기 (v10.77.0) — 할당기는 저장하지 않고 남은 id 를 본다
-            item_ids.observe(
-                *(e.id for e in self._post.queued("main")),
-                *(q.id for q in restored),
-            )
-
         revived = 0
-        requeue: list[tuple[AgentInstance, list, list]] = []
         for e in data.get("agents", []):
             key = e.get("key")
             if not key or key in self._agents or self.session_dir is None:
@@ -2713,16 +2632,13 @@ class AgentRegistry:
             if isinstance(e.get("created_at"), (int, float)):
                 tm.created_at = e["created_at"]
             self._agents[key] = tm
-            if e.get("state") == "dead":
+            if e.get("state") == "dead" or tm.ends_after_task:
                 tm.state = "dead"
                 tm.error = e.get("error", "")
                 tm.revivable = False
                 continue
             tm.revive = True
-            in_flight = [i for i in (e.get("in_flight") or []) if isinstance(i, dict)]
-            queued = [i for i in (e.get("inbox") or []) if isinstance(i, dict)]
-            # 새 id 가 복원분과 겹치지 않게 (v10.77.0 — 할당기는 저장하지 않는다)
-            item_ids.observe(*(i.get("id") for i in in_flight + queued))
+            tm.restarted = True
             tm.worker = threading.Thread(
                 target=self._worker,
                 args=(tm, parent_ctx),
@@ -2734,83 +2650,10 @@ class AgentRegistry:
             # conversation.jsonl 을 재생해 복원한다(restore 는 SSE 접속 전이라 buffer 에 쌓였다가 첫 접속 snapshot
             # 으로 배달). dead(kill) 툼스톤은 재생 안 함 — kill=정리 일관(필요하면 mode:"resume" 이 그때 복원).
             self._replay_conversation(tm)
-            requeue.append((tm, in_flight, queued))
             revived += 1
-        # 되넣기는 명단을 다 세운 뒤 — 끊긴 run 의 요청자가 돌아왔는지 봐야 한다
-        agent_stop.forget_gone_requesters(self)  # 되넣기 전 — 지금 줄은 main 의 메일뿐
-        for tm, in_flight, queued in requeue:
-            self._requeue(tm, in_flight, agent_stop.live_requests(self, queued))
-        self._adopt_questions(restored)
         self._save_state()
         self._notify_roster()
         return revived
-
-    def _requeue(self, tm: AgentInstance, in_flight: list, queued: list) -> None:
-        """재시작이 남긴 항목을 되돌린다 (v9.24.5) — 끊긴 런이 맨 앞.
-
-        끊긴 런(처리 중이던 첫 항목)은 계속하기 안내를 붙여 ``request`` 로
-        다시 넣는다: 새 id·대화창 한 줄·같은 발신자(빚 장부가 같은 상대에게
-        답을 강제). 이미 한 번 이어 하던 항목(``resumed``)이면 감싸지 않고
-        그대로 — 재시작이 거듭돼도 안내가 쌓이지 않는다. 나머지(배치의 다른
-        항목, 줄 서 있던 요청)는 이미 대화창·장부에 있으니 조용히 되넣는다."""
-        from agent_cli.constants import RESUMED_RUN_NOTICE
-
-        rest = list(in_flight[1:]) + list(queued)
-        if in_flight:
-            first = in_flight[0]
-            author = str(first.get("author") or "main")
-            if tm.ends_after_task and not self._agent_alive(author):
-                # 끊긴 run 의 요청자가 돌아오지 않았다 — 회신은 main 메일로 (설계 §2 resume)
-                author = "main"
-            if first.get("resumed"):
-                rest.insert(0, {**first, "author": author})
-            else:
-                expects = bool(first.get("expects_reply", True))
-                # id 를 먼저 받는다(종류 규칙은 `request` 와 같다) — run 의 과제 id 를 잇기 위해
-                rid = item_ids.next_id(
-                    item_ids.USER
-                    if is_human_addr(author)
-                    else item_ids.REPLY
-                    if expects
-                    else item_ids.MAIL
-                )
-                self.request(
-                    tm.key,
-                    RESUMED_RUN_NOTICE + str(first.get("text") or ""),
-                    author=author,
-                    hop=int(first.get("hop") or 0),
-                    expects_reply=expects,
-                    answers=first.get("answers"),
-                    resumed=True,
-                    item_id=rid,
-                    kind=str(first.get("kind") or ""),
-                    re=str(first.get("re") or ""),
-                    todo=str(first.get("todo") or ""),
-                )
-                if tm.ends_after_task and first.get("id") == tm.task_id:
-                    tm.task_id = rid  # 과제가 새 id 로 다시 들어갔다
-        for item in rest:
-            self._enqueue(tm, item)
-
-    def _adopt_questions(self, restored: list[Question]) -> None:
-        """resume 이 복원한 질문을 받아들인다 — 에이전트 복원 **뒤에**.
-
-        주소는 사람이라 언제나 살아 있다 — asker 가 돌아오지 않았으면(kill
-        툼스톤·매니페스트 부재) 답을 받을 데가 없으니 버린다. 버린 수는
-        ``stale_questions`` 로 사람에게 알린다. 되살린 질문은 트레이에 다시 뜨고,
-        사람이 답하면 평소처럼 새 배달로 간다.
-        """
-        if not restored:
-            return
-        dropped = 0
-        with self._cv:
-            for q in restored:
-                tm = self._agents.get(q.asker)
-                if tm is None or tm.state == "dead":
-                    dropped += 1
-                    continue
-                self._post.ask(q.id, f"agent:{q.asker}", q.target, q.text, meta=q)
-        self.stale_questions = dropped
 
     # ── worker ──────────────────────────────────
 
@@ -2971,17 +2814,6 @@ class AgentRegistry:
         것이 있어도 런을 열지 않는다). 순서: 정지 먼저 — 깬 워커가 런 도중이면 다음 흡수가 정지를 본다."""
         tm.stop_event.set()
         self._post.close(f"agent:{tm.key}")
-
-    @staticmethod
-    def _is_human_direct(item) -> bool:
-        """사람-직접(웹/@agt 대화창) 요청인가 — ``user:*`` 발신 + 회신 기대.
-        이런 요청만 배치 대상(C-1, 회신→대화창 ⑥). main 위임(→mailbox)·peer
-        (→requester)·배달된 peer 회신(expects_reply=False)은 제외."""
-        return (
-            isinstance(item, dict)
-            and str(item.get("author", "")).startswith("user:")
-            and item.get("expects_reply", True)
-        )
 
     def _with_human_notice(self, tm: AgentInstance, run_item: str, output: str) -> str:
         """이 런이 **사람에게** 물어 둔 미답 질문을 결과에 실어 알린다.

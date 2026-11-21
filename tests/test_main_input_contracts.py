@@ -33,14 +33,18 @@ def _job_mail(reg) -> None:
 
 
 class TestWordsAreNotSaved:
-    def test_only_the_mail_reaches_agents_json(self, tmp_path):
+    def test_neither_words_nor_mail_reach_agents_json(self, tmp_path):
+        """main 앞의 사람의 말도 메일도 저장하지 않는다 — agents.json 은 명단만이다(5c-0; 종전엔 메일 미러가 있었다)."""
         q = MainInput()
         reg = AgentRegistry(tmp_path, runtime={"model": "m", "timeout": 5}, post=q.post)
         q.enqueue("c1", "MAIN please look", nickname="dj")
-        _job_mail(reg)  # 저장을 부른다 — main 앞 미배달분 미러
+        _job_mail(reg)
+        reg.spawn(name="w")  # 명단이 바뀌어 저장한다
         doc = json.loads((tmp_path / "agents.json").read_text(encoding="utf-8"))
-        assert [m.get("kind") for m in doc["pending"]] == ["job"]
-        assert "MAIN please look" not in json.dumps(doc, ensure_ascii=False)
+        assert set(doc) == {"version", "agents"}
+        text = json.dumps(doc, ensure_ascii=False)
+        assert "MAIN please look" not in text and "job #1" not in text
+        reg.shutdown_all()
 
 
 class TestClosingThePump:
@@ -94,25 +98,3 @@ class TestNumbersAroundAMailRun:
         finally:
             q.close()
             assert ended.wait(10)
-
-
-class TestTheMailThatOpensARunSurvivesARestart:
-    """한가한 main 을 깨운 메일은 그 런의 첫 턴 경계가 흡수할 때까지 ``agents.json`` 에 남는다 — 그 사이 다른 저장이
-    끼어도. 그 사이에 프로세스가 죽으면 재시작이 그 메일을 다시 배달한다. 흡수한 뒤에는 대화 기록(history)에 들어
-    있으므로 저장 파일에서 빠진다."""
-
-    @staticmethod
-    def _pending(tmp_path):
-        doc = json.loads((tmp_path / "agents.json").read_text(encoding="utf-8"))
-        return [m.get("kind") for m in doc["pending"]]
-
-    def test_until_the_first_turn_boundary_takes_it(self, tmp_path):
-        q = MainInput()
-        reg = AgentRegistry(tmp_path, runtime={"model": "m", "timeout": 5}, post=q.post)
-        _job_mail(reg)
-        assert q.wait_to_open(0) == ()  # 메일 런이 열린다
-        assert self._pending(tmp_path) == ["job"]
-        reg._save_state()  # 그 사이 다른 저장(에이전트의 상태 변화 등)
-        assert self._pending(tmp_path) == ["job"]
-        assert [m.get("kind") for m in absorbed_mail(reg)] == ["job"]  # 첫 턴 경계
-        assert self._pending(tmp_path) == []

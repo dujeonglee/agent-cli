@@ -124,8 +124,8 @@ def test_answer_to_a_stopping_asker_is_refused_even_without_the_kill(
         reg.shutdown_all()
 
 
-def test_shutdown_keeps_questions_for_resume_and_kill_does_not(tmp_path, renderer):  # noqa: F811
-    """세션 종료는 ✕ 의 길을 지나지 않는다 — 산 에이전트의 질문은 resume 이 되살리고, ✕ 된 것의 질문은 없다."""
+def test_no_question_survives_a_restart_alive_or_killed(tmp_path, renderer):  # noqa: F811
+    """재시작은 열린 질문을 되살리지 않는다 — 산 에이전트의 것도 ✕ 된 것의 것도(5c-0; 종전엔 산 쪽 것을 되살렸다)."""
 
     def runner(kind, start, ctx):
         return SimpleNamespace(success=True, output="ok"), 0.01
@@ -136,15 +136,14 @@ def test_shutdown_keeps_questions_for_resume_and_kill_does_not(tmp_path, rendere
     assert wait_until(
         lambda: reg.get(alive).state == "idle" and reg.get(killed).state == "idle"
     )
-    qa, _ = reg.register_question(alive, "qa?")
+    reg.register_question(alive, "qa?")
     reg.register_question(killed, "qb?")
     assert reg.kill(killed) == ""
     reg.shutdown_all()
     again = _registry(tmp_path / "s", runner)
     again.restore()
     try:
-        assert [q.id for q in again.open_human_questions()] == [qa]
-        assert _open_qs(again, alive) == [qa] and _open_qs(again, killed) == []
-        assert again.stale_questions == 0
+        assert again.open_human_questions() == []
+        assert _open_qs(again, alive) == [] and _open_qs(again, killed) == []
     finally:
         again.shutdown_all()

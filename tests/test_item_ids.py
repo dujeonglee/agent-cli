@@ -74,16 +74,6 @@ class TestResumeContinuesNumbers:
         ContextManager(tmp_path / "s", max_context_tokens=10_000, resume=True)
         assert item_ids.next_id(item_ids.USER) == "u-10"
 
-    def test_pending_mail_and_questions_are_observed_on_restore(self, tmp_path):
-        reg = AgentRegistry(tmp_path)
-        to_main(reg, {"kind": "job", "output": "done"})  # n-1
-        to_main(reg, {"kind": "job", "output": "done 2"})  # n-2
-        item_ids._last = 0
-        fresh = AgentRegistry(tmp_path)
-        fresh.restore()
-        assert [m.id for m in fresh.queued_for("main")] == ["n-1", "n-2"]
-        assert item_ids.next_id(item_ids.MAIL) == "n-3"
-
 
 class TestMailIdsByKind:
     def test_prefix_follows_the_kind(self, tmp_path):

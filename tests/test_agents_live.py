@@ -630,11 +630,10 @@ class TestRegistryLifecycle:
         ``begin_agent_work`` (scope_start) the instant the item lands — so a
         post-enqueue timestamp would render the request AFTER the work it
         triggered (team-view ordering bug). Monotonic clock + a probe at the
-        save that follows the enqueue: the request thread is held there until
-        the worker has taken the item, and the clock at that moment is noted —
-        the inbound message's ts must be <= it."""
+        line flush that follows the enqueue (`_lines_after_section`): the request
+        thread is held there until the worker has taken the item, and the clock
+        at that moment is noted — the inbound message's ts must be <= it."""
         import agent_cli.subagent.agents_live as al
-        from agent_cli import fsio
 
         block = threading.Event()
         reg = make_registry(tmp_path, runner=make_runner(block=block))
@@ -650,16 +649,16 @@ class TestRegistryLifecycle:
             return clock[0]
 
         taken_at = []
-        real_write = fsio.atomic_write_json
+        real_after = reg._lines_after_section
 
-        def write(path, data, *a, **k):
-            # 받은편지함에 든 뒤 요청 스레드의 첫 저장 — 워커가 꺼내 갈 때까지 붙잡고, 그때의 시계를 적는다
+        def after(lines):
+            # 받은편지함에 든 뒤 요청 스레드의 첫 줄 내보내기 — 워커가 꺼내 갈 때까지 붙잡고, 그때의 시계를 적는다
             if threading.current_thread() is requester and not taken_at:
                 assert wait_until(lambda: reg.taken_by(me) != ())
                 taken_at.append(clock[0])
-            return real_write(path, data, *a, **k)
+            return real_after(lines)
 
-        monkeypatch.setattr(fsio, "atomic_write_json", write)
+        monkeypatch.setattr(reg, "_lines_after_section", after)
         monkeypatch.setattr(al.time, "time", tick)
         reg.request(key, "hello", author="main")
         block.set()
@@ -1404,33 +1403,20 @@ class TestResumeRestore:
         entry = next(e for e in self._state(tmp_path)["agents"] if e["key"] == key)
         assert entry["state"] == "idle"  # resume 대상
 
-    def test_pending_mirrored_to_disk(self, tmp_path, renderer):
-        reg = make_registry(tmp_path)
-        key, _ = reg.spawn()
-        reg.request(key, "hi")
-        # ``deliver`` appends in memory (what ``arrived_for("main", waking_only=False, words=False)`` sees)
-        # and mirrors to disk a step later — wait for the mirror itself, not
-        # the in-memory flag (CI Linux caught the gap once: 0 == 1).
-        assert wait_until(lambda: len(self._state(tmp_path)["pending"]) == 1)
-        absorbed_mail(reg)
-        assert self._state(tmp_path)["pending"] == []
-        reg.shutdown_all()
-
     def test_a_slow_save_does_not_overwrite_a_newer_one(
         self, tmp_path, renderer, monkeypatch
     ):
         """저장 둘이 겹쳐도 디스크에는 나중 상태가 남는다 (v10.133.2).
 
-        워커의 저장이 명단을 뜬 뒤 쓰기 전에 멈춰 있는 동안 main 이 회신을 꺼내고
-        저장하면, 종전에는 워커의 옛 사본이 나중에 써져 꺼낸 회신이 디스크에 되살아났다
-        (그 상태로 죽으면 resume 이 같은 회신을 한 번 더 배달한다)."""
+        한 저장이 명단을 뜬 뒤 쓰기 전에 멈춰 있는 동안 다른 쪽이 명단을 바꾸고 저장하면, 순서가 없던 때에는 옛
+        사본이 나중에 써져 바뀐 명단(여기서는 ✕ 로 dead 가 된 에이전트)이 디스크에서 되돌아갔다."""
         import threading
 
         from agent_cli import fsio
 
         reg = make_registry(tmp_path)
-        to_main(reg, {"kind": "reply", "key": "agt-x", "output": "done"})
-        assert len(self._state(tmp_path)["pending"]) == 1
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "idle")
 
         real_write = fsio.atomic_write_json
         first_in = threading.Event()
@@ -1445,17 +1431,18 @@ class TestResumeRestore:
             return real_write(path, data, *a, **kw)
 
         monkeypatch.setattr(fsio, "atomic_write_json", slow_first)
-        slow = threading.Thread(target=reg._save_state)  # 회신이 든 사본을 뜨고 멈춘다
+        slow = threading.Thread(target=reg._save_state)  # 살아 있는 명단을 뜨고 멈춘다
         slow.start()
         assert first_in.wait(5)
-        drain = threading.Thread(target=reg.absorb_main)  # 꺼내고 저장
-        drain.start()
-        drain.join(0.3)  # 순서가 없던 때에는 이 사이에 빈 목록이 먼저 써진다
+        killer = threading.Thread(target=reg.kill, args=(key,))  # 명단을 바꾸고 저장
+        killer.start()
+        killer.join(0.3)  # 순서가 없던 때에는 이 사이에 새 명단이 먼저 써진다
         let_go.set()
         slow.join(5)
-        drain.join(5)
-        assert not slow.is_alive() and not drain.is_alive()
-        assert self._state(tmp_path)["pending"] == []
+        killer.join(5)
+        assert not slow.is_alive() and not killer.is_alive()
+        (entry,) = self._state(tmp_path)["agents"]
+        assert entry["state"] == "dead"
 
     def test_no_save_is_reachable_while_holding_the_condition(self):
         """락 순서 가드 — 저장은 ``_save_lock`` → ``_cv`` 로 쥔다. ``_cv`` 를 쥔 채 저장에
@@ -1491,7 +1478,7 @@ class TestResumeRestore:
                 if name not in reach and self_calls(node) & reach:
                     reach.add(name)
                     grew = True
-        assert "absorb_main" in reach and "deliver" in reach  # 스캔이 본다
+        assert "kill" in reach and "_close_run" in reach  # 스캔이 본다
 
         def holds_cv(w):
             return any(
@@ -1508,78 +1495,36 @@ class TestResumeRestore:
                     under += [f"{name}:{w.lineno} -> {h}" for h in sorted(hit)]
         assert under == []
 
-    def test_full_resume_roundtrip(self, tmp_path, renderer):
-        # 세션 1: spawn → 문답 1회 → ctx 에 landmark → 미배달 회신 남기고 종료
-        reg1 = make_registry(tmp_path)
-        key, _ = reg1.spawn()
-        assert wait_until(lambda: reg1.get(key).state == "idle")
-        reg1.get(key).ctx.add({"role": "user", "content": "landmark-from-session-1"})
-        reg1.request(key, "hello")
-        assert wait_until(
-            lambda: reg1.arrived_for("main", waking_only=False, words=False)
-        )
-        reg1.shutdown_all()
-
-        # 세션 2 (같은 session_dir): restore → 재생성 + 미배달 복원
-        reg2 = make_registry(tmp_path)
-        revived = reg2.restore()
-        assert revived == 1
-        tm = reg2.get(key)
-        assert wait_until(lambda: tm.state == "idle")
-        # 이전 세션 문맥을 기억한 채 살아났다 (ctx resume)
-        assert any(
-            "landmark-from-session-1" in str(m) for m in tm.ctx.get_raw_messages()
-        )
-        # 미배달 회신은 첫 턴 경계 배달 대상으로 복원
-        restored = absorbed_mail(reg2)
-        assert [_unlabel(r["output"]) for r in restored] == ["done:hello"]
-        assert tm.handled == 1
-        reg2.request(key, "again")
-        assert wait_until(
-            lambda: reg2.arrived_for("main", waking_only=False, words=False)
-        )
-        again = absorbed_mail(reg2)[0]
-        # 새 런의 이름은 새 id — 앞 생의 회신 파일(reply-r-1.md)을 덮지 않는다
-        assert _unlabel(again["output"]) == "done:again" and again["run"] != "r-1"
-        reg2.shutdown_all()
-
     def _leave_session(self, tmp_path):
-        """세션 1: 상주 에이전트 하나 + 미배달 회신 하나를 남기고 끝난다."""
+        """세션 1: 상주 에이전트 하나를 남기고 끝난다."""
         reg1 = make_registry(tmp_path)
         key, _ = reg1.spawn()
         assert wait_until(lambda: reg1.get(key).state == "idle")
-        reg1.request(key, "hello")
-        assert wait_until(
-            lambda: reg1.arrived_for("main", waking_only=False, words=False)
-        )
         reg1.shutdown_all()
         return key, (tmp_path / "agents.json").read_bytes()
 
     def test_shutdown_before_restore_keeps_the_saved_roster(self, tmp_path, renderer):
         # 조립 도중 죽은 resume 세션: 레지스트리는 섰고 복원은 아직 — 정리의
-        # `shutdown_all` 이 빈 명단으로 파일을 덮어쓰면 에이전트와 메일이 사라진다.
-        _key, saved = self._leave_session(tmp_path)
+        # `shutdown_all` 이 빈 명단으로 파일을 덮어쓰면 에이전트가 사라진다.
+        key, saved = self._leave_session(tmp_path)
         reg2 = make_registry(tmp_path)
         reg2.shutdown_all()
         assert (tmp_path / "agents.json").read_bytes() == saved
         # 다음 세션이 그대로 되살린다
         reg3 = make_registry(tmp_path)
-        assert reg3.restore() == 1
-        assert [_unlabel(r["output"]) for r in absorbed_mail(reg3)] == ["done:hello"]
+        assert reg3.restore() == 1 and reg3.get(key) is not None
         reg3.shutdown_all()
 
     def test_save_before_restore_is_skipped_but_not_lost(self, tmp_path, renderer):
-        # 복원보다 먼저 닿은 통지 — 파일은 그대로 두고, 복원 뒤 첫 저장이 둘 다 쓴다.
+        # 복원보다 먼저 바뀐 명단(먼저 띄운 에이전트) — 파일은 그대로 두고, 복원 뒤 첫 저장이 둘 다 쓴다.
         key, saved = self._leave_session(tmp_path)
         reg2 = make_registry(tmp_path)
-        to_main(reg2, {"item_id": "n-early", "output": "early"})
+        early, _ = reg2.spawn()
         assert (tmp_path / "agents.json").read_bytes() == saved
         assert reg2.restore() == 1
         reg2._save_state()
         state = self._state(tmp_path)
-        assert [e["key"] for e in state["agents"]] == [key]
-        assert "n-early" in [p_["item_id"] for p_ in state["pending"]]
-        assert len(state["pending"]) == 2
+        assert sorted(e["key"] for e in state["agents"]) == sorted([key, early])
         reg2.shutdown_all()
 
     def test_fresh_session_dir_is_written_without_restore(self, tmp_path, renderer):
@@ -3014,19 +2959,6 @@ class TestRendererSignatureRegression:
         assert len(absorbed_mail(reg)) == 2
         assert reg.pending_mail() == [] and seen[-1] == q.snapshot()
 
-    def test_restored_mail_gets_fresh_queue_ids(self, tmp_path):
-        """resume 이 되살린 미배달분도 대기열 id 를 받는다 — 같은 id 두 줄이면
-        프런트의 빠짐(=주입) 판정이 엉킨다."""
-        from agent_cli.subagent.agents_live import AgentRegistry
-
-        a = AgentRegistry(tmp_path)
-        to_main(a, {"kind": "job", "output": "🧵 job #1 finished"})
-        to_main(a, {"kind": "job", "output": "🧵 job #2 finished"})
-        b = AgentRegistry(tmp_path)
-        b.restore()
-        ids = [it["id"] for it in b.pending_mail()]
-        assert len(ids) == 2 and len(set(ids)) == 2
-
     def test_agent_mail_hint_default_delegates_to_status(self):
         # 커스텀·CLI 렌더러는 override 안 함 → 기본 구현이 status 로 위임해
         # 종전 동작 보존(MinimalRenderer 는 콘솔에 라인 출력).
@@ -4160,37 +4092,6 @@ class TestAttributionInheritance:
         q = next(r for r in absorbed_mail(reg) if r["kind"] == "question")
         assert "answers" not in q
 
-    def test_pending_mirror_persists_answers(self, tmp_path, renderer):
-        # 미배달 회신의 agents.json 미러가 answers 를 보존 — resume 후에도
-        # 승계가 살아남는다.
-        import json as _json
-
-        reg = make_registry(tmp_path)
-        key, _ = reg.spawn()
-        wait_until(lambda: reg.get(key).state == "idle")
-        reg.set_current_run_authors(["Bob", "두정"])
-        reg.request(key, "job")
-        assert wait_until(
-            lambda: reg.arrived_for("main", waking_only=False, words=False)
-        )
-
-        # ``arrived_for("main", waking_only=False, words=False)`` 는 **메모리** 상태(_pending) 라 True 가 된
-        # 시점에 디스크 미러(_save_state, 락 밖 후속 호출)는 아직 안 써졌을
-        # 수 있다 — CI 의 느린 러너에서 이 틈이 벌어져 IndexError 로 flake
-        # (2026-09-12 run 34669480281). 검증 대상이 **미러 파일**이므로
-        # 파일이 실제로 pending 을 담을 때까지 기다린다.
-        def _mirror_has_pending() -> bool:
-            try:
-                return bool(
-                    _json.loads((tmp_path / "agents.json").read_text()).get("pending")
-                )
-            except (FileNotFoundError, ValueError):
-                return False
-
-        assert wait_until(_mirror_has_pending)
-        state = _json.loads((tmp_path / "agents.json").read_text())
-        assert state["pending"][0]["answers"] == ["Bob", "두정"]
-
 
 class TestRequestInEventAddressing:
     """v8.5.1 — request 의 "in" 이벤트는 수신 에이전트를 to 로 실어야 한다.
@@ -4317,131 +4218,6 @@ class TestRestartRequeue:
         import json
 
         return json.loads((tmp_path / "agents.json").read_text(encoding="utf-8"))
-
-    def _entry(self, tmp_path, key):
-        return next(e for e in self._state(tmp_path)["agents"] if e["key"] == key)
-
-    def _busy_with_queue(self, tmp_path):
-        """reg1: task-1 을 처리하는 도중(러너가 막힘) task-2·3 이 줄 선다."""
-        gate = threading.Event()
-        started = threading.Event()
-
-        def runner(kind, start, ctx):
-            started.set()
-            gate.wait(5)
-            return _FakeLoopResult(output=f"done:{start.query}"), 0.01
-
-        reg1 = make_registry(tmp_path, runner=runner)
-        key, _ = reg1.spawn()
-        assert wait_until(lambda: reg1.get(key).state == "idle")
-        reg1.request(key, "task-1")
-        assert started.wait(3)
-        reg1.request(key, "task-2")
-        reg1.request(key, "task-3")
-        return reg1, key, gate
-
-    def test_queue_and_in_flight_are_on_disk(self, tmp_path, renderer):
-        reg1, key, gate = self._busy_with_queue(tmp_path)
-        e = self._entry(tmp_path, key)
-        assert [i["text"] for i in e["in_flight"]] == ["task-1"]
-        assert [i["text"] for i in e["inbox"]] == ["task-2", "task-3"]
-        gate.set()
-        assert wait_until(lambda: self._entry(tmp_path, key)["inbox"] == [])
-        assert wait_until(lambda: self._entry(tmp_path, key)["in_flight"] == [])
-        reg1.shutdown_all()
-
-    def test_restart_mid_run_resumes_first_then_the_queue(self, tmp_path, renderer):
-        from agent_cli.constants import RESUMED_RUN_NOTICE
-
-        reg1, _key, gate = self._busy_with_queue(tmp_path)
-        # 프로세스가 죽은 것과 같다 — reg1 을 정리하지 않고 같은 폴더로 복원
-        rec = _RecordingRunner()
-        reg2 = make_registry(tmp_path, runner=rec)
-        from agent_cli import item_ids
-
-        item_ids._last = 0  # 새 프로세스와 같다 — 할당기는 저장되지 않는다
-        assert reg2.restore() == 1
-        assert wait_until(lambda: len(rec.queries()) == 3)
-        first, second, third = rec.queries()
-        assert first == RESUMED_RUN_NOTICE + "task-1"  # 끊긴 런이 맨 앞, 안내와 함께
-        assert (second, third) == ("task-2", "task-3")  # 줄 선 순서 그대로
-        # 새 id 는 복원분과 겹치지 않는다 (observe 가 번호를 잇는다)
-        assert item_ids.number_of(item_ids.next_id(item_ids.USER)) >= 4
-        gate.set()
-        reg1.shutdown_all()
-        reg2.shutdown_all()
-
-    def test_continuation_keeps_the_requester_and_shows_in_the_channel(
-        self, tmp_path, renderer
-    ):
-        import json
-
-        from agent_cli.constants import RESUMED_RUN_NOTICE
-
-        reg1, key, gate = self._busy_with_queue(tmp_path)
-        rec = _RecordingRunner()
-        reg2 = make_registry(tmp_path, runner=rec)
-        reg2.restore()
-        assert wait_until(lambda: len(rec.queries()) >= 1)
-        conv = [
-            json.loads(line)
-            for line in (tmp_path / "agents" / key / "conversation.jsonl")
-            .read_text(encoding="utf-8")
-            .splitlines()
-        ]
-        cont = [c for c in conv if c["text"].startswith(RESUMED_RUN_NOTICE)]
-        assert len(cont) == 1 and cont[0]["author"] == "main"  # 원래 발신자
-        gate.set()
-        reg1.shutdown_all()
-        reg2.shutdown_all()
-
-    def test_finished_run_is_not_resumed(self, tmp_path, renderer):
-        reg1 = make_registry(tmp_path)
-        key, _ = reg1.spawn()
-        reg1.request(key, "done-task")
-        assert wait_until(
-            lambda: reg1.arrived_for("main", waking_only=False, words=False)
-        )
-        assert wait_until(lambda: self._entry(tmp_path, key)["in_flight"] == [])
-        reg1.shutdown_all()
-        rec = _RecordingRunner()
-        reg2 = make_registry(tmp_path, runner=rec)
-        reg2.restore()
-        assert wait_until(lambda: reg2.get(key).state == "idle")
-        time.sleep(0.2)
-        assert rec.queries() == []  # 끝난 런엔 계속하기 안내가 없다
-        reg2.shutdown_all()
-
-    def test_notice_is_not_stacked_on_repeated_restarts(self, tmp_path, renderer):
-        """이어 하던 중 또 재시작되면 그 항목을 다시 감싸지 않는다."""
-        import json
-
-        from agent_cli.constants import RESUMED_RUN_NOTICE
-
-        reg1, key, gate = self._busy_with_queue(tmp_path)
-        gate2 = threading.Event()
-        started2 = threading.Event()
-
-        def blocking(kind, start, ctx):
-            started2.set()
-            gate2.wait(5)
-            return _FakeLoopResult(output="x"), 0.01
-
-        reg2 = make_registry(tmp_path, runner=blocking)
-        reg2.restore()  # 계속하기 항목으로 런을 시작하고 막힌다
-        assert started2.wait(3)
-        e = self._entry(tmp_path, key)
-        assert e["in_flight"][0].get("resumed") is True
-        rec = _RecordingRunner()
-        reg3 = make_registry(tmp_path, runner=rec)
-        reg3.restore()
-        assert wait_until(lambda: len(rec.queries()) >= 1)
-        assert rec.queries()[0] == RESUMED_RUN_NOTICE + "task-1"  # 한 겹뿐
-        assert json.dumps(rec.queries()).count("[session restarted]") == 1
-        gate.set()
-        gate2.set()
-        for r in (reg1, reg2, reg3):
-            r.shutdown_all()
 
     def test_old_format_manifest_still_restores(self, tmp_path, renderer):
         """받은편지함 필드가 없는 옛 agents.json — 종전대로 되살아나고 끝."""

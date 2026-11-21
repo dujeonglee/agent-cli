@@ -101,7 +101,7 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
   사유 한 줄이 선다: `(the run ended with an error: Max turns (40) reached)`(사유가 없으면 — 엔진 예외는 사유가 산출물에
   있다 — `(the run ended with an error)`). 요청자가 main 이면 관찰 레코드(`agent_mail.build_reply_record`)가, 에이전트면
   런 끝 폴백(`AgentRegistry.end_run`)이 단다 — 종전엔 사유가 버려졌고 에이전트 요청자는 실패 표시도 받지 못했다.
-  사유는 실패한 런의 메일에만 ``error`` 로 실린다(agents.json 미러의 더해진 키).
+  사유는 실패한 런의 메일에만 ``error`` 로 실린다.
 
 ### 2.3 정지
 
@@ -126,7 +126,8 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
 | 그 에이전트가 기다리던 회신(자기가 맡긴 하위 일) | 그대로 — 하위 에이전트는 계속 | 하위 run 은 함께 멈춤 · 하위 상주는 남음 | 〃 |
 
 사람 주소의 빚(채널에 사람이 직접 쓴 요청)은 회신하지 않는다 — 창이 곧 배달이다. 세션 종료(`shutdown_all`)는 사람의
-정지가 아니다: 원인(`stop_cause`)이 비고, 빚은 종전처럼 버려 재시작이 끊긴 요청을 되넣는다.
+정지가 아니다: 원인(`stop_cause`)이 비고 아무에게도 회신하지 않는다 — 재시작은 명단과 컨텍스트만 올리고 빚·줄은
+버린다(v10.160.0, 5c-0; 종전엔 재시작이 끊긴 요청을 되넣었다).
 
 **회신.** 회신이므로(P2 규칙) 요청자의 기다리는 회신을 닫고 새 장부 항목을 만들지 않는다. 봉투는 회신 모양 그대로에
 머리 끝 표지(`mark`)만 더한다:
@@ -151,7 +152,7 @@ Decide whether to continue another way or report back to the user.
 **스스로 내려간 에이전트 (v10.146.1).** 에이전트가 어떤 이유로든 내려가면(더는 상자를 읽지 않으면) 그 상자에 줄 선
 요청을 모두 닫고 요청자마다 사실 한 통을 보낸다 — ✕ 의 removed 와 같은 길(`_answer_queued`)이다. 사람의 정지가 아니라
 원인(`stop_cause`)이 비어 있는 두 경우: 과제를 끝낸 run 에이전트(표지 `ended`)와 예외로 죽은 워커(표지 `died`). 표지에
-`by` 가 없고, 회신은 요청자를 깨운다. 세션 종료는 여기에 들지 않는다(재시작이 되넣는다).
+`by` 가 없고, 회신은 요청자를 깨운다. 세션 종료는 여기에 들지 않는다(재시작은 줄 선 요청을 올리지 않는다, 5c-0).
 
 워커가 죽으면 집어 든(picked — 지금 일·흡수한) 요청, 곧 갚지 않은 빚(사람 주소 제외) 모두에도 사실 한 통을 보내고 빚을
 닫는다 — 정지의 stopped 와 같은 길(`_answer_debts`)이다. 죽은 런의 활동·생각은 믿을 수 없어 싣지 않는다. 요청자가 이미
@@ -178,9 +179,9 @@ Decide whether to continue another way or report back to the user.
   `Stop`, 에이전트도 일하면 `Stop ▾`(본체 = main, ▾ = Stop main · Stop all agents · Stop everything), main 이 한가하고
   에이전트만 일하면 `Send` 그대로 + 채널 줄 끝 `■ all`. **Stop everything 의 정지 회신만은 main 을 깨우지 않는다**
   (사용자 결정 — 메일 단위 표시 `wakes_main: false`, `MailWaker`·`run` 의 정지 판정은 main 상자의 깨우는 메일(`PostOffice.arrived` 의
-  `waking_only=True, words=False`)을 본다): main 메일함에 쌓였다가 사람의 다음 입력 런에 함께 배달되고, `run` 은 조용해지면 끝난다(회신은 agents.json 미러에
-  남는다). 살아 남은 상주에게 가는 그 회신도 런을 열지 않는다(받은편지함 항목 `opens_run: false` — 워커가 들고
-  있다가 그 상주가 다음에 일을 받는 런의 첫 흡수에 넣는다, `_release_held`; 미러에 남아 재시작에도 산다).
+  `waking_only=True, words=False`)을 본다): main 메일함에 쌓였다가 사람의 다음 입력 런에 함께 배달되고, `run` 은 조용해지면 끝난다(배달되지 않은 회신은
+  세션이 끝나면 버려진다, 5c-0). 살아 남은 상주에게 가는 그 회신도 런을 열지 않는다(받은편지함 항목 `opens_run: false` — 워커가 들고
+  있다가 그 상주가 다음에 일을 받는 런의 첫 흡수에 넣는다, `_release_held`; 재시작을 넘어 살지 않는다, 5c-0).
   Stop all agents·채널 ■/✕ 의 회신은 main·상주를 깨운다. API: `POST /api/agent/<key>/stop`, `POST /api/stop` 의 `scope`
   (`main`·`agents`·`all`), ✕ 는 종전 `POST /api/agent/<key>/kill`.
 - CLI: `/stop <key|name>`·`/stop all`(main 은 멈추지 않는다), Ctrl+C 한 번 = main 의 런, 2초 안에 두 번 = 전부(`ctrl_c.py`,

@@ -91,13 +91,12 @@ class TestQueuedFor:
         (m,) = reg.queued_for(f"agent:{key}")
         assert (m.src, m.re, m.expects_reply, m.wakes) == ("main", "r-9", False, True)
 
-    def test_items_that_do_not_wake_or_persist(self, held):
+    def test_items_that_do_not_wake(self, held):
         reg, key, _ = held
         reg.request(key, "quiet", expects_reply=False, kind="reply", opens_run=False)
         reg.request(key, "now only", expects_reply=False, kind="checkin", ledger="none")
         quiet, checkin = reg.queued_for(f"agent:{key}")
-        assert (quiet.wakes, quiet.persists) == (False, True)
-        assert (checkin.wakes, checkin.persists) == (True, False)
+        assert (quiet.wakes, checkin.wakes) == (False, True)
 
     def test_private_mailbox(self, tmp_path):
         reg = make_registry(tmp_path)

@@ -22,7 +22,6 @@ def as_dict(env) -> dict:
         "re": env.re,
         "closes_by": env.closes_by,
         "wakes": env.wakes,
-        "persists": env.persists,
     }
 
 

@@ -116,40 +116,6 @@ class TestHeldResidentAndTheRequestersWait:
 # ── 2. 재시작 뒤 에이전트→main 미배달 요청의 보낸 쪽 기록 ────────────────────
 
 
-class TestRestoredAgentToMainRequest:
-    def _sent_then_restored(self, tmp_path):
-        reg = make_registry(tmp_path)
-        key, _ = reg.spawn(name="asker")
-        assert wait_until(lambda: _state(reg, key) == "idle")
-        rid = reg.message_to_main(key, "which branch?", expects_reply=True)
-        before = reg.awaited_replies(f"agent:{key}")
-        reg.shutdown_all()
-        fresh = make_registry(tmp_path)
-        fresh.restore()
-        return fresh, key, rid, before
-
-    def test_the_undelivered_request_itself_survives(self, tmp_path):
-        """사전 조건 — 미배달 메일은 main 메일함에 그대로 돌아온다."""
-        fresh, _key, rid, before = self._sent_then_restored(tmp_path)
-        try:
-            assert [r["id"] for r in before] == [rid]
-            assert [(m.id, m.expects_reply) for m in fresh.queued_for("main")] == [
-                (rid, True)
-            ]
-        finally:
-            fresh.shutdown_all()
-
-    def test_the_sender_still_awaits_the_reply(self, tmp_path):
-        """`[v10.145.0 에서 고쳐짐 — 2단계 예외 D1]` 재시작이 main 메일함에 되넣은 요청의 보낸 쪽은 그 회신을
-        기다리는 것으로 선다 — 우편에서는 상자에 든 요청마다 줄이 있다. 옛 구현은 받은편지함 항목만 보낸 쪽 기록을
-        다시 적어 그 기다림이 사라졌다."""
-        fresh, key, rid, _before = self._sent_then_restored(tmp_path)
-        try:
-            assert [r["id"] for r in fresh.awaited_replies(f"agent:{key}")] == [rid]
-        finally:
-            fresh.shutdown_all()
-
-
 # ── 3. 세션 종료가 런을 제때 멈출 때의 요청 ──────────────────────────────────
 
 

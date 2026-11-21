@@ -53,6 +53,7 @@ from agent_cli.render import (
     render_turn_sep,
     render_usage_totals,
 )
+from agent_cli.session.records import interrupt_record
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.registry import strip_depth_gated
 from agent_cli.tools.result import ToolResult
@@ -618,14 +619,7 @@ class AgentLoop:
         both land here through ``stop_event`` → ``_should_continue``.
         """
         if self.ctx:
-            self.ctx.add(
-                {
-                    "role": "user",
-                    "tool": "interrupt",
-                    "success": False,
-                    "content": INTERRUPT_NOTICE,
-                }
-            )
+            self.ctx.add(interrupt_record(INTERRUPT_NOTICE))
         # Surface through the renderer (CLI console / web SSE), not a
         # direct console.print — the latter leaked the notice to the web
         # server's terminal. Mirror the run_skill path: only the

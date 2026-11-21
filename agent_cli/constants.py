@@ -82,20 +82,15 @@ OBS_SUCCESS = "STATUS: success\nRESULT:\n{result}"
 # ``agent_cli.dialects.all_system_user_prefixes()``.
 INTERRUPT_NOTICE = "⚡ User interrupted. Waiting for new instructions."
 
-
-#: Prefixed to the request a resident agent was working on when the session
-#: restarted (v9.24.5). The run died without a ``complete``; its history is
-#: intact (the ctx resumes), but nothing told the agent to go on — board
-#: session 1zfgc2's engine sat idle after a restart with its task half-done
-#: and ``floorCeil.js`` left broken. Checking state first matters: the last
-#: edit before the cut may have been applied or not.
-RESUMED_RUN_NOTICE = (
-    "[session restarted] Your previous run was interrupted by a session "
-    "restart before you called `complete`. The request you were working on is "
-    "quoted below; your history above shows how far you got. First check the "
-    "current state of anything you changed — the last edit before the restart "
-    "may be half-done. Then finish the request and reply as you normally "
-    "would.\n\nOriginal request:\n"
+#: 재시작이 main 과 되살린 상주의 컨텍스트 끝에 남기는 사실 기록 한 줄 (5c-0) — Stop 의 `INTERRUPT_NOTICE` 와 같은
+#: 레코드 모양(`session.records.interrupt_record`)이라 모델에게는 "[interrupt] ⚡ The session restarted. …" 로 보인다.
+#: 한가해서 꺼진 방도 읽으므로 잃은 것이 없어도 참이어야 한다. 무엇을 다시 맡길지는 말하지 않는다 — 모델이
+#: history 를 보고 정한다.
+RESTART_NOTICE = (
+    "⚡ The session restarted. Anything that was in progress before it was cut off "
+    "and is gone: runs, background jobs, monitors, waits, requests and replies not "
+    "yet delivered, and questions to the user. Nothing is owed for them and nothing "
+    "more will arrive."
 )
 
 

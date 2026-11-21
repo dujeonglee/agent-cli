@@ -21,7 +21,9 @@ v10.77.0: 번호는 :func:`next_id` 하나가 매긴다 — 번호 공간을 모
 
 from __future__ import annotations
 
+import re
 import threading
+from pathlib import Path
 
 USER = "u"
 MAIL = "n"
@@ -66,6 +68,29 @@ def observe(*item_ids) -> None:
     top = max((number_of(i) for i in item_ids), default=0)
     with _ALLOC_LOCK:
         _last = max(_last, top)
+
+
+#: 글 속의 id — 접두 하나·하이픈·숫자(앞이 낱말 글자가 아닐 때만: ``user-1`` 의 ``r-1`` 은 아니다)
+_ID_IN_TEXT = re.compile(r"\b[unrq]-(\d+)\b")
+
+#: 재시작 때 번호를 잇는 기록 글 — 모델 기록과 🤝 대화창
+RECORD_FILES = ("history.jsonl", "conversation.jsonl")
+
+
+def observe_records(folder: Path) -> None:
+    """``folder`` 아래의 기록 글(`RECORD_FILES`)에 적힌 모든 id 를 본다 — 재시작한 세션의 새 번호가 지난 생의 어떤
+    id 와도 겹치지 않게 (5c-0). 할당기를 저장하지 않으므로 기록이 곧 근거다: 모델이 본 요청·질문·회신 id 는 전부
+    history 나 🤝 창의 글에 있다. 사람이 쓴 글의 ``r-2026`` 같은 것도 번호를 올린다 — 건너뛸 뿐 겹치지 않는다.
+    읽지 못한 파일은 건너뛴다."""
+    top = 0
+    for name in RECORD_FILES:
+        for path in Path(folder).rglob(name):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            top = max([top, *(int(m) for m in _ID_IN_TEXT.findall(text))])
+    observe(f"u-{top}")
 
 
 def prefix_of(item_id) -> str:
