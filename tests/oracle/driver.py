@@ -1857,8 +1857,10 @@ def s34_parent_dies_with_its_run_agent(root: Path) -> dict:
 
     def kid_works(msgs):
         s = box["s"]
-        # 부모의 죽음과 그 정리 — 하니스가 이 run 을 멈춘 뒤에 돌아간다(도구 실행 직전 검사가 멈춤을 본다)
-        until(lambda: s.reg.get(kid_key()).stop_cause == "stopped", "run stopped")
+        # 부모의 죽음과 그 정리 — 하니스가 이 run 을 멈춘 뒤에 돌아간다. 루프의 도구 실행 직전 검사가 보는 것은
+        # stop_event 다. stop_run 은 stop_cause 를 세운 뒤 정리를 거쳐 stop_event 를 켜므로, 원인을 기다리면 그 틈에
+        # 셸이 시작될 수 있다(5c-0 에서 8/750).
+        until(lambda: s.reg.get(kid_key()).stop_event.is_set(), "run stopped")
         return call("shell", command="true")
 
     p = Provider(
