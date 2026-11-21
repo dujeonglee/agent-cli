@@ -250,6 +250,19 @@ def harness_work_running(owner: str) -> bool:
     return mons is not None and any(m.owner == owner for m in mons.list_all())
 
 
+def _short_wake_name(wake_id: str) -> str:
+    """`wake_items` 의 id 하나를 대기 줄의 짧은 이름으로 — ``job:1`` → "job #1", ``mon:m-2`` → "monitor m-2",
+    ``schedule`` → "a schedule". 에이전트 몫(``agent:…``)은 회신이 말하므로 빈 문자열."""
+    kind, _, rest = wake_id.partition(":")
+    if kind == "job":
+        return f"job #{rest}"
+    if kind == "mon":
+        return f"monitor {rest}"
+    if wake_id == _SCHEDULE_ID:
+        return "a schedule"
+    return ""
+
+
 def wake_source_ids(owner: str, *, agents) -> frozenset[str]:
     """중간 깨우기의 **대상 집합** (v10.79.0, docs/wait/DESIGN.md §6) — `wake_items` 의 id, 예약 없이. 예약만
     기다리는 `wait` 는 빈 집합이라 타이머를 걸지 않고, 예약과 작업을 함께 기다리면 걸되 알림에는
@@ -490,6 +503,19 @@ class Mailbox:
                 agents=self._registry,
                 with_schedule=schedule_wakes(self.owner),
             )
+        ]
+
+    def wake_names_besides_replies(self) -> list[str]:
+        """깨울 것 가운데 회신이 아닌 것의 짧은 이름 — 대기 줄(`renderer.wait_in_place` 의 ``others``, 5c-1 결정 C).
+        `wake_sources` 와 같은 것을 같은 순서로 본다. 회신(에이전트 몫)은 기다리는 회신(`awaited`)이 말하므로 뺀다."""
+        return [
+            short
+            for wid, _ in wake_items(
+                self.owner,
+                agents=self._registry,
+                with_schedule=schedule_wakes(self.owner),
+            )
+            if (short := _short_wake_name(wid))
         ]
 
     def run_started(self) -> None:

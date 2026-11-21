@@ -17,13 +17,15 @@ import pytest
 from agent_cli.context.manager import _OBS_COMPLETE_NUDGE, ContextManager
 from agent_cli.dialects import get as get_dialect
 from agent_cli.dialects.grammar import terminal_tools
+from agent_cli.hooks.runner import HookRunner
 from agent_cli.jobs import JobRegistry
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.render import get_renderer, set_renderer
 from agent_cli.session_slots import get_agent_registry, set_job_registry
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 from agent_cli.tools.virtual import WaitTool
-from agent_cli.wake import parked_debtors
+from agent_cli.wake import _short_wake_name, parked_debtors
 from tests.loop_ports import TEST_PORTS, make_ports, queue_inbox
 from tests.loopkit import make_loop
 from tests.mail_support import absorbed_mail, agent_wake_lines
@@ -55,6 +57,35 @@ def _loop(provider, *, ctx=None, query="Q", rid="u-1"):
         dialect=get_dialect("json_fc"),
         ctx=ctx,
     )
+
+
+def _recording_hooks(tmp_path):
+    """`PreWait` 를 받으면 턴을 한 줄 적는 Python 훅 하나 — ``(러너, 기록 파일)``."""
+    d = tmp_path / "hooks"
+    d.mkdir()
+    log = tmp_path / "hook.log"
+    (d / "00_rec.py").write_text(
+        'EVENTS = ["PreWait"]\n'
+        "def pre_wait(ctx):\n"
+        f"    with open({str(log)!r}, 'a') as f:\n"
+        "        f.write(f'{ctx.event} {ctx.turn}\\n')\n",
+        encoding="utf-8",
+    )
+    return HookRunner(hook_dirs=[d]), log
+
+
+class _WaitLineSpy:
+    """렌더러 대리 — `wait_in_place` 의 인자만 적고 나머지는 진짜 렌더러에 넘긴다."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.calls: list = []
+
+    def wait_in_place(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
 
 
 def _provider(*replies: dict):
@@ -122,6 +153,20 @@ class TestAdvertisedOnlyWhereAWakeExists:
         assert "wait" in self._tools(make_ports(inbox=list))
 
 
+@pytest.mark.parametrize(
+    ("wake_id", "name"),
+    [
+        ("job:1", "job #1"),
+        ("mon:mon-504d33", "monitor mon-504d33"),
+        ("schedule", "a schedule"),
+        ("agent:agt-3", ""),  # 회신은 기다리는 회신이 말한다
+    ],
+)
+def test_wait_line_short_names(wake_id, name):
+    """대기 줄의 짧은 이름(5c-1 결정 C) — `wake_items` 의 id 에서."""
+    assert _short_wake_name(wake_id) == name
+
+
 class TestWaitStaysInTheRun:
     """`wait` 는 런을 끝내지 않는다(5c-1) — 받아들여지면 그 자리에서 깨울 것을 기다리고, 깨면 같은 런이 같은 장부로
     잇는다(종전: 런을 `waiting` 결과로 끝내고 열린 요청을 다음 런으로 넘겼다 — `park_requests`)."""
@@ -153,8 +198,13 @@ class TestWaitStaysInTheRun:
 
         p = MagicMock()
         p.call.side_effect = _answer
+        runner, hook_log = _recording_hooks(tmp_path)
+        spy = _WaitLineSpy(get_renderer())
+        set_renderer(spy)
         loop = make_loop(
-            ports=make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg),
+            ports=make_ports(
+                inbox=queue_inbox(lambda: None), agent_registry=reg, hook_runner=runner
+            ),
             query="Q",
             query_request_id="u-1",
             provider=p,
@@ -188,7 +238,15 @@ class TestWaitStaysInTheRun:
             obs = [r for r in recs if r.get("tool") == "wait"]
             assert obs and obs[0]["success"] is True and "job #1" in obs[0]["content"]
             assert "next run" not in obs[0]["content"]  # 넘길 다음 런이 없다
+            # 받아들여진 `wait` 가 기다리기 직전 `PreWait` 한 번(5c-1 결정 K) — 그 턴의 값으로
+            assert hook_log.read_text(encoding="utf-8") == "PreWait 1\n"
+            # 대기 줄(결정 C): 회신이 없어도 그리고, 작업은 짧은 이름으로 — 깰 때 내린다
+            assert spy.calls == [
+                ((True, []), {"others": ["job #1"]}),
+                ((False, []), {}),
+            ]
         finally:
+            set_renderer(spy._inner)
             jobs.stop_all()
             set_job_registry(None)
             set_agent_registry(None)
@@ -196,14 +254,24 @@ class TestWaitStaysInTheRun:
 
     def test_nothing_pending_is_refused_and_the_run_goes_on(self, tmp_path):
         set_job_registry(None)
-        loop = _loop(
-            _provider(
+        runner, hook_log = _recording_hooks(tmp_path)
+        loop = make_loop(
+            ports=make_ports(inbox=queue_inbox(lambda: None), hook_runner=runner),
+            query="Q",
+            query_request_id="u-1",
+            provider=_provider(
                 {"action": "wait"},
                 {"action": "complete", "result": "ok", "answers": ["u-1"]},
-            )
+            ),
+            capabilities=ModelCapabilities(
+                context_window=32768, max_output_tokens=4096, supports_thinking=False
+            ),
+            model="m",
+            dialect=get_dialect("json_fc"),
         )
         res = loop.run()
         assert res.success and res.output == "ok"
+        assert not hook_log.exists()  # 거절된 `wait` 에서는 `PreWait` 가 불리지 않는다
         obs = [
             m["content"]
             for m in loop.messages

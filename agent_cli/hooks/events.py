@@ -9,6 +9,9 @@ PRE_LLM_CALL = "PreLLMCall"
 POST_LLM_CALL = "PostLLMCall"
 ON_TURN_END = "OnTurnEnd"
 
+# Wait lifecycle — 받아들여진 `wait` 가 제자리에서 기다리기 직전 (5c-1). 막을 수 없다(엔진이 결과를 읽지 않는다).
+PRE_WAIT = "PreWait"
+
 # Tool lifecycle
 PRE_TOOL_USE = "PreToolUse"
 POST_TOOL_USE = "PostToolUse"
@@ -28,6 +31,7 @@ ALL_EVENTS = frozenset(
         PRE_LLM_CALL,
         POST_LLM_CALL,
         ON_TURN_END,
+        PRE_WAIT,
         PRE_TOOL_USE,
         POST_TOOL_USE,
         ON_AGENT_START,
@@ -44,6 +48,7 @@ EVENT_TO_FUNC = {
     PRE_LLM_CALL: "pre_llm_call",
     POST_LLM_CALL: "post_llm_call",
     ON_TURN_END: "on_turn_end",
+    PRE_WAIT: "pre_wait",
     PRE_TOOL_USE: "pre_tool_use",
     POST_TOOL_USE: "post_tool_use",
     ON_AGENT_START: "on_agent_start",

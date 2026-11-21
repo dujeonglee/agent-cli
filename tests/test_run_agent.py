@@ -452,6 +452,25 @@ class TestCliAgentLines:
         )
         assert len([ln for ln in lines if "⏳" in ln]) == 1  # 깰 때는 찍지 않는다
 
+    def test_wait_line_names_jobs_and_monitors(self):
+        """5c-1 결정 C: 작업·모니터·예약만 기다려도 그린다 — 회신 다음에 짧은 이름. 깨울 것이 없으면 찍지 않는다."""
+        r, out = self._r()
+        r.wait_in_place(True, [], others=["job #1"])
+        r.wait_in_place(
+            True,
+            [{"id": "r-21", "from": "agent:agt-3", "text": "t"}],
+            others=["job #1", "monitor m-2"],
+        )
+        r.wait_in_place(True, [])
+        lines = [ln.strip() for ln in out.getvalue().splitlines() if "⏳" in ln]
+        assert lines == [
+            "⏳ waiting for job #1 — type to steer or give new work, Enter to send",
+            (
+                "⏳ waiting for 1 reply (r-21), job #1, monitor m-2 — type to steer or "
+                "give new work, Enter to send"
+            ),
+        ]
+
     def test_reply_notice_line(self, monkeypatch):
         from agent_cli.main import _agent_mail_notice
 
@@ -510,6 +529,20 @@ class TestWebRunScope:
         assert w.hub.sticky_payload("waiting_in_place") == {
             "waiting": True,
             "awaited": [{"id": "r-21", "from": "agt-3"}],
+        }
+        w.wait_in_place(False, [])
+        assert w.hub.sticky_payload("waiting_in_place") is None
+
+    def test_wait_in_place_sticky_carries_other_names(self):
+        """5c-1 결정 C: 작업만 기다려도 스티키가 선다 — ``others`` 는 있을 때만 실린다."""
+        from agent_cli.render.web import WebRenderer
+
+        w = WebRenderer()
+        w.wait_in_place(True, [], others=["job #1"])
+        assert w.hub.sticky_payload("waiting_in_place") == {
+            "waiting": True,
+            "awaited": [],
+            "others": ["job #1"],
         }
         w.wait_in_place(False, [])
         assert w.hub.sticky_payload("waiting_in_place") is None

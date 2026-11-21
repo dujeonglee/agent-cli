@@ -200,7 +200,11 @@
       }
      ]
     ],
-    {}
+    {
+     "others": [
+      "a schedule"
+     ]
+    }
    ],
    [
     "wait_in_place",
@@ -292,7 +296,11 @@
       }
      ]
     ],
-    {}
+    {
+     "others": [
+      "a schedule"
+     ]
+    }
    ],
    [
     "wait_in_place",

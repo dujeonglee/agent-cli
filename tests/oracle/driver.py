@@ -2423,7 +2423,8 @@ def s24_commands_while_waiting(root: Path) -> dict:
         facts["job"] = job.id
         s.say("MAIN wait for the job", nickname="dj")
         until(
-            lambda: s.main_input.post.is_waiting("main") and len(p.calls["MAIN"]) == 5,
+            # 대기 줄 뒤 — 그 줄의 others(작업의 짧은 이름)는 표시 뒤 `_wait_in_place` 가 읽는다: 먼저 죽이면 줄이 갈린다
+            lambda: _waits(s, "main") and len(p.calls["MAIN"]) == 5,
             "main waits on the job",
         )
         s.stores.jobs.kill(job)  # 깨울 것이 사라진다 — main 이 깨어 같은 런을 닫는다

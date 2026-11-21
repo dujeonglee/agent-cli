@@ -13,10 +13,16 @@ import json
 import re
 import threading
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+from agent_cli.loop.ledger import NAG_BUDGET
 from agent_cli.render import get_renderer, set_renderer
+from agent_cli.runtime import build_snapshot_store
+from agent_cli.snapshot import get_snapshot
+from tests.loop_ports import TEST_PORTS
+from tests.loopkit import make_loop
 from tests.oracle.driver import (
     Provider,
     Session,
@@ -409,10 +415,8 @@ def test_the_same_call_on_each_wake_is_not_a_loop(home):
 
 def test_the_point_before_the_wait_can_be_restored(tmp_path, monkeypatch):
     """main 이 a.txt 를 쓰고(v1), 작업이 그것을 바꾸는 동안 기다리고, 깨어 b.txt 를 쓰고 끝낸다. 되돌림 목록에 "a.txt =
-    v1" 지점이 있어야 한다 — 내가 고친 뒤, 기다리는 동안 남이 바꾸기 전."""
-    from agent_cli.runtime import build_snapshot_store
-    from agent_cli.snapshot import get_snapshot
-
+    v1" 지점이 있어야 한다 — 내가 고친 뒤, 기다리는 동안 남이 바꾸기 전. `[5c-1 ④]` 그 지점은 `PreWait` 의 "before wait
+    (turn 3)" 이다(종전엔 `wait` 로 끝난 런의 "session end (turn 3)")."""
     ws, home = tmp_path / "ws", tmp_path / "home"
     ws.mkdir()
     home.mkdir()
@@ -436,7 +440,12 @@ def test_the_point_before_the_wait_can_be_restored(tmp_path, monkeypatch):
     s.say("MAIN edit then wait for the job", nickname="dj")
     pump = s.pump_in_thread()
     try:
-        until(lambda: is_waiting(s) and len(p.calls["MAIN"]) == 3, "main waits")
+        # 제자리 대기의 대기 줄(`wait_in_place(True)`) 뒤 — 그것은 `PreWait` 다음이다. 기다림 표시(`is_waiting`)는 수락
+        # 판정이 먼저 세우므로 그것으로 잡으면 작업이 체크포인트보다 먼저 쓸 수 있다
+        until(
+            lambda: s.recorder.main_waiting.is_set() and len(p.calls["MAIN"]) == 3,
+            "main waits",
+        )
         # 기다리는 동안 작업이 a.txt 를 바꾼다
         (ws / "go").write_text("", encoding="utf-8")
         until(lambda: len(p.calls["MAIN"]) == 5 and s.main_idle(), "main done")
@@ -445,9 +454,8 @@ def test_the_point_before_the_wait_can_be_restored(tmp_path, monkeypatch):
             label: store._git("show", f"{c}:a.txt").stdout
             for c, label in store.log(limit=30)
         }
-        # [5c-1 에서 바뀜] `wait` 가 런을 끝내지 않으니 런 끝 체크포인트가 그 자리에 없다 — "a.txt = v1" 지점이 사라졌다
-        # (r9). 다음 커밋의 `PreWait` 체크포인트가 되살린다
-        assert "v1 by main\n" not in points.values()
+        # `wait` 는 런을 끝내지 않아 런 끝 체크포인트가 그 자리에 없다 — 받아들여진 `wait` 직전의 `PreWait` 가 찍는다
+        assert points["before wait (turn 3)"] == "v1 by main\n"
     finally:
         s.close()
         pump.join(10)
@@ -501,12 +509,6 @@ def test_the_turn_limit_counts_each_segment_of_an_in_place_wait(home):
 
 
 def test_begin_segment_resets_what_counts_per_segment():
-    from unittest.mock import MagicMock
-
-    from agent_cli.loop.ledger import NAG_BUDGET
-    from agent_cli.render import set_renderer
-    from tests.loop_ports import TEST_PORTS
-    from tests.loopkit import make_loop
 
     loop = make_loop(query="Q", provider=MagicMock(), ports=TEST_PORTS)
     d = loop._dispatch

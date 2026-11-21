@@ -280,6 +280,21 @@ class ToolBridge:
             self._record_tool_history("edit_file", args, result)
         return result, parts
 
+    def fire_hook(self, event: str, **kwargs):
+        """훅 사건 하나를 쏜다 — 러너가 없으면 None, 있으면 HookContext. 엔진(`AgentLoop._fire_hook`)과
+        디스패처(`PreWait`)가 이 한 곳을 지난다: 훅이 받는 값(대화·세션 디렉터리·턴·MCP)이 여기서만 정해진다."""
+        runner = self.cfg.kind.ports.hook_runner
+        if not runner:
+            return None
+        return runner.fire(
+            event,
+            messages=self.state.messages,
+            session_dir=self.ctx.session_dir if self.ctx else None,
+            turn=self.state.turn,
+            mcp_manager=self.cfg.kind.ports.mcp_manager,
+            **kwargs,
+        )
+
     # ── 1. PreToolUse hooks ────────────────────────────────────────
     def _run_pre_hooks(
         self, tool_name: str, tool_input, input_dict: dict

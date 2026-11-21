@@ -16,6 +16,7 @@ import time
 from agent_cli.dialects import try_foreign_parse
 from agent_cli.dialects.base import ParsedTurn
 from agent_cli.dialects.recovery.json import describe_json_error
+from agent_cli.hooks.events import PRE_WAIT
 from agent_cli.loop.kind import WAIT_NOTHING_PENDING, Caller
 
 # Max shrink-and-retry attempts per turn when the server rejects the
@@ -1217,6 +1218,9 @@ class TurnDispatcher:
             success=True,
             turn=self.state.turn,
         )
+        # 받아들여진 `wait` 에서만 — 기다리기 직전(내장 스냅샷 훅이 "before wait (turn N)" 을 찍는다, 5c-1 결정 K).
+        # 결과를 읽지 않는다: 훅이 `wait` 를 막거나 바꿀 수 없다
+        self.tools.fire_hook(PRE_WAIT)
         return self._wait_in_place(turn, mailbox)
 
     def _wait_in_place(self, turn, mailbox):
@@ -1231,7 +1235,11 @@ class TurnDispatcher:
 
         renderer = get_renderer()
         awaited = mailbox.awaited()
-        if awaited:
+        # 대기 줄(결정 C): 회신만이면 종전 그대로, 작업·모니터·예약은 짧은 이름으로 덧붙인다(비면 넘기지 않는다)
+        others = mailbox.wake_names_besides_replies()
+        if others:
+            renderer.wait_in_place(True, awaited, others=others)
+        else:
             renderer.wait_in_place(True, awaited)
         mailbox.arm_checkin()
         try:
@@ -1246,8 +1254,7 @@ class TurnDispatcher:
         finally:
             mailbox.run_started()  # 체크인 해제 — 다음 wait 가 다시 건다
             mailbox.clear_waiting()
-            if awaited:
-                renderer.wait_in_place(False, [])
+            renderer.wait_in_place(False, [])
         if why == "input":
             # `wait_input` 이 사람의 말을 보았다 — 그 사이 취소돼 상자에 없어도 사람이 쓴 것은 사실이다
             kinds = mailbox.arrivals() or (USER,)

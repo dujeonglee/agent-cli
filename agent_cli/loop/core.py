@@ -470,17 +470,8 @@ class AgentLoop:
         self._llm.overflow_retries = v
 
     def _fire_hook(self, event: str, **kwargs):
-        """Fire a hook event if runner is available. Returns HookContext or None."""
-        if not self.hook_runner:
-            return None
-        return self.hook_runner.fire(
-            event,
-            messages=self.messages,
-            session_dir=self.ctx.session_dir if self.ctx else None,
-            turn=self.turn,
-            mcp_manager=self.mcp_manager,
-            **kwargs,
-        )
+        """Fire a hook event if runner is available. Returns HookContext or None (`ToolBridge.fire_hook`)."""
+        return self._tools.fire_hook(event, **kwargs)
 
     def _rebuild_system_prompt(self) -> None:
         """SystemPromptSvc.rebuild 위임 (기존 호출면 유지)."""

@@ -484,6 +484,26 @@
     {}
    ],
    [
+    "wait_in_place",
+    [
+     true,
+     []
+    ],
+    {
+     "others": [
+      "job #1"
+     ]
+    }
+   ],
+   [
+    "wait_in_place",
+    [
+     false,
+     []
+    ],
+    {}
+   ],
+   [
     "open_items",
     [
      {
