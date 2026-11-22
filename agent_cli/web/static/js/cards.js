@@ -147,8 +147,9 @@ function sendPeerChip(tool, inputStr) {
   return label ? el("span", ["peer"], label) : null;
 }
 /** 주소 → 사람이 읽을 이름. `author` 네임스페이스가 이미 셋을 구분한다
- * (`main` / `user:<닉>` / `agent:<key>` 또는 bare key). 렌더 시점에
- * 로스터로 해소한다 — replay 에서 agent_msg 가 roster 보다 먼저 와도 된다. */
+ * (`main` / `user:<닉>` / `agent:<key>` 또는 bare key). 그릴 때 한 번
+ * 로스터로 해소한다 — 그래서 서버는 로스터를 이 줄들보다 먼저 보낸다(라이브도,
+ * 다시 접속한 스냅샷도 — `WebRenderer.agent_roster`). */
 export function peerLabel(who) {
   var w = String(who || "");
   if (!w || w === "main") return "main";

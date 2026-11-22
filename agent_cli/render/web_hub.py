@@ -111,8 +111,9 @@ class EventHub:
         # snapshot — so a late / refreshed / second-browser client sees the
         # last value (plain SSE only reaches clients connected at emit time).
         # ``set_sticky`` does both; ``register`` walks this dict to rebuild the
-        # snapshot. ``position``: ``ready`` goes FIRST (the top-bar must
-        # populate before everything), the rest append. Live only — the buffer
+        # snapshot. ``position``: ``ready`` (the top-bar must populate before
+        # everything) and ``agent_roster`` (the names the buffered lines are
+        # drawn with) go BEFORE the buffer, the rest append. Live only — the buffer
         # keeps history, the slot keeps "latest". NOT sticky: viewers
         # (connection-set-derived) / prompt snapshots (per-scope, on-demand).
         # name → {"event", "payload", "position"}.
@@ -225,7 +226,7 @@ class EventHub:
                 snapshot.insert(0, ("transcript_truncated", {"omitted": omitted}))
             # Replay sticky state into the new connection's snapshot so a
             # late/refreshed/second-browser client sees the last value of each.
-            # ``prepend`` slots (ready → top-bar) go ahead of the buffer;
+            # ``prepend`` slots (ready → top-bar, agent_roster → names) go ahead of the buffer;
             # ``append`` slots (worker_state/token_usage/queue) after.
             for slot in self._sticky.values():
                 entry = (slot["event"], slot["payload"])

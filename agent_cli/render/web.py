@@ -727,9 +727,14 @@ class WebRenderer(Renderer):
         self._emit("scope_end", payload, persistent=True)
 
     def agent_roster(self, roster: list) -> None:
-        """P4: teammate 목록 sticky — 라이브 브로드캐스트 + 재접속 snapshot
-        복원 (다른 sticky 슬롯과 동일 기계)."""
-        self.set_sticky("agent_roster", "agent_roster", {"roster": roster})
+        """P4: teammate 목록 sticky — 라이브 브로드캐스트 + 재접속 snapshot 복원.
+
+        스냅샷에서는 버퍼의 줄보다 **앞**에 선다(``prepend``): 프런트는 에이전트의 이름표(창 줄의 보낸 이·받는 이,
+        도구 줄의 상대, 점프 칩)를 그 줄을 그릴 때 로스터에서 푼다 — 이름을 푸는 재료는 그것으로 그릴 줄보다 먼저
+        와야 한다. 라이브는 본디 그 순서다(에이전트가 뜨면 로스터가 먼저 나간다)."""
+        self.set_sticky(
+            "agent_roster", "agent_roster", {"roster": roster}, position="prepend"
+        )
 
     def broadcast_knob(self, state: dict) -> None:
         """노브 상태 한 장(`knobs.web_state`)을 sticky ``knob:<name>`` 으로 — 칩
@@ -784,10 +789,9 @@ class WebRenderer(Renderer):
 
         ``profile``/``instance_name`` 은 **의도적으로 버린다** (v9.9.0). 발신자가 실어
         보내지만 그건 로스터를 볼 수 없는 CLI 를 위한 것이고, 프런트는 이름을
-        **렌더 시점에 로스터에서 해소**한다(`ovAgentDisplayName`) — replay 때
-        `agent_msg` 가 `roster` 보다 먼저 와도, 나중에 rename 이 생겨도 한
-        군데만 보면 되기 때문. 여기서 payload 에 실으면 웹에 이름의 출처가
-        둘이 된다."""
+        **렌더 시점에 로스터에서 해소**한다(`ovAgentDisplayName`) — 그래서 로스터는
+        스냅샷에서 이 줄들보다 앞에 온다(`agent_roster`). 여기서 payload 에 실으면
+        웹에 이름의 출처가 둘이 된다."""
         data = {
             "key": key,
             "direction": direction,
