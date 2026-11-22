@@ -18,6 +18,9 @@ import mimetypes
 import os
 import re
 import socket
+import threading
+import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
@@ -32,9 +35,12 @@ from agent_cli.net_errors import one_line as _one_line
 from agent_cli.net_errors import tls_detail as _tls_detail
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
+from agent_cli.tools.shell import STOP_POLL_S
 
 # ── Configuration ──────────────────────────────
 FETCH_TIMEOUT = 15
+#: 런의 정지로 버린 요청의 결과 — 주체 없음: 도구는 누가 멈췄는지 모른다(전경 `shell`·MCP 호출의 문장과 같은 틀)
+RUN_STOPPED = "This run was stopped, so the request was given up after {ran}s."
 USER_AGENT = "agent-cli/2.0 (fetch tool)"
 #: 바이너리 응답의 자동 저장 자리 (v10.58.0) — 시스템 프롬프트가 내려받기 자리로
 #: 안내하는 ``.agent-cli/tmp/`` 아래.
@@ -595,18 +601,44 @@ def _is_gitiles_blob(resp) -> bool:
     return (resp.headers.get("x-gitiles-object-type") or "") == "blob"
 
 
-def _request(url: str):
-    """GET ``url`` — (response, None) 또는 (None, 세 줄 실패 문구)."""
+def _get_or_stop(url: str, stopped: Callable[[], bool] | None):
+    """GET 을 옆 스레드에서 돌리고 이 런의 정지(``stopped`` — `RunContext.stopped`)를 `shell.STOP_POLL_S` 마다 본다
+    (전경 `shell`·MCP 호출과 같은 간격). 응답을 돌려주거나 요청의 예외를 그대로 던지고, 정지가 서면 요청을 버리고
+    None — 버린 요청은 제 시한(`FETCH_TIMEOUT`)에 스스로 끝난다."""
+    box: dict = {}
+
+    def get() -> None:
+        try:
+            box["resp"] = requests.get(
+                url,
+                timeout=FETCH_TIMEOUT,
+                headers={"User-Agent": USER_AGENT},
+                allow_redirects=True,
+            )
+        except requests.exceptions.RequestException as e:
+            box["exc"] = e
+
+    worker = threading.Thread(target=get, daemon=True, name="fetch")
+    worker.start()
+    while worker.is_alive():
+        worker.join(STOP_POLL_S)
+        if worker.is_alive() and stopped is not None and stopped():
+            return None
+    if "exc" in box:
+        raise box["exc"]
+    return box["resp"]
+
+
+def _request(url: str, stopped: Callable[[], bool] | None):
+    """GET ``url`` — (response, None) 또는 (None, 실패 문구: 세 줄 틀, 런의 정지로 버렸으면 그 사실 한 줄)."""
+    started = time.monotonic()
     try:
-        resp = requests.get(
-            url,
-            timeout=FETCH_TIMEOUT,
-            headers={"User-Agent": USER_AGENT},
-            allow_redirects=True,
-        )
+        resp = _get_or_stop(url, stopped)
     except requests.exceptions.RequestException as e:
         cause, facts = classify_exception(e)
         return None, failure_text(cause, url, **facts)
+    if resp is None:
+        return None, RUN_STOPPED.format(ran=int(time.monotonic() - started))
     status = classify_status(resp.status_code, resp.headers)
     if status:
         return None, failure_text(status[0], url, **status[1])
@@ -680,12 +712,14 @@ def _save(data: bytes, dest: Path, url: str, content_type: str, *, asked: bool):
     return note, None
 
 
-def _download(url: str, dest: str) -> tuple[str, str | None]:
+def _download(
+    url: str, dest: str, stopped: Callable[[], bool] | None
+) -> tuple[str, str | None]:
     """``download_to`` — 응답 바이트를 변환 없이 ``dest`` 에 (v10.58.0).
 
     gitiles blob 은 전송용 base64 를 풀어 파일 원문을 쓴다. 확인 페이지·JS
     껍데기는 성공 코드로 와도 저장하지 않는다 — 내용이 아니다."""
-    resp, err = _request(url)
+    resp, err = _request(url, stopped)
     if err:
         return "", err
     content_type = resp.headers.get("content-type", "")
@@ -708,13 +742,15 @@ def _download(url: str, dest: str) -> tuple[str, str | None]:
     return _save(data, Path(dest), url, content_type, asked=True)
 
 
-def _fetch_single(url: str) -> tuple[str, str | None]:
+def _fetch_single(
+    url: str, stopped: Callable[[], bool] | None
+) -> tuple[str, str | None]:
     """Fetch a single URL.
 
     Returns (markdown_content, error_or_none). Binary content is downloaded and
     the content is the note saying where (v10.58.0).
     """
-    resp, err = _request(url)
+    resp, err = _request(url, stopped)
     if err:
         return "", err
 
@@ -766,7 +802,7 @@ def _fetch_single(url: str) -> tuple[str, str | None]:
     return markdown, None
 
 
-def tool_fetch(args: dict) -> ToolResult:
+def tool_fetch(args: dict, *, stopped: Callable[[], bool] | None = None) -> ToolResult:
     """Fetch a web page and return content as markdown.
 
     Args:
@@ -790,9 +826,9 @@ def tool_fetch(args: dict) -> ToolResult:
         denial = _confine.guard([download_to], "fetch")
         if denial:
             return ToolResult(False, error=denial)
-        content, error = _download(url, download_to)
+        content, error = _download(url, download_to, stopped)
     else:
-        content, error = _fetch_single(url)
+        content, error = _fetch_single(url, stopped)
     if error:
         # 실패 문구는 `_request`·`_disguised_block` 이 이미 세 줄 틀로 완성한다
         # (v10.118.0 — 종전의 `HTTP (\d+): ` 재파싱·`_HTTP_FACTS` 덧붙이기 삭제).
@@ -865,4 +901,4 @@ class FetchTool(Tool):
         return [p] if isinstance(p, str) and p else []
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        return tool_fetch(args)
+        return tool_fetch(args, stopped=getattr(ctx, "stopped", None))
