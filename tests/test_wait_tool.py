@@ -17,12 +17,18 @@ import pytest
 from agent_cli.context.manager import _OBS_COMPLETE_NUDGE, ContextManager
 from agent_cli.dialects import get as get_dialect
 from agent_cli.dialects.grammar import terminal_tools
+from agent_cli.hooks.events import PRE_WAIT
 from agent_cli.hooks.runner import HookRunner
 from agent_cli.jobs import JobRegistry
+from agent_cli.loop import dispatch as dispatch_mod
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.render import get_renderer, set_renderer
-from agent_cli.session_slots import get_agent_registry, set_job_registry
+from agent_cli.session_slots import (
+    get_agent_registry,
+    set_agent_registry,
+    set_job_registry,
+)
 from agent_cli.tools.registry import _BUILTIN_ORDER, TOOLS
 from agent_cli.tools.virtual import WaitTool
 from agent_cli.wake import Mailbox, WaitingOn, _short_wake_name, parked_debtors
@@ -194,6 +200,89 @@ class TestAdvertisedOnlyWhereAWakeExists:
 def test_wait_line_short_names(wake_id, name):
     """대기 줄의 짧은 이름(5c-1 결정 C) — `wake_items` 의 id 에서."""
     assert _short_wake_name(wake_id) == name
+
+
+class _Boom(RuntimeError):
+    pass
+
+
+class _RaisingLineSpy(_WaitLineSpy):
+    """대기 줄을 그릴 때(``True``) 터지는 렌더러 — 지울 때(``False``)는 적기만 한다."""
+
+    def wait_in_place(self, *args, **kwargs):
+        super().wait_in_place(*args, **kwargs)
+        if args and args[0] is True:
+            raise _Boom("drawing the wait line failed")
+
+
+@pytest.mark.parametrize(
+    "where", ["observation", "pre_wait", "wait_line", "arm_checkin"]
+)
+def test_an_error_after_the_accept_leaves_no_mark_timer_or_line(
+    tmp_path, monkeypatch, where
+):
+    """받아들인 뒤 기다리기 전 어디서 예외가 나도(수락 문장 기록·`PreWait`·대기 줄 그리기·`arm_checkin`) 기다림 표시·
+    체크인 타이머·대기 줄이 남지 않는다 — `_op_wait` 의 ``finally`` 하나가 내린다(5e1, 오라클 s42). 예외는 런 밖으로
+    나간다(엔진은 삼키지 않는다)."""
+    from tests.test_agents_live import make_registry
+
+    reg = make_registry(tmp_path / "reg")
+    set_agent_registry(reg)
+    jobs = JobRegistry(tmp_path / "jobs")
+    jobs.deliver = reg.deliver
+    set_job_registry(jobs)
+    spy = (_RaisingLineSpy if where == "wait_line" else _WaitLineSpy)(get_renderer())
+    set_renderer(spy)
+    loop = make_loop(
+        ports=make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg),
+        query="Q",
+        query_request_id="u-1",
+        provider=_provider({"action": "wait"}),
+        capabilities=ModelCapabilities(
+            context_window=32768, max_output_tokens=4096, supports_thinking=False
+        ),
+        model="m",
+        dialect=get_dialect("json_fc"),
+    )
+    if where == "observation":
+        real = dispatch_mod._append_observation
+
+        def append(messages, ctx, dialect, record, obs, **kw):
+            if str(obs).startswith("Observation: waiting"):
+                raise _Boom("recording the accept failed")
+            return real(messages, ctx, dialect, record, obs, **kw)
+
+        monkeypatch.setattr(dispatch_mod, "_append_observation", append)
+    elif where == "pre_wait":
+        real_fire = loop._dispatch.tools.fire_hook
+
+        def fire(event, **kw):
+            if event == PRE_WAIT:
+                raise _Boom("the PreWait hook failed")
+            return real_fire(event, **kw)
+
+        monkeypatch.setattr(loop._dispatch.tools, "fire_hook", fire)
+    elif where == "arm_checkin":
+
+        def arm(owner, ids):
+            raise _Boom("arming the check-in failed")
+
+        monkeypatch.setattr(reg, "arm_checkin", arm)
+    try:
+        jobs.start("sleep 30", owner="main")
+        with pytest.raises(_Boom):
+            loop.run()
+        assert reg._post.is_waiting("main") is False  # 표시가 내려갔다
+        assert "main" not in reg._checkin_armed  # 타이머가 없다
+        drawn = [c for c in spy.calls if c[0][0] is True]
+        assert spy.calls[-1] == ((False, []), {})  # 대기 줄을 지웠다(그렸든 아니든)
+        assert len(drawn) == (1 if where in ("wait_line", "arm_checkin") else 0)
+    finally:
+        set_renderer(spy._inner)
+        jobs.stop_all()
+        set_job_registry(None)
+        set_agent_registry(None)
+        reg.shutdown_all()
 
 
 class TestWaitStaysInTheRun:

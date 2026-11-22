@@ -3031,7 +3031,11 @@ def s42_run_crashes_while_waiting(root: Path) -> dict:
     `message` 를 보내고 `wait` → 받아들여진 뒤 aa 의 대기 줄(`wait_in_place(True)`)에서 `RuntimeError`
     (`Recorder.raise_in`). 고정하는 것: ① aa 가 빚진 main 에게 가는 실패 회신의 글 ② aa 가 기다리던 bb 의 회신 — bb 가
     나중에 갚으면 aa 는 무엇을 읽는가 ③ aa 의 기다림 표시·체크인 타이머가 남는가 ④ aa 가 살아 다음 요청을 받는가. 순서:
-    bb 는 aa 의 런이 끝난(한가한) 뒤에 갚고, main 은 aa 의 실패 회신을 읽은 뒤 aa 에게 다시 묻는다."""
+    bb 는 aa 의 런이 끝난(한가한) 뒤에 갚고, main 은 aa 의 실패 회신을 읽은 뒤 aa 에게 다시 묻는다.
+
+    `[5e1 에서 바뀜]` ③ 받아들인 뒤의 예외에도 기다림 표시가 내려간다(`_op_wait` 의 ``finally`` 하나) — main 이 aa 에게
+    다시 묻고 `wait` 하면 받아들여져 제자리에서 aa 의 회신을 읽는다. 종전엔 표시가 남아 그 `wait` 가 서로 기다림으로
+    거짓 거절됐다("… owes you a reply but is itself waiting …")."""
     box: dict = {}
     facts: dict = {}
     bb_go = threading.Event()
@@ -3070,13 +3074,8 @@ def s42_run_crashes_while_waiting(root: Path) -> dict:
                     call("message", to="aa", text="TASK-K3 are you there")
                 ),
                 call("wait"),
-                # 그 `wait` 의 결과를 본 뒤(여섯째 호출) — aa 의 회신이 온 다음에 끝낸다
-                lambda m: (
-                    until(
-                        lambda: not box["s"].reg.awaited_replies("main"), "aa answered"
-                    ),
-                    complete_all("main read it")(m),
-                )[1],
+                # 받아들여진다(5e1 — aa 의 표시가 내려갔다) — 위의 `wait` 가 제자리에서 aa 의 회신을 기다린다
+                complete_all("main read it"),
             ]
             + [complete_all("main more")] * 10,
             "TASK-K1": [
@@ -3089,19 +3088,16 @@ def s42_run_crashes_while_waiting(root: Path) -> dict:
                 aa_waits,
                 # bb 의 회신이 연 aa 의 새 런 — 읽고 끝낸다(갚을 것이 없다: main 의 과제는 실패 회신으로 닫혔다)
                 call("complete", result="aa read K2", answers=[]),
-                # main 이 다시 물은 런 — 살아 있다: main 이 `wait` 의 결과를 본 뒤(여섯째 호출 시작) 갚는다. 같은 ctx 라
-                # 대본은 TASK-K1 이다
-                _after_main_calls(
-                    box,
-                    6,
-                    lambda m: call("reply", id=owed_id(m), text="yes, still here"),
-                ),
-                # aa 의 회신이 연 main 의 메일 런(일곱째 호출)이 시작된 뒤 — 그 꼬리가 aa 를 [busy] 로 읽게
-                _after_main_calls(
-                    box,
-                    7,
-                    lambda m: call("complete", result="answered main", answers=[]),
-                ),
+                # main 이 다시 물은 런 — 살아 있다: main 이 제자리 대기에 든 뒤 갚는다. 같은 ctx 라 대본은 TASK-K1 이다
+                lambda m: (
+                    until(lambda: _waits(box["s"], "main"), "main waits on aa"),
+                    call("reply", id=owed_id(m), text="yes, still here"),
+                )[1],
+                # main 의 런이 끝난 뒤 — main 의 마지막 꼬리가 aa 를 [busy] 로 읽게
+                lambda m: (
+                    until(lambda: runs_ended(box["s"]) >= 1, "main's run ended"),
+                    call("complete", result="answered main", answers=[]),
+                )[1],
             ]
             + [complete_all("aa more")] * 10,
             "TASK-K2": [

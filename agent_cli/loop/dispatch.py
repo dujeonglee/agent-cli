@@ -7,6 +7,8 @@ import os
 import re
 import time
 
+from agent_cli import render as render_surface
+
 #: message/ask 빚을 남긴 채 `complete` 하려는 주체를 독촉하는 상한 (v9.21.0;
 #: v9.22.0 부터 main·상주 공통, 질문(answer)·회신(reply) 공통).
 #: 1회는 "깜빡함" 을, 3회면 "이해 못 함" 까지 잡는다. 사용자 결정. 무제한이면
@@ -1199,42 +1201,53 @@ class TurnDispatcher:
                 turn=self.state.turn,
             )
             return _CONTINUE
-        # 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6): 타이머는 제자리 대기가 걸지만(`_wait_in_place` →
-        # `mailbox.arm_checkin`), 이번 간격은 여기서 같은 계산(`next_checkin_s`)으로 미리 적는다 — 설명엔 숫자가
-        # 없다(간격이 바뀐다). 예약만 기다려 타이머가 없으면 종전 문장 그대로.
-        checkin_s = mailbox.next_checkin_s(on.checkin_ids)
-        timer = (
-            f", or in {format_duration(checkin_s)} if nothing has reported"
-            if checkin_s
-            else ""
-        )
-        obs = f"Observation: waiting — will wake on: {'; '.join(on.sources)}{timer}."
-        _append_observation(
-            self.state.messages,
-            self.ctx,
-            self.cfg.dialect,
-            turn.record,
-            obs,
-            tool_name="wait",
-            success=True,
-            turn=self.state.turn,
-        )
-        # 받아들여진 `wait` 에서만 — 기다리기 직전(내장 스냅샷 훅이 "before wait (turn N)" 을 찍는다, 5c-1 결정 K).
-        # 결과를 읽지 않는다: 훅이 `wait` 를 막거나 바꿀 수 없다
-        self.tools.fire_hook(PRE_WAIT)
-        return self._wait_in_place(turn, mailbox, on)
+        # 받아들인 뒤 — 기다림 표시(`accept_wait` 가 세움)·체크인·대기 줄은 이 ``finally`` 하나가 내린다(5e1): 수락 문장
+        # 기록·`PreWait`·대기 줄 그리기·`arm_checkin`·기다림 어디서 예외가 나도 남지 않는다(종전엔 기다림만 감싸, 그 앞의
+        # 예외가 표시를 남겨 그를 기다리는 쪽의 `wait` 가 거짓으로 거절됐다 — 오라클 s42)
+        # 모듈로 부른다 — 테스트가 `render.get_renderer` 를 갈아 끼운다
+        renderer = render_surface.get_renderer()
+        try:
+            # 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6): 타이머는 제자리 대기가 걸지만(`_wait_in_place` →
+            # `mailbox.arm_checkin`), 이번 간격은 여기서 같은 계산(`next_checkin_s`)으로 미리 적는다 — 설명엔 숫자가
+            # 없다(간격이 바뀐다). 예약만 기다려 타이머가 없으면 종전 문장 그대로.
+            checkin_s = mailbox.next_checkin_s(on.checkin_ids)
+            timer = (
+                f", or in {format_duration(checkin_s)} if nothing has reported"
+                if checkin_s
+                else ""
+            )
+            obs = (
+                f"Observation: waiting — will wake on: {'; '.join(on.sources)}{timer}."
+            )
+            _append_observation(
+                self.state.messages,
+                self.ctx,
+                self.cfg.dialect,
+                turn.record,
+                obs,
+                tool_name="wait",
+                success=True,
+                turn=self.state.turn,
+            )
+            # 받아들여진 `wait` 에서만 — 기다리기 직전(내장 스냅샷 훅이 "before wait (turn N)" 을 찍는다, 5c-1 결정 K).
+            # 결과를 읽지 않는다: 훅이 `wait` 를 막거나 바꿀 수 없다
+            self.tools.fire_hook(PRE_WAIT)
+            why = self._wait_in_place(renderer, mailbox, on)
+        finally:
+            mailbox.run_started()  # 체크인 해제 — 다음 wait 가 다시 건다(걸리지 않았으면 할 일 없음)
+            mailbox.clear_waiting()
+            renderer.wait_in_place(False, [])
+        return self._woke(turn, mailbox, why)
 
-    def _wait_in_place(self, turn, mailbox, on):
-        """제자리 `wait` — 받아들여진 `wait` 는 모두 여기다(5c-1; 종전 v10.84.0 private, v10.141.0 회신을 기다리는
-        main): 런을 끝내지 않고 메일(회신·작업 통지·모니터·체크인)이 오거나, main 이면 사람 입력이 도착할 때까지
-        막는다 — 같은 런이라 감사 범위도 그 런 하나다. 깨면 새 구간(`_begin_segment`). 체크인 타이머는 걸고(메일로 온다), 깨면 푼다. 레지스트리가
-        없으면 기다릴 메일함이 없다 — 깨울 것이 사라진 것과 같이 다룬다.
+    def _wait_in_place(self, renderer, mailbox, on) -> str:
+        """제자리 `wait` 의 기다림 — 받아들여진 `wait` 는 모두 여기다(5c-1; 종전 v10.84.0 private, v10.141.0 회신을
+        기다리는 main): 대기 줄을 그리고 체크인 타이머를 건 뒤 메일(회신·작업 통지·모니터·체크인)이 오거나, main 이면
+        사람 입력이 도착할 때까지 막는다 — 같은 런이라 감사 범위도 그 런 하나다. 깬 이유를 돌려준다. 내리는 것(표시·
+        체크인·대기 줄)은 부르는 쪽(`_op_wait`)의 ``finally`` 하나가 한다. 레지스트리가 없으면 기다릴 메일함이 없다 —
+        깨울 것이 사라진 것과 같이 다룬다.
 
         기다리는 동안 이 스레드가 끊기면(CLI Ctrl+C) 런의 정지를 세우고 그대로 던진다 — 이
         런에 묶인 run 에이전트(`LinkedStop`)가 같이 멈춘다(v10.140.0 의 막힌 기다림과 같다)."""
-        from agent_cli.render import get_renderer
-
-        renderer = get_renderer()
         # 대기 줄(결정 C)과 체크인 대상은 받아들일 때 읽은 ``on``(`WaitingOn`)에서 — 다시 읽지 않는다(4b). 회신만이면
         # 종전 그대로, 작업·모니터·예약은 짧은 이름으로 덧붙인다(비면 넘기지 않는다)
         awaited = list(on.awaited)
@@ -1244,7 +1257,7 @@ class TurnDispatcher:
             renderer.wait_in_place(True, awaited)
         mailbox.arm_checkin(on.checkin_ids)
         try:
-            why = mailbox.wait(
+            return mailbox.wait(
                 stop_event=self.state.stop_event,
                 still_waiting=lambda: bool(mailbox.wake_sources()),
             )
@@ -1252,10 +1265,10 @@ class TurnDispatcher:
             if self.state.stop_event is not None:
                 self.state.stop_event.set()
             raise
-        finally:
-            mailbox.run_started()  # 체크인 해제 — 다음 wait 가 다시 건다
-            mailbox.clear_waiting()
-            renderer.wait_in_place(False, [])
+
+    def _woke(self, turn, mailbox, why: str):
+        """제자리 대기에서 깼다 — 깬 이유가 사람의 말(``input``)이나 깨울 것의 사라짐(``nothing``)이면 그 관찰을 남기고, 새
+        구간을 연다(`_begin_segment`). 같은 런을 잇는다."""
         if why == "input":
             # `wait_input` 이 사람의 말을 보았다 — 그 사이 취소돼 상자에 없어도 사람이 쓴 것은 사실이다
             kinds = mailbox.arrivals() or (USER,)
