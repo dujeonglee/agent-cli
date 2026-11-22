@@ -13,7 +13,7 @@ import threading
 import agent_cli.render as render_mod
 from agent_cli.render import render_step
 from agent_cli.subagent.agents_live import AgentRegistry
-from tests.browser.test_channel_jump import _chip, _wait
+from tests.browser.test_channel_jump import _chip, _roster, _wait
 from tests.test_agents_live import _FakeLoopResult
 
 IN_VIEW = """(el) => {
@@ -47,6 +47,9 @@ def test_the_arrow_on_a_head_row_goes_to_its_card_in_the_same_block(
 
     def runner(kind, start, ctx):
         absorb.wait(10)
+        # 흡수 카드를 블록 한가운데에 둔다 — 머리 줄이 보일 때도, 바닥을 따라갈 때도 화면 밖이다
+        for n in range(60):
+            render_step("observation", f"before {n}", 1, tool_name="shell")
         for it in box["reg"].absorb_pending(box["reg"].get(box["key"])):
             rec = it["record"]
             ctx.add(dict(rec))
@@ -58,8 +61,8 @@ def test_the_arrow_on_a_head_row_goes_to_its_card_in_the_same_block(
                 success=True,
                 item=rec["item"],
             )
-        for n in range(60):  # 흡수 카드를 화면 밖으로 밀어낸다(화면은 바닥을 따라간다)
-            render_step("observation", f"filler {n}", 2 + n, tool_name="shell")
+        for n in range(60):
+            render_step("observation", f"after {n}", 2, tool_name="shell")
         absorbed.set()
         door.wait(10)
         return _FakeLoopResult(output="done"), 0.01
@@ -101,15 +104,17 @@ def test_the_arrow_on_a_head_row_goes_to_its_card_in_the_same_block(
                 )
             last = page.locator(f"{_block(key, 'r-901')} .run-body > .card").last
             assert _wait(lambda: last.evaluate(IN_VIEW))  # 바닥을 따라가 있다
-            second = _card(page, key, "r-901", "n-903")
-            assert not second.evaluate(IN_VIEW)
-            _head(page, key, "r-901", "n-903").locator(".run-item-jump").click()
-            assert _wait(lambda: second.evaluate(IN_VIEW))
-            assert "fyi" in second.inner_text()
-            first = _card(page, key, "r-901", "r-902")
-            _head(page, key, "r-901", "r-902").locator(".run-item-jump").click()
-            assert _wait(lambda: first.evaluate(IN_VIEW))
-            assert "request [r-902] from main" in first.inner_text()
+            for item, text in (
+                ("n-903", "fyi"),
+                ("r-902", "request [r-902] from main"),
+            ):
+                card = _card(page, key, "r-901", item)
+                arrow = _head(page, key, "r-901", item).locator(".run-item-jump")
+                arrow.scroll_into_view_if_needed()  # 머리 줄이 보이는 자리 — 카드는 60줄 아래다
+                assert not card.evaluate(IN_VIEW)
+                arrow.click()
+                assert _wait(lambda card=card: card.evaluate(IN_VIEW))
+                assert text in card.inner_text()
 
         check(page)
         # 다시 붙어도(버퍼 재생 — 머리 줄과 카드가 스냅샷 순서로 온다) 같다
@@ -121,3 +126,32 @@ def test_the_arrow_on_a_head_row_goes_to_its_card_in_the_same_block(
         absorb.set()
         door.set()
         reg.shutdown_all()
+
+
+def test_a_head_row_that_arrives_after_its_card_still_gets_the_arrow(stack, page):
+    """resume 의 순서 — history 재생이 관찰 카드를 먼저 그리고, `conversation.jsonl` 재생이 머리 줄을 뒤에 보낸다."""
+    agt = "agt-rev"
+    stack.emit_ready()
+    _roster(stack, agt)
+    r = stack.renderer
+    r.begin_agent_work(key=agt, item="r-1", profile="", message="TASK-A", items=["r-1"])
+    r.observation("── request [r-2] from main ──\nTASK-B", 1, "agent", item="r-2")
+    r.end_agent_work(key=agt, item="r-1", success=True, duration_s=0.1)
+    for item, text in (("r-1", "TASK-A"), ("r-2", "TASK-B")):
+        r.agent_message(key=agt, direction="in", author="main", text=text, item=item)
+    r.agent_message(
+        key=agt,
+        direction="absorbed",
+        author="main",
+        text="TASK-B",
+        item="r-2",
+        to=agt,
+        absorbed_into="r-1",
+    )
+    page.goto(stack.url)
+    assert _wait(lambda: _chip(page, agt).count() > 0)
+    _chip(page, agt).click()
+    arrow = _head(page, agt, "r-1", "r-2").locator(".run-item-jump")
+    assert _wait(lambda: arrow.count() == 1)
+    assert _head(page, agt, "r-1", "r-1").locator(".run-item-jump").count() == 0
+    assert arrow.get_attribute("title") == "Go to this message in the run"
