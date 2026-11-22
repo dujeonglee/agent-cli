@@ -1107,9 +1107,9 @@ def on_session_end(ctx):
 | `PostToolUse` | 도구 실행 직후 | ✓ | ✓ |
 | `OnTurnEnd` | ��� 종료 후 | ✓ | |
 | `PreWait` | 받아들여진 `wait` 가 기다리기 직전 (거절된 `wait` 에서는 불리지 않음, v10.163.0) | ✓ (막을 수 없음) | |
-| `OnAgentStart` | agent run 실행 직전 | ✓ | |
+| `OnAgentStart` | agent run 실행 직전 (`agent` 도구·`@<profile>` 명령 모두) | ✓ | |
 | `OnAgentEnd` | agent run 완료 후 (세션 종료로 끊긴 과제에는 불리지 않음, v10.164.0) | ✓ | |
-| `OnSkillStart` | skill 실행 직전 (`run_skill` 도구·`/skill` 명령 모두, v10.87.0) | ✓ | |
+| `OnSkillStart` | skill 실행 직전 (`run_skill` 도구·`/skill` 명령 모두) | ✓ | |
 | `OnSkillEnd` | skill 완료 후 | ✓ | |
 | `OnSessionEnd` | 세션 종료 | ✓ | |
 
