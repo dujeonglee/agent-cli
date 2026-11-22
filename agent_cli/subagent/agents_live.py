@@ -1080,7 +1080,7 @@ class AgentRegistry:
 
         기준을 함께 적는다: 작업별 로그 크기(P(a) "+N lines since your wait")와
         에이전트별 `last_ordinal`("N steps since your wait")."""
-        self.run_started(owner)  # 이미 걸린 것이 있으면 푼다
+        self.cancel_checkin(owner)  # 이미 걸린 것이 있으면 푼다
         if not ids:
             return None
         step = self._checkin_step(owner, ids)
@@ -1113,20 +1113,13 @@ class AgentRegistry:
         timer.start()
         return interval
 
-    def run_started(self, owner: str) -> None:
+    def cancel_checkin(self, owner: str) -> None:
         """이 소유자에게 걸린 체크인 타이머를 푼다 — 제자리 대기가 깰 때(`TurnDispatcher._wait_in_place` 의 ``finally``),
-        새로 걸기 전(`arm_checkin`), 정리(`_cancel_checkins`). 걸린 것이 없으면 no-op."""
+        새로 걸기 전(`arm_checkin`), 주인이 사라질 때(`drop_mailbox`·kill·`shutdown_all`). 걸린 것이 없으면 no-op."""
         with self._cv:
             ck = self._checkin_armed.pop(owner, None)
         if ck is not None and ck.timer is not None:
             ck.timer.cancel()
-
-    def _cancel_checkins(self, *owners: str) -> None:
-        """정리 — 소유자가 죽거나 세션이 끝난다. 빈 인자는 전부."""
-        with self._cv:
-            targets = list(owners) if owners else list(self._checkin_armed)
-        for o in targets:
-            self.run_started(o)
 
     def fire_checkin(self, owner: str) -> str:
         """타이머가 부른다(테스트는 직접) — 알림을 만들어 배달하고 본문을 돌려준다.
@@ -2172,7 +2165,7 @@ class AgentRegistry:
     def drop_mailbox(self, addr: str) -> int:
         """주소의 루프가 끝났다 — 체크인·기다림 표시를 풀고, private 이면 메일함을 버린다(읽을
         사람이 없다). 버린 메일 수를 돌려준다."""
-        self._cancel_checkins(addr)
+        self.cancel_checkin(addr)
         with self._cv:
             self._checkin_last.pop(addr, None)
             self._post.clear_waiting(addr)
@@ -2260,7 +2253,7 @@ class AgentRegistry:
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
         # 건 질문은 지금 닫는다 (v10.149.1) — 워커의 정리(다음 턴 경계)까지 미루면 그 사이 트레이에 남아 답이 갈 곳이 없다
         self._purge_questions_for(tm.key)
-        self._cancel_checkins(f"agent:{tm.key}")  # 죽은 에이전트에게 알림이 가지 않게
+        self.cancel_checkin(f"agent:{tm.key}")  # 죽은 에이전트에게 알림이 가지 않게
         # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
         # 현재 턴을 마저 돌고(join 은 best-effort), 그 창에 발화하면 항목이
         # 워커가 다시 꺼내지 않아 영영 안 읽힌다. 그 턴에서 새로 건 감시는
@@ -2462,7 +2455,10 @@ class AgentRegistry:
         """세션 종료 — main 상자를 먼저 닫고(멈추는 런이 그 사실을 읽는다, 5e1) 전원 kill. main 부트스트랩의 finally 에서
         호출. ``deadline``(SIGTERM 경로, v10.134.1)이 있으면 워커를 그 안에서만 기다린다. 마지막 저장은 revivable 그대로(D7)."""
         self._post.close("main")
-        self._cancel_checkins()  # main 포함 — 끝나는 세션에 알림이 쌓이지 않게
+        with self._cv:
+            armed = list(self._checkin_armed)
+        for owner in armed:  # main 포함 — 끝나는 세션에 알림이 쌓이지 않게
+            self.cancel_checkin(owner)
         for tm in list(self._agents.values()):
             self._drop_monitors(tm.key)
             self._stop_worker(tm)

@@ -542,9 +542,9 @@ class Mailbox:
             )
         ]
 
-    def run_started(self) -> None:
+    def cancel_checkin(self) -> None:
         if self._registry is not None:
-            self._registry.run_started(self.owner)
+            self._registry.cancel_checkin(self.owner)
 
     def arm_checkin(self, ids: frozenset[str]) -> None:
         """체크인 타이머를 건다 — 대상은 받아들일 때 읽은 것(`WaitingOn.checkin_ids`)."""
@@ -634,7 +634,7 @@ class Released(NamedTuple):
 
 def release_owner(owner: str, *, jobs=None, monitors=None, registry=None) -> Released:
     """한 주소가 소유한 것을 전부 거둔다 — **한 함수** (v10.89.0; 종전 private 의
-    `release_private_owner` 와 상주의 `_drop_monitors`+`_cancel_checkins` 두 구현).
+    `release_private_owner` 와 상주의 `_drop_monitors`+체크인 취소 두 구현).
     돌고 있는 잡은 죽이고(결과에 알린다), 모니터는 폐기하고(재부모화하지 않는다),
     ``registry`` 가 있으면 메일함·체크인을 버린다(읽을 사람이 없다).
     ``jobs``·``monitors`` 는 레지스트리가 주입받은 것을 넘길 수 있고(테스트 DI) 없으면 전역."""

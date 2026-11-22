@@ -312,8 +312,8 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
   run·하니스 작업이 같은 길이다. 대상 id 집합·단계·이번 간격·기준(작업별 로그 크기, 에이전트별 `last_ordinal`)을
   `_Checkin` 하나에 들고 `threading.Timer` 를 띄운다. 상태는 `{owner: _Checkin}`(걸린 것)과 `{owner: (ids, step)}`(직전에
   발화한 것) 둘 — 배증이 치르는 유일한 값이다.
-- **푸는 곳**: 같은 제자리 대기의 ``finally``(`mailbox.run_started()` — 깨면 어떤 이유로든), 새로 걸기 직전
-  (`arm_checkin` 이 먼저 푼다), 정리(`_cancel_checkins` — 주인이 죽거나 세션이 끝남). 런의 시작·끝에는 풀 것이 없다 —
+- **푸는 곳**: 같은 제자리 대기의 ``finally``(`mailbox.cancel_checkin()` — 깨면 어떤 이유로든), 새로 걸기 직전
+  (`arm_checkin` 이 먼저 푼다), 정리(주인이 죽거나 세션이 끝남 — `drop_mailbox`·kill·`shutdown_all`). 런의 시작·끝에는 풀 것이 없다 —
   `wait` 는 런을 끝내지 않는다(5c-1). 종전의 런 시작 해제(`_note_run_started`)·런 끝 해제(`run_ended`)는 v10.164.0 에
   지웠다.
 - **발화**: `fire_checkin(owner)` 가 `wake.wait_checkin` 으로 본문을 만들어 main 이면 메일함
@@ -374,7 +374,7 @@ waiting on job #1` 로 받았다(v10.73 벤치 4건). 원인은 one-shot 에 자
   종류면 봉투를 씌우지 않으며 `absorb_pending` 의 레코드가 `tool` = 표·`source` = `harness_mail` (종전엔 kind 가
   떨어져 잡·모니터는 `agent` 레코드, 체크인만 봉투 — 세 루프가 세 모양).
 - **`_op_wait`** (`dispatch`): 거부 둘(도착 메일·깨울 것 없음)은 그대로. 수락 뒤 소유자가 private 이면 `_wait_in_place` —
-  `arm_checkin` → `wait_mail` 로 **막음** → `run_started`(체크인 해제) → `_CONTINUE`. 장부는 넘기지 않고("stay open for the
+  `arm_checkin` → `wait_mail` 로 **막음** → `cancel_checkin`(체크인 해제) → `_CONTINUE`. 장부는 넘기지 않고("stay open for the
   next run" 문구 없음) 같은 런이 이어진다. 기다리던 것이 메일 없이 사라지면(잡을 밖에서 죽임) "nothing you were waiting
   on is running any more" 관찰로 잇는다. 깨울 길이 없는 루프(`cfg.wakeable` 거짓 = 스킬 — 호출자 턴 안의 인라인, 주소를
   **일부러** 물려받아 그 모니터가 호출자에게 보고)는 첫 판정에서 **거부**: "this loop runs inline inside its caller and

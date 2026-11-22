@@ -1217,7 +1217,7 @@ class TurnDispatcher:
             self.tools.fire_hook(PRE_WAIT)
             why = self._wait_in_place(renderer, mailbox, on)
         finally:
-            mailbox.run_started()  # 체크인 해제 — 다음 wait 가 다시 건다(걸리지 않았으면 할 일 없음)
+            mailbox.cancel_checkin()  # 체크인 해제 — 다음 wait 가 다시 건다(걸리지 않았으면 할 일 없음)
             mailbox.clear_waiting()
             renderer.wait_in_place(False, [])
         return self._woke(turn, mailbox, why)

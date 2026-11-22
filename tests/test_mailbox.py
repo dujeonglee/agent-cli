@@ -27,7 +27,7 @@ class TestWithoutRegistry:
         assert mb.next_checkin_s(frozenset({"job:1"})) is None
         assert mb.parked_debtors() == []
         assert mb.wait(stop_event=None, still_waiting=lambda: True) == "nothing"
-        mb.run_started()
+        mb.cancel_checkin()
         mb.arm_checkin(frozenset({"job:1"}))
         mb.drop()
         assert mb.has_inbox is False
@@ -55,7 +55,7 @@ class TestWithRegistry:
         assert mb.next_checkin_s(ids) == 300
         assert mb.parked_debtors() == ["agent:k"]
         assert mb.wait(stop_event=stop, still_waiting=still) == "mail"
-        mb.run_started()
+        mb.cancel_checkin()
         mb.arm_checkin(ids)
         mb.drop()
         reg.arrivals_for.assert_called_once_with(
@@ -70,7 +70,7 @@ class TestWithRegistry:
             still_waiting=still,
             wait_input=None,
         )
-        reg.run_started.assert_called_once_with("agent:a")
+        reg.cancel_checkin.assert_called_once_with("agent:a")
         reg.drop_mailbox.assert_called_once_with("agent:a")
 
     def test_take_is_the_given_inbox(self):
@@ -117,9 +117,9 @@ class TestEveryKindHasOne:
             "skill": ("Mailbox", "agent:p", False),
         }
         # 레지스트리는 포트를 만들 때의 슬롯 것 — 종전 엔진이 읽던 것과 같다
-        main.run_started()
-        skill.run_started()
-        assert [c.args for c in reg.run_started.call_args_list] == [
+        main.cancel_checkin()
+        skill.cancel_checkin()
+        assert [c.args for c in reg.cancel_checkin.call_args_list] == [
             ("main",),
             ("agent:p",),
         ]
