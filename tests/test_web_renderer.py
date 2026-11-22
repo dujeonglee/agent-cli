@@ -3867,6 +3867,47 @@ class TestRunBlockFields:
         assert self._next(conn, "agent_msg")["fallback"] is True
 
 
+# ── 흡수된 배달의 id (v10.165.0) ──────────────────────────────────────
+
+
+class TestItemOnObservationCards:
+    """``observation`` 의 ``item``(작업 구간 도중 흡수된 배달의 id)은 페이로드에 실리고(없으면 키도 없다),
+    resume 재생은 레코드의 ``item`` 을 같은 자리에 되싣는다 — 웹이 카드의 ``data-item`` 으로 쓴다."""
+
+    def test_observation_carries_the_item(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.hub.register(conn)
+        r.observation("── request [r-4] from main ──", 1, "agent", item="r-4")
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "observation" and data["item"] == "r-4"
+        r.observation("text", 1, "shell")
+        _, data = conn.queue.get(timeout=0.5)
+        assert "item" not in data
+
+    def test_replay_restores_the_item(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add({"role": "user", "content": "go"})
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "agent",
+                "success": True,
+                "content": "── request [r-4] from main ──\nTASK-C",
+                "source": "agent_request",
+                "request_id": "r-4",
+                "item": "r-4",
+            }
+        )
+        ctx.add({"role": "user", "tool": "shell", "success": True, "content": "ok"})
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+        obs = [d for e, d in r.hub.events if e == "observation"]
+        assert [d.get("item") for d in obs] == ["r-4", None]
+
+
 # ── 이미지 (v10.60.0, docs/vision/DESIGN.md §7) ────────────────────────
 
 

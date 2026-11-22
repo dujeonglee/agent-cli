@@ -26,6 +26,7 @@ import {
   ovRenderAskTray,
   ovRenderBack,
   ovRoster,
+  scrollTimelineTo,
   setOvActiveChannel,
   setOvBack,
   syncChannelView,
@@ -90,7 +91,34 @@ function claimIn(blk, q) {
   var it = runItem(q.d);
   it.dataset.item = String(q.d.item || "");
   blk.head.appendChild(it);
+  linkHeadToCard(blk, it.dataset.item);
 }
+
+// ── 머리 줄 → 몸통의 그 카드 (v10.165.0) ─────────────────────
+// 런 도중 흡수된 배달은 머리 줄과 몸통의 관찰 카드 둘로 선다. 둘을 잇는 열쇠는 그 배달의 id 다(`data-item` — 블록
+// 번호가 아니다). 둘 다 서 있을 때만 머리 줄 끝에 ↓ 를 단다 — 카드가 없는 줄(런을 연 첫 항목, 사람이 창에 쓴 말)에는
+// 없다. 머리 줄이 설 때(`claimIn`)와 카드가 설 때(cards.js 의 `agentcli:item-card`) 부른다.
+function linkHeadToCard(blk, item) {
+  if (!item) return;
+  var sel = '[data-item="' + cssEsc(item) + '"]';
+  var row = blk.head.querySelector(".run-item" + sel);
+  if (!row || row.querySelector(".run-item-jump") || !blk.body.querySelector(sel)) return;
+  var btn = el("button", ["run-item-jump"], "↓");
+  btn.type = "button";
+  btn.title = "Go to this message in the run";
+  btn.addEventListener("click", function (e) {
+    e.stopPropagation(); // 줄 클릭은 본문 펼침이다
+    var card = blk.body.querySelector(sel);
+    if (card) scrollTimelineTo(card);
+  });
+  row.querySelector(".who").appendChild(btn);
+}
+document.addEventListener("agentcli:item-card", function (e) {
+  var card = e.detail.card;
+  var run = card.closest(".card-run");
+  var blk = run && runBlocks[run.dataset.taskId];
+  if (blk) linkHeadToCard(blk, card.dataset.item);
+});
 
 export function ensureRunBlock(d) {
   if (runBlocks[d.task_id]) return runBlocks[d.task_id];

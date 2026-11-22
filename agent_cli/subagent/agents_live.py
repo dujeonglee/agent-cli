@@ -1748,19 +1748,14 @@ class AgentRegistry:
                     hop=item.get("hop", 0),
                     id=rid,
                 )
-                content = self._model_text(item, mid_run=True)
-                out.append(
-                    {
-                        "record": {
-                            "role": "user",
-                            "tool": "agent",
-                            "success": True,
-                            "content": content,
-                            "source": "agent_request",
-                            "request_id": rid,  # 빚 id — 갚기 전 압축이 원문을 남긴다(`Ledger.pin_ids`)
-                        }
-                    }
-                )
+                rec = {
+                    "role": "user",
+                    "tool": "agent",
+                    "success": True,
+                    "content": self._model_text(item, mid_run=True),
+                    "source": "agent_request",
+                    "request_id": rid,  # 빚 id — 갚기 전 압축이 원문을 남긴다(`Ledger.pin_ids`)
+                }
             else:
                 # 회신·통지 — 런 시작 항목과 같은 봉투. 하니스 통지(잡·모니터·체크인)는
                 # main·one-shot 과 같은 함수(`wake.harness_record`, v10.89.0).
@@ -1771,7 +1766,8 @@ class AgentRegistry:
                     "content": self._model_text(item),
                     "source": "agent_mail",
                 }
-                out.append({"record": rec})
+            # ``item``: 그 배달의 id — 화면 전용(웹이 관찰 카드에 달아 블록 머리 줄에서 찾아간다). 모델은 읽지 않는다
+            out.append({"record": {**rec, "item": iid}})
         self._notify_roster()
         return out
 

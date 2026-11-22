@@ -942,6 +942,7 @@ class AgentLoop:
             hidx=getattr(self.ctx, "last_ordinal", None),
             tool_name=rec["tool"],
             success=bool(rec.get("success", True)),
+            item=str(rec.get("item") or ""),
         )
 
     def _interrupt_check(self) -> bool:

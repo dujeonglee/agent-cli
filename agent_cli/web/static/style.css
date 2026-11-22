@@ -629,6 +629,14 @@ body.multi-viewer .card-user .who {
   white-space: nowrap;
 }
 .run-item.can { cursor: pointer; }
+/* 머리 줄 → 몸통의 그 카드 (v10.165.0) — 흡수된 배달의 관찰 카드가 있을 때만 선다. */
+.run-item-jump {
+  margin-left: 6px; padding: 0 5px;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: transparent; color: var(--muted);
+  font: inherit; line-height: 1.4; cursor: pointer;
+}
+.run-item-jump:hover { color: var(--text); border-color: var(--accent-soft-border); }
 .run-item .run-item-body { grid-column: 2 / -1; margin-top: 4px; }
 .run-body { display: flex; flex-direction: column; gap: 2px; }
 .run-body .card { max-width: 100%; }

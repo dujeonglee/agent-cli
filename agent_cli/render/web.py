@@ -1029,6 +1029,7 @@ class WebRenderer(Renderer):
                     tool_name=msg.get("tool", ""),
                     success=msg.get("success", True),
                     images=msg.get("images") or None,  # v10.60.0 썸네일 재생
+                    item=str(msg.get("item") or ""),  # 흡수된 배달의 id (v10.165.0)
                 )
             else:
                 # Sub-agent histories: the plain user records are the task
@@ -1373,6 +1374,7 @@ class WebRenderer(Renderer):
         tool_name: str | None = None,
         success: bool = True,
         images: list[dict] | None = None,
+        item: str = "",
     ) -> None:
         payload: dict = {
             "turn": turn,
@@ -1380,6 +1382,9 @@ class WebRenderer(Renderer):
             "content": content,
             "success": success,
         }
+        # ``item`` (v10.165.0, additive): 작업 구간 도중 흡수된 배달의 id — 카드의 ``data-item``. 없으면 키도 없다.
+        if item:
+            payload["item"] = item
         # ``images`` (v10.60.0, additive): 관찰 레코드의 ImageRef dict — 카드가
         # `api/workspace/file?path=` 썸네일을 그린다. 없으면 키도 없다.
         if images:

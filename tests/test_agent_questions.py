@@ -26,6 +26,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import agent_cli.render as render_mod
+from agent_cli.render.minimal import MinimalRenderer
 from agent_cli.subagent.agent_mail import build_reply_record
 from agent_cli.subagent.question_port import QuestionPort
 from tests.loop_ports import make_ports, split_ports
@@ -2051,6 +2052,8 @@ class TestMidRunAbsorption:
         assert "Your current task stays open" in req["content"]
         assert mail["source"] == "agent_mail"
         assert mail["content"] == f"[agent:{a}]: 회신 본문"
+        # 화면 전용 칸 — 그 배달의 id (v10.165.0: 웹이 관찰 카드에 달아 블록 머리 줄에서 찾아간다)
+        assert (req["item"], mail["item"]) == ("r-2", "n-3")
         # 장부: 시작 항목 [1] + 흡수된 요청 [2]; 회신은 빚이 아니다
         assert [d.id for d in reg.reply_debts(me)] == ["r-1", "r-2"]
         # 받은편지함은 비고, 처리 중 목록에 셋 다
@@ -2196,9 +2199,25 @@ class TestMidRunAbsorption:
                 )
             raise AssertionError(n)
 
-        calls, ctx, res = self._loop(reg, b, turns)
+        seen = []
+
+        class Spy(MinimalRenderer):
+            def observation(self, content, turn, tool_name=None, **kw):
+                seen.append((tool_name, kw.get("item")))
+
+        prev = render_mod._renderer
+        render_mod.set_renderer(Spy(render_mod.console))
+        try:
+            calls, ctx, res = self._loop(reg, b, turns)
+        finally:
+            render_mod.set_renderer(prev)
         gate.set()
         assert res.output == "끝" and len(calls) == 2
+        # 흡수된 요청의 관찰 카드만 그 배달의 id 를 받는다(v10.165.0) — 도구 결과는 빈 값
+        assert ("agent", "r-2") in seen and ("read_file", "") in seen
+        assert [it for _, it in seen if it] == ["r-2"]
+        # 모델 입력의 메시지는 role·content 뿐이다 — 화면 전용 칸은 실리지 않는다
+        assert all(set(m) <= {"role", "content"} for m in calls[1])
         # 2턴의 프롬프트에 흡수된 요청이 관찰로 들어 있고, 꼬리가 둘 다 빚으로 든다
         second = "\n".join(str(m.get("content")) for m in calls[1])
         assert "── request [r-2] from main" in second and "추가 지시" in second
@@ -2208,6 +2227,9 @@ class TestMidRunAbsorption:
         # 기록에도 남는다 — 재시작·재생이 같은 것을 본다
         recs = [r for r in _history(ctx) if r.get("source") == "agent_request"]
         assert len(recs) == 1 and recs[0]["tool"] == "agent"
+        assert (
+            recs[0]["item"] == recs[0]["request_id"] == "r-2"
+        )  # 재생이 같은 카드를 그린다
         # 둘 다 main 에게 배달됐고 빚이 없다
         mail = absorbed_mail(reg)
         assert [m["output"] for m in mail] == ["추가 답", "원래 답"]

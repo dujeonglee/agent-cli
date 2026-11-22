@@ -566,6 +566,7 @@ class Renderer(ABC):
         tool_name: str | None = None,
         success: bool = True,
         images: list[dict] | None = None,
+        item: str = "",
     ) -> None:
         """Tool result (observation).
 
@@ -574,7 +575,10 @@ class Renderer(ABC):
 
         ``images`` (v10.60.0): the observation record's ``ImageRef`` dicts —
         web draws thumbnails from them; CLI reads the placeholder lines in
-        ``content`` instead and ignores this."""
+        ``content`` instead and ignores this.
+
+        ``item`` (v10.165.0): 작업 구간 도중 흡수된 배달의 id(그 관찰 레코드의 ``item``) — web 이 카드에 달아
+        작업 블록 머리 줄에서 그 카드로 간다. CLI 는 쓰지 않는다."""
 
     @abstractmethod
     def final(self, content: str, turn: int, requests: list | None = None) -> None:

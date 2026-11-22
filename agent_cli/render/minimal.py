@@ -444,8 +444,9 @@ class MinimalRenderer(Renderer):
         tool_name: str | None = None,
         success: bool = True,
         images: list[dict] | None = None,
+        item: str = "",
     ) -> None:
-        # ``images`` 는 쓰지 않는다 — 콘솔은 content 의 자리표시 줄을 🖼 로 찍는다.
+        # ``images`` 는 쓰지 않는다 — 콘솔은 content 의 자리표시 줄을 🖼 로 찍는다. ``item`` 도(웹의 카드 찾기용).
         self._print_agent_step(tool_name, success)
         status = "success" if success else "error"
         icon = "✓" if success else "✗"
