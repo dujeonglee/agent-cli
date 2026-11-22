@@ -60,7 +60,7 @@ def model_skills() -> dict[str, Skill]:
 
 
 def _parse_skill_file(path: Path) -> Skill | None:
-    """Parse a single skill file. Used by tests and executor."""
+    """Parse a single skill file. Used by tests."""
     res = ResourceLoader._parse_file(path)
     if res is None:
         return None

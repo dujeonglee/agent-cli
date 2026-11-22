@@ -204,7 +204,7 @@ def configure(session_dir: Path | str) -> Path:
 
 
 def reset() -> None:
-    """Stop recording (tests, process teardown)."""
+    """Stop recording (tests)."""
     global _root, _path, _schema_written
     with _lock:
         _root = _path = None

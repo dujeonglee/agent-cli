@@ -194,9 +194,6 @@ def _auto_save_detected(model: str, caps: ModelCapabilities) -> None:
 
 
 def _build_from_entry(entry: dict) -> ModelCapabilities:
-    # Legacy field `supports_tool_calling` — silently ignored if present in
-    # older models.json entries; the loop uses ReAct text parsing, not the
-    # native tool-calling API on any provider.
     sg = entry.get("supports_grammar")
     sv = entry.get("supports_vision")
     return ModelCapabilities(

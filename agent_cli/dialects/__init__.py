@@ -18,9 +18,9 @@ from agent_cli.dialects.base import DialectBase, Op, ParsedAction, ParsedTurn
 # ── Registry ─────────────────────────────────────
 _registry: dict[str, DialectBase] = {}
 
-# Single source of truth for the default dialect — the CLI's
-# --dialect default, the new-session default, and the get(None) /
-# unspecified-wire fallback all resolve here. Change the default in ONE place.
+# The default dialect — the ``get(None)`` fallback and the first dialect
+# ``try_foreign_parse`` tries. (The CLI and sessions have no default
+# dialect: v10.3.0, see ``resolve_dialect``.)
 #
 # json_fc (2026-07-17, v6.0.0 — PHASE4): md_array 의 리네임+리셰이프 후계.
 # 마크다운 헤더 envelope 제거(산문 thought + bare op 배열 — xml_fc D4 동형),
