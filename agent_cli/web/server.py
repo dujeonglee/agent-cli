@@ -365,11 +365,6 @@ class WebServer:
             items += src()
         return items
 
-    def pending_count(self) -> int:
-        """Number of queued-but-undelivered user messages — the idle-reaper's
-        'work is waiting' signal."""
-        return self.main_input.pending_count()
-
     def broadcast_queue(self) -> None:
         """Push the live queue state to all clients — 창구의 락을 놓은 뒤에 불린다(``queue_state`` 는 렌더러 락을
         잡는다; `MainInput` 도 레지스트리도 대기열 변경 알림을 락 밖에서 부른다)."""

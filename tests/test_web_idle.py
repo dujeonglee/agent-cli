@@ -154,10 +154,12 @@ class TestActivityAccessors:
         conn.closed.set()  # client gone
         assert r.hub.has_live_connections() is False
 
-    def test_pending_count(self):
+    def test_queued_words_are_counted_by_the_main_input(self):
+        """줄 선 사람의 말 수는 `MainInput` 이 센다 — 서버에 같은 것을 다시 묻는 메서드는 없다(v10.165.0 에서 지움)."""
         from agent_cli.web.server import WebServer
 
         s = WebServer(self._renderer(), token="t")
-        assert s.pending_count() == 0
+        assert s.main_input.pending_count() == 0
         s.enqueue("c1", "hi")
-        assert s.pending_count() == 1
+        assert s.main_input.pending_count() == 1
+        assert not hasattr(s, "pending_count")
