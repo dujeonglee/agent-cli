@@ -107,8 +107,8 @@ def write_status_file(
     stuck: dict | None = None,
     jobs: dict | None = None,
     waiting: bool = False,
-) -> Path:
-    """Atomically (over)write the live status sidecar. Returns the path.
+) -> None:
+    """Atomically (over)write the live status sidecar.
 
     ``knobs`` (v10.46.0, additive): 세션 노브의 현재 값 ``{name: value}`` —
     보드가 방의 값을 거울처럼 기록해 다음 spawn 에 같은 플래그로 돌려준다

@@ -345,10 +345,7 @@ class Renderer(ABC):
 
         ``ts`` — the scope's canonical start time (epoch seconds). Leave it
         ``None`` to have the emit point stamp "now". A parallel BATCH passes one
-        shared value for all its workers: they start within milliseconds of each
-        other, and stamping each thread separately scattered a simultaneous
-        fan-out across several rows of the swimlane's event-ordinal axis, which
-        reads as sequential. Shared ts → one row → one fork."""
+        shared value for all its workers."""
 
     def end_scope(
         self,

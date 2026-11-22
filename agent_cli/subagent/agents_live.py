@@ -1541,9 +1541,8 @@ class AgentRegistry:
             "author": author,
             "hop": hop,
             "expects_reply": expects_reply,
-            # 발신 시각 — 스윔레인 요청 화살표(agent_msg "in", ts=send_ts)와
-            # 작업 카드(begin_agent_work→scope_start)가 같은 앵커를 갖도록
-            # worker 로 실어 보낸다(웹 프런트가 카드 data-nav-ts 로 사용).
+            # 발신 시각 — 🤝 창의 수신 줄(agent_msg "in", ts=send_ts)과
+            # 작업 카드(begin_agent_work→scope_start 의 `nav_ts`)가 같은 값을 갖는다.
             "ts": send_ts,
         }
         if kind:
