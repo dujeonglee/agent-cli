@@ -1276,10 +1276,6 @@ class TurnDispatcher:
                 success=True,
                 turn=self.state.turn,
             )
-        if why == "closed":
-            # 세션이 닫힌다(main 상자가 닫혔다) — 런은 세션 종료로 끝난다. 관찰을 붙이지 않고 모델을 다시 부르지 않는다:
-            # 닫는 도중의 답은 받을 이가 없다(5c-pre).
-            return ToolResult(True, session_ended=True)
         if why == "nothing":
             _append_observation(
                 self.state.messages,
@@ -1291,7 +1287,7 @@ class TurnDispatcher:
                 success=True,
                 turn=self.state.turn,
             )
-        self._begin_segment()  # 깼다 — 새 구간(세션 종료의 "closed" 는 위에서 런을 끝냈다)
+        self._begin_segment()  # 깼다 — 새 구간(정지면 곧 루프 맨 위의 정지 판정이 끝낸다 — 세션 종료도, 5e1)
         return _CONTINUE
 
     def _terminal_record(self, turn, answer: str, claimed, still_open) -> dict:

@@ -1,4 +1,5 @@
-"""세션을 닫을 때 main 의 런 (5c-pre) — 실제 조립(오라클 `Session`, web), 모델 없이.
+"""세션을 닫을 때 일하던 작업 구간 (5c-pre·5e1) — 실제 조립(오라클 `Session`, web), 모델 없이. 닫기는 정지 하나다:
+main 상자를 닫으면 지금 작업 구간의 정지 플래그가 서고, 끝 정리는 "세션이 닫혔다" 를 읽고 아무것도 하지 않는다.
 
 닫기는 웹 호스트와 같은 순서다: main 상자를 닫고(`stop_pump` — `WebServer.shutdown`), 정리(`teardown_session` — 에이전트를
 멈춘다). 대본의 동기 지점은 제품이 판정에 쓰는 값이다 — main 의 제자리 대기 시작(`renderer.wait_in_place(True)` → 기록기의
@@ -178,29 +179,6 @@ def test_a_working_main_stops_when_the_session_closes(home):
 
 
 # ── 단위 — 메일함의 닫힘·런 끝의 종류·런 끝 정리 ──────────────────────────
-
-
-def test_mailbox_wait_reports_closed_only_with_a_closed_callable():
-    from unittest.mock import MagicMock
-
-    from agent_cli.wake import Mailbox
-
-    reg = MagicMock()
-    still = lambda: True
-    reg.wait_mail.return_value = "nothing"
-    assert (
-        Mailbox(reg, "agent:a").wait(stop_event=None, still_waiting=still) == "nothing"
-    )
-    assert (
-        reg.wait_mail.call_args.kwargs["still_waiting"] is still
-    )  # 닫힘이 없는 메일함은 그대로 넘긴다
-    shut = Mailbox(reg, "main", closed=lambda: True)
-    assert shut.wait(stop_event=None, still_waiting=still) == "closed"
-    assert (
-        reg.wait_mail.call_args.kwargs["still_waiting"]() is False
-    )  # 닫혔으면 더 기다리지 않는다
-    open_box = Mailbox(reg, "main", closed=lambda: False)
-    assert open_box.wait(stop_event=None, still_waiting=still) == "nothing"
 
 
 def test_a_session_ended_run_is_session_end_and_its_end_settles_nothing():
