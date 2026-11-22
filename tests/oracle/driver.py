@@ -3130,10 +3130,14 @@ def s42_run_crashes_while_waiting(root: Path) -> dict:
             "awaited_main": s.reg.awaited_replies("main"),
             "roster": _roster(s),
         }
-        # bb 의 회신이 연 aa 의 새 런 — 그 첫 꼬리가 bb 를 [idle] 로 읽게, bb 가 `complete` 로 런을 끝낼 때까지 aa 의
-        # 작업 카드(`begin_agent_work`, aa 의 스레드 — 첫 꼬리를 짓기 전)를 잡는다(cpus 0.25, 750회 중 1회). 지금 걸면
-        # aa 의 다음 작업 카드가 그 런이다 — 충돌한 런은 끝났고 main 은 aa 가 K2 를 읽은 뒤에야 다시 묻는다
+        # bb 의 회신 뒤 두 꼬리의 순서 — aa 가 그 회신을 집고(busy, `ResidentLoop.start`) → bb 가 다음 꼬리를 짓고
+        # `complete` 로 끝나고(idle) → aa 가 새 런의 첫 꼬리를 짓는다. ① bb 의 회신 out 줄(`agent_message` key=bb,
+        # bb 의 스레드 — 다음 꼬리 전)을 aa 가 busy 가 될 때까지 잡는다(cpus 0.5, 750회 중 1회 — aa 가 `[idle · 1
+        # queued]`). ② aa 의 작업 카드(`begin_agent_work` key=aa, aa 의 스레드 — `start` 뒤·첫 꼬리 전)를 bb 가 idle 이
+        # 될 때까지 잡는다(cpus 0.25, 750회 중 1회 — bb 가 `[busy]`). 지금 걸면 둘 다 그 회신의 것이다 — 충돌한 런은
+        # 끝났고 main 은 aa 가 K2 를 읽은 뒤에야 다시 묻는다
         bb = _agent_key(s, "bb")
+        s.recorder.hold("agent_message", bb, lambda: s.agent_state(aa) == "busy")
         s.recorder.hold("begin_agent_work", aa, lambda: s.agent_state(bb) == "idle")
         bb_go.set()
         until(
