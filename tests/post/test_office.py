@@ -328,7 +328,9 @@ class TestConsistency:
     def test_the_checker_names_what_is_broken(self):
         o = PostOffice()
         o.deliver(E.request("r-1", "main", A, "do"))
-        o._box(A).take_away()  # 줄은 queued 인데 봉투가 없다 — 테스트만 일부러 깨뜨린다
+        o._box(
+            A
+        ).remove_all()  # 줄은 queued 인데 봉투가 없다 — 테스트만 일부러 깨뜨린다
         with pytest.raises(ConsistencyError) as err:
             o.check_consistency()
         assert any(p.startswith("I2 r-1") for p in err.value.problems)

@@ -135,7 +135,7 @@ class PostOffice:
             with_rows = [e.id for e in box.queued() if e.closes_by is not None]
             if with_rows:
                 raise RowError(f"take({addr}) would orphan rows: {with_rows}")
-            envs = box.take_away()
+            envs = box.remove_all()
             if envs:
                 self.cv.notify_all()
             return envs
@@ -243,7 +243,7 @@ class PostOffice:
             }
             self._ensure_used(replies, queued_r)
             self._ensure_new(replies.values())
-            gone = self._box(addr).drop_queued()
+            gone = self._box(addr).remove_all()
             if not gone:
                 return
             for env in gone:

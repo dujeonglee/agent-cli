@@ -39,7 +39,7 @@ from agent_cli.providers.base import CallSettings, LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.credentials import Credentials
 from agent_cli.tools.registry import (
-    TOOL_SCHEMAS,
+    TOOLS,
     effective_tool_names,
     flat_param_schemas,
 )
@@ -49,9 +49,7 @@ from tests.loopkit import run_loop
 
 def _tools(names, fmt="json_fc"):
     ordered = effective_tool_names(names, get(fmt))
-    return [
-        (n, flat_param_schemas(n, TOOL_SCHEMAS[n].parameters), False) for n in ordered
-    ]
+    return [(n, flat_param_schemas(n, TOOLS[n].parameters), False) for n in ordered]
 
 
 # ── 1. 형식-무관 조각 ─────────────────────────────
@@ -614,10 +612,10 @@ class TestSchemaDeclarationsAreSingleSource:
         from agent_cli.tools import monitor_tool, schedule
         from agent_cli.tools.edit_file import EDIT_OPS
         from agent_cli.tools.memory_tool import MODES as MEMORY_MODES
-        from agent_cli.tools.registry import TOOL_SCHEMAS
+        from agent_cli.tools.registry import TOOLS
 
         def enum(tool, key):
-            return TOOL_SCHEMAS[tool].parameters["properties"][key]["enum"]
+            return TOOLS[tool].parameters["properties"][key]["enum"]
 
         assert enum("memory", "mode") == list(MEMORY_MODES)
         assert enum("memory", "type") == list(memory.VALID_TYPES)
@@ -626,10 +624,10 @@ class TestSchemaDeclarationsAreSingleSource:
         assert enum("schedule", "mode") == list(schedule.MODES)  # v10.108.0
 
     def test_min_length_only_where_empty_is_meaningless(self):
-        from agent_cli.tools.registry import TOOL_SCHEMAS
+        from agent_cli.tools.registry import TOOLS
 
         def ml(tool, key):
-            return TOOL_SCHEMAS[tool].parameters["properties"][key].get("minLength")
+            return TOOLS[tool].parameters["properties"][key].get("minLength")
 
         for tool, key in (
             ("shell", "command"),

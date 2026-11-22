@@ -22,7 +22,7 @@ xgr = pytest.importorskip("xgrammar")
 
 from agent_cli.dialects import get
 from agent_cli.tools.registry import (
-    TOOL_SCHEMAS,
+    TOOLS,
     allows_extra_keys,
     effective_tool_names,
     flat_param_schemas,
@@ -98,7 +98,7 @@ def _tools(fmt: str):
     wf = get(fmt)
     out = []
     for n in effective_tool_names(None, wf):
-        params = TOOL_SCHEMAS[n].parameters
+        params = TOOLS[n].parameters
         out.append((n, flat_param_schemas(n, params), allows_extra_keys(params)))
     return out
 
@@ -397,7 +397,7 @@ class TestFreeFormSchemas:
             ("srv.search", flat_param_schemas("srv.search", self.FREE), True),
             (
                 "complete",
-                flat_param_schemas("complete", TOOL_SCHEMAS["complete"].parameters),
+                flat_param_schemas("complete", TOOLS["complete"].parameters),
                 False,
             ),
         ]

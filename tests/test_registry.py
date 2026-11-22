@@ -1,7 +1,6 @@
 """Tests for tools/registry."""
 
 from agent_cli.tools.registry import (
-    TOOL_SCHEMAS,
     TOOLS,
     get_tool_descriptions,
     validate_tool_input,
@@ -111,10 +110,10 @@ class TestAgentSchema:
     """5.0.0: delegate 소멸 — agent 도구의 run 계약이 그 자리를 승계."""
 
     def test_agent_flat_params(self):
-        props = TOOL_SCHEMAS["agent"].parameters["properties"]
+        props = TOOLS["agent"].parameters["properties"]
         for k in ("mode", "task", "profile", "instructions", "context", "tools"):
             assert k in props
-        assert TOOL_SCHEMAS["agent"].parameters["required"] == ["mode"]
+        assert TOOLS["agent"].parameters["required"] == ["mode"]
 
     def test_agent_has_no_parallel_batch(self):
         # v10.141.0: run 은 바로 돌아온다 — 한 턴의 run 을 묶어 돌리던 병렬 배치는 없다

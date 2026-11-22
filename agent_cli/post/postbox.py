@@ -50,11 +50,6 @@ class Postbox:
         order += [i for i, e in enumerate(self._queued) if not is_human_words(e)]
         return self._move(order)
 
-    def take_away(self) -> tuple[Envelope, ...]:
-        """줄 선 것 전부를 꺼낸다 — 런이 들지 않는다(taken 에 두지 않음)."""
-        out, self._queued = tuple(self._queued), []
-        return out
-
     def take_first_words(self) -> Envelope | None:
         """줄 선 첫 사람의 말 하나를 상자에서 뺀다(런이 들지 않는다). 없으면 None."""
         i = next((i for i, e in enumerate(self._queued) if is_human_words(e)), None)
@@ -74,8 +69,8 @@ class Postbox:
                 return self._queued.pop(i)
         return None
 
-    def drop_queued(self) -> tuple[Envelope, ...]:
-        """줄 선 것을 모두 버리고 돌려준다(✕ — 호출자가 줄을 닫는다)."""
+    def remove_all(self) -> tuple[Envelope, ...]:
+        """줄 선 것을 모두 상자에서 빼 돌려준다 — 런이 들지 않는다(taken 에 두지 않음)."""
         out, self._queued = tuple(self._queued), []
         return out
 

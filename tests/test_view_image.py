@@ -369,7 +369,7 @@ class TestCompaction:
     def test_summary_prompt_asks_for_images_only_when_there_were_some(self):
         from unittest.mock import MagicMock
 
-        from agent_cli.loop.llm import _SUMMARY_IMAGES_LINE
+        from agent_cli.prompts.compaction import SUMMARY_IMAGES_LINE
         from tests.loop_ports import TEST_PORTS
         from tests.loopkit import make_loop
 
@@ -389,8 +389,8 @@ class TestCompaction:
             {"role": "user", "content": "[view_image] → [image: a.png (2×2)]"}
         ]
         loop._llm._llm_compact_summarize(with_image)
-        assert _SUMMARY_IMAGES_LINE in provider.call.call_args.kwargs["system"]
-        assert "what it shows" in _SUMMARY_IMAGES_LINE
+        assert SUMMARY_IMAGES_LINE in provider.call.call_args.kwargs["system"]
+        assert "what it shows" in SUMMARY_IMAGES_LINE
         # 요약기에 그림이 그대로 간다 (공급자 경계가 펼친다)
         refs = [{"path": "a.png", "width": 2, "height": 2}]
         loop._llm._llm_compact_summarize([{**with_image[0], "images": refs}])

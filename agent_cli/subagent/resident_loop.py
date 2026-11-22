@@ -34,15 +34,12 @@ from agent_cli.main_input import CLOSED
 from agent_cli.session.records import record_restart
 from agent_cli.session_slots import get_agent_registry
 from agent_cli.subagent import agent_stop
+from agent_cli.subagent.agent_mail import is_human_addr
 from agent_cli.tools.result import ToolResult
 from agent_cli.wake import Mailbox
 
 if TYPE_CHECKING:
     from agent_cli.loop.ports import LoopPorts
-
-
-def _is_human_addr(author: str) -> bool:
-    return author == "user" or str(author).startswith("user:")
 
 
 class ResidentLoop(LoopKind):
@@ -215,7 +212,7 @@ class ResidentLoop(LoopKind):
         if len(items) == 1:
             item = first
             author = item.get("author", "main")
-            human = _is_human_addr(author)
+            human = is_human_addr(author)
             expects = item.get("expects_reply", True)
             if expects:
                 # 요청 항목은 빚이다 (v9.21.0 — `complete` 는 국소, 배달은 `reply`/`message` 뿐).
@@ -350,7 +347,7 @@ class ResidentLoop(LoopKind):
         # 이 런에서 **건** 사람 질문 중 아직 열린 것을 결과에 실어 알린다 (§3.6·§3.7)
         output = reg._with_human_notice(tm, iid, output)
         reply_path = reg._persist_reply(tm, iid, output)
-        human = _is_human_addr(author)
+        human = is_human_addr(author)
         run_stop = self._run_stop
         stopped = run_stop.is_set() if run_stop is not None else tm.stop_event.is_set()
         if stopped and tm.stop_cause:

@@ -43,8 +43,6 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
 _MAX_OVERFLOW_RETRIES = 5
-# 요약 프롬프트의 제목·IMAGES 항목은 경계 지침과 한 벌 (v10.123.0, prompts/compaction).
-_SUMMARY_IMAGES_LINE = SUMMARY_IMAGES_LINE
 # Compaction ratio: the per-call target is ``context_window × ratio − system −
 # session state − minimum output`` (default 1.0 — the window is the trigger)
 # and compaction runs the moment the cache EXCEEDS that target — there is no
@@ -191,7 +189,7 @@ class LLMCaller:
             return None
         if self._grammar_cache is None:
             from agent_cli.tools.registry import (
-                TOOL_SCHEMAS,
+                TOOLS,
                 allows_extra_keys,
                 effective_tool_names,
                 flat_param_schemas,
@@ -199,7 +197,7 @@ class LLMCaller:
 
             tools = []
             for name in effective_tool_names(self.cfg.tools_list, self.cfg.dialect):
-                schema = TOOL_SCHEMAS.get(name)
+                schema = TOOLS.get(name)
                 if schema is None:
                     continue
                 params = schema.parameters
@@ -649,7 +647,7 @@ class LLMCaller:
             # 이미지 (v10.77.0, docs/vision/DESIGN.md §12.3): 요약기는 그림을 못
             # 받는다 — 그림에서 읽은 것 중 아직 글로 남지 않은 것을 모델의 글에서
             # 끌어내게 한다. 이미지가 없는 압축의 프롬프트는 종전과 바이트 같다.
-            + (_SUMMARY_IMAGES_LINE if _images.mentions_image(messages) else "")
+            + (SUMMARY_IMAGES_LINE if _images.mentions_image(messages) else "")
             + "\n"
             "Rules: use only information present in the transcript — do not "
             "invent or assume. Keep exact identifiers verbatim (paths, "

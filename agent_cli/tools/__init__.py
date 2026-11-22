@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from agent_cli.tools.base import RunContext
 from agent_cli.tools.registry import (
-    TOOL_SCHEMAS,
     TOOLS,
     _execute_tool,
     get_tool_descriptions,
@@ -22,7 +21,6 @@ from agent_cli.tools.result import ToolResult
 
 __all__ = [
     "TOOLS",
-    "TOOL_SCHEMAS",
     "RunContext",
     "ToolResult",
     "_execute_tool",

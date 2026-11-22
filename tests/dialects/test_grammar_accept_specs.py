@@ -15,7 +15,7 @@ xgr = pytest.importorskip("xgrammar")
 
 from agent_cli.dialects import get
 from agent_cli.tools.registry import (
-    TOOL_SCHEMAS,
+    TOOLS,
     allows_extra_keys,
     effective_tool_names,
     flat_param_schemas,
@@ -45,8 +45,8 @@ def _tools(fmt):
     return [
         (
             n,
-            flat_param_schemas(n, TOOL_SCHEMAS[n].parameters),
-            allows_extra_keys(TOOL_SCHEMAS[n].parameters),
+            flat_param_schemas(n, TOOLS[n].parameters),
+            allows_extra_keys(TOOLS[n].parameters),
         )
         for n in effective_tool_names(None, wf)
     ]

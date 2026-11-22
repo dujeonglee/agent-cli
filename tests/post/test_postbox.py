@@ -10,7 +10,7 @@ from agent_cli.post.postbox import BoxError, Postbox
 X = E.reply("x-1", "agent:a", "main", "ans", re="r-9")
 OPS = (
     "put", "take_next", "take_all", "take_all_human_first", "take_reply",
-    "drop_queued", "finish_run", "take_away",
+    "remove_all", "finish_run",
 )  # fmt: skip
 
 #: (위치, 연산) → 새 위치. "error" 는 BoxError. 시안 §3 에서 따로 적은 표.
@@ -22,9 +22,8 @@ EXPECT = {
     ("queued", "take_all"): "taken",
     ("queued", "take_all_human_first"): "taken",
     ("queued", "take_reply"): "none",
-    ("queued", "drop_queued"): "none",
+    ("queued", "remove_all"): "none",
     ("queued", "finish_run"): "queued",
-    ("queued", "take_away"): "none",
     ("taken", "put"): "error",
     **{
         ("taken", op): "taken"
@@ -33,8 +32,7 @@ EXPECT = {
             "take_all",
             "take_all_human_first",
             "take_reply",
-            "drop_queued",
-            "take_away",
+            "remove_all",
         )
     },
     ("taken", "finish_run"): "none",
@@ -76,7 +74,7 @@ def test_envelope_location_table(place, op):
 
 
 def test_table_size():
-    assert len(EXPECT) == 3 * len(OPS) == 24
+    assert len(EXPECT) == 3 * len(OPS) == 21
 
 
 def _h(i):

@@ -4,7 +4,7 @@ Each tool is a :class:`Tool` subclass that owns its schema, its dispatch,
 and its wire-key namespace in one place:
 
 - **schema** (``name`` / ``description`` / ``parameters``) — what used to
-  live in the central ``registry.TOOL_SCHEMAS`` dict,
+  live in a central schema dict,
 - **dispatch** (``_run``) — what used to be a free ``tool_*`` function
   referenced from the central ``__init__.TOOLS`` dict,
 - **prefix** — the wire surface namespaces ``action_input`` keys as
@@ -14,9 +14,7 @@ and its wire-key namespace in one place:
   (does this payload's key shape belong to me, for recovering a dropped
   action name). Subclasses never override them — they just set ``name``.
 
-``Tool`` instances are the values of ``registry.TOOL_SCHEMAS`` (and
-``TOOLS``): they expose the same ``.name`` / ``.description`` /
-``.parameters`` attributes the old ``ToolSchema`` dataclass did, so every
+``Tool`` instances are the values of ``registry.TOOLS``: every
 schema consumer (system prompt, input validation, MCP adapter) keeps
 working unchanged.
 
