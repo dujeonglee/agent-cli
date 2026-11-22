@@ -287,10 +287,11 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
 | 내 요청을 처리 중, 진행함 | `agent:k (explorer) · working on your request · 12 steps since your wait, last one 40s ago` |
 | 내 요청을 처리 중, 멈춘 듯 | `agent:k (explorer) · working on your request · no step since your wait, last one 9m ago` |
 | 내 요청이 대기열 | `agent:j (writer) · has your request queued behind 2 others · busy on another request, last step 1m ago` |
+| 내 요청이 대기열, 그 에이전트는 기다리는 중 | `agent:j (writer) · has your request queued, next in line · waiting, last step 1m ago` (v10.166.0 — 우편의 기다림 표시. 꼬리 `[waiting]`·폴백 회신 꼬리 `agent status: waiting` 과 같은 낱말) |
 | 회신을 빚졌고 다른 요청을 하는 중 | `agent:p (explorer) · owes you a reply · busy on another request, last step 5s ago` |
 | 회신을 빚졌고 일하지 않음(받은편지함이 비지 않아 잠듦으로 세지 않는다) | `agent:p (explorer) · owes you a reply · idle` (v10.146.6) |
-| 회신을 빚진 채 스스로 잠듦 | `agent:m (coder) · owes you a reply · itself waiting on job #3 (`pytest -x tests/`)` |
-| 사람 질문에 막힘 | `agent:n (reviewer) · owes you a reply · itself waiting on job #1 (`…`) · blocked on question q-3 to the user, unanswered for 9m` |
+| 회신을 빚진 채 스스로 잠듦 | `agent:m (coder) · owes you a reply · itself waiting on job #3` — 기다리는 것은 이름만(v10.166.0, `wake.wake_name`): 에이전트는 키(`agt-5`), main 은 `main`, 작업 `job #3`, 모니터 `monitor m-2`, 예약 `a schedule`. 종전엔 `wait` 수락 문장의 줄 그대로였다(`job #3 (\`pytest -x tests/\`)`·`agent:agt-5 working on your request` — 뒤의 "your" 는 읽는 쪽이 아니라 그 채무자의 시점이었다) |
+| 사람 질문에 막힘 | `agent:n (reviewer) · owes you a reply · itself waiting on job #1 · blocked on question q-3 to the user, unanswered for 9m` |
 | main 이 회신을 빚짐(기다리는 쪽이 에이전트) | `main · owes you a reply` — 에이전트가 아니라 걸음 수·일감·kill 안내가 없다 |
 
 "내 요청을 처리 중"·"대기열" 은 그 런·받은편지함이 내 요청 중 아직 회신이 가지 않은 것을 들고 있을 때만이다

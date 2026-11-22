@@ -25,6 +25,7 @@ from agent_cli import jobs
 from agent_cli.dialects import get as _get_dialect
 from agent_cli.fsio import atomic_write_text
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.subagent.agents_state import WAITING
 from agent_cli.tools.registry import get_tool_descriptions
 
 
@@ -942,9 +943,9 @@ def build_live_agents_section(
             state = " [dead · resumable]"
         elif include_state:
             queued = s.get("pending_requests") or 0
-            state = f" [{s.get('state', '?')}" + (
-                f" · {queued} queued]" if queued else "]"
-            )
+            # 기다리는 에이전트(스냅샷의 ``waiting`` — 우편의 기다림 표시)는 작업 상태 대신 그 낱말로 (v10.166.0)
+            now = WAITING if s.get("waiting") else s.get("state", "?")
+            state = f" [{now}" + (f" · {queued} queued]" if queued else "]")
         line = f"- {label}{state}" + (f" — {desc}" if desc else "")
         lines.append(line)
     return "\n".join(lines)
