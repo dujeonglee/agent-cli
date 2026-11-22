@@ -313,8 +313,8 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
   run·하니스 작업이 같은 길이다. 대상 id 집합·단계·이번 간격·기준(작업별 로그 크기, 에이전트별 `last_ordinal`)을
   `_Checkin` 하나에 들고 `threading.Timer` 를 띄운다. 상태는 `{owner: _Checkin}`(걸린 것)과 `{owner: (ids, step)}`(직전에
   발화한 것) 둘 — 배증이 치르는 유일한 값이다.
-- **푸는 곳**: 같은 제자리 대기의 ``finally``(`mailbox.cancel_checkin()` — 깨면 어떤 이유로든), 새로 걸기 직전
-  (`arm_checkin` 이 먼저 푼다), 정리(주인이 죽거나 세션이 끝남 — `drop_mailbox`·kill·`shutdown_all`). 런의 시작·끝에는 풀 것이 없다 —
+- **푸는 곳**: 같은 제자리 대기의 ``finally``(`mailbox.cancel_checkin()` — 깨면 어떤 이유로든),
+  정리(주인이 죽거나 세션이 끝남 — `drop_mailbox`·kill·`shutdown_all`). 런의 시작·끝에는 풀 것이 없다 —
   `wait` 는 런을 끝내지 않는다(5c-1). 종전의 런 시작 해제(`_note_run_started`)·런 끝 해제(`run_ended`)는 v10.164.0 에
   지웠다.
 - **발화**: `fire_checkin(owner)` 가 `wake.wait_checkin` 으로 본문을 만들어 main 이면 메일함

@@ -1074,7 +1074,6 @@ class AgentRegistry:
 
         기준을 함께 적는다: 작업별 로그 크기(P(a) "+N lines since your wait")와
         에이전트별 `last_ordinal`("N steps since your wait")."""
-        self.cancel_checkin(owner)  # 이미 걸린 것이 있으면 푼다
         if not ids:
             return None
         step = self._checkin_step(owner, ids)
@@ -1108,8 +1107,8 @@ class AgentRegistry:
         return interval
 
     def cancel_checkin(self, owner: str) -> None:
-        """이 소유자에게 걸린 체크인 타이머를 푼다 — 제자리 대기가 깰 때(`TurnDispatcher._wait_in_place` 의 ``finally``),
-        새로 걸기 전(`arm_checkin`), 주인이 사라질 때(`drop_mailbox`·kill·`shutdown_all`). 걸린 것이 없으면 no-op."""
+        """이 소유자에게 걸린 체크인 타이머를 푼다 — 제자리 대기가 깰 때(`TurnDispatcher._op_wait` 의 ``finally``),
+        주인이 사라질 때(`drop_mailbox`·kill·`shutdown_all`). 걸린 것이 없으면 no-op."""
         with self._cv:
             ck = self._checkin_armed.pop(owner, None)
         if ck is not None and ck.timer is not None:
