@@ -1,11 +1,14 @@
 """Tests for the fetch tool."""
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agent_cli.tools.base import RunContext
 from agent_cli.tools.fetch import (
     _PROXY_VARS,
     FetchTool,
@@ -1136,3 +1139,76 @@ class TestDownloadFailureText:
             "Retrying will not help; this source needs an account."
         )
         assert not (tmp_path / "p.html").exists()
+
+
+#: 사건을 기다리는 상한 — 넘으면 테스트가 실패한다(결과를 바꾸는 값이 아니다)
+_PATIENCE_S = 20
+
+
+class _HeldServer:
+    """요청을 받은 뒤 응답을 쥐고 있는 로컬 서버(127.0.0.1, 임시 포트) — ``got`` 은 요청이 닿았다, ``release`` 를
+    세우면 그제야 답한다. 시간으로 맞추지 않는다: 순서는 이 두 사건이 정한다."""
+
+    def __init__(self):
+        self.got = threading.Event()
+        self.release = threading.Event()
+        held = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                held.got.set()
+                held.release.wait(_PATIENCE_S)
+                body = b"late answer"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                try:
+                    self.wfile.write(body)
+                except OSError:
+                    pass  # 받는 쪽이 요청을 버렸다
+
+            def log_message(self, *args):
+                pass
+
+        self._srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._srv.server_address[1]}/held"
+        threading.Thread(target=self._srv.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.release.set()
+        self._srv.shutdown()
+        self._srv.server_close()
+
+
+@pytest.fixture
+def held_server():
+    srv = _HeldServer()
+    yield srv
+    srv.close()
+
+
+def _fetch_in_thread(url: str, stopped):
+    """``FetchTool`` 을 옆 스레드에서 — ``(스레드, 결과 상자)``."""
+    box: dict = {}
+
+    def go():
+        box["result"] = FetchTool()._run({"url": url}, ctx=RunContext(stopped=stopped))
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    return t, box
+
+
+class TestStopsWithTheRun:
+    """작업 구간이 멈췄을 때의 `fetch` — 서버가 응답을 쥐고 있는 동안."""
+
+    def test_a_stopped_run_still_waits_for_the_answer(self, held_server):
+        """[지금 값] `fetch` 는 런의 정지를 보지 않는다 — 정지가 선 채로도 서버가 답할 때까지 기다리고, 그 답을
+        그대로 돌려준다."""
+        t, box = _fetch_in_thread(held_server.url, lambda: True)
+        assert held_server.got.wait(_PATIENCE_S)
+        held_server.release.set()
+        t.join(_PATIENCE_S)
+        assert box["result"].success
+        assert "late answer" in box["result"].output
