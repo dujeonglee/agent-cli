@@ -1036,8 +1036,7 @@ class AgentRegistry:
         - 그 밖(보통의 끝): :meth:`end_run` — 남은 빚을 라벨 붙은 런 요약으로.
 
         종전엔 이 판정(``not stop_event``)이 호출부 셋에 흩어져 있었다. ``meta`` 의 ``run`` 키는 그 런을 연 배달
-        id 이고 `run_started`(런 **시작**)와는 무관하다."""
-        self.run_started(debtor)  # 끝났으니 걸린 것이 있어도 의미가 없다
+        id 이다. 체크인 타이머는 여기서 풀 것이 없다 — 거는 곳은 제자리 대기 하나이고 깨면 그 ``finally`` 가 푼다."""
         if stopped:
             # 버린 빚 — 요청자는 더 기다리지 않는다(dropped). 세션 종료도 여기다(추정 버그 3 — 5단계에서
             # outcome="session_end" 로 바뀐다)
@@ -1110,9 +1109,8 @@ class AgentRegistry:
         return interval
 
     def run_started(self, owner: str) -> None:
-        """이 소유자의 런이 시작됐다(어떤 이유로든 — 보고·메일·사람 입력) —
-        걸린 타이머를 푼다. `AgentLoop.run()` 이 배달 뒤 한 번 부른다; 네 경로
-        (main·상주·run·web)가 그 한 지점을 지난다. 걸린 것이 없으면 no-op."""
+        """이 소유자에게 걸린 체크인 타이머를 푼다 — 제자리 대기가 깰 때(`TurnDispatcher._wait_in_place` 의 ``finally``),
+        새로 걸기 전(`arm_checkin`), 정리(`_cancel_checkins`). 걸린 것이 없으면 no-op."""
         with self._cv:
             ck = self._checkin_armed.pop(owner, None)
         if ck is not None and ck.timer is not None:
