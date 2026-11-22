@@ -2891,13 +2891,14 @@ def s38_close_while_main_waits(root: Path) -> dict:
     aa = _agent_key(s, "aa")
 
     def ends_after_aa_stopped(args, kwargs):
-        # 닫힌 뒤 main 의 런 끝 띠(`open_items`) — aa 의 평생 정지가 선 뒤에 그린다: 그 뒤로 aa 에게 보낸 기다리는 회신은
-        # 장부 사본에서 빠진다(받을 이 없음 — `awaited_replies`). 5e1 부터 main 은 정지로 끝나 그 띠가 정리(aa 멈춤)와
-        # 앞뒤가 갈렸다(cpus 0.5, 750회 중 68회)
+        # 닫힌 뒤 main 의 런 끝 — aa 의 평생 정지가 선 뒤로 미룬다: 그 뒤로 aa 에게 보낸 기다리는 회신은 장부 사본에서
+        # 빠진다(받을 이 없음 — `awaited_replies`). 5e1 부터 main 은 정지로 끝나 런 끝 띠가 정리(aa 멈춤)와 앞뒤가
+        # 갈렸다(cpus 0.5, 750회 중 68회). 잡는 자리는 런 끝 finally 의 `note_items_closed_after` — 띠(`open_items`)의
+        # 스냅샷은 그 사건이 적히기 **전에** 인자로 떠지므로 거기서 잡으면 늦다(750회 중 44회)
         if s.main_input.closed():
             until(lambda: s.reg.get(aa).stop_event.is_set(), "aa stopped by the close")
 
-    s.recorder.rules["open_items"] = ends_after_aa_stopped
+    s.recorder.rules["note_items_closed_after"] = ends_after_aa_stopped
     s.stop_pump()
     closer = threading.Thread(target=s.close, daemon=True, name="oracle-close")
     closer.start()
@@ -3129,6 +3130,11 @@ def s42_run_crashes_while_waiting(root: Path) -> dict:
             "awaited_main": s.reg.awaited_replies("main"),
             "roster": _roster(s),
         }
+        # bb 의 회신이 연 aa 의 새 런 — 그 첫 꼬리가 bb 를 [idle] 로 읽게, bb 가 `complete` 로 런을 끝낼 때까지 aa 의
+        # 작업 카드(`begin_agent_work`, aa 의 스레드 — 첫 꼬리를 짓기 전)를 잡는다(cpus 0.25, 750회 중 1회). 지금 걸면
+        # aa 의 다음 작업 카드가 그 런이다 — 충돌한 런은 끝났고 main 은 aa 가 K2 를 읽은 뒤에야 다시 묻는다
+        bb = _agent_key(s, "bb")
+        s.recorder.hold("begin_agent_work", aa, lambda: s.agent_state(bb) == "idle")
         bb_go.set()
         until(
             lambda: (
