@@ -553,32 +553,18 @@ class AgentRegistry:
                 )
                 for tm in list(self._agents.values())
             )
-            rows = self._post.rows()
+            rows = [r for r in self._post.rows() if r.kind == "r"]
             return WakeFacts(
                 agents=agents,
-                owing=tuple(
-                    (r.dst, r.src)
-                    for r in rows
-                    if r.kind == "r" and r.state == "picked"
-                ),
-                queued=tuple(
-                    (r.dst, r.src)
-                    for r in rows
-                    if r.kind == "r" and r.state == "queued"
-                ),
-                awaited=frozenset(
-                    (r.src, r.rid)
-                    for r in rows
-                    if r.kind == "r" and r.state != "closed"
-                ),
+                owing=tuple((r.dst, r.src) for r in rows if r.state == "picked"),
+                queued=tuple((r.dst, r.src) for r in rows if r.state == "queued"),
+                awaited=frozenset((r.src, r.rid) for r in rows if r.state != "closed"),
                 waiting=self._post.waiting_addresses(),
                 # 받는 쪽이 죽었으면 빼다 — 회신을 보낼 이가 없다(그 죽음은 따로 메일로 온다)
                 replies=tuple(
                     (r.src, {"id": r.rid, "from": r.dst, "text": r.text})
                     for r in rows
-                    if r.kind == "r"
-                    and r.state != "closed"
-                    and self._agent_alive(r.dst)
+                    if r.state != "closed" and self._agent_alive(r.dst)
                 ),
             )
 
