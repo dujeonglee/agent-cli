@@ -519,6 +519,7 @@
    },
    {
     "content": "── request [r-2] from main ──\nTASK-H also check b.py\n(You owe main a `reply` with `id` \"r-2\". Your current task stays open; see ## Open Items.)",
+    "request_id": "r-2",
     "role": "user",
     "source": "agent_request",
     "success": true,

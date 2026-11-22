@@ -1036,8 +1036,7 @@ class AgentRegistry:
         - 그 밖(보통의 끝): :meth:`end_run` — 남은 빚을 라벨 붙은 런 요약으로.
 
         종전엔 이 판정(``not stop_event``)이 호출부 셋에 흩어져 있었다. ``meta`` 의 ``run`` 키는 그 런을 연 배달
-        id 이고 `run_started`(런 **시작**)와는 무관하다."""
-        self.run_started(debtor)  # 끝났으니 걸린 것이 있어도 의미가 없다
+        id 이다. 체크인 타이머는 여기서 풀 것이 없다 — 거는 곳은 제자리 대기 하나이고 깨면 그 ``finally`` 가 푼다."""
         if stopped:
             # 버린 빚 — 요청자는 더 기다리지 않는다(dropped). 세션 종료도 여기다(추정 버그 3 — 5단계에서
             # outcome="session_end" 로 바뀐다)
@@ -1110,9 +1109,8 @@ class AgentRegistry:
         return interval
 
     def run_started(self, owner: str) -> None:
-        """이 소유자의 런이 시작됐다(어떤 이유로든 — 보고·메일·사람 입력) —
-        걸린 타이머를 푼다. `AgentLoop.run()` 이 배달 뒤 한 번 부른다; 네 경로
-        (main·상주·run·web)가 그 한 지점을 지난다. 걸린 것이 없으면 no-op."""
+        """이 소유자에게 걸린 체크인 타이머를 푼다 — 제자리 대기가 깰 때(`TurnDispatcher._wait_in_place` 의 ``finally``),
+        새로 걸기 전(`arm_checkin`), 정리(`_cancel_checkins`). 걸린 것이 없으면 no-op."""
         with self._cv:
             ck = self._checkin_armed.pop(owner, None)
         if ck is not None and ck.timer is not None:
@@ -1757,6 +1755,7 @@ class AgentRegistry:
                             "success": True,
                             "content": content,
                             "source": "agent_request",
+                            "request_id": rid,  # 빚 id — 갚기 전 압축이 원문을 남긴다(`Ledger.pin_ids`)
                         }
                     }
                 )
@@ -2452,8 +2451,9 @@ class AgentRegistry:
             pass  # 화면은 best-effort — 정리를 막지 않는다
 
     def shutdown_all(self, *, deadline: float | None = None) -> None:
-        """세션 종료 — 전원 kill. main 부트스트랩의 finally 에서 호출. ``deadline``
-        (SIGTERM 경로, v10.134.1)이 있으면 워커를 그 안에서만 기다린다."""
+        """세션 종료 — main 상자를 먼저 닫고(멈추는 런이 그 사실을 읽는다, 5e1) 전원 kill. main 부트스트랩의 finally 에서
+        호출. ``deadline``(SIGTERM 경로, v10.134.1)이 있으면 워커를 그 안에서만 기다린다. 마지막 저장은 revivable 그대로(D7)."""
+        self._post.close("main")
         self._cancel_checkins()  # main 포함 — 끝나는 세션에 알림이 쌓이지 않게
         for tm in list(self._agents.values()):
             self._drop_monitors(tm.key)
@@ -2461,7 +2461,6 @@ class AgentRegistry:
         for tm in list(self._agents.values()):
             if tm.worker is not None:
                 tm.worker.join(timeout=wait_left(deadline, 5.0))
-        # 최종 스냅샷 — revivable 유지 상태로 기록돼 resume 이 되살린다 (D7).
         self._save_state()
 
     def resume_teammate(self, key: str, *, parent_ctx=None) -> str:

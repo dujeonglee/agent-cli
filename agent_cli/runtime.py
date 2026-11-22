@@ -773,13 +773,13 @@ class MainLoop(LoopKind):
         self.record_turns = record_turns
         self.hooks_config = hooks_config
         self.graceful_interrupt = graceful_interrupt
+        self._session_closed = session_closed
         self.ports = self.make_ports(
             agent_registry=agent_registry,
             mcp_manager=mcp_manager,
             enqueue_user_message=enqueue_user_message,
             route_message=route_message,
             wait_for_user_input=wait_for_user_input,
-            session_closed=session_closed,
         )
 
     @staticmethod
@@ -790,12 +790,10 @@ class MainLoop(LoopKind):
         enqueue_user_message,
         route_message,
         wait_for_user_input=None,
-        session_closed=None,
     ) -> LoopPorts:
         """``wait_for_user_input`` (v10.141.0): ``(timeout) -> bool`` — 사람 입력이 도착했는가
         (꺼내지 않는다; 호스트의 것 — web 은 main 앞 사람의 말, run 은 터미널 줄 + 그것). 기다리는
-        회신을 둔 제자리 `wait` 를 사람의 말이 깨운다. ``session_closed`` (5c-pre): ``() -> bool`` — main 상자가
-        닫혔는가(`MainInput.closed`). 제자리 `wait` 가 그것을 보고 런을 세션 종료로 끝낸다."""
+        회신을 둔 제자리 `wait` 를 사람의 말이 깨운다."""
         return LoopPorts(
             owner="main",
             questions=_main_questions(agent_registry),
@@ -817,7 +815,6 @@ class MainLoop(LoopKind):
                 "main",
                 take=agent_registry.absorb_main if agent_registry is not None else None,
                 wait_input=wait_for_user_input,
-                closed=session_closed,
             ),
             unwired={
                 **(
@@ -831,6 +828,10 @@ class MainLoop(LoopKind):
         )
 
     # ── 엔진이 묻는 것 (v10.88.0) ──
+    def session_ended(self) -> bool:
+        """main 상자가 닫혔는가(`MainInput.closed`) — 세션이 끝나는 중이다(5e1)."""
+        return bool(self._session_closed is not None and self._session_closed())
+
     def wait_refused_next(self) -> str:
         """main 은 요청을 보내야 회신이 온다 — 깨울 것이 없으면 그 길을 말한다."""
         return WAIT_NEXT_MAIN

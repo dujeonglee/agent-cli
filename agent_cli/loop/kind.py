@@ -267,6 +267,12 @@ class LoopKind:
     # ── B·C 엔진이 묻는 것 (PR 2, v10.88.0) — 기본 구현은 정체(포트·깊이·이름)에서 유도한다.
     # 다섯 종류는 자기 정책을 **명시**해 덮어쓴다; 기본은 맨 종류(엔진을 종류 없이 세우는
     # 테스트가 `tests/loopkit.py` 에서 만든다)를 위한 것이다.
+    def session_ended(self) -> bool:
+        """세션이 끝나는 중인가(main 상자가 닫혔다) — 엔진의 정지가 이것이면 세션 종료로 끝낸다: 기록·카드·끝 정리
+        없이(`AgentLoop._on_interrupt`, 5e1). 기본은 거짓 — main(`MainInput.closed`)과 에이전트(레지스트리 우편의
+        main 상자)가 같은 사실을 읽는다."""
+        return False
+
     def wait_refused_next(self) -> str:
         """깨울 것이 없어 `wait` 를 거절할 때 문장의 다음 걸음 — 과제를 잇거나 끝낸다(run·하니스 작업).
         새 종류는 덮어쓰지 않으면 이 기본("Keep working …")을 쓴다; main·상주는 자기 길을 말한다."""

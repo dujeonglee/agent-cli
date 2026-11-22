@@ -357,7 +357,7 @@ P1 의 바이트 동일 검사와 P3 재생은 **방언별로** 돈다 — 꼬�
 
 ## 13. `wait` 와의 관계 (v10.65.0)
 
-`complete` 는 닫는 행위다. 띄운 작업·모니터·에이전트를 기다릴 때는 `wait` — 아무것도 닫지 않고 런을 끝내며, 열린 요청은 `ctx.park_requests` 로 다음 런의 장부에 오른다(장부는 런 수명 그대로). 기다리려고 `answers` 없는 complete 를 보내면 되돌림 관찰이 깨울 것이 있을 때 "call `wait` instead" 를 붙인다. `docs/wait/DESIGN.md`.
+`complete` 는 닫는 행위다. 띄운 작업·모니터·에이전트를 기다릴 때는 `wait` — 아무것도 닫지 않고 그 자리에서 기다린다. 깨면 같은 런이 같은 장부로 잇는다(v10.163.0 — 종전엔 런을 끝내고 열린 요청을 `ctx.park_requests` 로 다음 런의 장부에 올렸다). 장부는 런 수명 그대로다. 기다리려고 `answers` 없는 complete 를 보내면 되돌림 관찰이 깨울 것이 있을 때 "call `wait` instead" 를 붙인다. `docs/wait/DESIGN.md`.
 
 ## 14. 메일의 장부 위치는 만드는 쪽이 선언한다 (v10.78.1)
 
@@ -410,9 +410,9 @@ main 앞 메일의 세 갈래(§2) 중 회신 빚은 처음부터 필드(`expect
 | `hidx` | `None` — 렌더러가 채운다(§15.3) | `None` |
 
 오른 턴은 `add_request(…, turn=)` 로 받는다(additive, 기본 0). 항목 dict 에는 넣지 않고 장부 안의
-맵에 둔다 — 그 dict 는 최종 카드의 `requests` 와 `park_requests` 로 그대로 흘러가므로 모양이 바뀌면
-최종 카드 payload 와 깨우기 런의 장부가 함께 바뀐다. 호출자는 `core.py` 의 여섯(런 시작 셋 —
-`user_requests`·`wait` 로 넘긴 요청·시작 요청, 턴 경계 셋 — 큐 주입·메일·상주 받은편지함)이고
+맵에 둔다 — 그 dict 는 최종 카드의 `requests` 로 그대로 흘러가므로 모양이 바뀌면 최종 카드 payload 가
+바뀐다(`park_requests` 로 다음 런에 넘기던 길은 v10.163.0 에 지웠다). 호출자는 `core.py` 의 런 시작(`user_requests`·
+시작 요청)과 턴 경계(큐 주입·메일·상주 받은편지함)이고
 모두 그 시점의 `state.turn` 을 넘긴다.
 
 ### 15.2 부르는 자리와 거름

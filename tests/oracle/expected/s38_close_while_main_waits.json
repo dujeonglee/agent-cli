@@ -281,12 +281,6 @@
     "content": "TASK-C look",
     "request_id": "r-1",
     "role": "user"
-   },
-   {
-    "content": "⚡ User interrupted. Waiting for new instructions.",
-    "role": "user",
-    "success": false,
-    "tool": "interrupt"
    }
   ],
   "history.jsonl": [

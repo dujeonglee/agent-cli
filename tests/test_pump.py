@@ -134,7 +134,8 @@ class TestMailRun:
         def run_main(req):
             seen.append(req)
             mi.post.absorb("main", human_first=True)  # 그 런의 첫 턴 경계가 하는 일
-            mi.close()
+            mi.close()  # 세션이 닫힌다 — 그 런은 정지 판정에서 세션 종료로 끝난다(엔진의 `_on_interrupt`, 5e1)
+            return ToolResult(False, error="session ended", session_ended=True)
 
         make_pump(
             main_input=mi,
@@ -159,7 +160,8 @@ class TestMailRun:
         def run_main(req):
             seen.append(not req.author_is_user)
             if not req.author_is_user:
-                mi.close()
+                mi.close()  # 세션이 닫힌다 — 그 런은 세션 종료로 끝난다(5e1)
+                return ToolResult(False, error="session ended", session_ended=True)
 
         make_pump(main_input=mi, run_main=run_main, policy=ForeverPolicy()).run()
         assert seen == [False, True]

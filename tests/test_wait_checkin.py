@@ -173,12 +173,6 @@ class TestArmAndFire:
         assert timer.cancelled and _armed(reg) is None
         assert reg.fire_checkin("main") == "" and _mail(reg) == []
 
-    def test_a_normal_run_end_clears_a_stale_timer(self, reg, jobs):
-        jobs.start("sleep 30", owner="main")
-        reg.arm_checkin("main", checkin_ids("main"))
-        reg.run_ended("main", "done")  # 보통의 끝 — 기다림이 아니다
-        assert _armed(reg) is None
-
     def test_nothing_running_at_fire_time_sends_nothing(self, reg, jobs):
         job = jobs.start("sleep 30", owner="main")
         reg.arm_checkin("main", checkin_ids("main"))
@@ -605,18 +599,6 @@ class TestLoopWiring:
         ]
         assert obs[0] == "Observation: waiting — will wake on: a schedule."
 
-    def test_a_run_with_input_cancels_but_an_empty_wake_run_does_not(self, reg, jobs):
-        jobs.start("sleep 30", owner="main")
-        reg.arm_checkin("main", checkin_ids("main"))
-        # 깨우기 런인데 배달된 것이 없다 — 다른 런이 가져갔다. 타이머는 그대로.
-        res = _loop(MagicMock(), query="", rid="").run()
-        assert res.output == "" and _armed(reg) is not None
-        # 입력이 있는 런은 푼다
-        _loop(
-            _provider({"action": "complete", "result": "ok", "answers": ["u-1"]})
-        ).run()
-        assert _armed(reg) is None
-
     def test_a_delivered_checkin_wakes_a_run_that_can_wait_again(self, reg, jobs):
         """알림이 배달되고, 모델이 다시 wait 하면 이번엔 10분이다. 그 기다림은 작업이 바깥에서 죽어 끝난다(깨울 것이
         사라짐) — 같은 런이 닫는다."""
@@ -647,6 +629,9 @@ class TestLoopWiring:
         assert users[0].startswith("⏰ Check-in after 5m")
         assert any("or in 10m if nothing has reported" in u for u in users)
         assert loop._state.ledger.request_ids() == []  # 알림은 열린 항목이 아니다
+        assert (
+            _armed(reg) is None
+        )  # 제자리 대기가 깨면 그 자리에서 푼다 — 런 끝·런 시작에 풀 것이 없다
 
 
 # ── 문구 — 네 자리의 kill, wait 설명, 인벤토리 ─────────────────

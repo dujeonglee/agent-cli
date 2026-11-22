@@ -528,8 +528,6 @@ class AgentLoop:
                     # 경계 전에 상자에서 빠진다(`PostOffice.forget_requests_of`). main 상자를 꺼내는 다른 곳(턴 경계
                     # 흡수·`@agent` 명령의 답)은 모두 main 의 스레드라 끼어들 수 없다.
                     return ToolResult(True, output="")
-                if self.turn == 0:
-                    self._note_run_started()
                 self.turn += 1
                 self._begin_turn()
                 result = self._execute_turn()
@@ -608,7 +606,12 @@ class AgentLoop:
             without relying on the legacy prefix match.
         Shared by both surfaces: Ctrl+C (chat) and the web stop button
         both land here through ``stop_event`` → ``_should_continue``.
+
+        세션 종료(main 상자가 닫혀 정지가 섬 — `LoopKind.session_ended`, 5e1)는 사람의 정지가 아니다: 기록·화면 카드
+        없이 ``session_ended`` 결과로 끝낸다 — 끝 정리가 그것을 읽고 아무것도 하지 않는다.
         """
+        if self._config.kind.session_ended():
+            return ToolResult(False, error="session ended", session_ended=True)
         if self.ctx:
             self.ctx.add(interrupt_record(INTERRUPT_NOTICE))
         # Surface through the renderer (CLI console / web SSE), not a
@@ -846,14 +849,6 @@ class AgentLoop:
         if rid:
             self._state.ledger.add_request(rid, author or "", text, turn=self.turn)
         self._add_user_message(text, author, request_id=rid, images=images)
-
-    def _note_run_started(self) -> None:
-        """이 소유자의 런이 **입력을 받아** 시작됐다 — 이 주소의 `wait` 중간 깨우기 타이머가 걸려 있으면 푼다
-        (v10.79.0, docs/wait/DESIGN.md §6). main·상주·run·web 네 경로가 이 한 지점을 지난다. 우편 창구
-        (`ports.mailbox`)로 간다 — 상주·private 처럼 `agent_registry` 가 None 인 루프도 자기 주소의 메일함은 있다
-        (v10.133.28). 5c-1 부터 타이머를 거는 곳은 제자리 대기(`TurnDispatcher._wait_in_place`) 하나이고, 깨면 그
-        ``finally`` 가 푼다 — 런을 끝낸 `wait` 가 없어 런이 시작할 때 걸려 있는 타이머는 없다."""
-        self._config.kind.ports.mailbox.run_started()
 
     def _inject_mail(self, reply: dict) -> bool:
         """레지스트리 회신 한 통을 관찰 레코드로 (teammate P1, D2) — LLM 폴링 없이 하니스가

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 
 from agent_cli import item_ids
@@ -47,6 +48,8 @@ class MainInput:
         self.post = post if post is not None else PostOffice()
         self.on_change = on_change
         self._is_command = is_command
+        #: 지금 런의 정지 플래그 — 펌프가 런을 열 때 건다(`MainActor.open`), 끝나면 None. 닫기(`close`)가 세운다
+        self._stop: threading.Event | None = None
 
     def _changed(self) -> None:
         cb = self.on_change
@@ -141,8 +144,23 @@ class MainInput:
         return self.post.is_closed(MAIN)
 
     def close(self) -> None:
-        """기다리는 펌프를 깨워 끝나게 한다 — 줄 선 사람의 말은 런을 열지 않는다(닫힘이 이긴다). 멱등."""
-        self.post.close(MAIN)
+        """세션이 끝난다 — main 상자를 닫고 **지금 작업 구간의 정지 플래그도 세운다**(5e1). 기다리는 펌프는 깨어 끝나고(줄
+        선 사람의 말은 런을 열지 않는다 — 닫힘이 이긴다), 일하던 main 은 다음 정지 판정(턴 경계·스트림·도구 직전·제자리
+        대기)에서 멈춰 세션 종료로 끝난다(`AgentLoop._on_interrupt` — 끝 정리 없음). 멱등."""
+        with self.post.cv:
+            self.post.close(MAIN)
+            stop = self._stop
+        if stop is not None:
+            stop.set()
+
+    def bind_stop(self, event: threading.Event | None) -> None:
+        """지금 런의 정지 플래그를 건다(None = 해제) — 닫기가 세울 것. 이미 닫혔으면 곧바로 세운다: 닫힌 뒤 열린
+        런(닫힘과 런 시작이 엇갈림)도 첫 정지 판정에서 끝난다."""
+        with self.post.cv:
+            self._stop = event
+            closed = self.post.is_closed(MAIN)
+        if event is not None and closed:
+            event.set()
 
     @staticmethod
     def item_of(env: Envelope) -> dict:

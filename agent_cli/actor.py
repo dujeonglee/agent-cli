@@ -15,8 +15,8 @@ from typing import Any, Literal, Protocol
 
 from agent_cli.main_input import CLOSED
 
-#: 런이 어떻게 끝났나 — 끝 정리가 읽는 사실. ``session_end`` 는 세션 종료의 런 끝 — 지금은 닫힐 때 제자리에서 기다리던
-#: main 하나(5c-pre, `ToolResult.session_ended`). 일하는 중이던 런·멈춘 에이전트의 런으로 넓히는 것은 5e.
+#: 런이 어떻게 끝났나 — 끝 정리가 읽는 사실. ``session_end`` 는 세션 종료의 런 끝 — main 상자가 닫혀 정지가 선
+#: 작업 구간(main·에이전트, `ToolResult.session_ended` — 엔진의 `_on_interrupt`, 5e1). 끝 정리는 아무것도 하지 않는다.
 Outcome = Literal["done", "failed", "stopped", "crashed", "session_end"]
 
 

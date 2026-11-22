@@ -306,19 +306,15 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
 
 ### 6.4 구현 자리
 
-- **거는 곳**: `AgentRegistry.run_ended(waiting=True)` → `arm_checkin(owner)` — 런 끝의 유일한
-  정리(§5)라 main·상주·run·web 이 한 곳이다. 대상 id 집합·단계·이번 간격·기준(작업별 로그 크기,
-  에이전트별 `last_ordinal`)을 `_Checkin` 하나에 들고 `threading.Timer` 를 띄운다. 상태는
-  `{owner: _Checkin}`(걸린 것)과 `{owner: (ids, step)}`(직전에 발화한 것) 둘 — 배증이 치르는
-  유일한 값이다.
-- **푸는 곳**: `AgentLoop.run()` 이 첫 턴 경계의 배달 **뒤**, 빈 깨우기 런의 조기 반환 뒤에
-  `_note_run_started()` → 전역 `get_agent_registry().run_started(owner)` 를 한 번 부른다. 상주 포트는
-  `agent_registry=None` 이라 전역으로 가야 하고(`dispatch._op_wait` 와 같은 방식), 네 경로가
-  한 지점이다. 배달 뒤인 이유: 다른 런이 메일을 먼저 가져가 입력 없이 끝나는 런(`output=""`)이
-  타이머를 풀면 잠든 모델의 기다림에 깨우기가 없어진다. 배달과 이 호출 사이에 타이머가 발화하면
-  그 알림은 다음 턴 경계에 배달되거나 `wait` 를 "already arrived" 로 거부시킨다 — 사실 진술이라
-  어느 쪽도 거짓이 아니다. `run_ended` 의 `**meta` 에 있는 `run` 키는 그 런을 연 배달 id 이고 이
-  "런 시작" 과 무관하다.
+- **거는 곳**: 제자리 대기 하나(`TurnDispatcher._wait_in_place` → `mailbox.arm_checkin(ids)` →
+  `AgentRegistry.arm_checkin(owner, ids)`, v10.163.0 — 대상은 받아들일 때 읽은 `WaitingOn.checkin_ids`). main·상주·
+  run·하니스 작업이 같은 길이다. 대상 id 집합·단계·이번 간격·기준(작업별 로그 크기, 에이전트별 `last_ordinal`)을
+  `_Checkin` 하나에 들고 `threading.Timer` 를 띄운다. 상태는 `{owner: _Checkin}`(걸린 것)과 `{owner: (ids, step)}`(직전에
+  발화한 것) 둘 — 배증이 치르는 유일한 값이다.
+- **푸는 곳**: 같은 제자리 대기의 ``finally``(`mailbox.run_started()` — 깨면 어떤 이유로든), 새로 걸기 직전
+  (`arm_checkin` 이 먼저 푼다), 정리(`_cancel_checkins` — 주인이 죽거나 세션이 끝남). 런의 시작·끝에는 풀 것이 없다 —
+  `wait` 는 런을 끝내지 않는다(5c-1). 종전의 런 시작 해제(`_note_run_started`)·런 끝 해제(`run_ended`)는 v10.164.0 에
+  지웠다.
 - **발화**: `fire_checkin(owner)` 가 `wake.wait_checkin` 으로 본문을 만들어 main 이면 메일함
   (`_push_reply`, `MailWaker` 가 깨운다), 상주면 받은편지함(`request(..., kind="checkin",
   ledger="none")`)으로. 걸린 것이 없거나(런이 먼저 시작해 풀렸다) 아무것도 안 돌고 있으면 보내지

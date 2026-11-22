@@ -26,7 +26,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_cli.constants import snapshot_knobs
 from agent_cli.snapshot import MUTATING_TOOLS, checkpoint_label, get_snapshot
+from agent_cli.tools.registry import TOOLS
 
 EVENTS = ["OnSessionStart", "PreToolUse", "PreWait", "OnSessionEnd"]
 
@@ -34,8 +36,6 @@ _SECTION = "Workspace snapshot"
 
 
 def _enabled() -> bool:
-    from agent_cli.constants import snapshot_knobs
-
     return snapshot_knobs()["enabled"]
 
 
@@ -44,8 +44,6 @@ def on_session_start(ctx):
     루프마다 불리지만(서브에이전트도) 저장소는 워크스페이스당 하나다."""
     if not _enabled():
         return
-    from agent_cli.snapshot import get_snapshot
-
     store = get_snapshot(Path.cwd())
     if store is None or not store.enabled:
         return  # 없는 사본을 약속하지 않는다 — 도구도 같은 이유로 벗겨져 있다
@@ -57,8 +55,6 @@ def _call_summary(tool_name: str, tool_input) -> str:
     접는 것은 `checkpoint_label` 의 일."""
     if not isinstance(tool_input, dict):
         return ""
-    from agent_cli.tools.registry import TOOLS
-
     tool = TOOLS.get(tool_name)
     if tool is None:
         return ""
@@ -71,8 +67,6 @@ def _call_summary(tool_name: str, tool_input) -> str:
 def pre_tool_use(ctx):
     if ctx.tool_name not in MUTATING_TOOLS or not _enabled():
         return
-    from agent_cli.snapshot import get_snapshot
-
     store = get_snapshot(Path.cwd())
     if store is not None and store.enabled:
         summary = _call_summary(ctx.tool_name, ctx.tool_input)
@@ -90,8 +84,6 @@ def pre_wait(ctx):
 def on_session_end(ctx):
     if not _enabled():
         return
-    from agent_cli.snapshot import get_snapshot
-
     store = get_snapshot(Path.cwd())
     if store is not None and store.enabled:
         store.checkpoint(f"session end (turn {ctx.turn})", force=True)

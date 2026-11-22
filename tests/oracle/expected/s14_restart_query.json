@@ -7,7 +7,7 @@
    "revived": 2,
    "roster": [
     {
-     "handled": 1,
+     "handled": 0,
      "key": "agt-A",
      "name": "worker",
      "pending_requests": 0,
@@ -511,12 +511,6 @@
      "content": "TASK-O1 first job",
      "request_id": "r-2",
      "role": "user"
-    },
-    {
-     "content": "⚡ User interrupted. Waiting for new instructions.",
-     "role": "user",
-     "success": false,
-     "tool": "interrupt"
     }
    ],
    "agents/agt-B/history.jsonl": [
@@ -925,12 +919,6 @@
      "content": "TASK-O1 first job",
      "request_id": "r-2",
      "role": "user"
-    },
-    {
-     "content": "⚡ User interrupted. Waiting for new instructions.",
-     "role": "user",
-     "success": false,
-     "tool": "interrupt"
     },
     {
      "content": "⚡ The session restarted. Anything that was in progress before it was cut off and is gone: runs, background jobs, monitors, waits, requests and replies not yet delivered, and questions to the user. Nothing is owed for them and nothing more will arrive.",

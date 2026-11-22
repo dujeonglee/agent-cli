@@ -9,14 +9,14 @@
    "revived": 2,
    "roster": [
     {
-     "handled": 1,
+     "handled": 0,
      "key": "agt-A",
      "name": "aa",
      "pending_requests": 0,
      "state": "idle"
     },
     {
-     "handled": 1,
+     "handled": 0,
      "key": "agt-B",
      "name": "bb",
      "pending_requests": 0,
@@ -462,12 +462,6 @@
      "role": "user",
      "success": true,
      "tool": "wait"
-    },
-    {
-     "content": "⚡ User interrupted. Waiting for new instructions.",
-     "role": "user",
-     "success": false,
-     "tool": "interrupt"
     }
    ],
    "agents/agt-B/history.jsonl": [
@@ -475,12 +469,6 @@
      "content": "── request [r-1] from agt-A (aa) ──\nTASK-W2 compute 6*7\n(You owe agt-A a `reply` with `id` \"r-1\".)",
      "request_id": "r-1",
      "role": "user"
-    },
-    {
-     "content": "⚡ User interrupted. Waiting for new instructions.",
-     "role": "user",
-     "success": false,
-     "tool": "interrupt"
     }
    ],
    "history.jsonl": [
@@ -637,12 +625,6 @@
      "tool": "wait"
     },
     {
-     "content": "⚡ User interrupted. Waiting for new instructions.",
-     "role": "user",
-     "success": false,
-     "tool": "interrupt"
-    },
-    {
      "content": "⚡ The session restarted. Anything that was in progress before it was cut off and is gone: runs, background jobs, monitors, waits, requests and replies not yet delivered, and questions to the user. Nothing is owed for them and nothing more will arrive.",
      "role": "user",
      "success": false,
@@ -654,12 +636,6 @@
      "content": "── request [r-1] from agt-A (aa) ──\nTASK-W2 compute 6*7\n(You owe agt-A a `reply` with `id` \"r-1\".)",
      "request_id": "r-1",
      "role": "user"
-    },
-    {
-     "content": "⚡ User interrupted. Waiting for new instructions.",
-     "role": "user",
-     "success": false,
-     "tool": "interrupt"
     },
     {
      "content": "⚡ The session restarted. Anything that was in progress before it was cut off and is gone: runs, background jobs, monitors, waits, requests and replies not yet delivered, and questions to the user. Nothing is owed for them and nothing more will arrive.",
