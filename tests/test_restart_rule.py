@@ -17,6 +17,8 @@ import pytest
 
 from agent_cli import item_ids
 from agent_cli.subagent import conversation_log
+from agent_cli.subagent.agents_live import AgentRegistry
+from agent_cli.subagent.resident_loop import ResidentLoop
 from tests.test_agents_live import (
     _FakeLoopResult,
     _RecordingRunner,
@@ -319,6 +321,88 @@ def test_a_revived_resident_gets_one_restart_line_in_its_window(
     assert wait_until(lambda: reg3.get(key).state == "idle")
     assert _is_restart_record(_last(reg3.get(key).ctx))
     assert len(_restart_lines(reg3, key)) == 1
+
+
+def _directions(reg, key) -> list[str]:
+    return [ln["direction"] for ln in conversation_log.read(reg.get(key).home_dir)]
+
+
+def _ran_once(tmp_path, regs):
+    """reg1: 상주가 요청 하나를 끝냈다(창에 in·out 두 줄, history 한 줄)."""
+    made, _ = regs
+    reg1 = make_registry(tmp_path, runner=_RecordingRunner())
+    made.append(reg1)
+    key, _ = reg1.spawn(name="worker")
+    assert wait_until(lambda: reg1.get(key).state == "idle")
+    assert reg1.request(key, "task-1", author="user:dj") == ""
+    assert wait_until(lambda: reg1.get(key).handled >= 1)
+    reg1.get(key).ctx.add({"role": "user", "content": "task-1"})
+    assert _directions(reg1, key) == ["in", "out"]
+    return reg1, key
+
+
+def test_a_delivery_right_after_the_restart_stands_below_the_restart_line(
+    tmp_path,
+    renderer,  # noqa: F811
+    regs,
+    monkeypatch,
+):
+    """[A1(11) 에서 바뀜] 되살린 워커가 컨텍스트를 열기 전에 새 요청이 오면 그 요청이 재시작 줄보다 먼저 적힌다 —
+    워커의 `ResidentLoop.open` 을 그 배달이 기록될 때까지 잡아 그 순서를 세운다."""
+    _reg1, key = _ran_once(tmp_path, regs)
+    delivered = threading.Event()
+    real_open = ResidentLoop.open
+
+    def held_open(self, parent_ctx):
+        if self.tm.restarted:
+            assert delivered.wait(10)
+        return real_open(self, parent_ctx)
+
+    monkeypatch.setattr(ResidentLoop, "open", held_open)
+    reg2, _rec = _restart(tmp_path, regs)
+    assert reg2.request(key, "task-2", author="user:dj") == ""
+    delivered.set()
+    assert wait_until(lambda: reg2.get(key).handled >= 2)
+    assert _directions(reg2, key) == ["in", "out", "in", "restarted", "out"]
+
+
+def test_the_restart_line_goes_out_twice_when_the_worker_writes_it_before_the_replay(
+    tmp_path,
+    renderer,  # noqa: F811
+    regs,
+    monkeypatch,
+):
+    """[A1(11) 에서 바뀜] `restore` 의 창 재생과 워커가 적는 재시작 줄의 경주 — 워커가 먼저 적으면 재생이 그 줄을
+    읽어 한 번, 워커가 한 번 낸다. 재생을 그 줄이 선 뒤로 잡아 그 순서를 세운다."""
+    _reg1, key = _ran_once(tmp_path, regs)
+    real_replay = AgentRegistry._replay_conversation
+
+    def replay_after_the_line(self, tm):
+        if tm.restarted:
+            assert wait_until(lambda: "restarted" in _directions(self, tm.key))
+        real_replay(self, tm)
+
+    monkeypatch.setattr(AgentRegistry, "_replay_conversation", replay_after_the_line)
+    reg2, _rec = _restart(tmp_path, regs)
+    assert wait_until(lambda: reg2.get(key).state == "idle")
+    assert wait_until(lambda: _is_restart_record(_last(reg2.get(key).ctx)))
+    shown = [c[1]["direction"] for c in renderer.named("agent_message")]
+    assert shown.count("restarted") == 2
+    assert _directions(reg2, key) == ["in", "out", "restarted"]
+
+
+def test_a_resident_with_history_but_an_empty_window_gets_the_line_too(
+    tmp_path,
+    renderer,  # noqa: F811
+    regs,
+):
+    """[A1(11) 에서 바뀜] 지금은 history 가 기준이다 — 창에 줄이 없어도 재시작 기록을 적으면 줄이 선다."""
+    reg1, key = _mid_run(tmp_path, regs)
+    reg1.get(key).ctx.add({"role": "user", "content": "task-1"})
+    conversation_log.path_of(reg1.get(key).home_dir).unlink()
+    reg2, _rec = _restart(tmp_path, regs)
+    assert wait_until(lambda: _is_restart_record(_last(reg2.get(key).ctx)))
+    assert wait_until(lambda: _directions(reg2, key) == ["restarted"])
 
 
 def test_no_restart_record_for_a_run_agent_or_a_resident_revived_after_a_kill(
