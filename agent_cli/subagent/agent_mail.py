@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from agent_cli.post import envelope as post_envelope
 from agent_cli.post.envelope import Envelope
 from agent_cli.subagent.agent_stop import one_line
-from agent_cli.subagent.agents_state import state_is_active
+from agent_cli.subagent.agents_state import WAITING, state_is_active
 from agent_cli.token_estimator import estimate_tokens
 from agent_cli.wake import harness_record
 
@@ -362,8 +362,10 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
     if tm is not None and getattr(tm, "state", "dead") != "dead":
         queued = registry.backlog_of(key)
         if queued > 0 or state_is_active(tm.state):
+            # 기다리는 중이면(우편의 기다림 표시) 작업 상태 대신 그 낱말로 — 꼬리의 `## Live Agents` 와 같다
+            now = WAITING if registry.is_waiting(f"agent:{key}") else tm.state
             tail = (
-                f"(agent status: {tm.state} · {queued} queued — remaining "
+                f"(agent status: {now} · {queued} queued — remaining "
                 "replies arrive automatically; no need to poll.)"
             )
         else:

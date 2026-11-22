@@ -77,6 +77,7 @@ from agent_cli.subagent.agent_mail import (
     view_of_inbox_item,
     view_of_main_mail,
 )
+from agent_cli.subagent.agents_state import WAITING
 from agent_cli.subagent.delegation_checks import depth_or_recursion_refusal
 from agent_cli.subagent.question_port import (
     REPLY_REQUESTER_GONE,
@@ -95,6 +96,7 @@ from agent_cli.wake import (
     parked_view,
     release_owner,
     wait_checkin,
+    wake_name,
 )
 
 if TYPE_CHECKING:
@@ -653,8 +655,10 @@ class AgentRegistry:
                     if ahead
                     else "has your request queued, next in line"
                 )
+                # 내 요청을 줄 세운 채 무엇을 하나 — 기다리는 중이면(같은 사본의 기다림 표시) 그 낱말로 (v10.166.0)
+                doing = WAITING if me in facts.waiting else "busy on another request"
                 busy = (
-                    f"busy on another request{_last_step(tm)}"
+                    f"{doing}{_last_step(tm)}"
                     if self.state_is_active(tm.state)
                     else "picking it up"
                 )
@@ -669,9 +673,8 @@ class AgentRegistry:
             key = debtor.split(":", 1)[1]
             if not on:
                 continue  # 깨울 것이 없는 채무자는 깨울 근거가 아니다 (v10.77.0)
-            line = (
-                f"{_label(key)} · owes you a reply · itself waiting on {', '.join(on)}"
-            )
+            names = ", ".join(wake_name(wid) for wid, _ in on)
+            line = f"{_label(key)} · owes you a reply · itself waiting on {names}"
             open_qs = [q for q in self.open_human_questions() if q.asker == key]
             if open_qs:
                 q = min(open_qs, key=lambda q: q.asked_at)
@@ -2162,6 +2165,9 @@ class AgentRegistry:
         self._post.clear_waiting(addr)
         if addr.startswith("agent:"):
             self._notify_roster()
+
+    def is_waiting(self, addr: str) -> bool:
+        return self._post.is_waiting(addr)
 
     def drop_mailbox(self, addr: str) -> int:
         """주소의 루프가 끝났다 — 체크인·기다림 표시를 풀고, private 이면 메일함을 버린다(읽을

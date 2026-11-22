@@ -382,10 +382,10 @@ class TestAgentLines:
         assert checkin_ids("main") == {"agent:m"}
         reg.arm_checkin("main", checkin_ids("main"))
         text = reg.fire_checkin("main")
-        assert (
-            "agent:m (coder) · owes you a reply · itself waiting on job #1 "
-            "(`pytest -x tests/`)"
-        ) in text
+        # 이름만(v10.166.0) — 종전엔 `wait` 수락 문장의 줄 그대로 "job #1 (`pytest -x tests/`)" 였다
+        assert text.splitlines()[1] == (
+            "agent:m (coder) · owes you a reply · itself waiting on job #1"
+        )
         assert "answered by the user" not in text
 
     def test_parked_debtor_blocked_on_a_human_question_adds_the_line(
@@ -404,7 +404,7 @@ class TestAgentLines:
             text = reg.fire_checkin("main")
         assert (
             "agent:n (reviewer) · owes you a reply · itself waiting on job #1 "
-            f'(`sleep 30`) · blocked on question "{qid}" to the user, unanswered for 9m'
+            f'· blocked on question "{qid}" to the user, unanswered for 9m'
         ) in text
         assert text.endswith(
             "A question to the user is answered by the user, not by you."
@@ -437,9 +437,20 @@ class TestAgentLines:
             False,
         )
 
-    def test_a_waiting_agent_reads_as_busy_in_the_three_places(self, reg):
-        """[B 에서 바뀜] 받아들여진 `wait` 로 기다리는 에이전트(기다림 표시)를 모델이 읽는 세 자리 — 꼬리의
-        `## Live Agents`, 폴백 회신의 꼬리, 체크인의 줄 선 요청 줄 — 가 모두 작업 상태 "busy" 로 말한다."""
+    def test_a_parked_debtor_waiting_on_agents_is_named_by_key(self, reg):
+        """기다림 줄은 이름만(v10.166.0) — 에이전트는 키, main 은 "main". 종전엔 수락 문장의 줄("agent:b working on
+        your request")을 그대로 실어, main 이 읽는 글에 그 채무자 시점의 "your" 가 섰다."""
+        _fake_agent(reg, "a", profile="coder")
+        reg.mark_waiting("agent:a")
+        reg.note_owes("agent:a", "main", "t", id="r-900")
+        _fake_agent(reg, "b", state="busy", current_author="agent:a")
+        (line,) = reg.checkin_agent_lines("main", {})[0]
+        assert line == "agent:a (coder) · owes you a reply · itself waiting on b"
+
+    def test_a_waiting_agent_reads_as_waiting_in_the_three_places(self, reg):
+        """받아들여진 `wait` 로 기다리는 에이전트(우편의 기다림 표시)를 모델이 읽는 세 자리 — 꼬리의 `## Live Agents`,
+        폴백 회신의 꼬리, 체크인의 줄 선 요청 줄 — 가 같은 낱말 "waiting" 으로 말한다(v10.166.0; 종전엔 작업 상태
+        "busy"). 표시가 내려가면 셋 다 다시 작업 상태로 말한다."""
         _fake_agent(
             reg,
             "w",
@@ -449,19 +460,30 @@ class TestAgentLines:
             inbox=[{"author": "main"}],
         )
         reg.mark_waiting("agent:w")
-        assert "- `w` (explorer) [busy · 1 queued]" in build_live_agents_section(
+        assert "- `w` (explorer) [waiting · 1 queued]" in build_live_agents_section(
             reg, include_state=True
         )
         fallback = {"kind": "reply", "key": "w", "output": "summary", "success": True}
         assert build_reply_record(fallback, registry=reg)["content"].endswith(
-            "(agent status: busy · 1 queued — remaining replies arrive automatically; "
+            "(agent status: waiting · 1 queued — remaining replies arrive automatically; "
             "no need to poll.)"
         )
         (line,) = reg.checkin_agent_lines("main", {})[0]
         assert line == (
-            "agent:w (explorer) · has your request queued, next in line · busy on "
-            "another request, last step 1m ago"
+            "agent:w (explorer) · has your request queued, next in line · waiting, "
+            "last step 1m ago"
         )
+        reg.clear_waiting("agent:w")
+        assert "- `w` (explorer) [busy · 1 queued]" in build_live_agents_section(
+            reg, include_state=True
+        )
+        assert (
+            "(agent status: busy · 1 queued — "
+            in (build_reply_record(fallback, registry=reg)["content"])
+        )
+        (line,) = reg.checkin_agent_lines("main", {})[0]
+        assert line.endswith("· busy on another request, last step 1m ago")
+        assert reg.get("w").state == "busy"  # 작업 상태는 내내 그대로다
 
     def test_pending_for_text_is_unchanged(self, reg):
         """에이전트 몫의 줄(`wake.relation_items`) — 종전 문장 그대로."""

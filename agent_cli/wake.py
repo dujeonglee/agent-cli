@@ -227,24 +227,22 @@ def schedule_wakes(owner: str) -> bool:
 
 def parked_view(
     owner: str, seen: frozenset, *, agents, facts: WakeFacts
-) -> list[tuple[str, list[str]]]:
-    """고리 찾기의 걸음 하나 — ``owner`` 에게 빚진 채 잠든 채무자마다 ``(주소, 그를 깨울 것의 줄)`` (v10.77.0). ``seen``
+) -> list[tuple[str, list[tuple[str, str]]]]:
+    """고리 찾기의 걸음 하나 — ``owner`` 에게 빚진 채 잠든 채무자마다 ``(주소, 그를 깨울 것)`` (v10.77.0) — 깨울 것은
+    `wake_items` 의 ``(id, 줄)`` 쌍 그대로다(체크인은 id 로 이름만 쓴다, v10.166.0). ``seen``
     (거슬러 온 주소들, ``owner`` 포함)에 든 채무자는 뺀다 — 고리다, 나를 기다리는 쪽은 나를 깨우지 못한다. 그를 깨울
     것은 ``seen`` 을 뺀 채 다시 묻는다. `wait` 의 판정(`wake_items`)과 중간 깨우기의 에이전트 줄
     (`AgentRegistry.checkin_agent_lines`)이 같은 이 걸음을 쓴다."""
     return [
         (
             debtor,
-            [
-                text
-                for _, text in wake_items(
-                    debtor,
-                    seen,
-                    agents=agents,
-                    with_schedule=schedule_wakes(debtor),
-                    facts=facts,
-                )
-            ],
+            wake_items(
+                debtor,
+                seen,
+                agents=agents,
+                with_schedule=schedule_wakes(debtor),
+                facts=facts,
+            ),
         )
         for debtor in parked_debtors(facts, owner)
         if debtor not in seen
@@ -273,6 +271,19 @@ def _short_wake_name(wake_id: str) -> str:
     if wake_id == _SCHEDULE_ID:
         return "a schedule"
     return ""
+
+
+def wake_name(wake_id: str) -> str:
+    """`wake_items` 의 id 하나의 **이름** — 체크인이 "그 에이전트가 무엇을 기다리나" 를 말할 때 쓴다(v10.166.0):
+    에이전트는 키(``agent:agt-5`` → "agt-5"), main 은 "main", 그 밖은 `_short_wake_name`("job #1"·"monitor m-2"·
+    "a schedule")."""
+    if wake_id == "main":
+        return "main"
+    return (
+        wake_id.removeprefix("agent:")
+        if wake_id.startswith("agent:")
+        else _short_wake_name(wake_id)
+    )
 
 
 class WaitingOn(NamedTuple):
