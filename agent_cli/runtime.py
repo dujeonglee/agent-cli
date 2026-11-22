@@ -164,12 +164,11 @@ def wire_monitor_delivery(registry, monitors) -> None:
 def build_hook_runner():
     """세션당 Python 훅 러너 하나 (v10.35.0) — run/web 부트스트랩이 부르고 네 포트
     종류의 `make_ports`(`MainLoop`·`ResidentLoop`·`SkillLoop`·`PrivateLoop`)가 `session_slots.get_hook_runner`
-    로 같은 인스턴스를 받는다. 셸 훅(`hooks.json`)은 종류의 `hooks_config`
-    경로가 따로 돌므로 러너엔 주지 않는다(두 번 실행 방지). `teardown_session` 이
-    푼다."""
+    로 같은 인스턴스를 받는다. 러너는 Python 훅만 돈다 — 셸 훅(`hooks.json`)은 종류의
+    `hooks_config` 경로가 따로 돈다. `teardown_session` 이 푼다."""
     from agent_cli.hooks.runner import HookRunner
 
-    runner = HookRunner(shell_hooks_config=None)
+    runner = HookRunner()
     set_hook_runner(runner)
     return runner
 

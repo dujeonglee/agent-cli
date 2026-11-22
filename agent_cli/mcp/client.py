@@ -488,11 +488,6 @@ class McpClientManager:
 
     # ── Status ───────────────────────────────────────
 
-    @property
-    def connected_servers(self) -> list[str]:
-        """List of currently connected server names."""
-        return list(self._sessions.keys())
-
     def is_connected(self, server: str) -> bool:
         return server in self._sessions
 

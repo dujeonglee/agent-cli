@@ -1,4 +1,4 @@
-"""Hook runner — execute Python + shell hooks for lifecycle events."""
+"""Hook runner — execute Python hooks for lifecycle events."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from agent_cli.hooks.context import HookContext
-from agent_cli.hooks.events import ALL_EVENTS, POST_TOOL_USE, PRE_TOOL_USE
+from agent_cli.hooks.events import ALL_EVENTS
 from agent_cli.hooks.loader import load_python_hooks
 
 
 class HookRunner:
-    """Executes Python hooks (and optionally shell hooks) for events.
+    """Executes Python hooks for events.
 
     Usage::
 
@@ -24,10 +24,8 @@ class HookRunner:
     def __init__(
         self,
         hook_dirs: list[Path] | None = None,
-        shell_hooks_config: dict | None = None,
     ):
         self._python_hooks: dict[str, list[Callable]] = load_python_hooks(hook_dirs)
-        self._shell_hooks_config = shell_hooks_config
 
     def reload(self, hook_dirs: list[Path] | None = None) -> None:
         """Re-scan hook directories and reload all Python hooks."""
@@ -72,10 +70,6 @@ class HookRunner:
         # 1. Python hooks
         self._run_python_hooks(event, ctx)
 
-        # 2. Shell hooks (tool events only, backward compat)
-        if event in (PRE_TOOL_USE, POST_TOOL_USE) and self._shell_hooks_config:
-            self._run_shell_hooks(event, ctx)
-
         return ctx
 
     def _run_python_hooks(self, event: str, ctx: HookContext) -> None:
@@ -86,11 +80,3 @@ class HookRunner:
             except Exception:
                 # Bad hook — skip silently, don't break the agent loop
                 pass
-
-    def _run_shell_hooks(self, event: str, ctx: HookContext) -> None:
-        """Execute shell hooks via the legacy hooks module.
-
-        Will be wired in Phase 2 when we integrate with loop.py.
-        For now, shell hooks continue to work through the existing
-        hooks.py run_hooks() call in loop.py.
-        """

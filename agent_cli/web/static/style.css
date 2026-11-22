@@ -56,7 +56,7 @@
   --overlay: rgba(0,0,0,.55); --shadow: rgba(0,0,0,.50);
   --glass: rgba(19,21,26,.86); --glass-strong: rgba(19,21,26,.92);
   --hairline: rgba(255,255,255,.06); --hairline-strong: rgba(255,255,255,.12); --ghost-border: rgba(255,255,255,.14);
-  --accent-shadow: rgba(126,141,176,.40); --accent-soft-bg2: rgba(126,141,176,.18); --accent-soft-bg3: rgba(126,141,176,.12);
+  --accent-soft-bg2: rgba(126,141,176,.18); --accent-soft-bg3: rgba(126,141,176,.12);
   --ok-soft-bg: rgba(63,185,80,.20); --ok-soft-border: rgba(63,185,80,.55);
   --focus-ring-shadow: rgba(126,141,176,.30); --time-bg: rgba(21,23,28,.72);
 }
@@ -66,7 +66,7 @@
   --accent: #4d8eff; --accent-hover: #6ba0ff; --accent-2: #74a6ff;
   --accent-soft-text: #9cc0ff; --accent-soft-bg: rgba(77,142,255,.14); --accent-soft-border: rgba(77,142,255,.32);
   --user-bg: #2f6fe0; --user-code-bg: #2250a1; --user-time: #9cc0ff; --focus-ring: #4d8eff;
-  --accent-shadow: rgba(77,142,255,.45); --accent-soft-bg2: rgba(77,142,255,.18); --accent-soft-bg3: rgba(77,142,255,.12);
+  --accent-soft-bg2: rgba(77,142,255,.18); --accent-soft-bg3: rgba(77,142,255,.12);
   --focus-ring-shadow: rgba(77,142,255,.30); --glass: rgba(17,23,37,.86); --glass-strong: rgba(17,23,37,.92);
   --time-bg: rgba(17,23,37,.72);
 }
@@ -77,7 +77,7 @@
   --on-accent: #04211d;
   --accent-soft-text: #7fe8da; --accent-soft-bg: rgba(45,212,191,.13); --accent-soft-border: rgba(45,212,191,.30);
   --user-bg: #15897b; --user-code-bg: #57aaa0; --user-time: #7fe8da; --focus-ring: #2dd4bf;
-  --accent-shadow: rgba(45,212,191,.40); --accent-soft-bg2: rgba(45,212,191,.18); --accent-soft-bg3: rgba(45,212,191,.10);
+  --accent-soft-bg2: rgba(45,212,191,.18); --accent-soft-bg3: rgba(45,212,191,.10);
   --focus-ring-shadow: rgba(45,212,191,.28); --glass: rgba(16,20,19,.86); --glass-strong: rgba(16,20,19,.92);
   --time-bg: rgba(16,20,19,.72);
 }
@@ -90,7 +90,7 @@
   --on-accent: #1c1610;
   --accent-soft-text: #f0c890; --accent-soft-bg: rgba(224,164,88,.14); --accent-soft-border: rgba(224,164,88,.32);
   --user-bg: #c0813a; --user-code-bg: #d2a471; --user-time: #f0c890; --focus-ring: #e0a458;
-  --accent-shadow: rgba(224,164,88,.42); --accent-soft-bg2: rgba(224,164,88,.18); --accent-soft-bg3: rgba(224,164,88,.12);
+  --accent-soft-bg2: rgba(224,164,88,.18); --accent-soft-bg3: rgba(224,164,88,.12);
   --focus-ring-shadow: rgba(224,164,88,.30); --hairline: rgba(255,248,235,.06);
   --glass: rgba(24,20,15,.86); --glass-strong: rgba(24,20,15,.92); --time-bg: rgba(24,20,15,.72);
 }
@@ -109,7 +109,7 @@
   --overlay: rgba(15,23,42,.25); --shadow: rgba(15,23,42,.18);
   --glass: rgba(255,255,255,.92); --glass-strong: rgba(255,255,255,.95);
   --hairline: rgba(15,23,42,.06); --hairline-strong: rgba(15,23,42,.12); --ghost-border: rgba(15,23,42,.14);
-  --accent-shadow: rgba(99,102,241,.35); --accent-soft-bg2: rgba(99,102,241,.12); --accent-soft-bg3: rgba(99,102,241,.08);
+  --accent-soft-bg2: rgba(99,102,241,.12); --accent-soft-bg3: rgba(99,102,241,.08);
   --ok-soft-bg: rgba(80,200,120,.22); --ok-soft-border: rgba(80,200,120,.6);
   --focus-ring-shadow: rgba(129,140,248,.18); --time-bg: rgba(249,250,251,.78);
 }
@@ -1419,7 +1419,7 @@ footer {
 
 /* semantic kind hues — system prompt vs conversation. Literal (like the JS
    palette) so they stay stable across themes; used only as subtle accents. */
-:root { --insp-system: var(--accent); --insp-tools: var(--scope-agent, var(--accent)); --insp-convo: var(--cyan); --insp-tail: var(--warn); --insp-grammar: var(--scope-skill); }
+:root { --insp-system: var(--accent); --insp-tools: var(--accent); --insp-convo: var(--cyan); --insp-tail: var(--warn); --insp-grammar: var(--scope-skill); }
 
 /* ── Prompt Inspection ─────────────────────── */
 #de-close { font-size: 16px; }

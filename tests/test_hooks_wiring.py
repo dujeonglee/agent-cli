@@ -82,12 +82,6 @@ class TestSessionRunner:
             assert ports.hook_runner is None, name
             assert "build_hook_runner" in ports.unwired["hook_runner"], name
 
-    def test_runner_carries_no_shell_hooks(self):
-        """셸 훅(`hooks.json`)은 `LoopConfig.hooks_config` 경로가 따로 돈다 —
-        러너에도 주면 PreToolUse 마다 두 번 실행된다."""
-        runner = build_hook_runner()
-        assert runner._shell_hooks_config is None
-
     def test_teardown_clears_it(self, tmp_path):
         from unittest.mock import MagicMock, patch
 

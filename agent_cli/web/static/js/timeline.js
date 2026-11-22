@@ -372,7 +372,7 @@ es.addEventListener("scope_start", function (e) {
   // 결과가 꼬리. 왕래 줄(보냄/받음)이 하던 "요청 경계" 를 이 블록이 긋는다.
   // run 에이전트(`d.run`)는 부른 자리(`caller_task`)에 한 줄 카드도 놓는다 — 그
   // 자리는 부른 스레드의 것(main 의 맨 위, 또는 부른 에이전트의 런 블록)이다.
-  const grp = noteScopeChannel(d.task_id, d.parent || "", d.ctx_dir || "", d.channel || "")
+  noteScopeChannel(d.task_id, d.parent || "", d.ctx_dir || "", d.channel || "")
     ? (ensureRunBlock(d), d.run && ensureRunLink(d), null)
     : ensureTaskGroup(
         d.task_id,

@@ -83,7 +83,6 @@ JSON_FC = DialectSpec(
     name_slot=NameSlot.JSON_KEY,
     args=ArgStyle.JSON_NATIVE,
     value_mode="json",
-    op_shape="flat_action",
     prose_opener="[",
     prose_after_blank_line=True,
     # 러너웨이 시그니처는 옛 md_array 헤더 반복(`## Thought`/`## Action`) — 문법이

@@ -328,14 +328,6 @@ class AgentLoop:
         return self._config.provider_name
 
     @property
-    def depth(self):
-        return self._config.kind.depth
-
-    @property
-    def max_depth(self):
-        return self._config.kind.max_depth
-
-    @property
     def max_turns(self):
         return self._config.kind.max_turns
 
@@ -356,32 +348,12 @@ class AgentLoop:
         return self._config.skill_stack
 
     @property
-    def agent_stack(self):
-        return self._config.agent_stack
-
-    @property
     def capabilities(self):
         return self._config.capabilities
 
     @property
     def dialect(self):
         return self._config.dialect
-
-    @property
-    def mcp_manager(self):
-        return self._config.kind.ports.mcp_manager
-
-    @property
-    def hook_runner(self):
-        return self._config.kind.ports.hook_runner
-
-    @property
-    def hooks_config(self):
-        return self._config.kind.hooks_config
-
-    @property
-    def session(self):
-        return self._config.kind.session
 
     @property
     def graceful_interrupt(self):
@@ -460,14 +432,6 @@ class AgentLoop:
     def _call_llm(self):
         """LLMCaller 위임 (기존 호출면 유지 — 테스트의 인스턴스 모킹 호환)."""
         return self._llm._call_llm()
-
-    @property
-    def overflow_retries(self):
-        return self._llm.overflow_retries
-
-    @overflow_retries.setter
-    def overflow_retries(self, v):
-        self._llm.overflow_retries = v
 
     def _fire_hook(self, event: str, **kwargs):
         """Fire a hook event if runner is available. Returns HookContext or None (`ToolBridge.fire_hook`)."""
@@ -1374,17 +1338,11 @@ class AgentLoop:
             call=call,
         )
 
-    def _task_text(self) -> str:
-        return self._dispatch._task_text()
-
     def _dispatch_tool_with_hooks(self, tool_name: str, tool_input):
         return self._tools._dispatch_tool_with_hooks(tool_name, tool_input)
 
     def _tool_observation(self, tool_name: str, result, args) -> str:
         return self._tools._tool_observation(tool_name, result, args)
-
-    def _record_tool_history(self, tool_name: str, tool_input) -> None:
-        return self._tools._record_tool_history(tool_name, tool_input)
 
     def _run_ctx(self) -> RunContext:
         return self._tools._run_ctx()
@@ -1396,14 +1354,6 @@ class AgentLoop:
     @_oversized_cap.setter
     def _oversized_cap(self, v):
         self._tools._oversized_cap = v
-
-    @property
-    def recent_tool_history(self):
-        return self._tools.recent_tool_history
-
-    @recent_tool_history.setter
-    def recent_tool_history(self, v):
-        self._tools.recent_tool_history = v
 
     def _on_max_turns(self):
         """Handle max turns reached."""

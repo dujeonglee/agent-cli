@@ -11,8 +11,7 @@
 **명시** 전달하므로 슬롯을 조회하지 않고 run-only 가 유지된다.
 
 훅 러너는 네 루프(main·상주·스킬·일회성)가 같은 인스턴스를 본다(v10.35.0). 셸 훅(`hooks.json`)은
-종류의 `hooks_config` 경로로 돌며 여기와 무관하다 — 러너에 `shell_hooks_config` 를 주지 않아
-두 번 돌지 않는다.
+종류의 `hooks_config` 경로로 돌며 여기와 무관하다 — 러너는 Python 훅만 돈다.
 """
 
 from __future__ import annotations

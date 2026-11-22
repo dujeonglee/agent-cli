@@ -36,8 +36,6 @@ _NAMES = "|".join(THINK_TAG_NAMES)
 THINK_BLOCK_RE = re.compile(
     r"<(" + _NAMES + r")\b[^>]*>(.*?)</\1\s*>", re.DOTALL | re.IGNORECASE
 )
-# ② 미닫힘 opener.
-THINK_OPEN_RE = re.compile(r"<(" + _NAMES + r")\b[^>]*>", re.IGNORECASE)
 # ③ 고아 태그 낱개 (여닫이 무관) — thought 산문 청소용 (json_fc sanitize).
 ORPHAN_THINK_TAG_RE = re.compile(r"</?\s*(?:" + _NAMES + r")\s*>", re.IGNORECASE)
 # ③ 트레일링 고아 태그 무리 — 본문 끝에만 앵커 (문자열 값 안은 보존).

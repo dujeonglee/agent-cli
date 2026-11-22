@@ -26,7 +26,6 @@ _ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
 # Streamable HTTP 의 표기 흔들림 수용 — 규격 문서·다른 클라이언트가
 # "streamable-http" / "streamable_http" / "http" 를 섞어 쓴다 (v9.3.0).
 _STREAMABLE_ALIASES = frozenset({"streamable-http", "streamable_http", "http"})
-STREAMABLE_HTTP = "streamable-http"  # 우리가 파일에 쓰는 캐노니컬 이름
 
 #: 도구 호출 하나를 기다리는 시간의 기본 상한(초) — 서버 항목의 ``call_timeout_s`` 로 바꾼다.
 #: 다른 도구처럼 MCP 호출에도 끝이 있어야 한다: 답하지 않는 서버를 런이 끝없이 기다렸다.

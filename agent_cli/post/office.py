@@ -504,10 +504,6 @@ class PostOffice:
         with self.cv:
             return self._book.rows()
 
-    def addresses(self) -> tuple[str, ...]:
-        with self.cv:
-            return tuple(self._boxes)
-
     # ── 불변식 ───────────────────────────────────────
 
     def check_consistency(self) -> None:

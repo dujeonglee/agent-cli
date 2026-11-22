@@ -2192,26 +2192,6 @@ class WebRenderer(Renderer):
         with self._lock:
             return self._prompt_snapshots.get(scope)
 
-    def dispatch_progress(
-        self,
-        label: str,
-        turn: int,
-        tool_name: str,
-        detail: str = "",
-        thought: str = "",
-    ) -> None:
-        self._emit(
-            "dispatch_progress",
-            {
-                "label": label,
-                "turn": turn,
-                "tool_name": tool_name,
-                "detail": detail,
-                "thought": thought,
-            },
-            persistent=False,
-        )
-
     # 생성 중 표시 (v9.4.0 ④, docs/chat-ui §2) — 본문·사고 **둘 다** 같은
     # 모양이다: 델타를 누적해 0.5s 스로틀로 tick 만 보낸다.
     #

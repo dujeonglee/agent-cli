@@ -760,18 +760,6 @@ class Renderer(ABC):
     def spinner_stop(self) -> None:
         """Stop the spinner animation. Default no-op (C8)."""
 
-    def dispatch_progress(
-        self,
-        label: str,
-        turn: int,
-        tool_name: str,
-        detail: str = "",
-        thought: str = "",
-    ) -> None:
-        """Show dispatched execution progress (skill, delegate, etc.).
-        Default no-op (C8) — 진행 장식; 코어 action/observation 이 본 정보를
-        이미 나름."""
-
     def stream_chunk(self, text: str) -> None:
         """Render a streaming chunk from LLM response. Default: no-op."""
 
