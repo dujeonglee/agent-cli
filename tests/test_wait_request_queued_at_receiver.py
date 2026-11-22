@@ -109,3 +109,27 @@ class TestReceiverHasNotPickedItUp:
         reg.note_owes("main", AA, "which directory?", id=rid)
         assert _row_state(reg, rid) == "picked"
         assert _wait(reg, AA) == ["main owes you a reply"]
+
+
+class TestCheckinLine:
+    """오래 기다리면 오는 체크인의 줄 — 받는 쪽이 main 일 때."""
+
+    def test_main_has_not_picked_it_up(self, reg):
+        _agent(reg, "aa")
+        _ask(reg, AA, "main", "which directory?")
+        assert reg.checkin_agent_lines(AA, {}) == (
+            ["main · has your request queued"],
+            False,
+            False,
+        )
+
+    def test_main_picked_it_up(self, reg):
+        _agent(reg, "aa")
+        rid = _ask(reg, AA, "main", "which directory?")
+        reg.absorb_main()
+        reg.note_owes("main", AA, "which directory?", id=rid)
+        assert reg.checkin_agent_lines(AA, {}) == (
+            ["main · owes you a reply"],
+            False,
+            False,
+        )

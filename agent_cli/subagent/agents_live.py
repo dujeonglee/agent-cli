@@ -586,8 +586,9 @@ class AgentRegistry:
         self, addr: str, step_marks: dict[str, int]
     ) -> tuple[list[str], bool, bool]:
         """`wait` 중간 깨우기 알림의 에이전트 줄 (v10.79.0, docs/wait/DESIGN.md §6.3)
-        — ``(줄 목록, 에이전트 줄이 있는가, 사람 질문에 막힌 줄이 있는가)``. 빚진 쪽이 main 이면 그 줄은
-        ``main · owes you a reply`` 뿐이다 — 에이전트가 아니라 걸음 수·일감이 없다.
+        — ``(줄 목록, 에이전트 줄이 있는가, 사람 질문에 막힌 줄이 있는가)``. 받는 쪽이 main 이면 그 줄은
+        ``main · owes you a reply``(집었다)나 ``main · has your request queued``(아직 줄 서 있다)뿐이다 — 에이전트가
+        아니라 걸음 수·일감이 없다.
 
         작업·monitor 와 달리 에이전트는 로그 파일이 없다. 레지스트리가 **이미 아는
         것**만으로 그린다 — 상태·지금 처리 중인 요청자·받은편지함 미러·회신 빚과
@@ -628,7 +629,12 @@ class AgentRegistry:
         facts = self.wake_facts()  # 관계와 잠든 채무자를 같은 사본에서
         for kind, me in agent_relations(facts, addr):
             if not me.startswith("agent:"):
-                main_lines.append(f"{me} · owes you a reply")
+                what = (
+                    "has your request queued"
+                    if kind == "queued"
+                    else "owes you a reply"
+                )
+                main_lines.append(f"{me} · {what}")
                 continue
             key = me.split(":", 1)[1]
             tm = self._agents.get(key)

@@ -293,6 +293,7 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
 | 회신을 빚진 채 스스로 잠듦 | `agent:m (coder) · owes you a reply · itself waiting on job #3` — 기다리는 것은 이름만(v10.166.0, `wake.wake_name`): 에이전트는 키(`agt-5`), main 은 `main`, 작업 `job #3`, 모니터 `monitor m-2`, 예약 `a schedule`. 종전엔 `wait` 수락 문장의 줄 그대로였다(`job #3 (\`pytest -x tests/\`)`·`agent:agt-5 working on your request` — 뒤의 "your" 는 읽는 쪽이 아니라 그 채무자의 시점이었다) |
 | 사람 질문에 막힘 | `agent:n (reviewer) · owes you a reply · itself waiting on job #1 · blocked on question q-3 to the user, unanswered for 9m` |
 | main 이 회신을 빚짐(기다리는 쪽이 에이전트) | `main · owes you a reply` — 에이전트가 아니라 걸음 수·일감·kill 안내가 없다 |
+| main 이 내 요청을 아직 집지 않음 | `main · has your request queued` — main 이 일하는 중이거나 기다리는 중이다. 그 봉투가 main 을 깨운다 |
 
 "내 요청을 처리 중"·"대기열" 은 그 런·받은편지함이 내 요청 중 아직 회신이 가지 않은 것을 들고 있을 때만이다
 (v10.143.0) — 회신한 뒤 마무리 중인 런·통지로 도는 런·대기열의 통지는 줄도 깨울 근거도 아니다(docs/agent-engine/DESIGN.md §2.2). 한 에이전트는 한 줄이다(v10.146.6) — 내 요청을 들고 일하는 쪽은 그 요청을 빚진 쪽이기도 하지만 "working" 하나로, 그다음
