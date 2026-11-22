@@ -24,7 +24,7 @@
 
 - **깨울 것이 있을 때만** 받는다(`wake.wake_items(owner)`): 이 소유자의
   돌고 있는 백그라운드 작업·살아 있는 모니터, 세션의 일하는 중인 상주 에이전트·
-  예약. 없으면 거부 관찰("nothing would wake you — keep working or call
+  예약, 그리고 내 요청을 아직 집지 않은 받는 쪽(main 포함 — "has your request queued", 5c-2 C). 없으면 거부 관찰("nothing would wake you — keep working or call
   `complete`") 을 남기고 런을 잇는다. 막혔을 때 wait 로 도피하는 길은 없다.
 - 열린 항목(`u-…`·`n-…`·기다리는 회신)은 **같은 런의 장부에 그대로** 있다 — 넘길 다음 런이 없다
   (종전의 `ctx.park_requests`·`take_parked_requests` 는 v10.163.0 에 지웠다).
