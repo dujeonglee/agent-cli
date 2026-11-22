@@ -559,34 +559,6 @@
    ]
   },
   "events": {
-   "agent-agt-A": [
-    [
-     "agent_message",
-     [],
-     {
-      "author": "",
-      "direction": "restarted",
-      "key": "agt-A",
-      "text": "",
-      "to": "agt-A",
-      "ts": "<t>"
-     }
-    ]
-   ],
-   "agent-agt-B": [
-    [
-     "agent_message",
-     [],
-     {
-      "author": "",
-      "direction": "restarted",
-      "key": "agt-B",
-      "text": "",
-      "to": "agt-B",
-      "ts": "<t>"
-     }
-    ]
-   ],
    "main": [
     [
      "agent_message",
@@ -623,6 +595,18 @@
      "agent_message",
      [],
      {
+      "author": "",
+      "direction": "restarted",
+      "key": "agt-A",
+      "text": "",
+      "to": "agt-A",
+      "ts": "<t>"
+     }
+    ],
+    [
+     "agent_message",
+     [],
+     {
       "author": "agent:agt-A",
       "direction": "in",
       "instance_name": "bb",
@@ -630,6 +614,18 @@
       "key": "agt-B",
       "profile": "",
       "text": "TASK-W2 compute 6*7",
+      "to": "agt-B",
+      "ts": "<t>"
+     }
+    ],
+    [
+     "agent_message",
+     [],
+     {
+      "author": "",
+      "direction": "restarted",
+      "key": "agt-B",
+      "text": "",
       "to": "agt-B",
       "ts": "<t>"
      }

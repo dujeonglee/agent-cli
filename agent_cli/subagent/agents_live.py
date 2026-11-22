@@ -2617,6 +2617,7 @@ class AgentRegistry:
                 continue
             tm.revive = True
             tm.restarted = True
+            conversation_log.note_restart(tm)  # 창의 재시작 줄 — 워커보다 먼저
             tm.worker = threading.Thread(
                 target=self._worker,
                 args=(tm, parent_ctx),

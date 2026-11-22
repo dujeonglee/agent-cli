@@ -191,11 +191,8 @@ class ResidentLoop(LoopKind):
         self.binding = binding
         self.ctx = ctx
         tm.ctx = ctx
-        # 재시작이 되살렸다 — 컨텍스트 끝에 사실 기록 한 줄(5c-0). 모델은 그것을 읽고, 사람은 🤝 창의 한 줄로 본다
-        # (``restarted`` — 웹만 그린다, v10.165.0). 기록을 적지 않은 때(런 없이 거듭 재시작)는 줄도 없다
-        if tm.restarted and record_restart(ctx):
-            line = {"key": tm.key, "direction": "restarted", "author": "", "text": ""}
-            self.registry._record(tm, {**line, "to": tm.key, "ts": time.time()})
+        if tm.restarted:  # 재시작이 되살렸다 — 컨텍스트 끝에 사실 기록 한 줄(5c-0)
+            record_restart(ctx)
 
     # ── ⑫ 시작 — 받은편지함 항목 → 시작 메시지 + 회계 ──
     def start(self, items: list[dict]) -> Start:

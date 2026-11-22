@@ -307,8 +307,8 @@ def test_a_revived_resident_gets_one_restart_line_in_its_window(
     renderer,  # noqa: F811
     regs,
 ):
-    """재시작 기록을 적은 때 🤝 창에도 한 줄(v10.165.0) — `conversation.jsonl` 에 남고(resume 재생이 다시 그린다)
-    화면에 나간다. 기록을 적지 않는 거듭 재시작(사이에 런이 없다)에는 줄도 없다."""
+    """재시작이 되살린 상주의 🤝 창에 한 줄(v10.165.0) — `conversation.jsonl` 에 남고(resume 재생이 다시 그린다)
+    화면에 나간다. 그 사이 창에 아무 줄도 없이 거듭 재시작하면 줄은 하나다."""
     reg1, key = _mid_run(tmp_path, regs)
     reg1.get(key).ctx.add({"role": "user", "content": "task-1"})
     reg2, _rec = _restart(tmp_path, regs)
@@ -347,8 +347,9 @@ def test_a_delivery_right_after_the_restart_stands_below_the_restart_line(
     regs,
     monkeypatch,
 ):
-    """[A1(11) 에서 바뀜] 되살린 워커가 컨텍스트를 열기 전에 새 요청이 오면 그 요청이 재시작 줄보다 먼저 적힌다 —
-    워커의 `ResidentLoop.open` 을 그 배달이 기록될 때까지 잡아 그 순서를 세운다."""
+    """재시작 줄은 `restore` 가 워커를 띄우기 전에 적는다 — 되살린 워커가 컨텍스트를 열기 전에 새 요청이 와도 그
+    요청은 재시작 줄 아래에 적힌다(종전엔 워커가 컨텍스트를 연 뒤 적어 그 요청보다 늦었다). 워커의 `ResidentLoop.open`
+    을 그 배달이 기록될 때까지 잡아 그 순서를 세운다."""
     _reg1, key = _ran_once(tmp_path, regs)
     delivered = threading.Event()
     real_open = ResidentLoop.open
@@ -363,17 +364,17 @@ def test_a_delivery_right_after_the_restart_stands_below_the_restart_line(
     assert reg2.request(key, "task-2", author="user:dj") == ""
     delivered.set()
     assert wait_until(lambda: reg2.get(key).handled >= 2)
-    assert _directions(reg2, key) == ["in", "out", "in", "restarted", "out"]
+    assert _directions(reg2, key) == ["in", "out", "restarted", "in", "out"]
 
 
-def test_the_restart_line_goes_out_twice_when_the_worker_writes_it_before_the_replay(
+def test_the_restart_line_goes_out_once_whatever_the_worker_does(
     tmp_path,
     renderer,  # noqa: F811
     regs,
     monkeypatch,
 ):
-    """[A1(11) 에서 바뀜] `restore` 의 창 재생과 워커가 적는 재시작 줄의 경주 — 워커가 먼저 적으면 재생이 그 줄을
-    읽어 한 번, 워커가 한 번 낸다. 재생을 그 줄이 선 뒤로 잡아 그 순서를 세운다."""
+    """재시작 줄은 `restore` 의 창 재생이 한 번 낸다 — 워커는 적지도 내지도 않는다(종전엔 워커가 적었고, 재생보다
+    먼저 적으면 재생이 한 번·워커가 한 번 냈다). 재생을 그 줄이 선 뒤로 잡아도, 워커가 다 뜬 뒤에 세어도 한 번이다."""
     _reg1, key = _ran_once(tmp_path, regs)
     real_replay = AgentRegistry._replay_conversation
 
@@ -387,22 +388,24 @@ def test_the_restart_line_goes_out_twice_when_the_worker_writes_it_before_the_re
     assert wait_until(lambda: reg2.get(key).state == "idle")
     assert wait_until(lambda: _is_restart_record(_last(reg2.get(key).ctx)))
     shown = [c[1]["direction"] for c in renderer.named("agent_message")]
-    assert shown.count("restarted") == 2
+    assert shown.count("restarted") == 1
     assert _directions(reg2, key) == ["in", "out", "restarted"]
 
 
-def test_a_resident_with_history_but_an_empty_window_gets_the_line_too(
+def test_a_resident_with_history_but_an_empty_window_gets_no_line(
     tmp_path,
     renderer,  # noqa: F811
     regs,
 ):
-    """[A1(11) 에서 바뀜] 지금은 history 가 기준이다 — 창에 줄이 없어도 재시작 기록을 적으면 줄이 선다."""
+    """창의 줄은 창의 기록이 기준이다(`conversation_log.note_restart`) — 창이 비었으면 재시작 줄도 없다. 모델이 읽는
+    재시작 기록은 history 가 기준이라 그대로 적힌다."""
     reg1, key = _mid_run(tmp_path, regs)
     reg1.get(key).ctx.add({"role": "user", "content": "task-1"})
     conversation_log.path_of(reg1.get(key).home_dir).unlink()
     reg2, _rec = _restart(tmp_path, regs)
-    assert wait_until(lambda: _is_restart_record(_last(reg2.get(key).ctx)))
-    assert wait_until(lambda: _directions(reg2, key) == ["restarted"])
+    assert wait_until(lambda: reg2.get(key).state == "idle")
+    assert _is_restart_record(_last(reg2.get(key).ctx))
+    assert _directions(reg2, key) == []
 
 
 def test_no_restart_record_for_a_run_agent_or_a_resident_revived_after_a_kill(
