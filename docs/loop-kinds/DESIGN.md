@@ -28,7 +28,7 @@
 |---|---|---|
 | A 정체 (생성자) | ① `owner` ② `depth` ③ `agent_stack`·`skill_stack` ④ `binding` ⑤ `tools` ⑥ `hooks_config` ⑦ `ports` ⑧ `stop_event` | 런 동안 불변 |
 | B 프롬프트 (매 턴) | ⑨ `prompt_profile` ⑩ `tail_roster` ⑪ `renders` | **PR 2** — 엔진이 종류에게 묻는다 |
-| C 런 (템플릿 순서) | ⑫ `start` ⑬ `make_ctx` ⑭ `open_scope`/`close_scope` ⑮ `intake` ⑯ `wait_policy` ⑰ `finish` ⑱ `release` | ⑫⑬⑭⑰⑱ 은 PR 1, ⑮⑯ 은 PR 2 |
+| C 런 (템플릿 순서) | ⑫ `start` ⑬ `make_ctx` ⑭ `open_scope`/`close_scope` ⑮ `intake` ⑯ `wait_policy` ⑰ `finish` ⑱ `release` | ⑫⑬⑭⑰⑱ 은 PR 1, ⑮⑯ 은 PR 2. ⑯ 은 v10.163.0 에 지웠다 — 받아들여진 `wait` 는 모두 제자리(`dispatch._wait_in_place`), 거절은 `ports.wakeable()` 하나 |
 
 `run(start)` 템플릿: 스코프 열기 → `make_ctx`(실패 = `LoopKindError` → `rejected`) → 엔진
 `engine(kind, start, ctx)`(v10.132.0 — 종전 `engine(query, ctx, **loop_kwargs)`, §3.4) → `finally: release()` → `finish` → (예외는 `crashed`) →
@@ -106,7 +106,7 @@ history·result.md, 관찰 `run_skill` ⑤ 감사 노브 on → 런 뒤 `harness
 
 | 물음 | 엔진의 자리 | 종전 추측 |
 |---|---|---|
-| `wait_policy()` → `end_run`·`block`·`refuse` | `dispatch._op_wait` | `cfg.wakeable` + `is_private_owner(owner)` |
+| ~~`wait_policy()` → `end_run`·`block`·`refuse`~~ (v10.163.0 에 지움 — `ports.wakeable()` 하나로 거절, 받아들이면 모두 제자리) | `dispatch._op_wait` | `cfg.wakeable` + `is_private_owner(owner)` |
 | `intake()` → `{"message"}`·`{"mail"}`·`{"record"}`·`{"user_request"}` | `core._intake` (넣는 법은 엔진: `_inject_message`·`_inject_mail`·`_inject_item`) | `dequeue_user_message`·`agent_registry` 포트 유무와 `mailbox.has_inbox` 로 세 메서드 |
 | `prompt_profile()` → role·peer_section·agent_registry·ask_blocking·reports_to_caller·peer_channel | `prompt.SystemPromptSvc.rebuild`, `llm`(함수 스키마·종결 어투), `dispatch`(ask 비차단), `tool_bridge`(거절 문구) | `agent_registry is None`·`depth > 0`·`questions.nonblocking`·`message_handler is not None` |
 | `tail_roster(tools)` | `llm._build_session_state` | 레지스트리+`agent` 도구 / `peer_roster` 포트 |
