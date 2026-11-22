@@ -254,7 +254,6 @@ class SkillLoop(LoopKind):
             peer_section="",
             ask_blocking=True,
             reports_to_caller=True,
-            peer_channel=False,
         )
 
     def tail_roster(self, tools: list[str]) -> str:

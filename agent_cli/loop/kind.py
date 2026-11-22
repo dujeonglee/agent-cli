@@ -79,8 +79,6 @@ class PromptProfile:
     ask_blocking: bool
     #: 종결문이 "호출자에게 보고" 어투인가 (서브루프)
     reports_to_caller: bool
-    #: 상주 모드 거절 문구가 `message` 동료 채널을 가리키는가
-    peer_channel: bool
 
 
 @dataclass(frozen=True)
@@ -293,7 +291,6 @@ class LoopKind:
             peer_section=self.peer_agents_section,
             ask_blocking=not (q is not None and getattr(q, "nonblocking", False)),
             reports_to_caller=self.depth > 0,
-            peer_channel=self.ports.message_handler is not None,
         )
 
     def tail_roster(self, tools: list[str]) -> str:
@@ -416,7 +413,6 @@ class PrivateLoop(LoopKind):
             peer_section="",
             ask_blocking=True,
             reports_to_caller=True,
-            peer_channel=False,
         )
 
     def tail_roster(self, tools: list[str]) -> str:

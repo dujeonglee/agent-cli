@@ -148,7 +148,6 @@ class ResidentLoop(LoopKind):
             peer_section=self.peer_agents_section,
             ask_blocking=False,  # 질문 포트로 비차단
             reports_to_caller=True,
-            peer_channel=True,  # 상주 모드 거절은 `message` 동료 채널을 가리킨다
         )
 
     def tail_roster(self, tools: list[str]) -> str:

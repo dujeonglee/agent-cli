@@ -2275,8 +2275,6 @@ class WebRenderer(Renderer):
             "prompt",
             {
                 "prompt": prompt,
-                "multiline": multiline,
-                "continuation": continuation,
                 "context": context,
                 # Who/why: which delegate agent is asking + its
                 # reasoning, so the user can attribute the prompt.
@@ -2343,10 +2341,7 @@ class WebRenderer(Renderer):
                 "confirm",
                 {
                     "prompt": prompt,
-                    "options": [
-                        {"key": o.key, "label": o.label, "aliases": list(o.aliases)}
-                        for o in options
-                    ],
+                    "options": [{"key": o.key, "label": o.label} for o in options],
                     "default_key": default_key,
                     # The command to display + the dangerous-token ranges to
                     # highlight (None/[] for a non-command confirm like the

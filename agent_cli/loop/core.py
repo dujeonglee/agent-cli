@@ -148,7 +148,6 @@ class AgentLoop:
         self.run_authors: list[str] = []
         self.provider = binding.provider  # 엔드포인트 객체는 세션 수명 — 모델만 바뀐다
         self.ctx = ctx
-        self.agent_role = kind.agent_role
 
         # Derived wiring (finalized below, then frozen into LoopConfig)
         tools_list = kind.tools or list(TOOLS.keys())

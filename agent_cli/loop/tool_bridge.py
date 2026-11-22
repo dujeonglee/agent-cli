@@ -183,7 +183,7 @@ class ToolBridge:
         started = time.monotonic()
         try:
             if tool_name == "agent":
-                result = self._invoke_agent(tool_input, input_dict)
+                result = self._invoke_agent(tool_input)
             else:
                 result = self._invoke_regular(tool_name, tool_input)
         except Exception as e:
@@ -353,7 +353,7 @@ class ToolBridge:
         return None, tool_input, input_dict
 
     # ── 2. Agent dispatch (5.0.0 통합) ──────────────────────────────
-    def _invoke_agent(self, tool_input, input_dict: dict) -> ToolResult:
+    def _invoke_agent(self, tool_input) -> ToolResult:
         """agent 인터셉트 — 제네릭 execute 경로에 없는 호출자·배선이 필요해 여기서 가로챈다.
 
         모든 모드(run·spawn·status·resume·kill)가 한 길이다(docs/agent-engine/DESIGN.md §1):
@@ -577,7 +577,7 @@ class ToolBridge:
         args,
         *,
         suffix: str = "",
-    ) -> str:
+    ) -> None:
         """Render one op's observation INTO a multi-op turn's accumulator,
         charging it against the per-turn budget.
 
@@ -609,7 +609,6 @@ class ToolBridge:
                 "images": images,
             }
         )
-        return observation
 
     @staticmethod
     def accumulate_raw(

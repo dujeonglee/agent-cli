@@ -663,10 +663,10 @@ class TestPersistence:
 class TestRules:
     def test_the_table(self):
         r = agent_stop.stop_rule
-        assert r("stopped", False) == (False, False, False)
-        assert r("stopped", True) == (True, True, True)
-        assert r("removed", False) == (True, True, True)
-        assert r("removed", True) == (True, True, True)
+        assert r("stopped", False) == (False, False)
+        assert r("stopped", True) == (True, True)
+        assert r("removed", False) == (True, True)
+        assert r("removed", True) == (True, True)
         with pytest.raises(KeyError):
             r("", False)  # 세션 종료는 규칙이 아니다
 

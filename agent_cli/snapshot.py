@@ -138,7 +138,6 @@ class ChangeReport:
 
 @dataclass
 class SnapshotStats:
-    files: int = 0
     seconds: float = 0.0
     commits: int = 0
     #: 체크포인트가 실패하고 있으면 첫 실패 시각(epoch 초)과 마지막 이유 — 성공하면 지운다
@@ -434,7 +433,6 @@ class GitSnapshot:
                     except OSError:
                         pass
         self._big_files = big
-        self.stats.files = count
         if self.file_count_max >= 0 and count > self.file_count_max:
             self.per_turn = False
 

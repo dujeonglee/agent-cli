@@ -214,7 +214,6 @@ class TurnDispatcher:
         tool_name: str = "",
         primitives=None,
         recovery_kind: str = "",
-        render: bool = False,
         store_emission: bool = True,
         nudge: dict | None = None,
     ):
@@ -235,20 +234,13 @@ class TurnDispatcher:
         ``recovery_kind`` "format" 은 fold 대상 마킹(B1 은 빈 값 유지 —
         액션 루프 넛지는 다음 파싱 성공으로 해소된 게 아니므로 접지 않는다).
         """
-        # ``render=True`` (v9.21.0): 거부를 **실패한 관찰 카드**로 남긴다.
-        # 기본(False)은 형식 거부용 — 웹의 recovery() 는 휘발 retry_tick 만
-        # 내고 카드를 안 그린다(거부된 원문은 재시도 기계지 모델의 작업이
-        # 아니다). 그런데 회신 독촉은 모델이 **일을 끝냈다고 주장한 것**을
-        # 하네스가 물리는 것이라, 아무것도 안 그리면 사용자에겐 그 complete
-        # 이 통과한 것처럼 보인다(실측 a209hq — ✅ 카드로 그려져 혼동).
         # 기록하지 않는 시도의 생각은 그리지도 않는다 (v9.24.11). 생각은
         # 턴 처리 전 보류돼 있다(render.drop_pending_thought) — 맨 먼저
         # 버려야 한다: 아래 기록 단계(ctx.add → get_renderer)가 보류분을
         # 내보내기 때문이다. 기록되는 개입(B1 등)은 그대로 보인다.
         if not store_emission:
             drop_pending_thought()
-        if not render:
-            render_recovery(llm_text, message, reason, self.state.turn)
+        render_recovery(llm_text, message, reason, self.state.turn)
         # ``store_emission=False`` (v9.21.1): 물린 `complete` 은 저장하지 않는다
         # — 거부 관찰이 원문을 인용해 자기완결이다(사용자 결정). 남기면 저장
         # 형태(`ops:[complete]`)가 history 에서 final 로 읽히고, 재시도는
@@ -263,7 +255,7 @@ class TurnDispatcher:
             tool_name=tool_name,
             success=False,
             turn=self.state.turn,
-            render=render,  # False: render_recovery already surfaced it
+            render=False,  # render_recovery already surfaced it
             recovery_kind=recovery_kind,
             store_emission=store_emission,
             nudge=nudge,
@@ -758,7 +750,6 @@ class TurnDispatcher:
             # ``Tool.terminal`` 속성 파생 (T3 선언화 — 종전 도구명 튜플).
             if tool is not None and tool.terminal:
                 self._flush_op_results(turn.record, results)
-                results = []
                 return self._dispatch_op(llm_text, turn, op, outcome)
             # Ops run sequentially, in order — the correctness guarantee for
             # side-effecting tools (write→edit same file, mkdir→touch). (The
@@ -1078,12 +1069,6 @@ class TurnDispatcher:
                 if raw
                 else "(Completed without result — model may lack capability for this task)"
             )
-        elif isinstance(op.action_input, str):
-            raw = op.action_input
-            answer = (
-                op.action_input
-                or "(Completed without result — model may lack capability for this task)"
-            )
         else:
             raw = None
             answer = (
@@ -1096,10 +1081,8 @@ class TurnDispatcher:
         # observability AND we unwrap one level so the user-facing
         # answer doesn't carry a literal ``{"result": "..."}`` prefix.
         # Single-level only (recursive nesting indicates a different
-        # bug worth surfacing). ``raw`` may be from ``op.action_
-        # input`` (dict path) or the input itself (str path); both
-        # surface as the same artifact, so we re-derive ``answer``
-        # from the unwrapped value.
+        # bug worth surfacing). ``raw`` is the ``result`` of ``op.action_
+        # input``; we re-derive ``answer`` from the unwrapped value.
         if detect_nested_envelope(raw):
             outcome["failure_signal"] = FAILURE_NESTED_ENVELOPE
             unwrapped = unwrap_nested_envelope(raw)
@@ -1132,7 +1115,7 @@ class TurnDispatcher:
             return self._nag_open_items(
                 llm_text, turn, claimed, still_open, debts, outcome, awaited
             )
-        answer = self._with_unanswered_notice(claimed, still_open, debts, answer)
+        answer = self._with_unanswered_notice(claimed, still_open, answer)
         answer = self._with_awaited_notice(awaited, answer)
         if self.ctx:
             self.ctx.add(self._terminal_record(turn, answer, claimed, still_open))
@@ -1373,7 +1356,7 @@ class TurnDispatcher:
             f"{self.state.ledger.awaited_for_notice(awaited)}"
         )
 
-    def _with_unanswered_notice(self, claimed, requests, debts, answer: str) -> str:
+    def _with_unanswered_notice(self, claimed, requests, answer: str) -> str:
         """예산이 끝난 자리의 **최후 통지** — 닫히지 않은 요청을 최종 답 말미에.
 
         회계일 뿐 강제가 아니다. 모델의 주장이 정직한지는 검증할 수 없다 — 검출되는
