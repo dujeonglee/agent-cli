@@ -2,6 +2,7 @@
 
 스레드도 레지스트리도 없다. 줄마다 한 사실. 잠든 채무자는 창구의 기다림 표시(``waiting``)로 본다(5b) — main 도
 잠든 쪽이 되고, 깨우지 않는 봉투를 든 채 기다리는 쪽도 잠든 쪽이다. 죽은 채무자는 깨울 것이 아니다(5b 항목 8).
+줄 선 요청(``queued`` — 장부의 줄 선 r 줄 ``(받는 쪽, 요청자)``)은 받는 쪽이 main 이든 에이전트든 "queued" 다(5c-2 C).
 """
 
 from __future__ import annotations
@@ -19,13 +20,17 @@ from agent_cli.wake import (
 A, B, C = "agent:a", "agent:b", "agent:c"
 
 
-def agent(addr, *, active=False, dead=False, queued=(), taken=()):
-    return AgentFact(addr, active, dead, tuple(queued), tuple(taken))
+def agent(addr, *, active=False, dead=False, taken=()):
+    return AgentFact(addr, active, dead, tuple(taken))
 
 
-def facts(agents=(), owing=(), awaited=(), waiting=()):
+def facts(agents=(), owing=(), queued=(), awaited=(), waiting=()):
     return WakeFacts(
-        tuple(agents), tuple(owing), frozenset(awaited), frozenset(waiting)
+        tuple(agents),
+        tuple(owing),
+        tuple(queued),
+        frozenset(awaited),
+        frozenset(waiting),
     )
 
 
@@ -52,7 +57,8 @@ RELATIONS = [
     (
         "줄 선 요청",
         facts(
-            [agent(A, active=True, queued=[("main", "r-2")])],
+            [agent(A, active=True)],
+            queued=[(A, "main")],
             awaited=[("main", "r-2")],
         ),
         "main",
@@ -67,8 +73,8 @@ RELATIONS = [
         [],
     ),
     (
-        "통지만 줄 섬 — 근거 아님",
-        facts([agent(A, queued=[("main", "n-3")])]),
+        "통지만 줄 섬 — 근거 아님(통지는 장부에 줄이 없다)",
+        facts([agent(A)]),
         "main",
         frozenset(),
         [],
@@ -103,7 +109,7 @@ RELATIONS = [
     ),
     (
         "자기 자신은 명단에서 뺀다",
-        facts([agent(A, active=True, queued=[(A, "r-1")])], awaited=[(A, "r-1")]),
+        facts([agent(A, active=True)], queued=[(A, A)], awaited=[(A, "r-1")]),
         A,
         frozenset(),
         [],
@@ -141,14 +147,14 @@ RELATIONS = [
     ),
     (
         "기다림 표시가 없는 한가한 채무자는 빚진 쪽",
-        facts([agent(A, queued=[(B, "n-9")])], owing=[(A, "main")]),
+        facts([agent(A)], owing=[(A, "main")], queued=[(A, B)]),
         "main",
         frozenset(),
         [("owes", A)],
     ),
     (
-        "깨우지 않는 봉투를 든 채 기다리는 채무자도 잠든 쪽 (5b D5)",
-        facts([agent(A, queued=[(B, "n-9")])], owing=[(A, "main")], waiting=[A]),
+        "남의 줄 선 요청을 든 채 기다리는 채무자도 잠든 쪽 (5b D5)",
+        facts([agent(A)], owing=[(A, "main")], queued=[(A, B)], waiting=[A]),
         "main",
         frozenset(),
         [],
@@ -159,6 +165,71 @@ RELATIONS = [
         "main",
         frozenset(),
         [("owes", A)],
+    ),
+    # ── 줄 선 요청은 장부가 말한다 (5c-2 C) ──
+    (
+        "main 앞에 줄 선 내 요청 — main 이 일하는 중(c1)",
+        facts([agent(A, active=True)], queued=[("main", A)], awaited=[(A, "r-3")]),
+        A,
+        frozenset(),
+        [("queued", "main")],
+    ),
+    (
+        "main 앞에 줄 선 내 요청 — main 이 기다리는 중이어도(c2): 그 봉투가 main 을 깨운다",
+        facts(
+            [agent(A, active=True, taken=[("main", "r-2")])],
+            owing=[(A, "main")],
+            queued=[("main", A)],
+            awaited=[("main", "r-2"), (A, "r-3")],
+            waiting=["main"],
+        ),
+        A,
+        frozenset(),
+        [("queued", "main")],
+    ),
+    (
+        "기다리는 에이전트 앞에 줄 선 내 요청(c3) — 한 번만 나온다",
+        facts(
+            [agent(A, active=True), agent(B, active=True)],
+            queued=[(B, A)],
+            awaited=[(A, "r-4")],
+            waiting=[B],
+        ),
+        A,
+        frozenset(),
+        [("queued", B)],
+    ),
+    (
+        "main 이 내 요청 하나를 집었고 하나는 줄 서 있다 — queued 하나(owes 보다 앞)",
+        facts([], owing=[("main", A)], queued=[("main", A)]),
+        A,
+        frozenset(),
+        [("queued", "main")],
+    ),
+    (
+        "남이 main 에게 보낸 줄 선 요청은 세지 않는다",
+        facts([agent(A), agent(B)], queued=[("main", B)]),
+        A,
+        frozenset(),
+        [],
+    ),
+    (
+        "명단의 에이전트는 명단 순서, 명단에 없는 main 은 그 뒤",
+        facts(
+            [agent(A), agent(B, active=True, taken=[(C, "r-1")]), agent(C)],
+            queued=[("main", C), (A, C)],
+            awaited=[(C, "r-1")],
+        ),
+        C,
+        frozenset(),
+        [("queued", A), ("working", B), ("queued", "main")],
+    ),
+    (
+        "exclude 는 줄 선 main 도 뺀다",
+        facts([], queued=[("main", A)]),
+        A,
+        frozenset({"main"}),
+        [],
     ),
 ]
 
@@ -174,9 +245,10 @@ def test_relation_items_text():
         [
             agent(A, active=True),
             agent(B, active=True, taken=[("main", "r-1")]),
-            agent(C, queued=[("main", "r-2")]),
+            agent(C),
         ],
         owing=[(A, "main")],
+        queued=[(C, "main")],
         awaited=[("main", "r-1"), ("main", "r-2")],
     )
     assert relation_items(f, "main") == [
@@ -202,7 +274,7 @@ PARKED = [
     ("일하는 채무자", facts([agent(A, active=True)], owing=[(A, "main")]), "main", []),
     (
         "받은편지함에 무엇이 있어도 기다리면 잠든 쪽 (5b D5)",
-        facts([agent(A, queued=[("x", "r-1")])], owing=[(A, "main")], waiting=[A]),
+        facts([agent(A)], owing=[(A, "main")], queued=[(A, "x")], waiting=[A]),
         "main",
         [A],
     ),
@@ -213,6 +285,18 @@ PARKED = [
         [],
     ),
     ("표시 없는 main", facts([], owing=[("main", A)]), A, []),
+    (
+        "줄 선 요청만 든 채 기다리는 main 은 잠든 채무자가 아니다 (c2 — 고리 거절이 아니다)",
+        facts([], queued=[("main", A)], waiting=["main"]),
+        A,
+        [],
+    ),
+    (
+        "줄 선 요청만 든 채 기다리는 에이전트도 잠든 채무자가 아니다 (c3)",
+        facts([agent(B)], queued=[(B, A)], waiting=[B]),
+        A,
+        [],
+    ),
     (
         "기다리는 main 은 잠든 채무자 (5b N4)",
         facts([], owing=[("main", A)], waiting=["main"]),

@@ -549,7 +549,6 @@ class AgentRegistry:
                     addr=f"agent:{tm.key}",
                     active=self.state_is_active(tm.state),
                     dead=tm.state == "dead",
-                    queued=heads(self._queued(tm)),
                     taken=heads(self._taken(tm)),
                 )
                 for tm in list(self._agents.values())
@@ -561,6 +560,11 @@ class AgentRegistry:
                     (r.dst, r.src)
                     for r in rows
                     if r.kind == "r" and r.state == "picked"
+                ),
+                queued=tuple(
+                    (r.dst, r.src)
+                    for r in rows
+                    if r.kind == "r" and r.state == "queued"
                 ),
                 awaited=frozenset(
                     (r.src, r.rid)

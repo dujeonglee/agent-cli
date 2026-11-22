@@ -74,8 +74,9 @@ class TestReceiverHasNotPickedItUp:
         _agent(reg, "aa")
         rid = _ask(reg, AA, "main", "which directory?")
         assert _row_state(reg, rid) == "queued"
-        # [지금 값] 거절 — main 앞에 줄 선 요청은 어느 칸에도 깨울 것으로 들지 않는다
-        assert _wait(reg, AA) is None
+        # 종전엔 거절("nothing would wake you … no agent owes you a reply") — main 은 명단에 없어 줄 선 요청이 어느
+        # 칸에도 들지 않았다
+        assert _wait(reg, AA) == ["main has your request queued"]
         assert parked_debtors(reg.wake_facts(), AA) == []
 
     def test_c2_main_is_waiting_in_place(self, reg):
@@ -86,12 +87,12 @@ class TestReceiverHasNotPickedItUp:
         reg.mark_waiting("main")  # main 의 `wait` 가 받아들여졌다
         rid = _ask(reg, AA, "main", "which directory?")
         assert _row_state(reg, rid) == "queued"
-        # [지금 값] 거절(깨울 것 없음) — 고리 거절은 아니다(main 은 aa 의 잠든 채무자가 아니다)
-        assert _wait(reg, AA) is None
+        # 그 봉투가 main 을 깨운다 — 고리 거절이 아니다(main 은 aa 의 잠든 채무자가 아니다). 종전엔 거절
+        assert _wait(reg, AA) == ["main has your request queued"]
         assert parked_debtors(reg.wake_facts(), AA) == []
 
     def test_c3_an_agent_is_waiting_in_place(self, reg):
-        """c3 — 받는 쪽 bb 가 제자리에서 기다리는 중이다. 줄 선 요청이 bb 를 깨운다 — 지금도 받아들여진다."""
+        """c3 — 받는 쪽 bb 가 제자리에서 기다리는 중이다. 줄 선 요청이 bb 를 깨운다 — 조각은 하나다(종전과 같다)."""
         _agent(reg, "aa")
         _agent(reg, "bb")
         reg.mark_waiting(BB)
@@ -101,7 +102,7 @@ class TestReceiverHasNotPickedItUp:
         assert parked_debtors(reg.wake_facts(), AA) == []
 
     def test_after_main_picks_it_up_main_owes(self, reg):
-        """집은 뒤에는 빚이다 — 지금도 받아들여진다."""
+        """집은 뒤에는 빚이다(종전과 같다)."""
         _agent(reg, "aa")
         rid = _ask(reg, AA, "main", "which directory?")
         reg.absorb_main()

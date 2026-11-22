@@ -45,24 +45,24 @@ _SCHEDULE_ID = "schedule"
 
 
 class AgentFact(NamedTuple):
-    """명단의 에이전트 하나 — 사본. ``queued``·``taken`` 은 항목의 ``(author, id)`` 이다(``queued`` 는 깨우지 않는
-    봉투도 든다 — 관계 "queued" 는 내가 보낸 갚지 않은 요청만 본다)."""
+    """명단의 에이전트 하나 — 사본. ``taken`` 은 그 런이 든 항목의 ``(author, id)`` 이다."""
 
     addr: str
     active: bool
     dead: bool
-    queued: tuple[tuple[str, str], ...]
     taken: tuple[tuple[str, str], ...]
 
 
 class WakeFacts(NamedTuple):
     """장부와 명단의 사본 — ``agents`` 는 명단 순서, ``owing`` 은 집힌 r 줄의 ``(빚진 쪽, 요청자)`` 장부 순서,
+    ``queued`` 는 줄 선(받는 쪽이 아직 집지 않은) r 줄의 ``(받는 쪽, 요청자)`` 장부 순서 — 받는 쪽은 main 일 수도 있다,
     ``awaited`` 는 닫히지 않은 r 줄의 ``(요청자, id)``, ``waiting`` 은 창구의 기다림 표시가 선 주소들
     (`PostOffice.waiting_addresses` — 받아들여진 `wait` 로 기다리는 쪽). ``replies`` 는 그중 받는 쪽이 살아 있는
     줄의 ``(요청자, {"id", "from", "text"})`` — 기다리는 회신(`awaited_of`)의 원본이다."""
 
     agents: tuple[AgentFact, ...]
     owing: tuple[tuple[str, str], ...]
+    queued: tuple[tuple[str, str], ...]
     awaited: frozenset[tuple[str, str]]
     waiting: frozenset[str] = frozenset()
     replies: tuple[tuple[str, dict], ...] = ()
@@ -122,11 +122,19 @@ def agent_relations(
     잠든** 쪽은 여기 없다 — `parked_debtors` 가 따로 들고 `parked_view` 가 거슬러 본다. ``exclude`` (v10.77.0):
     순환 대기 판정에서 거슬러 온 주소들. **이미 도착한** 메일은 여기 안 든다(v10.66.2) — 그건 `Mailbox.arrivals`.
 
-    한 에이전트는 한 관계로만 나온다 — working > queued > owes: 내 요청을 들고 일하는(줄 세운) 쪽은 그 요청을 빚진
+    한 쪽은 한 관계로만 나온다 — working > queued > owes: 내 요청을 들고 일하는(줄 세운) 쪽은 그 요청을 빚진
     쪽이기도 하지만 더 많이 말하는 쪽 하나로 센다.
+
+    "queued" 는 장부가 말한다(5c-2 C): 줄 선 내 요청은 그 봉투가 받는 쪽을 깨운다 — 받는 쪽이 main 이든 에이전트든,
+    기다리는 중이든. 명단의 에이전트는 명단 순서로, 명단에 없는 받는 쪽(main)은 그 뒤에 선다.
 
     기다림 표시가 선 쪽은 working 이 아니다 — 잠든 채무자 길(`_is_parked`·`parked_view`)로 간다(5c-1: 제자리에서
     기다리는 에이전트도 런 안이라 ``active`` 다)."""
+    queued_at = [
+        holder
+        for holder, requester in facts.queued
+        if requester == addr and holder != addr
+    ]
     held: dict[str, str] = {}
     for a in facts.agents:
         if a.addr == addr or a.addr in exclude:
@@ -137,8 +145,11 @@ def agent_relations(
             and _holds_unpaid_request_from(facts, a.taken, addr)
         ):
             held[a.addr] = "working"
-        elif _holds_unpaid_request_from(facts, a.queued, addr):
-            held[a.addr] = "queued"  # 받은편지함에 줄 선 것으로 본다
+        elif a.addr in queued_at:
+            held[a.addr] = "queued"
+    for holder in queued_at:  # 명단에 없는 받는 쪽 — main
+        if holder not in held and holder not in exclude:
+            held[holder] = "queued"
     owes = [
         ("owes", debtor)
         for debtor in _debtors_owing(facts, addr)

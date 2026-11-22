@@ -40,8 +40,9 @@ class TestWithRegistry:
         reg.next_checkin_s.return_value = 300
         # 잠든 채무자는 레지스트리의 사본에서 판정한다(`wake.parked_debtors`) — k 는 a 에게 빚진 채 잠들었다
         reg.wake_facts.return_value = WakeFacts(
-            agents=(AgentFact("agent:k", False, False, (), ()),),
+            agents=(AgentFact("agent:k", False, False, ()),),
             owing=(("agent:k", "agent:a"),),
+            queued=(),
             awaited=frozenset(),
             waiting=frozenset({"agent:k"}),
         )
