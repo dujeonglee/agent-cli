@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 
@@ -42,6 +43,21 @@ def read(home_dir: Path) -> list[dict]:
         if isinstance(rec, dict) and rec.get("key"):
             out.append(rec)
     return out
+
+
+def note_restart(owner) -> bool:
+    """재시작이 되살린 에이전트의 창 끝에 재시작 줄(``direction: "restarted"`` — 웹이 채널에 한 줄 그린다, v10.165.0)을
+    적는다. 적었으면 참. 적지 않는 때: 창이 비었다, 마지막 줄이 이미 재시작 줄이다(그 사이 아무 줄도 없이 거듭
+    재시작) — 모델이 읽는 재시작 기록(`session.records.record_restart`)과 같은 꼴의 규칙을 창의 기록에 쓴다.
+
+    파일에만 적는다. 부르는 곳(`AgentRegistry.restore`)이 워커를 띄우기 전에 부르고 곧이어 창을 재생한다 — 줄은 그
+    재생이 다른 줄과 함께 순서대로 한 번 낸다. 되살린 뒤의 배달은 이 줄 아래에 적힌다."""
+    lines = read(owner.home_dir)
+    if not lines or lines[-1].get("direction") == "restarted":
+        return False
+    line = {"key": owner.key, "direction": "restarted", "author": "", "text": ""}
+    append([(owner, {**line, "to": owner.key, "ts": time.time()})])
+    return True
 
 
 def never_blocks() -> bool:

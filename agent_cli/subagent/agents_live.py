@@ -335,9 +335,9 @@ class AgentInstance:
         # 이 런의 회신 빚은 여기 없다 — 레지스트리의 주소별 장부
         # (`AgentRegistry._post` — 약속 장부, v10.145.0) 가 main 과 같은 자리에서 든다.
 
-    def snapshot(self, *, pending_requests: int) -> dict:
+    def snapshot(self, *, pending_requests: int, waiting: bool) -> dict:
         """status 표시용 스냅샷 (락 없는 근사값 — 표시 용도). ``pending_requests`` 는 레지스트리가 센 앞에 쌓인
-        할 일(`AgentRegistry.backlog_of` — 받은편지함은 레지스트리의 우편에 있다)."""
+        할 일(`AgentRegistry.backlog_of` — 받은편지함은 레지스트리의 우편에 있다), ``waiting`` 은 우편의 기다림 표시."""
         est_tokens = 0
         if self.ctx is not None:
             try:
@@ -353,6 +353,7 @@ class AgentInstance:
             "state": "dead" if self.stop_event.is_set() else self.state,
             "handled": self.handled,
             "pending_requests": pending_requests,
+            "waiting": waiting,
             "est_tokens": est_tokens,
             "error": self.error,
             "ends_after_task": self.ends_after_task,
@@ -742,8 +743,9 @@ class AgentRegistry:
         return [dict(e.payload) for e in self._post.taken(f"agent:{tm.key}")]
 
     def _snapshot_of(self, tm) -> dict:
-        """에이전트 하나의 표시용 스냅샷 — 앞에 쌓인 할 일을 우편에서 센다."""
-        return tm.snapshot(pending_requests=self.backlog_of(tm.key))
+        """에이전트 하나의 표시용 스냅샷 — 앞에 쌓인 할 일과 기다림 표시를 우편에서 읽는다."""
+        waiting = self._post.is_waiting(f"agent:{tm.key}")
+        return tm.snapshot(pending_requests=self.backlog_of(tm.key), waiting=waiting)
 
     def backlog_of(self, key: str) -> int:
         """에이전트 ``key`` 앞에 쌓인 할 일 — 깨우는 봉투만 센다(런을 열지 않는 정지 회신은 일이 아니다)."""
@@ -1746,19 +1748,14 @@ class AgentRegistry:
                     hop=item.get("hop", 0),
                     id=rid,
                 )
-                content = self._model_text(item, mid_run=True)
-                out.append(
-                    {
-                        "record": {
-                            "role": "user",
-                            "tool": "agent",
-                            "success": True,
-                            "content": content,
-                            "source": "agent_request",
-                            "request_id": rid,  # 빚 id — 갚기 전 압축이 원문을 남긴다(`Ledger.pin_ids`)
-                        }
-                    }
-                )
+                rec = {
+                    "role": "user",
+                    "tool": "agent",
+                    "success": True,
+                    "content": self._model_text(item, mid_run=True),
+                    "source": "agent_request",
+                    "request_id": rid,  # 빚 id — 갚기 전 압축이 원문을 남긴다(`Ledger.pin_ids`)
+                }
             else:
                 # 회신·통지 — 런 시작 항목과 같은 봉투. 하니스 통지(잡·모니터·체크인)는
                 # main·one-shot 과 같은 함수(`wake.harness_record`, v10.89.0).
@@ -1769,7 +1766,8 @@ class AgentRegistry:
                     "content": self._model_text(item),
                     "source": "agent_mail",
                 }
-                out.append({"record": rec})
+            # ``item``: 그 배달의 id — 화면 전용(웹이 관찰 카드에 달아 블록 머리 줄에서 찾아간다). 모델은 읽지 않는다
+            out.append({"record": {**rec, "item": iid}})
         self._notify_roster()
         return out
 
@@ -2154,12 +2152,16 @@ class AgentRegistry:
                     if not any(e.re == rid for e in self._post.queued("main")):
                         return None
 
-    # 기다림 표시 — 창구의 것(`PostOffice.mark_waiting`), `Mailbox` 가 엔진 대신 부른다
+    # 기다림 표시 — 창구의 것, `Mailbox` 가 엔진 대신 부른다. 에이전트의 표시는 로스터의 ``waiting`` 칸 — 바뀌면 알린다
     def mark_waiting(self, addr: str) -> None:
         self._post.mark_waiting(addr)
+        if addr.startswith("agent:"):
+            self._notify_roster()
 
     def clear_waiting(self, addr: str) -> None:
         self._post.clear_waiting(addr)
+        if addr.startswith("agent:"):
+            self._notify_roster()
 
     def drop_mailbox(self, addr: str) -> int:
         """주소의 루프가 끝났다 — 체크인·기다림 표시를 풀고, private 이면 메일함을 버린다(읽을
@@ -2615,6 +2617,7 @@ class AgentRegistry:
                 continue
             tm.revive = True
             tm.restarted = True
+            conversation_log.note_restart(tm)  # 창의 재시작 줄 — 워커보다 먼저
             tm.worker = threading.Thread(
                 target=self._worker,
                 args=(tm, parent_ctx),

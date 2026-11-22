@@ -106,6 +106,7 @@ def write_status_file(
     open_items: dict | None = None,
     stuck: dict | None = None,
     jobs: dict | None = None,
+    waiting: bool = False,
 ) -> Path:
     """Atomically (over)write the live status sidecar. Returns the path.
 
@@ -126,9 +127,13 @@ def write_status_file(
     꺼지는 방" 의 이유. 돌고 있는 작업이 없으면 생략.
 
     ``agents`` (v7.10.0, additive): 상주 에이전트 요약
-    ``{"alive", "working", "list": [{key, profile, name, state}, ...]}`` —
+    ``{"alive", "working", "waiting", "list": [{key, profile, name, state, waiting}, ...]}`` —
     board 가 행에 🤖 칩과 "에이전트 작업 중" 상태를 그리는 소스. ``None``
-    이면 필드 생략(에이전트 미사용/구버전 소비자와 동일 shape 유지)."""
+    이면 필드 생략(에이전트 미사용/구버전 소비자와 동일 shape 유지). ``waiting`` (v10.165.0) 은 받아들여진
+    `wait` 로 기다리는 에이전트 — ``working`` 에는 세지 않는다.
+
+    ``waiting`` (v10.165.0, additive): main 이 제자리에서 기다리는 중(받아들여진 `wait` 의 대기 줄과 함께 서고
+    내린다). ``busy`` 도 참이다 — 기다림은 작업 구간 안이다. 거짓이면 생략."""
     info = {
         "busy": bool(busy),
         "awaiting_input": bool(awaiting_input),
@@ -148,6 +153,8 @@ def write_status_file(
         info["stuck"] = stuck
     if jobs is not None:  # v10.121.0 — 돌고 있는 작업 (board 🧵 칩)
         info["jobs"] = jobs
+    if waiting:  # v10.165.0 — main 이 제자리에서 기다리는 중 (board "Waiting")
+        info["waiting"] = True
     path = status_file_path(session_dir)
     # fsio.atomic_write_json 이 같은 의미론(유니크 tmp + replace + 부모
     # 소실 가드)을 소유 — 자체 mkstemp 구현을 수렴 (v4.27.1 레이스 교훈은

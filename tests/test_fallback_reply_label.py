@@ -11,6 +11,8 @@ import threading
 
 import pytest
 
+from agent_cli.subagent import conversation_log
+from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL as NO_REPLY_LABEL
 from agent_cli.subagent.agent_mail import build_reply_record
 from tests.mail_support import absorbed_mail
 from tests.test_agents_live import _FakeLoopResult, make_registry
@@ -18,7 +20,7 @@ from tests.test_engine_p2 import wait_until
 
 
 @pytest.fixture
-def helper(tmp_path):
+def helper_door(tmp_path):
     door = threading.Event()
 
     def runner(kind, start, ctx):
@@ -29,10 +31,16 @@ def helper(tmp_path):
     key, _ = reg.spawn(name="helper")
     assert wait_until(lambda: reg.get(key).state == "idle")
     try:
-        yield reg, key
+        yield reg, key, door
     finally:
         door.set()
         reg.shutdown_all()
+
+
+@pytest.fixture
+def helper(helper_door):
+    reg, key, _door = helper_door
+    return reg, key
 
 
 def _heads(reg) -> list[str]:
@@ -62,3 +70,61 @@ def test_a_second_request_absorbed_mid_run_gets_its_own_label(helper):
         f"{first.id}] ──",
         f"{second.id}] ──",
     ]
+
+
+# ── 🤝 창의 폴백 줄(`conversation.jsonl` 의 out 줄) ──
+
+
+def _out_lines(reg, key) -> list[tuple]:
+    return [
+        (ln["item"], ln["to"], bool(ln.get("fallback")), ln["text"].splitlines()[0])
+        for ln in conversation_log.read(reg.get(key).home_dir)
+        if ln["direction"] == "out"
+    ]
+
+
+def _run_with_two_requests(reg, key, door, *, first_author="main") -> tuple[str, str]:
+    """작업 구간 하나가 요청 둘을 든다 — 첫 요청이 구간을 열고(워커는 문에서 멈춘다) 둘째는 그 구간에 흡수된다.
+    문을 열어 회신 없이 끝낸다. 두 요청의 id 를 돌려준다."""
+    tm = reg.get(key)
+    assert reg.request(key, "first", author=first_author) == ""
+    assert wait_until(lambda: tm.state == "busy" and tm.current_item)
+    first = tm.current_item
+    assert reg.request(key, "second") == ""
+    reg.absorb_pending(tm)
+    (second,) = [d.id for d in reg.reply_debts(f"agent:{key}") if d.id != first]
+    door.set()
+    assert wait_until(lambda: tm.state == "idle")
+    return first, second
+
+
+def test_the_window_shows_a_fallback_line_per_debt(helper_door):
+    """폴백은 빚마다 가고(위 테스트) 창의 줄도 빚마다 하나다 — 그 빚의 id 와 상대로 (v10.165.0; 종전엔 첫 항목 하나)."""
+    reg, key, door = helper_door
+    first, second = _run_with_two_requests(reg, key, door)
+    assert _out_lines(reg, key) == [
+        (first, "main", True, NO_REPLY_LABEL),
+        (second, "main", True, NO_REPLY_LABEL),
+    ]
+
+
+def test_a_human_run_with_a_debt_keeps_the_fallback_for_the_creditor(helper_door):
+    """사람이 창에서 연 구간에 main 의 빚이 남았다 — 폴백 줄은 빚의 상대(main)에게, 사람에게는 라벨 없는 결과 줄
+    (v10.165.0; 종전엔 사람 줄 하나에 폴백 라벨이 붙었다)."""
+    reg, key, door = helper_door
+    first, second = _run_with_two_requests(reg, key, door, first_author="user:dj")
+    assert _out_lines(reg, key) == [
+        (second, "main", True, NO_REPLY_LABEL),
+        (first, "user:dj", False, "ok"),
+    ]
+
+
+def test_a_human_run_without_debts_keeps_its_one_line(helper_door):
+    reg, key, door = helper_door
+    tm = reg.get(key)
+    assert reg.request(key, "hello", author="user:dj") == ""
+    assert wait_until(lambda: tm.state == "busy" and tm.current_item)
+    first = tm.current_item
+    door.set()
+    assert wait_until(lambda: tm.state == "idle")
+    assert _out_lines(reg, key) == [(first, "user:dj", False, "ok")]

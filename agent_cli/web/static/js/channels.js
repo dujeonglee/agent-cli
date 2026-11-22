@@ -513,7 +513,7 @@ export function postStop(scope, failed) {
  * also scrolls every scrollable ancestor (incl. horizontally) and shoved
  * the whole team view sideways in the mockup. The container is the one
  * surface that should move. */
-function scrollTimelineTo(card) {
+export function scrollTimelineTo(card) {
   ctxReveal(card); // 접힌 "컨텍스트 밖 대화" 안이면 먼저 편다
   // Off auto-follow so a live scrollToBottom() can't yank us back down.
   // (프로그램 스크롤로 표시 — 도착지가 바닥 근처여도 규칙 2 가 되붙이지 않는다.)

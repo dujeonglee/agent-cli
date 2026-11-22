@@ -526,6 +526,14 @@
      "text": "TASK-W2 compute 6*7",
      "to": "agt-B",
      "ts": "<t>"
+    },
+    {
+     "author": "",
+     "direction": "restarted",
+     "key": "agt-A",
+     "text": "",
+     "to": "agt-A",
+     "ts": "<t>"
     }
    ],
    "agents/agt-B/conversation.jsonl": [
@@ -537,6 +545,14 @@
      "key": "agt-B",
      "profile": "",
      "text": "TASK-W2 compute 6*7",
+     "to": "agt-B",
+     "ts": "<t>"
+    },
+    {
+     "author": "",
+     "direction": "restarted",
+     "key": "agt-B",
+     "text": "",
      "to": "agt-B",
      "ts": "<t>"
     }
@@ -579,6 +595,18 @@
      "agent_message",
      [],
      {
+      "author": "",
+      "direction": "restarted",
+      "key": "agt-A",
+      "text": "",
+      "to": "agt-A",
+      "ts": "<t>"
+     }
+    ],
+    [
+     "agent_message",
+     [],
+     {
       "author": "agent:agt-A",
       "direction": "in",
       "instance_name": "bb",
@@ -586,6 +614,18 @@
       "key": "agt-B",
       "profile": "",
       "text": "TASK-W2 compute 6*7",
+      "to": "agt-B",
+      "ts": "<t>"
+     }
+    ],
+    [
+     "agent_message",
+     [],
+     {
+      "author": "",
+      "direction": "restarted",
+      "key": "agt-B",
+      "text": "",
       "to": "agt-B",
       "ts": "<t>"
      }

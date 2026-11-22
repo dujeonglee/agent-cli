@@ -26,6 +26,7 @@ import {
   ovRenderAskTray,
   ovRenderBack,
   ovRoster,
+  scrollTimelineTo,
   setOvActiveChannel,
   setOvBack,
   syncChannelView,
@@ -90,7 +91,34 @@ function claimIn(blk, q) {
   var it = runItem(q.d);
   it.dataset.item = String(q.d.item || "");
   blk.head.appendChild(it);
+  linkHeadToCard(blk, it.dataset.item);
 }
+
+// ── 머리 줄 → 몸통의 그 카드 (v10.165.0) ─────────────────────
+// 런 도중 흡수된 배달은 머리 줄과 몸통의 관찰 카드 둘로 선다. 둘을 잇는 열쇠는 그 배달의 id 다(`data-item` — 블록
+// 번호가 아니다). 둘 다 서 있을 때만 머리 줄 끝에 ↓ 를 단다 — 카드가 없는 줄(런을 연 첫 항목, 사람이 창에 쓴 말)에는
+// 없다. 머리 줄이 설 때(`claimIn`)와 카드가 설 때(cards.js 의 `agentcli:item-card`) 부른다.
+function linkHeadToCard(blk, item) {
+  if (!item) return;
+  var sel = '[data-item="' + cssEsc(item) + '"]';
+  var row = blk.head.querySelector(".run-item" + sel);
+  if (!row || row.querySelector(".run-item-jump") || !blk.body.querySelector(sel)) return;
+  var btn = el("button", ["run-item-jump"], "↓");
+  btn.type = "button";
+  btn.title = "Go to this message in the run";
+  btn.addEventListener("click", function (e) {
+    e.stopPropagation(); // 줄 클릭은 본문 펼침이다
+    var card = blk.body.querySelector(sel);
+    if (card) scrollTimelineTo(card);
+  });
+  row.querySelector(".who").appendChild(btn);
+}
+document.addEventListener("agentcli:item-card", function (e) {
+  var card = e.detail.card;
+  var run = card.closest(".card-run");
+  var blk = run && runBlocks[run.dataset.taskId];
+  if (blk) linkHeadToCard(blk, card.dataset.item);
+});
 
 export function ensureRunBlock(d) {
   if (runBlocks[d.task_id]) return runBlocks[d.task_id];
@@ -102,7 +130,7 @@ export function ensureRunBlock(d) {
   var body = el("div", ["run-body"]);
   card.appendChild(head);
   card.appendChild(body);
-  var blk = { card: card, head: head, body: body, key: key, items: items, closed: false };
+  var blk = { card: card, head: head, body: body, key: key, items: items, closed: false, ts: endSecs(d.ts) };
   runBlocks[d.task_id] = blk;
   // run 에이전트는 받은편지함이 없다 — 머리는 과제 원문과 부른 쪽(부른 자리의 채널)
   if (d.run) head.appendChild(runItem({ text: d.label, author: channelOf(d.caller_task || "") }));
@@ -306,6 +334,8 @@ function renderFallbackRow(blk, d) {
   scheduleScroll();
 }
 
+const RESTARTED_TEXT = "↻ Session restarted — work in progress was cut off";
+
 export function ovOnAgentMsg(d) {
   if (!d || !d.key) return;
   var key = d.key;
@@ -368,6 +398,20 @@ export function ovOnAgentMsg(d) {
     }
     return;
   }
+  if (d.direction === "restarted") {
+    // 세션 재시작 (v10.165.0) — 그 채널 루트의 흐린 한 줄. resume 은 옛 런 블록을 먼저 재생하고 이 줄을 뒤에
+    // 보내므로, 자기 시각보다 늦게 시작한 첫 런 블록 앞에 세운다(없으면 끝).
+    var rc = el("div", ["card", "card-restarted"], RESTARTED_TEXT);
+    finishCard(rc, { ts: d.ts }, key);
+    var at = endSecs(d.ts);
+    var next = null;
+    Object.keys(runBlocks).forEach(function (tid) {
+      var b = runBlocks[tid];
+      if (b.key === key && b.ts > at && (!next || b.ts < next.ts)) next = b;
+    });
+    if (next) $messages.insertBefore(rc, next.card);
+    return;
+  }
   if (d.direction === "question") {
     // 대화 줄은 `→ ask` 도구 줄이 맡는다. 트레이는 **주소가 사람인 질문에만**
     // 뜨고, 무엇을 띄울지는 roster 의 `open_questions` 가 정한다.
@@ -386,6 +430,7 @@ export function ovOnAgentCleared(key) {
   $messages
     .querySelectorAll(
       ':scope > .card-queued[data-ch="' + ch + '"], ' +
+      ':scope > .card-restarted[data-ch="' + ch + '"], ' +
       ':scope > .card-run[data-ch="' + ch + '"] .run-head > .run-item, ' +
       ':scope > .card-run[data-ch="' + ch + '"] .run-body > .card-fallback'
     )

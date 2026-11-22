@@ -18,6 +18,7 @@ spawner 의 깊이 +1" 을 다시 읽어 흔들렸다), 스택은 호출자의 �
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 from agent_cli.actor import RunEnd
@@ -332,8 +333,6 @@ class ResidentLoop(LoopKind):
         - 세션 종료로 끝난 런(``session_ended`` — 5e1)은 아무것도 하지 않는다: 회신·폴백·우편 정리·처리 수 없이
           그대로 돌려준다. 우편은 프로세스와 함께 사라지고(5c-0), 마지막 저장은 `shutdown_all` 이 한다.
         """
-        import time as _time
-
         if result is not None and getattr(result, "session_ended", False):
             return result, secs
 
@@ -358,23 +357,28 @@ class ResidentLoop(LoopKind):
         if stopped and tm.stop_cause:
             # 사람(또는 모델)이 멈췄다 — 빚진 상대 모두에게 stopped 회신 (P3, `agent_stop`)
             self._answer_stopped_run()
-        owed = bool(reg.reply_debts(me)) and not stopped
-        if owed or human:
-            out_payload = {
-                "key": tm.key,
-                "direction": "out",
-                "author": tm.key,
-                "text": f"{_NO_REPLY_LABEL}\n{output}" if owed else output,
-                "item": iid,
-                "success": success,
-                "to": author,
-                "ts": _time.time(),
-                "profile": tm.profile_name,
-                "instance_name": tm.instance_name,
-                # 하니스 폴백 = 도구 호출 없는 유일한 발신 (v9.23.0) — 웹은 ⚠ 폴백 줄로
-                "fallback": owed,
-            }
-            reg._record(tm, out_payload)
+        # 🤝 창의 out 줄 — 하니스 폴백은 도구 호출 없는 유일한 발신이라(v9.23.0) 웹이 ⚠ 줄로 그린다: 갚지 못한 빚마다
+        # 한 줄, 그 빚의 id 와 상대로(`end_run` 이 보내는 폴백과 한 줄씩 맞는다). 사람이 창에서 연 구간은 창이 곧
+        # 배달이다 — 그 사람에게 결과 한 줄(폴백이 아니다).
+        line = {
+            "key": tm.key,
+            "direction": "out",
+            "author": tm.key,
+            "success": success,
+            "ts": time.time(),
+            "profile": tm.profile_name,
+            "instance_name": tm.instance_name,
+        }
+        for d in () if stopped else reg.reply_debts(me):
+            text = f"{_NO_REPLY_LABEL}\n{output}"
+            reg._record(
+                tm, {**line, "text": text, "item": d.id, "to": d.to, "fallback": True}
+            )
+        if human:
+            reg._record(
+                tm,
+                {**line, "text": output, "item": iid, "to": author, "fallback": False},
+            )
         # 런 끝 정리 — 판정은 `run_ended` 한 곳에 (wait·중단·보통)
         reg.run_ended(
             me,

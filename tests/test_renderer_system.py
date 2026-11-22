@@ -456,3 +456,15 @@ class TestMinimalRendererContract:
                 "confirm",
             }
         )
+
+
+def test_the_terminal_does_not_draw_the_restart_line():
+    """``direction: "restarted"``(v10.165.0)는 웹 채널의 줄이다 — 터미널은 사람에게 가는 out 줄만 찍는다."""
+    buf = io.StringIO()
+    r = MinimalRenderer(Console(file=buf, force_terminal=False, width=100))
+    r.agent_message(key="agt-1", direction="restarted", author="", text="", to="agt-1")
+    assert buf.getvalue() == ""
+    r.agent_message(
+        key="agt-1", direction="out", author="agt-1", text="hello", to="user:dj"
+    )
+    assert "hello" in buf.getvalue()

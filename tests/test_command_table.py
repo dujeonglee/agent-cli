@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 import agent_cli.main as m
 from agent_cli.command_table import COMMANDS, RUN, WEB, help_text
 
-#: 표로 옮기기 전 웹 도움말 원문 — 웹 표면은 바뀌지 않는다
+#: 표로 옮기기 전 웹 도움말 원문(+ 그 뒤 더한 줄) — 표가 그대로 이 글을 낸다
 _WEB_HELP_BEFORE = (
     "Web mode commands:\n"
     "  /help                    Show this help\n"
@@ -25,6 +25,9 @@ _WEB_HELP_BEFORE = (
     "  /stop <agent>|all        Stop an agent's run (all: every working agent)\n"
     "  @agents                  List available agents\n"
     "  @<agent> <task>          Delegate a task to an agent\n"
+    # v10.165.0: 상주 에이전트로 가는 두 꼴 — `main._try_dispatch_agent_command` 가 처리해 온 것을 표에 올렸다
+    "  @<profile>-spawn <task>  Start a resident agent with a task\n"
+    "  @agt-<key> <message>     Send directly to a running agent\n"
     "\n"
     "Any other input goes to the LLM as a chat turn."
 )

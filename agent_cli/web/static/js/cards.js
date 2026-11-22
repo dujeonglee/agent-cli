@@ -519,6 +519,14 @@ function fetchCauseChip(tool, content, success) {
   return m ? el("span", ["obs-cause"], m[1]) : null;
 }
 
+/** 흡수된 배달의 관찰 (v10.165.0) — 그 배달의 id 를 카드에 달고 알린다: 런 블록 머리 줄의 ↓ 가 이 카드로 온다.
+ *  runs.js 가 이 모듈을 import 하므로 사건으로 알린다(`agentcli:jump` 와 같은 수단). */
+function markItemCard(card, item) {
+  if (!item) return;
+  card.dataset.item = String(item);
+  document.dispatchEvent(new CustomEvent("agentcli:item-card", { detail: { card: card } }));
+}
+
 export function renderObservation(d) {
   const card = el("div", ["card", "card-observation"]);
   card.classList.add(d.success ? "ok" : "fail");
@@ -584,6 +592,7 @@ export function renderObservation(d) {
       // 누르면 카드가 펴진다 — 카드의 접기 규칙(`foldOnClick`)이 맡는다
       step.card.insertBefore(why, step.body);
     }
+    markItemCard(step.card, d.item);
     scheduleScroll();
     return;
   }
@@ -595,6 +604,7 @@ export function renderObservation(d) {
     return (d.success ? "✓" : "✗") + " `" + (tool || "result") + "`" + (content ? "\n" + fence(content) : "");
   };
   finishCard(card, d);
+  markItemCard(card, d.item);
 }
 
 export function renderError(d) {

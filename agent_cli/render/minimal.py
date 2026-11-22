@@ -444,8 +444,9 @@ class MinimalRenderer(Renderer):
         tool_name: str | None = None,
         success: bool = True,
         images: list[dict] | None = None,
+        item: str = "",
     ) -> None:
-        # ``images`` 는 쓰지 않는다 — 콘솔은 content 의 자리표시 줄을 🖼 로 찍는다.
+        # ``images`` 는 쓰지 않는다 — 콘솔은 content 의 자리표시 줄을 🖼 로 찍는다. ``item`` 도(웹의 카드 찾기용).
         self._print_agent_step(tool_name, success)
         status = "success" if success else "error"
         icon = "✓" if success else "✗"
@@ -1192,8 +1193,8 @@ class MinimalRenderer(Renderer):
         수신 표면이다. main 발신 문답은 관찰 배달과 이중 표시되지 않게
         건너뛴다."""
         # "absorbed"(v10.8.2) 는 웹의 대기 줄 정리 신호 — 터미널은 흡수된 본문을
-        # 관찰로 이미 찍는다.
-        if to == "main" or direction in ("in", "absorbed"):
+        # 관찰로 이미 찍는다. "restarted"(v10.165.0) 는 웹 채널의 재시작 줄 — 터미널은 그리지 않는다.
+        if to == "main" or direction in ("in", "absorbed", "restarted"):
             return
         from agent_cli.agent_icon import agent_display_name, agent_icon
 

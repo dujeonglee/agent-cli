@@ -99,7 +99,35 @@ class TestStatusPublishing:
         s = WebRenderer._agents_summary_from(
             [{"key": "a", "profile": "p", "name": "", "state": "dead"}]
         )
-        assert s == {"alive": 0, "working": 0, "list": []}
+        assert s == {"alive": 0, "working": 0, "waiting": 0, "list": []}
+
+    def test_a_waiting_agent_is_not_counted_working(self):
+        """v10.165.0: 기다리는 에이전트(로스터 ``waiting``)는 상태가 busy 여도 "작업 중" 에 세지 않는다."""
+        s = WebRenderer._agents_summary_from(
+            [
+                {"key": "a", "name": "aa", "state": "busy", "waiting": True},
+                {"key": "b", "name": "bb", "state": "busy", "waiting": False},
+                {"key": "c", "name": "cc", "state": "idle"},
+                {"key": "d", "name": "dd", "state": "dead", "waiting": True},
+            ]
+        )
+        assert (s["alive"], s["working"], s["waiting"]) == (3, 1, 1)
+        assert [(a["key"], a["state"], a["waiting"]) for a in s["list"]] == [
+            ("a", "busy", True),
+            ("b", "busy", False),
+            ("c", "idle", False),
+        ]
+
+    def test_main_waiting_follows_the_wait_row(self, tmp_path):
+        """v10.165.0: main 의 ``waiting`` 은 대기 줄(`wait_in_place`)과 함께 서고 내린다 — 없으면 키도 없다."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.worker_busy()
+        assert "waiting" not in read_status_file(tmp_path)
+        r.wait_in_place(True, [{"id": "r-1", "from": "agent:agt-1"}])
+        st = read_status_file(tmp_path)
+        assert st["waiting"] is True and st["busy"] is True
+        r.wait_in_place(False, [])
+        assert "waiting" not in read_status_file(tmp_path)
 
     def test_roster_updates_refresh_status_file(self, tmp_path):
         """상태 전이(working→idle)마다 파일이 최신값으로 재발행 —
@@ -3837,6 +3865,47 @@ class TestRunBlockFields:
             key="agt-a", direction="out", author="agt-a", text="y", fallback=True
         )
         assert self._next(conn, "agent_msg")["fallback"] is True
+
+
+# ── 흡수된 배달의 id (v10.165.0) ──────────────────────────────────────
+
+
+class TestItemOnObservationCards:
+    """``observation`` 의 ``item``(작업 구간 도중 흡수된 배달의 id)은 페이로드에 실리고(없으면 키도 없다),
+    resume 재생은 레코드의 ``item`` 을 같은 자리에 되싣는다 — 웹이 카드의 ``data-item`` 으로 쓴다."""
+
+    def test_observation_carries_the_item(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.hub.register(conn)
+        r.observation("── request [r-4] from main ──", 1, "agent", item="r-4")
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "observation" and data["item"] == "r-4"
+        r.observation("text", 1, "shell")
+        _, data = conn.queue.get(timeout=0.5)
+        assert "item" not in data
+
+    def test_replay_restores_the_item(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add({"role": "user", "content": "go"})
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "agent",
+                "success": True,
+                "content": "── request [r-4] from main ──\nTASK-C",
+                "source": "agent_request",
+                "request_id": "r-4",
+                "item": "r-4",
+            }
+        )
+        ctx.add({"role": "user", "tool": "shell", "success": True, "content": "ok"})
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+        obs = [d for e, d in r.hub.events if e == "observation"]
+        assert [d.get("item") for d in obs] == ["r-4", None]
 
 
 # ── 이미지 (v10.60.0, docs/vision/DESIGN.md §7) ────────────────────────

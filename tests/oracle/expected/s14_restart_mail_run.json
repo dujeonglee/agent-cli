@@ -667,6 +667,14 @@
      "text": "TASK-O2 second job",
      "to": "agt-A",
      "ts": "<t>"
+    },
+    {
+     "author": "",
+     "direction": "restarted",
+     "key": "agt-A",
+     "text": "",
+     "to": "agt-A",
+     "ts": "<t>"
     }
    ],
    "agents/agt-B/conversation.jsonl": [
@@ -705,6 +713,14 @@
      "text": "(no explicit reply — this is the agent's run summary)\nTASK-P done\n\n⏳ 1 reply you asked for had not arrived when this run closed (they still come as mail):\n   [r-1] (main) \"TASK-Q which branch?\"",
      "to": "main",
      "ts": "<t>"
+    },
+    {
+     "author": "",
+     "direction": "restarted",
+     "key": "agt-B",
+     "text": "",
+     "to": "agt-B",
+     "ts": "<t>"
     }
    ]
   },
@@ -736,6 +752,18 @@
       "key": "agt-A",
       "profile": "",
       "text": "TASK-O2 second job",
+      "to": "agt-A",
+      "ts": "<t>"
+     }
+    ],
+    [
+     "agent_message",
+     [],
+     {
+      "author": "",
+      "direction": "restarted",
+      "key": "agt-A",
+      "text": "",
       "to": "agt-A",
       "ts": "<t>"
      }
@@ -785,6 +813,18 @@
       "success": true,
       "text": "(no explicit reply — this is the agent's run summary)\nTASK-P done\n\n⏳ 1 reply you asked for had not arrived when this run closed (they still come as mail):\n   [r-1] (main) \"TASK-Q which branch?\"",
       "to": "main",
+      "ts": "<t>"
+     }
+    ],
+    [
+     "agent_message",
+     [],
+     {
+      "author": "",
+      "direction": "restarted",
+      "key": "agt-B",
+      "text": "",
+      "to": "agt-B",
       "ts": "<t>"
      }
     ],

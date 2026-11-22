@@ -105,7 +105,9 @@ def render_step(
     requests: list | None = None,
     hidx: int | None = None,
     images: list[dict] | None = None,
+    item: str = "",
 ) -> None:
+    # ``item`` (v10.165.0): 작업 구간 도중 흡수된 배달의 id — web 이 그 관찰 카드에 달아 블록 머리 줄에서 찾아간다.
     # ``hidx`` (v10.6.0): 이 카드가 그리는 history 레코드의 서수 — 챗의 모델 시점
     # 경계 판정용. 레코드보다 먼저 그리는 카드는 ``ctx.next_ordinal``, 뒤에 그리는
     # 카드는 ``ctx.last_ordinal`` 을 넘긴다. CLI 는 무시한다.
@@ -122,7 +124,7 @@ def render_step(
             _renderer.action(tool_name or "", tool_input or "", turn)
         elif step_type == "observation":
             _renderer.observation(
-                content, turn, tool_name, success=success, images=images
+                content, turn, tool_name, success=success, images=images, item=item
             )
         elif step_type == "final":
             _renderer.final(content, turn, requests=requests)

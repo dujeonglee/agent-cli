@@ -44,6 +44,16 @@ COMMANDS: tuple[Command, ...] = (
     ),
     Command("@agents", "List available agents", frozenset({WEB, RUN})),
     Command("@<agent> <task>", "Delegate a task to an agent", frozenset({WEB, RUN})),
+    Command(
+        "@<profile>-spawn <task>",
+        "Start a resident agent with a task",
+        frozenset({WEB, RUN}),
+    ),
+    Command(
+        "@agt-<key> <message>",
+        "Send directly to a running agent",
+        frozenset({WEB, RUN}),
+    ),
 )
 
 _HEADER = {
