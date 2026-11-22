@@ -1755,6 +1755,7 @@ class AgentRegistry:
                             "success": True,
                             "content": content,
                             "source": "agent_request",
+                            "request_id": rid,  # 빚 id — 갚기 전 압축이 원문을 남긴다(`Ledger.pin_ids`)
                         }
                     }
                 )
