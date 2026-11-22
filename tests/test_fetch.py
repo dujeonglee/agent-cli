@@ -1236,14 +1236,27 @@ class TestStopsWithTheRun:
         assert box["result"].error.startswith("This run was stopped")
         assert not (tmp_path / "out.bin").exists()
 
-    @pytest.mark.parametrize("stopped", [None, lambda: False])
-    def test_without_a_stop_it_waits_for_the_answer(self, held_server, stopped):
-        t, box = _fetch_in_thread({"url": held_server.url}, stopped)
-        assert held_server.got.wait(_PATIENCE_S)
+    def test_without_a_stop_it_waits_for_the_answer(self, held_server):
+        """정지가 서지 않은 채 정지를 한 번 이상 묻고도(요청이 살아 있는 동안) 기다린다 — 서버는 그 뒤에야 답한다."""
+        asked = threading.Event()
+
+        def not_stopped() -> bool:
+            asked.set()
+            return False
+
+        t, box = _fetch_in_thread({"url": held_server.url}, not_stopped)
+        assert asked.wait(_PATIENCE_S)
         held_server.release.set()
         t.join(_PATIENCE_S)
         assert box["result"].success
         assert "late answer" in box["result"].output
+
+    def test_a_loop_without_a_stop_flag_waits_too(self, held_server):
+        t, box = _fetch_in_thread({"url": held_server.url}, None)
+        assert held_server.got.wait(_PATIENCE_S)
+        held_server.release.set()
+        t.join(_PATIENCE_S)
+        assert box["result"].success
 
     def test_a_request_error_still_reads_as_before(self):
         """옆 스레드에서 난 요청의 예외는 그대로 올라와 종전의 세 줄 문구가 된다."""
