@@ -90,11 +90,11 @@ from agent_cli.wake import (
     AgentFact,
     WakeFacts,
     agent_relations,
+    awaited_of,
     harness_record,
     parked_view,
     release_owner,
     wait_checkin,
-    wake_source_ids,
 )
 
 if TYPE_CHECKING:
@@ -258,7 +258,7 @@ class AgentInstance:
         self.key = key
         self.profile_name = profile_name
         #: run 에이전트(`agent` ``mode`` "run", docs/agent-engine/DESIGN.md §2) — 과제 하나의
-        #: 런이 `complete` 로 끝나면 내려온다(`wait` 로 끝난 런은 아니다 — `RunEnd.waiting`).
+        #: 런이 끝나면 내려온다.
         #: 그 밖은 spawn 과 같다:
         #: 명단·주소·상한·agents.json·채널. ``task_id`` 가 그 과제 요청의 id 다.
         self.ends_after_task = ends_after_task
@@ -574,6 +574,14 @@ class AgentRegistry:
                     if r.kind == "r" and r.state != "closed"
                 ),
                 waiting=self._post.waiting_addresses(),
+                # 받는 쪽이 죽었으면 빼다 — 회신을 보낼 이가 없다(그 죽음은 따로 메일로 온다)
+                replies=tuple(
+                    (r.src, {"id": r.rid, "from": r.dst, "text": r.text})
+                    for r in rows
+                    if r.kind == "r"
+                    and r.state != "closed"
+                    and self._agent_alive(r.dst)
+                ),
             )
 
     def checkin_agent_lines(
@@ -683,17 +691,10 @@ class AgentRegistry:
         갚음·폴백은 회신을 **배달한 뒤** 지운다: 먼저 지우면 그 틈에 요청자의 `wait` 가 기다릴
         회신도 도착한 메일도 없는 순간을 보고 제자리 대신 런을 끝낸다.
         받는 쪽에서 세면(빚 장부 + 받은편지함) 항목이 받은편지함을 떠나 빚으로 적히기까지의
-        틈에 회신 기다림이 사라진다. 받는 쪽이 죽었으면 빼다 — 회신을 보낼 이가 없다(그 죽음은
-        따로 메일로 온다). 읽기만 한다."""
+        틈에 회신 기다림이 사라진다. 받는 쪽이 죽었으면 빼다(`wake_facts` 의 ``replies``). 읽기만 한다."""
         if not addr or is_human_addr(addr):
             return []
-        with self._cv:
-            out = [
-                {"id": r.rid, "from": r.dst, "text": r.text}
-                for r in self._post.awaited_by(addr)
-                if self._agent_alive(r.dst)
-            ]
-        return sorted(out, key=lambda r: item_ids.number_of(r["id"]))
+        return awaited_of(self.wake_facts(), addr)
 
     # ── 배달과 갚기 — 한 락 구간 (v10.145.0) ────────────────────────────────────────────
     # 범용 배달(`_enqueue`·`_push_reply`·`_push_private`)은 봉투를 `_post_deliver` 로 우편에 넣는다. 갚는 자리
@@ -1022,35 +1023,20 @@ class AgentRegistry:
         debtor: str,
         output: str,
         *,
-        waiting: bool = False,
         stopped: bool = False,
         **meta,
     ) -> int:
         """런 끝의 **유일한** 정리 (v10.77.0) — 상주 단건·사람 배치·main 펌프가
-        모두 여기로 온다. 처리한 빚 수를 돌려준다.
+        모두 여기로 온다. 처리한 빚 수를 돌려준다. `wait` 는 런을 끝내지 않는다(5c-1) — 여기 오지 않는다.
 
-        - ``waiting`` (`wait` 로 끝남): 갚을 차례가 아니다 — 열린 빚은 다음 런으로 가고 깨어난
-          런이 `reply` 로 갚는다. 폴백을 지금 보내면 요청자가 "⏸ waiting" 을 답으로 받는다. 이 런에서
-          닫힌 줄은 다른 끝과 같이 버린다(`PostOffice.end_run` 의 ``wait`` — main 은 여기서, 에이전트는
-          `_close_run` 에서).
         - ``stopped`` (정지로 끊김): 남은 빚을 버린다. 사람·모델의 정지(■·✕)는 런의 정리가
           먼저 빚진 상대 모두에게 회신했다(`answer_debts_as_stopped` — 여기 남는 것은 사람 주소의
           빚뿐). 세션 종료의 빚은 재시작이 끊긴 요청을 새 id 로 다시 넣으며 다시 적는다 — 남기면
           같은 요청에 빚이 둘이 되고, 죽은 채무자의 빚이 요청자의 `wait` 를 영원히 붙잡는다.
         - 그 밖(보통의 끝): :meth:`end_run` — 남은 빚을 라벨 붙은 런 요약으로.
 
-        종전엔 이 판정(``not waiting``·``not stop_event``)이 호출부 셋에 흩어져
-        있었고, v10.65.0 의 상주 판정이 런 시작(`begin_run` 의 비우기)을 빠뜨려
-        wait 뒤의 빚이 사라졌다.
-
-        ``waiting`` 이면 중간 깨우기 타이머를 건다 (v10.79.0, :meth:`arm_checkin`) —
-        런 끝의 유일한 자리라 main·상주·run·web 이 한 곳이다. ``meta`` 의 ``run``
-        키는 그 런을 연 배달 id 이고 `run_started`(런 **시작**)와는 무관하다."""
-        if waiting:
-            if debtor == "main":  # 에이전트는 런 정리(`_close_run`)가 든 것을 비운다
-                self._post.end_run(debtor, run_id=debtor, outcome="wait")
-            self.arm_checkin(debtor)
-            return 0
+        종전엔 이 판정(``not stop_event``)이 호출부 셋에 흩어져 있었다. ``meta`` 의 ``run`` 키는 그 런을 연 배달
+        id 이고 `run_started`(런 **시작**)와는 무관하다."""
         self.run_started(debtor)  # 끝났으니 걸린 것이 있어도 의미가 없다
         if stopped:
             # 버린 빚 — 요청자는 더 기다리지 않는다(dropped). 세션 종료도 여기다(추정 버그 3 — 5단계에서
@@ -1066,10 +1052,9 @@ class AgentRegistry:
     # 시간 제한이 없어 끝없이 잠들 수 있었다. 알림은 기존 셋째 갈래(장부 밖 메일,
     # `ledger: "none"`)의 첫 사용자다 — 새 층이 아니다.
 
-    def next_checkin_s(self, owner: str) -> int | None:
-        """이 소유자가 지금 `wait` 하면 걸릴 간격(초) — 없으면(예약만 기다림) None.
-        `dispatch._op_wait` 가 결과 문장에 적고 `arm_checkin` 이 같은 값을 건다."""
-        ids = wake_source_ids(owner, agents=self)
+    def next_checkin_s(self, owner: str, ids: frozenset[str]) -> int | None:
+        """이 소유자가 ``ids``(받아들일 때 읽은 체크인 대상 — `WaitingOn.checkin_ids`)를 기다리면 걸릴 간격(초) —
+        없으면(예약만 기다림) None. `dispatch._op_wait` 가 결과 문장에 적고 `arm_checkin` 이 같은 값을 건다."""
         if not ids:
             return None
         return CHECKIN_STEPS_S[
@@ -1085,13 +1070,13 @@ class AgentRegistry:
             last = self._checkin_last.get(owner)
         return last[1] + 1 if last is not None and last[0] == ids else 0
 
-    def arm_checkin(self, owner: str) -> int | None:
-        """`wait` 로 끝난 런 — 타이머를 건다. 걸린 간격(초) 또는 None.
+    def arm_checkin(self, owner: str, ids: frozenset[str]) -> int | None:
+        """제자리 `wait` 가 ``ids``(받아들일 때 읽은 체크인 대상)를 기다리기 시작한다(`Mailbox.arm_checkin`) — 타이머를
+        건다. 걸린 간격(초) 또는 None.
 
         기준을 함께 적는다: 작업별 로그 크기(P(a) "+N lines since your wait")와
         에이전트별 `last_ordinal`("N steps since your wait")."""
         self.run_started(owner)  # 이미 걸린 것이 있으면 푼다
-        ids = wake_source_ids(owner, agents=self)
         if not ids:
             return None
         step = self._checkin_step(owner, ids)
@@ -1799,13 +1784,7 @@ class AgentRegistry:
             # 흡수분(v9.25.0)까지 이 런이 처리했다 — 시작 항목 수보다 클 수 있다
             tm.handled += handled + tm.absorbed_in_run
             tm.absorbed_in_run = 0
-            # 든 것을 비우고 이 런에서 닫힌 줄을 버린다(열린 줄은 런 끝 정리 `run_ended` 가 이미 닫았거나,
-            # `wait` 면 그대로 — 잠든 빚)
-            self._post.end_run(
-                f"agent:{tm.key}",
-                run_id=self._run_of(f"agent:{tm.key}"),
-                outcome="wait",
-            )
+            # 든 것과 이 런에서 닫힌 줄은 런 끝 정리(`run_ended` → `end_run(done|stopped)`)가 이미 비웠다
         self._save_state()  # ``handled`` 를 싣는다 — 증가 뒤에
         tm.state = "idle"
         tm.current_author = "main"
@@ -2320,7 +2299,7 @@ class AgentRegistry:
         return ""
 
     def working_agents(self) -> list[str]:
-        """일하는 에이전트의 키 — 런 중인 것과 일을 끝내지 않은 run 에이전트(``wait`` 로 잠든 것 포함).
+        """일하는 에이전트의 키 — 런 중인 것(제자리에서 기다리는 것 포함)과 일을 끝내지 않은 run 에이전트.
         "모두 정지"·웹 ``■ all``·Ctrl+C 가 본다. 읽기만 한다."""
         return [
             tm.key
@@ -2445,8 +2424,8 @@ class AgentRegistry:
         tm.stop_notified.append((to.removeprefix("agent:"), rid))
 
     def _answer_after_stop(self, tm: AgentInstance) -> None:
-        """사람(또는 모델)이 끝낸 에이전트의 남은 것을 표(`agent_stop.stop_rule`)대로 정리한다 — 워커가 죽을 때
-        한 번. 런 없이 남은 빚(스스로 잠든 빚)·대기 요청·띄운 run, 그리고 화면 한 줄."""
+        """사람(또는 모델)이 끝낸 에이전트의 남은 것을 표(`agent_stop.stop_rule`)대로 정리한다 — 워커가 죽을 때 한 번.
+        남은 빚·대기 요청과 화면 한 줄. 띄운 run 은 빚을 닫은 뒤에 멈춘다(`agent_stop.close_debts_then_stop_sub_runs`)."""
         rule = agent_stop.stop_rule(tm.stop_cause, tm.ends_after_task)
         self.answer_debts_as_stopped(tm, activity=[], notes="")
         kept = 0
@@ -2456,8 +2435,6 @@ class AgentRegistry:
             self._answer_queued(tm, agent_stop.stop_mark(cause, by), reply_of)
         else:
             kept = len(self._queued(tm))
-        if rule.stops_sub_runs:
-            agent_stop.stop_sub_runs(self, tm)
         self.report_stop(tm, kept=kept)
 
     def report_stop(self, tm: AgentInstance, *, kept: int) -> None:
@@ -2777,9 +2754,8 @@ class AgentRegistry:
                     tm, mark, partial(agent_stop.gone_reply, died=bool(crash))
                 )
             if not tm.revivable:
-                agent_stop.close_debts_owed_to(self, tm, self._who(f"agent:{tm.key}"))
-                if crash and not tm.stop_event.is_set():  # 결과를 받을 부모가 없다
-                    agent_stop.stop_sub_runs(self, tm, agent_stop.HARNESS)
+                died = bool(crash) and not tm.stop_event.is_set()
+                agent_stop.close_debts_then_stop_sub_runs(self, tm, died=died)
                 # **영구 사망(kill·crash)일 때만** 질문을 정리한다 (§3.8).
                 # 세션 종료(shutdown_all)는 revivable 을 유지하므로 여기
                 # 들어오지 않는다 — 들어오면 직후의 _save_state 가 빈 목록을

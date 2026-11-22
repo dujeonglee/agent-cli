@@ -503,20 +503,27 @@ class TestWaitInPlaceWakes:
             "are woken again in 10m."
         )
 
-    def test_wait_without_awaited_reply_still_ends_the_run(self, session, tmp_path):
-        """작업·모니터만 기다리면 지금처럼 런을 끝낸다(범위 밖)."""
+    def test_waiting_on_a_job_waits_in_the_run(self, session, tmp_path):
+        """작업만 기다려도 제자리다(5c-1; 종전엔 런을 끝냈다) — 작업의 통지에 깨어 같은 런이 `complete` 한다."""
         from agent_cli.jobs import JobRegistry
         from agent_cli.session_slots import set_job_registry
 
-        p = Provider({"MAIN": [call("wait")]})
+        flag = tmp_path / "go"
+        p = Provider({"MAIN": [call("wait"), complete_all("job read")]})
         s = session(p)
         jobs = JobRegistry(tmp_path)
         jobs.deliver = s["reg"].deliver
         set_job_registry(jobs)
         try:
-            jobs.start("sleep 5", owner="main")
-            result = s["run"]()
-            assert getattr(result, "waiting", False) is True
+            jobs.start(f"while [ ! -f {flag} ]; do sleep 0.05; done", owner="main")
+            done: list = []
+            th = threading.Thread(target=lambda: done.append(s["run"]()), daemon=True)
+            th.start()
+            assert wait_until(lambda: main_waits_in_place(s["reg"]))
+            flag.write_text("", encoding="utf-8")
+            th.join(10)
+            (result,) = done
+            assert result.success and len(p.calls["MAIN"]) == 2  # 한 런, 두 호출
         finally:
             jobs.stop_all()
             set_job_registry(None)
@@ -669,9 +676,9 @@ class TestComeDown:
         th.start()
         assert wait_until(lambda: len(reg._agents) == 2)
         k = next(t for t in reg._agents.values() if "TASK-K" in t.description)
-        # K 의 런은 wait 로 끝났다 — 내려오지 않고 받은편지함을 기다린다
-        assert wait_until(lambda: k.state == "idle")
-        assert k.worker.is_alive() and k.revivable is True
+        # K 는 제자리에서 기다린다 — 런 안(busy), 내려오지 않는다(5c-1; 종전엔 wait 가 런을 끝내 idle)
+        assert wait_until(lambda: reg._post.is_waiting(f"agent:{k.key}"))
+        assert k.state == "busy" and k.worker.is_alive() and k.revivable is True
         gate.set()
         th.join(10)
         assert wait_until(lambda: k.state == "dead") and k.revivable is False

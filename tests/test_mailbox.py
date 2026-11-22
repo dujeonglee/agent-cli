@@ -24,11 +24,11 @@ class TestWithoutRegistry:
     def test_values_match_the_engines_none_branches(self):
         mb = Mailbox(None, "run:x")
         assert mb.arrivals() == ()
-        assert mb.next_checkin_s() is None
+        assert mb.next_checkin_s(frozenset({"job:1"})) is None
         assert mb.parked_debtors() == []
         assert mb.wait(stop_event=None, still_waiting=lambda: True) == "nothing"
         mb.run_started()
-        mb.arm_checkin()
+        mb.arm_checkin(frozenset({"job:1"}))
         mb.drop()
         assert mb.has_inbox is False
 
@@ -49,16 +49,20 @@ class TestWithRegistry:
         mb = Mailbox(reg, "agent:a")
         stop, still = object(), (lambda: True)
         assert mb.arrivals() == ("notice", "notice")
-        assert mb.next_checkin_s() == 300
+        ids = frozenset(
+            {"job:1"}
+        )  # 받아들일 때 읽은 대상(`WaitingOn.checkin_ids`) — 넘겨받아 다시 읽지 않는다
+        assert mb.next_checkin_s(ids) == 300
         assert mb.parked_debtors() == ["agent:k"]
         assert mb.wait(stop_event=stop, still_waiting=still) == "mail"
         mb.run_started()
-        mb.arm_checkin()
+        mb.arm_checkin(ids)
         mb.drop()
         reg.arrivals_for.assert_called_once_with(
             "agent:a", waking_only=True, words=True
         )
-        reg.next_checkin_s.assert_called_once_with("agent:a")
+        reg.next_checkin_s.assert_called_once_with("agent:a", ids)
+        reg.arm_checkin.assert_called_once_with("agent:a", ids)
         reg.wake_facts.assert_called_once_with()
         reg.wait_mail.assert_called_once_with(
             arrived=mb._mail_arrived_while_waiting,
@@ -67,7 +71,6 @@ class TestWithRegistry:
             wait_input=None,
         )
         reg.run_started.assert_called_once_with("agent:a")
-        reg.arm_checkin.assert_called_once_with("agent:a")
         reg.drop_mailbox.assert_called_once_with("agent:a")
 
     def test_take_is_the_given_inbox(self):

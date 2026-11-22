@@ -357,6 +357,19 @@ def close_debts_owed_to(registry, tm, label: str) -> None:
             registry._pending_changed()  # 입력창 위 대기열의 메일 줄
 
 
+def close_debts_then_stop_sub_runs(registry, tm, *, died: bool) -> None:
+    """사라지는 ``tm``(되살리지 않는 끝)이 기다리던 회신을 닫고(`close_debts_owed_to`) **그다음** 그가 띄운 run 을
+    멈춘다 — ✕·run 의 ■·사망이 한 순서다. 워커의 정리에서 한 번. 멈추는 쪽: 사망(``died`` — 결과를 받을 부모가
+    없다, `HARNESS`) 또는 사람·모델의 끝(규칙 `stop_rule` 의 ``stops_sub_runs``). 순서를 거꾸로 하면 run 의 정지
+    회신이 아직 열린 그 회신을 사라지는 ``tm`` 에게 보낼지가 두 스레드의 순서에 달린다(5c-1 s39) — 닫은 뒤면 run 은
+    "is gone" 통지를 받고(읽기 전에 멈춘다) 아무에게도 회신하지 않는다."""
+    close_debts_owed_to(registry, tm, registry._who(f"agent:{tm.key}"))
+    if died:
+        stop_sub_runs(registry, tm, HARNESS)
+    elif tm.stop_cause and stop_rule(tm.stop_cause, tm.ends_after_task).stops_sub_runs:
+        stop_sub_runs(registry, tm)
+
+
 def stop_sub_runs(registry, tm, by: str = "") -> None:
     """``tm`` 이 띄운 run 에이전트를 멈춘다(■ 와 같은 정지 — 그 run 은 내려온다). ✕·run 의 ■ 는 ``tm`` 을 멈춘 쪽과
     조용함(``stop_replies_wake``)을 물려받는다. ``tm`` 의 사망(``by`` = `HARNESS`)과 하니스가 멈춘 ``tm`` 의 자식은

@@ -298,24 +298,19 @@ class TestKindsStateTheirPolicy:
         )
         return main, skill, one, harness, reg
 
-    def test_wait_policy(self, tmp_path):
-        from agent_cli.loop.kind import WAIT_BLOCK, WAIT_END_RUN, WAIT_REFUSE
-
+    def test_who_can_wait(self, tmp_path):
+        """`wait` 는 깨울 길(받을 상자)이 있는 루프면 제자리에서 기다리고, 없으면(스킬 — 호출자의 턴 안 인라인) 거부한다
+        (5c-1: 정책 셋 → 이 하나, `ports.wakeable`)."""
         main, skill, one, harness, _ = self._kinds(tmp_path)
-        assert main.wait_policy() == WAIT_END_RUN
-        assert skill.wait_policy() == WAIT_REFUSE  # 호출자의 턴 안 인라인
-        # run 에이전트는 상주와 같다 — 런을 끝내고 받은편지함이 깨운다 (v10.141.0)
-        assert one.wait_policy() == WAIT_END_RUN and harness.wait_policy() == WAIT_BLOCK
-        # 맨 종류: 깨울 길 없음 → 거부, private 주소 → 제자리, 그 외 → 런 종료
-        assert make_kind().wait_policy() == WAIT_REFUSE
-        assert (
-            make_kind(ports=make_ports(inbox=queue_inbox(lambda: None))).wait_policy()
-            == WAIT_END_RUN
-        )
-        assert (
-            make_kind(ports=make_ports(owner="harness:x", inbox=list)).wait_policy()
-            == WAIT_BLOCK
-        )
+        assert one.ports.wakeable() and harness.ports.wakeable()
+        # 이 대역의 main 은 레지스트리 없이 섰다 — 받을 상자가 없어 깨울 길도 없다(제품의 main 은 늘 레지스트리가 있다)
+        assert not main.ports.wakeable()
+        assert not skill.ports.wakeable()  # 호출자의 턴 안 인라인
+        # 맨 종류: 상자가 없으면 거부, 있으면 기다린다
+        assert not make_kind().ports.wakeable()
+        assert make_kind(
+            ports=make_ports(inbox=queue_inbox(lambda: None))
+        ).ports.wakeable()
 
     def test_skill_does_not_absorb_the_callers_mail(self, tmp_path):
         """D1: main 아래 스킬은 main 레지스트리의 회신을 흡수하지 않는다 — 스킬엔 `reply` 가 없고
@@ -423,14 +418,12 @@ class TestEngineAsksTheKind:
         assert sorted(loop._state.ledger.request_ids()) == ["u-1", "u-2"]
 
     def test_loop_config_without_a_kind_gets_a_bare_one(self):
-        from agent_cli.loop.kind import WAIT_REFUSE, LoopKind
+        from agent_cli.loop.kind import LoopKind
         from tests.loopkit import make_config
 
         cfg = make_config(owner="agent:q", depth=1, tools_list=["shell"])
         assert isinstance(cfg.kind, LoopKind) and cfg.kind.owner == "agent:q"
-        assert (
-            cfg.kind.ports.owner == "agent:q" and cfg.kind.wait_policy() == WAIT_REFUSE
-        )
+        assert cfg.kind.ports.owner == "agent:q" and not cfg.kind.ports.wakeable()
         assert cfg.kind.prompt_profile().reports_to_caller
 
 

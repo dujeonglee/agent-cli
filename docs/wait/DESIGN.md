@@ -18,23 +18,24 @@
 
 ## 2. 무엇
 
-`wait` — "더 할 게 없다, 깨워 달라". 아무것도 닫지 않고 런을 끝낸다.
+`wait` — "더 할 게 없다, 깨워 달라". 아무것도 닫지 않고 **그 자리에서** 기다린다 — 런을 끝내지 않는다(v10.163.0,
+5c-1; 종전엔 main 이 회신 없이 기다리거나 에이전트가 기다리면 런을 끝냈다). 깨면 같은 런이 다음 턴을 잇는다
+(`TurnDispatcher._wait_in_place` 하나 — main·상주·run 에이전트가 같다).
 
 - **깨울 것이 있을 때만** 받는다(`wake.wake_items(owner)`): 이 소유자의
   돌고 있는 백그라운드 작업·살아 있는 모니터, 세션의 일하는 중인 상주 에이전트·
   예약. 없으면 거부 관찰("nothing would wake you — keep working or call
   `complete`") 을 남기고 런을 잇는다. 막혔을 때 wait 로 도피하는 길은 없다.
-- 열린 요청(`u-…`·`n-…`)은 **다음 런으로 넘어간다** — 장부는 런 수명이라
-  `ctx.park_requests` 에 두고 다음 런의 `_setup` 이 `take_parked_requests` 로
-  가져가 장부에 올린다. 메모리뿐: 프로세스가 죽으면 resume 런은 빈 장부(원문은
-  history 에 있다). 빚(`r-`·`q-`)은 레지스트리 소유라 원래 이월된다.
+- 열린 항목(`u-…`·`n-…`·기다리는 회신)은 **같은 런의 장부에 그대로** 있다 — 넘길 다음 런이 없다
+  (종전의 `ctx.park_requests`·`take_parked_requests` 는 v10.163.0 에 지웠다).
+- 깰 때마다 **새 구간**(`TurnDispatcher._begin_segment`): 턴 한도·되묻기 예산·반복 감지기·제자리 고리를 새로
+  센다(꼬리의 `turn N/M` 도 1 부터). 세션 종료의 깸("closed")은 구간을 열지 않고 런을 세션 종료로 끝낸다(5c-pre).
 - 기록은 **보통의 op + 관찰** 모양(`{"action":"wait","reason":…}` + "Observation:
-  waiting — will wake on: job #1 (`…`). Open items stay open for the next run:
-  u-1."). 새 카드 종류가 없다 — 웹 재생·resume·CLI 가 그대로 그린다. 깨어난 런도
-  history 에서 "내가 기다렸다" 를 본다.
-- 런 결과는 `ToolResult(waiting=True, output="⏸ waiting on …")`. run 의 결과 파일
-  사슬(`main._ConsoleSurface.run_ended`)은 작업을 썼을 때와 같이 다음 깨우기 런의
-  답까지 쓴다 — 모니터·에이전트를 기다린 경우도 포함(종전엔 작업만).
+  waiting — will wake on: job #1 (`…`), or in 5m if nothing has reported."). 새 카드 종류가 없다 — 웹 재생·
+  resume·CLI 가 그대로 그린다. 깬 회신·통지는 그 `wait` 의 결과로 읽힌다.
+- 받아들여진 `wait` 는 기다리기 직전 훅 사건 `PreWait` 를 쏜다(막을 수 없다) — 내장 스냅샷 훅의
+  "before wait (turn N)" 체크포인트. main 의 대기 줄은 회신 말고도 작업·모니터·예약의 짧은 이름을 단다.
+- run 의 결과 파일 사슬은 없다 — 기다림이 런 안이라 그 런의 답이 곧 결과다.
 - 터미널(`Tool.terminal`) — 문법이 뒤따르는 호출을 막고, 디스패치가 앞선 op 결과를
   flush 한 뒤 처리한다. 자리는 `complete` 바로 앞.
 
@@ -201,7 +202,7 @@ harbor 벤치 전부(trial 483)에서 받아들여진 `wait` 50번 중 **13번(2
 | 이번 간격 | 5분 | 10분 | 20분 | 40분 | 60분 |
 | 처음 wait 부터 누적 | 5분 | 15분 | 35분 | 75분 | +60분씩 |
 
-"같은 대상" 은 깨울 것의 **id 집합**(`wake.wake_source_ids`: `job:1`·`mon-…`·`agent:k`)이다 —
+"같은 대상" 은 깨울 것의 **id 집합**(`wake.WaitingOn.checkin_ids` — 받아들일 때 한 번 읽은 값, v10.163.0: `job:1`·`mon-…`·`agent:k`)이다 —
 사람이 읽는 줄(`Mailbox.wake_sources`)로 비교하면 같은 에이전트라도 "queued↔working" 처럼 글이 바뀌어
 헛되이 5분으로 돌아간다. 집합이 **직전에 발화한** 깨우기 때와 같으면 다음 단계, 다르면 5분
 (`AgentRegistry._checkin_step`). 진짜 보고로 깨면 집합이 거의 항상 바뀌므로(작업 소멸·빚 정산)

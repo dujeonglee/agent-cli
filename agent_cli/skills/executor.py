@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.loop.kind import (
-    WAIT_REFUSE,
     Caller,
     LoopKind,
     LoopKindError,
@@ -244,9 +243,6 @@ class SkillLoop(LoopKind):
         )
 
     # ── 엔진이 묻는 것 (v10.88.0) ──
-    def wait_policy(self) -> str:
-        return WAIT_REFUSE  # 호출자의 턴 안 인라인 — 아무도 깨우지 않는다
-
     def intake(self) -> list[dict]:
         # D1: 스킬은 호출자(main)의 레지스트리 메일을 흡수하지 않는다 — 스킬엔 `reply` 가
         # 없고 빚이 main 이름으로 적혔다. 그 메일은 스킬이 끝난 뒤 main 의 다음 턴이 받는다.

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from types import SimpleNamespace
 from typing import ClassVar
@@ -33,10 +34,10 @@ from agent_cli.session_slots import (
 )
 from agent_cli.subagent.agent_mail import build_reply_record
 from agent_cli.subagent.agents_live import AgentInstance
-from agent_cli.wake import Mailbox, wake_source_ids
+from agent_cli.wake import Mailbox
 from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
-from tests.mail_support import absorbed_mail, agent_wake_lines
+from tests.mail_support import absorbed_mail, agent_wake_lines, checkin_ids
 from tests.monitor_delivery import RecordingDelivery
 from tests.test_agents_live import make_registry, make_runner, wait_until
 
@@ -107,10 +108,21 @@ def _mail(reg):
 
 
 class TestArmAndFire:
+    def test_arm_uses_the_targets_it_is_given(self, reg):
+        """체크인 대상은 받아들일 때 읽은 것을 넘겨받는다(5c-1 4b) — 거는 순간에 다시 묻지 않는다: 지금은 아무것도
+        돌지 않아도 넘겨받은 대상으로 건다."""
+        ids = frozenset({"job:1"})
+        assert reg.next_checkin_s("main", ids) == 300
+        assert reg.arm_checkin("main", ids) == 300
+        assert _armed(reg).ids == ids
+        reg.run_started("main")
+
     def test_wait_arms_five_minutes_and_fires_a_fact_statement(self, reg, jobs):
         job = jobs.start("sleep 30", owner="main")
-        assert reg.next_checkin_s("main") == 300
-        assert reg.run_ended("main", "⏸ waiting", waiting=True) == 0
+        assert reg.next_checkin_s("main", checkin_ids("main")) == 300
+        assert (
+            reg.arm_checkin("main", checkin_ids("main")) == 300
+        )  # 제자리 `wait` 가 기다리기 시작할 때 건다(`Mailbox.arm_checkin`)
         ck = _armed(reg)
         assert ck is not None and ck.interval_s == 300 and ck.step == 0
         assert ck.ids == {"job:1"} and ck.log_marks == {1: job.header_bytes}
@@ -142,7 +154,7 @@ class TestArmAndFire:
 
     def test_log_growth_since_the_wait(self, reg, jobs, tmp_path):
         job = jobs.start("sleep 30", owner="main")
-        reg.run_ended("main", "", waiting=True)
+        reg.arm_checkin("main", checkin_ids("main"))
         with (tmp_path / job.log).open("a") as f:
             f.write("frame 1 done\nframe 2 done\nframe 3 done\n")
         text = reg.fire_checkin("main")
@@ -155,7 +167,7 @@ class TestArmAndFire:
 
     def test_run_started_cancels_the_timer_and_nothing_is_sent(self, reg, jobs):
         jobs.start("sleep 30", owner="main")
-        reg.run_ended("main", "", waiting=True)
+        reg.arm_checkin("main", checkin_ids("main"))
         timer = FakeTimer.made[-1]
         reg.run_started("main")
         assert timer.cancelled and _armed(reg) is None
@@ -163,13 +175,13 @@ class TestArmAndFire:
 
     def test_a_normal_run_end_clears_a_stale_timer(self, reg, jobs):
         jobs.start("sleep 30", owner="main")
-        reg.run_ended("main", "", waiting=True)
+        reg.arm_checkin("main", checkin_ids("main"))
         reg.run_ended("main", "done")  # 보통의 끝 — 기다림이 아니다
         assert _armed(reg) is None
 
     def test_nothing_running_at_fire_time_sends_nothing(self, reg, jobs):
         job = jobs.start("sleep 30", owner="main")
-        reg.run_ended("main", "", waiting=True)
+        reg.arm_checkin("main", checkin_ids("main"))
         jobs.kill(job)  # 통지 없이 사라졌다(소유자 사망·세션 종료 경로)
         assert reg.fire_checkin("main") == "" and _mail(reg) == []
 
@@ -178,9 +190,11 @@ class TestArmAndFire:
 
         set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
         assert Mailbox(get_agent_registry(), "main").wake_sources() == ["a schedule"]
-        assert wake_source_ids("main", agents=get_agent_registry()) == frozenset()
-        assert reg.next_checkin_s("main") is None
-        assert reg.arm_checkin("main") is None and _armed(reg) is None
+        assert checkin_ids("main") == frozenset()
+        assert reg.next_checkin_s("main", checkin_ids("main")) is None
+        assert (
+            reg.arm_checkin("main", checkin_ids("main")) is None and _armed(reg) is None
+        )
 
     def test_a_schedule_beside_a_job_arms_but_is_not_in_the_notice(
         self, reg, jobs, monkeypatch
@@ -189,8 +203,8 @@ class TestArmAndFire:
 
         set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
         jobs.start("sleep 30", owner="main")
-        assert wake_source_ids("main", agents=get_agent_registry()) == {"job:1"}
-        reg.run_ended("main", "", waiting=True)
+        assert checkin_ids("main") == {"job:1"}
+        reg.arm_checkin("main", checkin_ids("main"))
         text = reg.fire_checkin("main")
         assert "job #1" in text and "schedule" not in text
 
@@ -200,35 +214,37 @@ class TestDoubling:
         jobs.start("sleep 30", owner="main")
         seen = []
         for _ in range(6):
-            assert reg.next_checkin_s("main") == reg.arm_checkin("main")
+            assert reg.next_checkin_s("main", checkin_ids("main")) == reg.arm_checkin(
+                "main", checkin_ids("main")
+            )
             seen.append(_armed(reg).interval_s)
             assert reg.fire_checkin("main")
         assert seen == [300, 600, 1200, 2400, 3600, 3600]
         assert tuple(seen[:5]) == CHECKIN_STEPS_S
         # "woken again in" 은 다음 단계 — 마지막은 60분에 머문다
         jobs.start("sleep 30", owner="main")  # 대상 집합이 바뀌었다
-        assert reg.next_checkin_s("main") == 300
-        reg.arm_checkin("main")
+        assert reg.next_checkin_s("main", checkin_ids("main")) == 300
+        reg.arm_checkin("main", checkin_ids("main"))
         assert _armed(reg).step == 0
 
     def test_next_interval_in_the_notice_follows_the_step(self, reg, jobs):
         jobs.start("sleep 30", owner="main")
-        reg.arm_checkin("main")
+        reg.arm_checkin("main", checkin_ids("main"))
         assert "woken again in 10m" in reg.fire_checkin("main")
-        reg.arm_checkin("main")
+        reg.arm_checkin("main", checkin_ids("main"))
         assert "Check-in after 10m" in (t := reg.fire_checkin("main"))
         assert "woken again in 20m" in t
         for _ in range(3):
-            reg.arm_checkin("main")
+            reg.arm_checkin("main", checkin_ids("main"))
             t = reg.fire_checkin("main")
         assert "Check-in after 1h" in t and "woken again in 1h" in t
 
     def test_a_cancelled_timer_does_not_advance_the_step(self, reg, jobs):
         """진짜 보고로 깨면(타이머가 풀리면) 단계는 직전에 **발화한** 깨우기 기준이다."""
         jobs.start("sleep 30", owner="main")
-        reg.arm_checkin("main")
+        reg.arm_checkin("main", checkin_ids("main"))
         reg.run_started("main")  # 발화 전에 런이 시작됐다
-        assert reg.next_checkin_s("main") == 300
+        assert reg.next_checkin_s("main", checkin_ids("main")) == 300
 
 
 # ── 알림 내용 ────────────────────────────────────────────────
@@ -238,7 +254,7 @@ class TestNoticeLines:
     def test_two_jobs_list_both_kills(self, reg, jobs):
         a = jobs.start("sleep 30", owner="main")
         b = jobs.start("sleep 31", owner="main")
-        reg.arm_checkin("main")
+        reg.arm_checkin("main", checkin_ids("main"))
         text = reg.fire_checkin("main")
         assert "job #1 ·" in text and "job #2 ·" in text
         assert f"`kill -- -{a.pid}` for job #1; `kill -- -{b.pid}` for job #2" in text
@@ -249,8 +265,8 @@ class TestNoticeLines:
         mon = mons.add(
             build({"file": str(log), "pattern": "done"}), owner="main", deadline_s=6540
         )
-        assert wake_source_ids("main", agents=get_agent_registry()) == {f"mon:{mon.id}"}
-        reg.arm_checkin("main")
+        assert checkin_ids("main") == {f"mon:{mon.id}"}
+        reg.arm_checkin("main", checkin_ids("main"))
         text = reg.fire_checkin("main")
         assert f"monitor {mon.id} · `file` + `pattern` on {log} · 1h49m left" in text
         assert (
@@ -264,7 +280,7 @@ class TestNoticeLines:
         log = tmp_path / "ocr.log"
         log.write_text("")
         mons.add(build({"file": str(log), "idle": "5m"}), owner="main", deadline_s=7200)
-        reg.arm_checkin("main")
+        reg.arm_checkin("main", checkin_ids("main"))
         text = reg.fire_checkin("main")
         assert f"`file` + `idle` on {log} for 5m · 2h left" in text
         assert (
@@ -275,7 +291,7 @@ class TestNoticeLines:
     def test_another_owners_work_is_not_in_my_notice(self, reg, jobs):
         jobs.start("sleep 30", owner="main")
         jobs.start("sleep 40", owner="agent:x")
-        reg.arm_checkin("main")
+        reg.arm_checkin("main", checkin_ids("main"))
         text = reg.fire_checkin("main")
         assert "job #1" in text and "job #2" not in text
 
@@ -322,8 +338,8 @@ class TestAgentLines:
 
     def test_working_agent_counts_steps_since_the_wait(self, reg):
         tm = _fake_agent(reg, "k", state="busy", ordinal=3, last_at=time.time() - 40)
-        assert wake_source_ids("main", agents=get_agent_registry()) == {"agent:k"}
-        reg.arm_checkin("main")
+        assert checkin_ids("main") == {"agent:k"}
+        reg.arm_checkin("main", checkin_ids("main"))
         assert _armed(reg).step_marks == {"agent:k": 3}
         tm.ctx.last_ordinal = 15
         text = reg.fire_checkin("main")
@@ -340,7 +356,7 @@ class TestAgentLines:
 
     def test_a_stalled_agent_shows_no_step(self, reg):
         _fake_agent(reg, "k", state="busy", ordinal=7, last_at=time.time() - 540)
-        reg.arm_checkin("main")
+        reg.arm_checkin("main", checkin_ids("main"))
         text = reg.fire_checkin("main")
         assert (
             "working on your request · no step since your wait, last one 9m ago" in text
@@ -356,7 +372,7 @@ class TestAgentLines:
             last_at=time.time() - 60,
             inbox=[{"author": "agent:z"}, {"author": "agent:y"}, {"author": "main"}],
         )
-        reg.arm_checkin("main")
+        reg.arm_checkin("main", checkin_ids("main"))
         text = reg.fire_checkin("main")
         assert (
             "agent:j (writer) · has your request queued behind 2 others · busy on "
@@ -368,8 +384,8 @@ class TestAgentLines:
         reg.mark_waiting("agent:m")  # 받아들여진 `wait` — 스스로 잠듦(기다림 표시)
         reg.note_owes("agent:m", "main", "t", id="r-1")
         jobs.start("pytest -x tests/", owner="agent:m")
-        assert wake_source_ids("main", agents=get_agent_registry()) == {"agent:m"}
-        reg.arm_checkin("main")
+        assert checkin_ids("main") == {"agent:m"}
+        reg.arm_checkin("main", checkin_ids("main"))
         text = reg.fire_checkin("main")
         assert (
             "agent:m (coder) · owes you a reply · itself waiting on job #1 "
@@ -386,7 +402,7 @@ class TestAgentLines:
         jobs.start("sleep 30", owner="agent:n")
         qid, err = reg.register_question("n", "?")  # 사람에게 건 질문 — 공개 길
         assert not err
-        reg.arm_checkin("main")
+        reg.arm_checkin("main", checkin_ids("main"))
         asked = time.time()
         with monkeypatch.context() as m:
             m.setattr(time, "time", lambda: asked + 540)  # 9분 뒤의 알림
@@ -404,7 +420,7 @@ class TestAgentLines:
             reg, "p", state="busy", current_author="agent:q", last_at=time.time() - 5
         )
         reg.note_owes("agent:p", "main", "t", id="r-3")
-        reg.arm_checkin("main")
+        reg.arm_checkin("main", checkin_ids("main"))
         text = reg.fire_checkin("main")
         assert (
             "agent:p (explorer) · owes you a reply · busy on another request, last step 5s ago"
@@ -472,8 +488,8 @@ class TestResident:
             assert r.request(key, "do Y") == ""  # 뒤에 줄 선 보통 요청
             me = f"agent:{key}"
             jobs.start("sleep 30", owner=me)
-            # 에이전트 자신이 wait 로 끝났다(워커 바깥에서 같은 호출을 흉내)
-            r.run_ended(me, "⏸ waiting", waiting=True)
+            # 에이전트 자신이 제자리 `wait` 에 들었다(워커 바깥에서 같은 호출을 흉내 — `Mailbox.arm_checkin`)
+            r.arm_checkin(me, checkin_ids(me))
             assert _armed(r, me) is not None
             text = r.fire_checkin(me)
             assert text.startswith("⏰ Check-in after 5m — still running:\njob #1")
@@ -481,7 +497,7 @@ class TestResident:
             # 회신을 빚지우지 않는다(장부 밖 알림)
             assert item.expects_reply is False
             # 상주가 main 을 기다릴 때 — main 의 알림에 "working" 줄로 보인다
-            r.arm_checkin("main")
+            r.arm_checkin("main", checkin_ids("main"))
             assert f"agent:{key}" in r.fire_checkin("main")
             # 하니스 통지는 봉투 밖 (v10.84.0, 사용자 결정 C) — main 이 받는 모양과 같다: 그 알림이 연 런의 시작 글
             gate.set()
@@ -503,8 +519,10 @@ class TestResident:
     def test_kill_and_shutdown_cancel_timers(self, reg, jobs):
         _fake_agent(reg, "k", state="busy")
         jobs.start("sleep 30", owner="agent:k")
-        reg.arm_checkin("main")  # main 은 agent:k 를 기다린다
-        reg.arm_checkin("agent:k")  # agent:k 는 자기 작업을 기다린다
+        reg.arm_checkin("main", checkin_ids("main"))  # main 은 agent:k 를 기다린다
+        reg.arm_checkin(
+            "agent:k", checkin_ids("agent:k")
+        )  # agent:k 는 자기 작업을 기다린다
         assert {"main", "agent:k"} <= set(reg._checkin_armed)
         reg._cancel_checkins("agent:k")
         assert "agent:k" not in reg._checkin_armed and "main" in reg._checkin_armed
@@ -540,10 +558,20 @@ def _provider(*replies: dict):
 
 class TestLoopWiring:
     def test_wait_result_names_the_interval(self, reg, jobs):
-        jobs.start("sleep 30", owner="main")
-        loop = _loop(_provider({"action": "wait"}))
+        job = jobs.start("sleep 30", owner="main")
+        # 제자리 대기 — 기다리기 시작하면 작업을 바깥에서 죽여(깨울 것이 사라짐) 같은 런이 닫게 한다
+        threading.Thread(
+            target=lambda: (
+                wait_until(lambda: reg._post.is_waiting("main")),
+                jobs.kill(job),
+            ),
+            daemon=True,
+        ).start()
+        loop = _loop(
+            _provider({"action": "wait"}, {"action": "complete", "answers": ["u-1"]})
+        )
         res = loop.run()
-        assert res.waiting and res.output == "⏸ waiting on job #1 (`sleep 30`)"
+        assert res.success
         obs = [
             str(m["content"])
             for m in loop.messages
@@ -551,27 +579,35 @@ class TestLoopWiring:
         ]
         assert obs[0] == (
             "Observation: waiting — will wake on: job #1 (`sleep 30`), or in 5m if "
-            "nothing has reported. Open items stay open for the next run: u-1."
-        )
+            "nothing has reported."
+        )  # 5c-1: "Open items stay open for the next run: …" 이 빠졌다(다음 런이 없다)
 
     def test_wait_result_without_a_timer_is_unchanged(self, reg, monkeypatch):
         from agent_cli.session_slots import set_schedule_registry
 
-        set_schedule_registry(SimpleNamespace(has_active_work=lambda: True))
+        active = {"on": True}
+        set_schedule_registry(SimpleNamespace(has_active_work=lambda: active["on"]))
         set_job_registry(None)
-        loop = _loop(_provider({"action": "wait"}))
-        assert loop.run().waiting
+        # 제자리 대기 — 기다리기 시작하면 예약을 꺼(깨울 것이 사라짐) 같은 런이 닫게 한다
+        threading.Thread(
+            target=lambda: (
+                wait_until(lambda: reg._post.is_waiting("main")),
+                active.update(on=False),
+            ),
+            daemon=True,
+        ).start()
+        loop = _loop(
+            _provider({"action": "wait"}, {"action": "complete", "answers": ["u-1"]})
+        )
+        assert loop.run().success
         obs = [
             str(m["content"]) for m in loop.messages if "waiting —" in str(m["content"])
         ]
-        assert obs[0] == (
-            "Observation: waiting — will wake on: a schedule. Open items stay open "
-            "for the next run: u-1."
-        )
+        assert obs[0] == "Observation: waiting — will wake on: a schedule."
 
     def test_a_run_with_input_cancels_but_an_empty_wake_run_does_not(self, reg, jobs):
         jobs.start("sleep 30", owner="main")
-        reg.arm_checkin("main")
+        reg.arm_checkin("main", checkin_ids("main"))
         # 깨우기 런인데 배달된 것이 없다 — 다른 런이 가져갔다. 타이머는 그대로.
         res = _loop(MagicMock(), query="", rid="").run()
         assert res.output == "" and _armed(reg) is not None
@@ -582,14 +618,23 @@ class TestLoopWiring:
         assert _armed(reg) is None
 
     def test_a_delivered_checkin_wakes_a_run_that_can_wait_again(self, reg, jobs):
-        """알림이 배달되고, 모델이 다시 wait 하면 이번엔 10분이다."""
-        jobs.start("sleep 30", owner="main")
-        reg.arm_checkin("main")
+        """알림이 배달되고, 모델이 다시 wait 하면 이번엔 10분이다. 그 기다림은 작업이 바깥에서 죽어 끝난다(깨울 것이
+        사라짐) — 같은 런이 닫는다."""
+        job = jobs.start("sleep 30", owner="main")
+        reg.arm_checkin("main", checkin_ids("main"))
         reg.fire_checkin("main")
+
+        def kill_once_waiting():
+            assert wait_until(lambda: "main" in reg._checkin_armed)
+            jobs.kill(job)
+
+        threading.Thread(target=kill_once_waiting, daemon=True).start()
         loop = make_loop(
             ports=make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg),
             query="",
-            provider=_provider({"action": "wait"}),
+            provider=_provider(
+                {"action": "wait"}, {"action": "complete", "answers": []}
+            ),
             capabilities=ModelCapabilities(
                 context_window=32768, max_output_tokens=4096, supports_thinking=False
             ),
@@ -597,7 +642,7 @@ class TestLoopWiring:
             dialect=get_dialect("json_fc"),
         )
         res = loop.run()
-        assert res.waiting
+        assert res.success
         users = [str(m["content"]) for m in loop.messages if m["role"] == "user"]
         assert users[0].startswith("⏰ Check-in after 5m")
         assert any("or in 10m if nothing has reported" in u for u in users)

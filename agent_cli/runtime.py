@@ -30,8 +30,6 @@ from typing import Any
 
 from agent_cli.constants import RESTART_NOTICE, schedule_addr
 from agent_cli.loop.kind import (
-    WAIT_BLOCK,
-    WAIT_END_RUN,
     WAIT_NEXT_MAIN,
     LoopKind,
     PromptProfile,
@@ -312,7 +310,6 @@ def main_run_ended(
     agent_registry,
     output: str = "",
     *,
-    waiting: bool = False,
     stopped: bool = False,
     **meta,
 ) -> int:
@@ -320,8 +317,7 @@ def main_run_ended(
 
     독촉은 런 **안**에서 있었다(dispatch 의 빚 목록 — 상주와 같은 기계).
     그러고도 남은 회신 빚은 라벨 붙은 런 요약(``output``)을 그 에이전트 inbox 로
-    폴백 배달한다. ``waiting`` (v10.77.0): `wait` 로 끝난 런 — 판정은 상주와 같은
-    `AgentRegistry.run_ended` 한 곳이다.
+    폴백 배달한다. 판정은 상주와 같은 `AgentRegistry.run_ended` 한 곳이다.
 
     상주 에이전트는 워커 루프의 디스패치 수렴점에서 같은 일을 한다. main 은
     펌프가 둘(run/web)이라 호출부가 둘인데, **정의는 하나**여야 한다 —
@@ -337,9 +333,7 @@ def main_run_ended(
     """
     if agent_registry is None:
         return 0
-    return agent_registry.run_ended(
-        "main", output or "", waiting=waiting, stopped=stopped, **meta
-    )
+    return agent_registry.run_ended("main", output or "", stopped=stopped, **meta)
 
 
 def teardown_session(
@@ -837,12 +831,6 @@ class MainLoop(LoopKind):
         )
 
     # ── 엔진이 묻는 것 (v10.88.0) ──
-    def wait_policy(self) -> str:
-        """기다리는 회신이 있으면 제자리(v10.141.0, docs/agent-engine/DESIGN.md §3) — 같은 런에서
-        회신·사람 입력·체크인에 깬다(감사 범위도 그 런 하나). 작업·모니터만 기다리면 런을 끝내고
-        펌프가 메일을 기다린다(체크인 타이머는 레지스트리)."""
-        return WAIT_BLOCK if self.ports.mailbox.awaited() else WAIT_END_RUN
-
     def wait_refused_next(self) -> str:
         """main 은 요청을 보내야 회신이 온다 — 깨울 것이 없으면 그 길을 말한다."""
         return WAIT_NEXT_MAIN

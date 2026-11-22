@@ -1603,10 +1603,13 @@ class WebRenderer(Renderer):
         if prev != payload:
             self.set_sticky("stuck", "stuck", payload)
 
-    def wait_in_place(self, waiting: bool, awaited: list[dict]) -> None:
+    def wait_in_place(
+        self, waiting: bool, awaited: list[dict], others: list[str] | None = None
+    ) -> None:
         """제자리 대기 스티키 ``waiting_in_place`` (v10.141.0, 설계 §5 시안 A) — 입력창 위
-        "main is waiting for agt-3 — type to steer it or give new work". 깨면 지운다(휘발
-        이벤트로 띠를 숨긴다). main 의 것뿐이라 중첩 렌더(에이전트 스레드)는 그리지 않는다."""
+        "main is waiting for agt-3, job #1 — type to steer it or give new work". 깨면 지운다(휘발
+        이벤트로 띠를 숨긴다). main 의 것뿐이라 중첩 렌더(에이전트 스레드)는 그리지 않는다. ``others``(작업·모니터·
+        예약의 짧은 이름, 5c-1 결정 C)는 있을 때만 싣는다 — 회신만의 모양은 종전 그대로."""
         if self.in_nested_render():
             return
         if not waiting:
@@ -1624,6 +1627,8 @@ class WebRenderer(Renderer):
                 for r in awaited
             ],
         }
+        if others:
+            payload["others"] = list(others)
         self.set_sticky("waiting_in_place", "waiting_in_place", payload)
 
     def stuck_summary(self) -> dict | None:

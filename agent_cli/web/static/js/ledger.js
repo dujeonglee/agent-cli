@@ -117,9 +117,16 @@ function oiRender() {
   const scrollTop = oldList ? oldList.scrollTop : 0;
 
   $openItems.innerHTML = "";
-  $openItems.hidden = oiItems.length + leaving.length === 0;
+  const waitLine = oiWaitLine();
+  const empty = oiItems.length + leaving.length === 0;
+  $openItems.hidden = empty && !waitLine;
   if (oiItems.length <= OI_FOLD_ROWS) oiExpanded = false;
   if ($openItems.hidden) return;
+  if (empty) {
+    // 열린 항목 없이 작업·모니터만 기다린다 — 대기 줄만 선다(5c-1 결정 C)
+    $openItems.appendChild(waitLine);
+    return;
+  }
   const hd = el("div", ["oi-hd"]);
   hd.appendChild(el("span", ["oi-title"], oiTitle()));
   if (oiBudget && oiBudget.total != null) {
@@ -147,17 +154,7 @@ function oiRender() {
   $openItems.appendChild(list);
   list.scrollTop = scrollTop;
   if (folds) $openItems.appendChild(oiToggle(oiItems.length - OI_FOLD_ROWS));
-  if (oiWaiting && oiWaiting.awaited && oiWaiting.awaited.length) {
-    const who = oiWaiting.awaited.map(function (r) { return r.from; });
-    const uniq = who.filter(function (w, i) { return who.indexOf(w) === i; });
-    $openItems.appendChild(
-      el(
-        "div",
-        ["oi-wait"],
-        "main is waiting for " + uniq.join(", ") + " — type to steer it or give new work"
-      )
-    );
-  }
+  if (waitLine) $openItems.appendChild(waitLine);
 
   if (focusKey === "more") {
     const m = $openItems.querySelector(".oi-more");
@@ -166,6 +163,22 @@ function oiRender() {
     const r = list.querySelector('.oi-item[data-id="' + CSS.escape(focusKey) + '"]');
     if (r && r.tabIndex >= 0) r.focus();
   }
+}
+
+// 대기 줄 — main 이 제자리에서 기다리는 동안. 회신을 보낸 상대(중복 없이), 그다음 작업·모니터·예약의 짧은
+// 이름("job #1" — 5c-1 결정 C). 기다리는 것이 없으면 null
+function oiWaitLine() {
+  if (!oiWaiting) return null;
+  const who = (oiWaiting.awaited || []).map(function (r) { return r.from; });
+  const names = who
+    .filter(function (w, i) { return who.indexOf(w) === i; })
+    .concat(oiWaiting.others || []);
+  if (!names.length) return null;
+  return el(
+    "div",
+    ["oi-wait"],
+    "main is waiting for " + names.join(", ") + " — type to steer it or give new work"
+  );
 }
 
 // 머리 — 기다리는 회신뿐이면 그것을 말한다("Waiting for 1 reply · r-21 from agt-3")

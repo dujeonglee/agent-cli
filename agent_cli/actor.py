@@ -17,7 +17,7 @@ from agent_cli.main_input import CLOSED
 
 #: 런이 어떻게 끝났나 — 끝 정리가 읽는 사실. ``session_end`` 는 세션 종료의 런 끝 — 지금은 닫힐 때 제자리에서 기다리던
 #: main 하나(5c-pre, `ToolResult.session_ended`). 일하는 중이던 런·멈춘 에이전트의 런으로 넓히는 것은 5e.
-Outcome = Literal["done", "failed", "stopped", "wait", "crashed", "session_end"]
+Outcome = Literal["done", "failed", "stopped", "crashed", "session_end"]
 
 
 @dataclass(frozen=True)
@@ -33,24 +33,18 @@ class RunEnd:
     error: BaseException | None = None
 
     @property
-    def waiting(self) -> bool:
-        return self.outcome == "wait"
-
-    @property
     def ok(self) -> bool:
-        """정상으로 끝났나 — ``done`` 과 ``wait``(종전의 ``success``)."""
-        return self.outcome in ("done", "wait")
+        """정상으로 끝났나 — ``done``(종전의 ``success``)."""
+        return self.outcome == "done"
 
     @classmethod
     def of(cls, finished: Any, *, stopped: bool = False) -> RunEnd:
-        """종류의 반환에서 — 세션 종료로 끝났으면 ``session_end``, `wait` 로 끝났으면 ``wait``, 정지가 섰으면
-        ``stopped``, 실패면 ``failed``, 아니면 ``done``."""
+        """종류의 반환에서 — 세션 종료로 끝났으면 ``session_end``, 정지가 섰으면 ``stopped``, 실패면 ``failed``,
+        아니면 ``done``. `wait` 는 런을 끝내지 않는다(5c-1) — 런의 끝이 아니다."""
         result = finished[0] if isinstance(finished, tuple) else finished
         outcome: Outcome
         if bool(getattr(result, "session_ended", False)):
             outcome = "session_end"
-        elif bool(getattr(result, "waiting", False)):
-            outcome = "wait"
         elif stopped:
             outcome = "stopped"
         elif not bool(getattr(result, "success", False)):

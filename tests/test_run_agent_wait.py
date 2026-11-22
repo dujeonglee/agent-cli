@@ -39,6 +39,7 @@ from agent_cli.wake import (
 from tests.loop_kinds import make_caller, run_task
 from tests.loop_ports import TEST_PORTS
 from tests.loopkit import make_loop
+from tests.mail_support import checkin_ids
 from tests.test_agents_live import make_registry
 
 
@@ -212,7 +213,7 @@ class TestPrivateMailbox:
 
     def test_drop_mailbox_discards_and_cancels_checkin(self, reg, jobs):
         jobs.start("sleep 30", owner="harness:x")
-        assert reg.arm_checkin("harness:x")
+        assert reg.arm_checkin("harness:x", checkin_ids("harness:x"))
         reg.deliver(
             "harness:x", mail=self._mail(), text="t", author="main", expects_reply=False
         )
@@ -222,7 +223,7 @@ class TestPrivateMailbox:
 
     def test_checkin_lands_in_the_private_mailbox(self, reg, jobs):
         jobs.start("sleep 30", owner="harness:x")
-        assert reg.arm_checkin("harness:x")
+        assert reg.arm_checkin("harness:x", checkin_ids("harness:x"))
         text = reg.fire_checkin("harness:x")
         assert "still running" in text
         got = reg.take_mail("harness:x")
@@ -357,15 +358,13 @@ class TestWaitInPlace:
         )
         assert "wait" in loop.tools_list  # 깨울 길이 있으니 광고된다
         res = loop.run()
-        assert res.success and not getattr(res, "waiting", False)
-        assert res.output == "done" and loop.turn == 2
+        assert res.success and res.output == "done" and loop.turn == 2
         recs = _records(tmp_path)
         waits = [r for r in recs if r.get("tool") == "wait"]
         assert waits and "will wake on: job #1" in waits[0]["content"]
         assert "next run" not in waits[0]["content"]  # 장부를 넘기지 않는다
         job_mail = [r for r in recs if r.get("tool") == "job"]
         assert job_mail and "job #1 finished" in job_mail[0]["content"]
-        assert ctx.take_parked_requests() == []
 
     def test_job_killed_from_outside_ends_the_wait_with_a_fact(self, jobs, tmp_path):
         job = jobs.start("sleep 30", owner="harness:t2")

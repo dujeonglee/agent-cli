@@ -27,7 +27,7 @@ from agent_cli.post.request_book import (
     RowError,
 )
 
-Outcome = Literal["done", "stopped", "wait", "session_end"]
+Outcome = Literal["done", "stopped", "session_end"]
 
 
 class _Mark:
@@ -190,13 +190,11 @@ class PostOffice:
         - ``done``·``stopped``: 집힌 r 줄마다 ``replies`` 에 그 rid 가 있으면 그 회신을 배달하고 닫는다(``done`` →
           fallback, ``stopped`` → stopped), 없으면 dropped. 집힌 u·n 줄은 run_ended. 들고 있던 봉투를 비우고,
           남겨 둔 닫힌 줄(명시 회신)을 버린다.
-        - ``wait``: 열린 줄은 그대로(잠든 빚), 들고 있던 봉투를 비우고, 이 런에서 닫힌 줄은 버린다 — 다음 런에서
-          같은 id 에 "이 런에서 이미 회신했다" 고 말하지 않게(v10.145.2, 런 끝의 규칙은 하나다).
         - ``session_end`` [단계 5 에서 쓰임 — 지금 제품은 부르지 않는다]: 아무것도 건드리지 않는다 — 프로세스가 끝나면
           우편째 사라진다(재시작은 우편을 올리지 않는다, 5c-0).
 
-        쓰이지 않을 회신은 받지 않는다: ``replies`` 의 rid 가 이번에 닫는 r 줄이 아니거나, ``wait``·``session_end``
-        인데 ``replies`` 가 있으면 아무것도 바꾸지 않고 `RowError`."""
+        쓰이지 않을 회신은 받지 않는다: ``replies`` 의 rid 가 이번에 닫는 r 줄이 아니거나, ``session_end`` 인데
+        ``replies`` 가 있으면 아무것도 바꾸지 않고 `RowError`. (`wait` 는 런의 끝이 아니다 — 5c-1.)"""
         replies = replies or {}
         with self.cv:
             box = self._box(addr)
@@ -221,7 +219,7 @@ class PostOffice:
                 for row in self._book.open_requests(addr):
                     changed = True
                     self._book.close(row.rid, "run_ended", in_run=run_id)
-            if outcome in ("done", "stopped", "wait"):
+            if outcome in ("done", "stopped"):
                 changed = bool(self._book.purge_closed(addr)) or changed
             if outcome != "session_end":
                 changed = bool(box.finish_run()) or changed
@@ -364,8 +362,7 @@ class PostOffice:
     # ── 기다림 표시 ─────────────────────────────────
     #
     # `wait` 의 받아들임 판정 앞에 세우고(`Mailbox.accept_wait` — 거절이면 내린다), 기다림이 끝날 때 내린다 — 제자리
-    # 대기가 돌아올 때, 런을 끝낸 대기면 다음 런이 입력을 받아 시작할 때(`loop.core._note_run_started` — 5c 에서
-    # WAIT_END_RUN 과 함께 없어질 자리), 상자가 닫힐 때(`close`), 주인이 사라질 때(`drop_mailbox`). 잠든 채무자 판정
+    # 대기가 돌아올 때(5c-1 부터 `wait` 는 모두 제자리다), 상자가 닫힐 때(`close`), 주인이 사라질 때(`drop_mailbox`). 잠든 채무자 판정
     # (`wake._is_parked`)이 읽는다. 깨우지 않는다(기다리는 이가 이것을 조건으로 보지 않는다).
 
     def mark_waiting(self, addr: str) -> None:

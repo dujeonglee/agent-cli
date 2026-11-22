@@ -62,6 +62,33 @@ class TestWaitingBand:
         assert _wait(lambda: line.count() == 0)
         assert band.is_visible()  # 회신은 아직 — 띠는 남는다
 
+    def test_job_only_wait_draws_the_line_by_itself(self, stack, page):
+        """5c-1 결정 C: 열린 항목 없이 작업만 기다려도 대기 줄이 선다 — 짧은 이름으로, 깨면 띠가 내려간다."""
+        stack.emit_ready()
+        page.goto(stack.url)
+        band = page.locator("#open-items")
+        stack.renderer.wait_in_place(True, [], others=["job #1"])
+        line = band.locator(".oi-wait")
+        assert _wait(lambda: line.count() == 1)
+        assert line.inner_text() == (
+            "main is waiting for job #1 — type to steer it or give new work"
+        )
+        assert band.locator(".oi-title").count() == 0  # 항목이 없으니 머리도 없다
+        stack.renderer.wait_in_place(False, [])
+        assert _wait(lambda: not band.is_visible())
+
+    def test_mixed_wait_line_names_replies_then_jobs(self, stack, page):
+        stack.emit_ready()
+        page.goto(stack.url)
+        stack.renderer.open_items(_snap(_awaiting()))
+        stack.renderer.wait_in_place(True, AWAITED, others=["job #1", "monitor m-2"])
+        line = page.locator("#open-items .oi-wait")
+        assert _wait(lambda: line.count() == 1)
+        assert line.inner_text() == (
+            "main is waiting for agt-3, job #1, monitor m-2 — type to steer it or give "
+            "new work"
+        )
+
     def test_mixed_band_says_the_model_owes_the_rest(self, stack, page):
         stack.emit_ready()
         page.goto(stack.url)

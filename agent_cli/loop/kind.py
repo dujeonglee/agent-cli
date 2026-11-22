@@ -48,11 +48,6 @@ class LoopKindError(Exception):
     """종류가 런을 열 수 없다 — 모델(또는 호스트)에게 보낼 사유 한 줄이 메시지다."""
 
 
-#: ⑯ `wait` 정책 — 런을 끝내고 깨우기를 기다린다 / 제자리에서 막는다 / 거부한다.
-WAIT_END_RUN = "end_run"
-WAIT_BLOCK = "block"
-WAIT_REFUSE = "refuse"
-
 #: `wait` 거절 — 깨울 것이 없다. 사실은 누구에게나 한 문장이고, 다음 걸음은 종류가 정한다
 #: (`LoopKind.wait_refused_next`): main 은 요청을 먼저 보내야 회신이 오고, 상주는 런을 끝내면 다음
 #: 메시지가 새 런을 연다(문맥은 그대로), run 에이전트·하니스 작업은 과제를 잇거나 끝낸다.
@@ -272,14 +267,6 @@ class LoopKind:
     # ── B·C 엔진이 묻는 것 (PR 2, v10.88.0) — 기본 구현은 정체(포트·깊이·이름)에서 유도한다.
     # 다섯 종류는 자기 정책을 **명시**해 덮어쓴다; 기본은 맨 종류(엔진을 종류 없이 세우는
     # 테스트가 `tests/loopkit.py` 에서 만든다)를 위한 것이다.
-    def wait_policy(self) -> str:
-        """⑯ `wait` 가 런을 끝내나(main·상주), 제자리에서 막나(private), 거부하나(인라인)."""
-        from agent_cli.constants import is_private_owner
-
-        if not self.ports.wakeable():
-            return WAIT_REFUSE
-        return WAIT_BLOCK if is_private_owner(self.owner) else WAIT_END_RUN
-
     def wait_refused_next(self) -> str:
         """깨울 것이 없어 `wait` 를 거절할 때 문장의 다음 걸음 — 과제를 잇거나 끝낸다(run·하니스 작업).
         새 종류는 덮어쓰지 않으면 이 기본("Keep working …")을 쓴다; main·상주는 자기 길을 말한다."""
@@ -413,10 +400,7 @@ class PrivateLoop(LoopKind):
         self.ports.mailbox.drop()  # 메일함·체크인 버림(읽을 사람이 없다)
         return note
 
-    # ── 엔진이 묻는 것 — private 종류의 명시 정책 ──
-    def wait_policy(self) -> str:
-        return WAIT_BLOCK  # 런이 곧 함수 호출 — 메일함에 통지가 올 때까지 여기서 막는다
-
+    # ── 엔진이 묻는 것 — private 종류 ──
     def intake(self) -> list[dict]:
         return list(self.ports.mailbox.take() or [])  # 자기 메일함 → `mail_record`
 

@@ -25,7 +25,7 @@ from tests.loop_ports import split_ports
 
 class TestEvents:
     def test_all_events_count(self):
-        assert len(ALL_EVENTS) == 11
+        assert len(ALL_EVENTS) == 12  # PreWait (5c-1)
 
     def test_event_to_func_complete(self):
         """Every event in ALL_EVENTS has a function name mapping."""

@@ -13,10 +13,12 @@ import time
 #: 아무것도 런을 못 멈춘다 — 개입은 max_turns 미계수, B1 은 도구 경로에만
 #: 있어 반복 complete 을 안 본다. 실측(a209hq): 플레이어 셋은 1회에 응했고
 #: 오케스트레이터만 1회를 넘겼다.
+from agent_cli.constants import format_duration
 from agent_cli.dialects import try_foreign_parse
 from agent_cli.dialects.base import ParsedTurn
 from agent_cli.dialects.recovery.json import describe_json_error
-from agent_cli.loop.kind import Caller
+from agent_cli.hooks.events import PRE_WAIT
+from agent_cli.loop.kind import WAIT_NOTHING_PENDING, Caller
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
@@ -559,8 +561,18 @@ class TurnDispatcher:
         if asking:
             self._ask_stale(calls)
 
+    def _begin_segment(self) -> None:
+        """구간(깨어 있는 토막)을 새로 시작한다 — 제자리 `wait` 에서 깰 때(5c-1). 구간마다 새로 세는 것이 여기 다 있다:
+        턴(상한·꼬리의 턴 줄이 세는 기준), 되돌림 예산, 같은 호출 반복(`ActionLoopDetector`), 제자리 고리(`StaleGuard`)와
+        그 🔁 표시. 런 시작은 이 객체가 새로 서므로 부르지 않는다. 열린 항목·기록의 턴 번호는 그대로다."""
+        self.state.segment_turn0 = self.state.turn
+        self.state.ledger.new_segment()
+        self.loop_detector = ActionLoopDetector(threshold=2)
+        self.stale_guard = StaleGuard()
+        self.clear_stale()
+
     def clear_stale(self) -> None:
-        """런 끝 — 떠 있는 🔁 표시를 지운다(엔진의 ``run`` finally)."""
+        """떠 있는 🔁 표시를 지운다 — 런 끝(엔진의 ``run`` finally)과 구간의 시작(`_begin_segment`)."""
         if not self._stale_shown:
             return
         self._stale_shown = False
@@ -1125,28 +1137,19 @@ class TurnDispatcher:
         return ToolResult(True, output=answer)
 
     def _op_wait(self, llm_text: str, turn, op, outcome: dict):
-        """terminal ``wait`` op (v10.65.0, docs/wait/DESIGN.md).
+        """terminal ``wait`` op (v10.65.0, docs/wait/DESIGN.md) — 런을 끝내지 않는다(5c-1).
 
-        깨울 것(`ports.mailbox.wake_sources`)이 있으면: 열린 요청을 ctx 에 넘기고
-        (`park_requests` — 다음 런의 장부로), 호출과 관찰을 기록하고(히스토리는
-        보통의 op + 관찰 모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다),
-        런을 ``waiting`` 결과로 끝낸다. 없으면: 거부 관찰을 남기고 런을 잇는다 —
-        막혔을 때 wait 로 도피하는 길은 없다. 이미 도착한 통지(`ports.mailbox.arrived`)
-        가 있어도 거부한다(v10.66.2): 다음 관찰에 그 통지가 온다고 말해 준다.
+        깨울 것(`ports.mailbox.wake_sources`)이 있으면: 호출과 관찰을 기록하고(히스토리는 보통의 op + 관찰
+        모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다) **그 자리에서** 깨울 것이 올 때까지 막는다
+        (`_wait_in_place`). 깨면 같은 런이 잇는다 — 다음 턴 경계의 흡수(`kind.intake`)가 깨운 것을 넣고, 장부는
+        그대로다(같은 런). main·상주·run 에이전트·하니스 작업, 기다리는 것이 회신·작업·모니터 무엇이든 같다.
+        없으면: 거부 관찰을 남기고 런을 잇는다 — 막혔을 때 wait 로 도피하는 길은 없다. 이미 도착한 통지가
+        있어도 거부한다(v10.66.2): 다음 관찰에 그 통지가 온다고 말해 준다.
 
-        v10.84.0 (docs/wait/DESIGN.md §7): 깨울 길이 없는 루프(스킬 — 호출자의 턴 안
-        인라인)는 첫 판정에서 거부한다 — 종전엔 광고만 안 하고 받아서 스킬 런을
-        "⏸ waiting" 결과로 끝냈다. 제자리 정책(`WAIT_BLOCK` — 하니스 작업, 기다리는 회신을
-        둔 main)은 런을 끝내지 않는다: 메일(또는 main 이면 사람 입력)이 올 때까지 **여기서
-        막고** 런을 잇는다 — 다음 턴 경계의 흡수(`kind.intake`)가 그것을 넣는다. 장부는
-        넘기지 않는다(같은 런)."""
-        from agent_cli.loop.kind import WAIT_BLOCK, WAIT_NOTHING_PENDING, WAIT_REFUSE
+        v10.84.0 (docs/wait/DESIGN.md §7): 깨울 길이 없는 루프(스킬 — 호출자의 턴 안 인라인, `ports.wakeable`
+        이 거짓)는 첫 판정에서 거부한다."""
 
-        reason = ""
-        if isinstance(op.action_input, dict):
-            reason = str(op.action_input.get("reason") or "").strip()
-        policy = self.cfg.kind.wait_policy()  # v10.88.0: 종류가 정한다
-        if policy == WAIT_REFUSE:
+        if not self.cfg.kind.ports.wakeable():
             _append_observation(
                 self.state.messages,
                 self.ctx,
@@ -1175,8 +1178,10 @@ class TurnDispatcher:
                 turn=self.state.turn,
             )
             return _CONTINUE
-        sources = mailbox.accept_wait()  # 기다림 표시를 먼저 세운다 — 거절이면 내린다
-        if not sources:
+        # 무엇을 기다리기로 했나 — 받아들일 때 한 번 읽는다(5c-1 4b): 수락 문장·대기 줄·체크인 대상이 이 값 하나에서.
+        # 기다림 표시를 먼저 세운다 — 거절이면 내린다
+        on = mailbox.accept_wait()
+        if on is None:
             parked = mailbox.parked_debtors()
             why = (
                 mutual_wait_refusal(parked, mailbox.debts_to(parked))
@@ -1194,28 +1199,16 @@ class TurnDispatcher:
                 turn=self.state.turn,
             )
             return _CONTINUE
-        from agent_cli.constants import format_duration
-
-        in_place = policy == WAIT_BLOCK
-        kept = ""
-        if not in_place:
-            ledger = self.state.ledger
-            open_ids = ledger.request_ids()
-            if self.ctx is not None:
-                self.ctx.park_requests(list(ledger.requests))
-            if open_ids:
-                kept = f" Open items stay open for the next run: {', '.join(open_ids)}."
-        # 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6): 타이머는 런이 끝날 때
-        # 레지스트리가 걸지만(`run_ended(waiting=True)`), 이번 간격은 여기서 같은
-        # 계산(`next_checkin_s`)으로 미리 적는다 — 설명엔 숫자가 없다(간격이 바뀐다).
-        # 예약만 기다려 타이머가 없으면 종전 문장 그대로.
-        checkin_s = mailbox.next_checkin_s()
+        # 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6): 타이머는 제자리 대기가 걸지만(`_wait_in_place` →
+        # `mailbox.arm_checkin`), 이번 간격은 여기서 같은 계산(`next_checkin_s`)으로 미리 적는다 — 설명엔 숫자가
+        # 없다(간격이 바뀐다). 예약만 기다려 타이머가 없으면 종전 문장 그대로.
+        checkin_s = mailbox.next_checkin_s(on.checkin_ids)
         timer = (
             f", or in {format_duration(checkin_s)} if nothing has reported"
             if checkin_s
             else ""
         )
-        obs = f"Observation: waiting — will wake on: {'; '.join(sources)}{timer}.{kept}"
+        obs = f"Observation: waiting — will wake on: {'; '.join(on.sources)}{timer}."
         _append_observation(
             self.state.messages,
             self.ctx,
@@ -1226,17 +1219,15 @@ class TurnDispatcher:
             success=True,
             turn=self.state.turn,
         )
-        if in_place:
-            return self._wait_in_place(turn, mailbox)
-        summary = f"⏸ waiting on {'; '.join(sources)}" + (
-            f" — {reason}" if reason else ""
-        )
-        return ToolResult(True, output=summary, waiting=True)
+        # 받아들여진 `wait` 에서만 — 기다리기 직전(내장 스냅샷 훅이 "before wait (turn N)" 을 찍는다, 5c-1 결정 K).
+        # 결과를 읽지 않는다: 훅이 `wait` 를 막거나 바꿀 수 없다
+        self.tools.fire_hook(PRE_WAIT)
+        return self._wait_in_place(turn, mailbox, on)
 
-    def _wait_in_place(self, turn, mailbox):
-        """제자리 `wait` (v10.84.0 private, v10.141.0 main): 런을 끝내지 않고 메일(회신·작업
-        통지·체크인)이 오거나, main 이면 사람 입력이 도착할 때까지 막는다 — 같은 런이라 감사
-        범위도 그 런 하나다. 체크인 타이머는 걸고(메일로 온다), 깨면 푼다. 레지스트리가
+    def _wait_in_place(self, turn, mailbox, on):
+        """제자리 `wait` — 받아들여진 `wait` 는 모두 여기다(5c-1; 종전 v10.84.0 private, v10.141.0 회신을 기다리는
+        main): 런을 끝내지 않고 메일(회신·작업 통지·모니터·체크인)이 오거나, main 이면 사람 입력이 도착할 때까지
+        막는다 — 같은 런이라 감사 범위도 그 런 하나다. 깨면 새 구간(`_begin_segment`). 체크인 타이머는 걸고(메일로 온다), 깨면 푼다. 레지스트리가
         없으면 기다릴 메일함이 없다 — 깨울 것이 사라진 것과 같이 다룬다.
 
         기다리는 동안 이 스레드가 끊기면(CLI Ctrl+C) 런의 정지를 세우고 그대로 던진다 — 이
@@ -1244,10 +1235,14 @@ class TurnDispatcher:
         from agent_cli.render import get_renderer
 
         renderer = get_renderer()
-        awaited = mailbox.awaited()
-        if awaited:
+        # 대기 줄(결정 C)과 체크인 대상은 받아들일 때 읽은 ``on``(`WaitingOn`)에서 — 다시 읽지 않는다(4b). 회신만이면
+        # 종전 그대로, 작업·모니터·예약은 짧은 이름으로 덧붙인다(비면 넘기지 않는다)
+        awaited = list(on.awaited)
+        if on.others:
+            renderer.wait_in_place(True, awaited, others=on.others)
+        else:
             renderer.wait_in_place(True, awaited)
-        mailbox.arm_checkin()
+        mailbox.arm_checkin(on.checkin_ids)
         try:
             why = mailbox.wait(
                 stop_event=self.state.stop_event,
@@ -1260,8 +1255,7 @@ class TurnDispatcher:
         finally:
             mailbox.run_started()  # 체크인 해제 — 다음 wait 가 다시 건다
             mailbox.clear_waiting()
-            if awaited:
-                renderer.wait_in_place(False, [])
+            renderer.wait_in_place(False, [])
         if why == "input":
             # `wait_input` 이 사람의 말을 보았다 — 그 사이 취소돼 상자에 없어도 사람이 쓴 것은 사실이다
             kinds = mailbox.arrivals() or (USER,)
@@ -1297,6 +1291,7 @@ class TurnDispatcher:
                 success=True,
                 turn=self.state.turn,
             )
+        self._begin_segment()  # 깼다 — 새 구간(세션 종료의 "closed" 는 위에서 런을 끝냈다)
         return _CONTINUE
 
     def _terminal_record(self, turn, answer: str, claimed, still_open) -> dict:

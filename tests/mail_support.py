@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+from agent_cli.session_slots import get_agent_registry
+from agent_cli.wake import WaitingOn, schedule_wakes, wake_items
+
 
 def to_main(reg, mail: dict) -> str:
     """``mail`` 을 main 메일함으로 배달한다 — 에러 문자열 또는 ""."""
@@ -22,3 +25,11 @@ def agent_wake_lines(reg, addr: str) -> list[str]:
     from agent_cli.wake import relation_items
 
     return [text for _, text in relation_items(reg.wake_facts(), addr)]
+
+
+def checkin_ids(owner: str, agents=None) -> frozenset[str]:
+    """``owner`` 가 지금 `wait` 하면 걸릴 체크인 대상 — 받아들여진 `wait` 의 값(`WaitingOn.checkin_ids`)과 같은 계산을
+    표시 없이(`Mailbox.accept_wait` 는 기다림 표시를 세운다). ``agents`` 가 없으면 슬롯의 레지스트리."""
+    reg = agents if agents is not None else get_agent_registry()
+    items = wake_items(owner, agents=reg, with_schedule=schedule_wakes(owner))
+    return WaitingOn(tuple(items), ()).checkin_ids

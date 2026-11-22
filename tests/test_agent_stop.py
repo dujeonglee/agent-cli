@@ -58,7 +58,6 @@ class Stage:
 
     - ``HOLD``: 시작을 알리고(``started[tag]``), ``absorb[tag]`` 가 서면 받은편지함을 이 런으로 흡수하고
       (``absorbed[tag]``), 정지가 설 때까지 막는다. 멈추면 interrupt 결과, 아니면 성공.
-    - ``PARK``: 바로 `wait` 로 끝난다(빚은 열린 채 — 스스로 잠든 상주).
     - ``GATE``·``DIE``·``GULP``: 시작을 알리고 ``absorb[tag]`` 를 기다렸다가 성공으로 끝나거나(GATE) 워커를
       죽인다(DIE — 받은편지함은 그대로, GULP — 받은편지함을 이 런으로 흡수한 뒤).
     - 그 밖: 바로 성공(``ran`` 에 표지를 적는다).
@@ -76,7 +75,7 @@ class Stage:
         return d.setdefault(tag, threading.Event())
 
     def __call__(self, kind, start, ctx):
-        m = re.search(r"\b(HOLD\d+|PARK\d+|GATE\d+|DIE\d+|GULP\d+|NEXT)\b", start.query)
+        m = re.search(r"\b(HOLD\d+|GATE\d+|DIE\d+|GULP\d+|NEXT)\b", start.query)
         tag = m.group(1) if m else ""
         if tag.startswith(("GATE", "DIE", "GULP")):
             # 시작을 알리고 ``absorb[tag]`` 가 서면 끝난다 — GATE 는 성공, DIE·GULP 는 워커를 죽인다
@@ -87,8 +86,6 @@ class Stage:
             if tag.startswith(("DIE", "GULP")):
                 raise WorkerDies(tag)
             return ToolResult(True, output=f"{tag} done")
-        if tag.startswith("PARK"):
-            return ToolResult(True, output="⏸ waiting", waiting=True)
         if not tag.startswith("HOLD"):
             self.ran.append(tag)
             # 그 런의 첫 흡수가 읽은 것 — 들고 있던 항목(``opens_run`` 거짓)이 여기서 보인다
@@ -343,24 +340,6 @@ class TestRemove:
         assert reg.awaited_replies("main") == []
         assert reg.awaited_replies(f"agent:{p6.key}") == []
         assert tm.revivable is False
-
-    def test_idle_resident_removed_answers_parked_debt_and_queue(self, reg, stage):
-        p6 = peer(reg)
-        tm = spawn(reg)
-        # 스스로 잠든 빚(지난 런이 `wait` 로 끝남) — 장부에만 있다
-        assert not reg.request(
-            tm.key, "PARK1 old ask", author=f"agent:{p6.key}", item_id="r-60"
-        )
-        assert until(lambda: tm.handled == 1 and tm.state == "idle")
-        assert reg.kill(tm.key) == ""
-        assert until(lambda: gone(tm))
-        (r60,) = peer_replies(p6)
-        assert (
-            r60["re"] == "r-60"
-            and "while it was working on your request [r-60]" in r60["text"]
-        )
-        assert "Last activity" not in r60["text"]  # 런 없이 남은 빚 — 실을 활동이 없다
-        assert reg.awaited_replies(f"agent:{p6.key}") == []
 
     def test_model_kill_is_the_same_device_and_names_the_actor(self, reg, stage):
         tm = spawn(reg)

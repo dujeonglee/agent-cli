@@ -218,11 +218,13 @@ class Renderer(ABC):
         `Ledger.snapshot` 이 런 시작·턴 경계·`complete` 정산·런 끝에 온다. 모델
         입력과 무관한 표시 전용이다. Default no-op — web 은 스티키, CLI 는 한 줄."""
 
-    def wait_in_place(self, waiting: bool, awaited: list[dict]) -> None:
-        """main 이 기다리는 회신을 둔 채 제자리에서 `wait` 한다 / 깼다 (v10.141.0,
-        docs/agent-engine/DESIGN.md §5·§6). ``awaited`` 는 ``[{"id", "from", "text"}]``
-        (깰 때는 빈 목록). 표시 전용 — 사람에게 "입력하면 깨운다" 를 알린다. Default no-op —
-        web 은 입력창 위 줄(스티키), CLI 는 ⏳ 한 줄."""
+    def wait_in_place(
+        self, waiting: bool, awaited: list[dict], others: list[str] | None = None
+    ) -> None:
+        """main 이 제자리에서 `wait` 한다 / 깼다 (v10.141.0, docs/agent-engine/DESIGN.md §5·§6). ``awaited`` 는
+        기다리는 회신 ``[{"id", "from", "text"}]``(깰 때는 빈 목록), ``others`` 는 회신 말고 깨울 것의 짧은 이름
+        ("job #1"·"monitor m-2"·"a schedule" — 5c-1 결정 C, 없으면 None). 표시 전용 — 사람에게 "입력하면
+        깨운다" 를 알린다. Default no-op — web 은 입력창 위 줄(스티키), CLI 는 ⏳ 한 줄."""
 
     def note_request(self, request_id: str, hidx: int) -> None:
         """장부 항목 ``request_id`` 의 원문 레코드 history 서수 (v10.119.0) —

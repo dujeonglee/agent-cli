@@ -541,15 +541,20 @@ class MinimalRenderer(Renderer):
             soft_wrap=True,
         )
 
-    def wait_in_place(self, waiting: bool, awaited: list[dict]) -> None:
-        """``⏳ waiting for N reply (r-21) — type to steer…`` 한 줄 (v10.141.0, 설계 §6) —
-        main 이 제자리 대기에 들어갈 때만. 깰 때는 찍지 않는다(다음 줄이 그 이유를 말한다)."""
-        if not waiting or not awaited:
+    def wait_in_place(
+        self, waiting: bool, awaited: list[dict], others: list[str] | None = None
+    ) -> None:
+        """``⏳ waiting for N reply (r-21), job #1 — type to steer…`` 한 줄 (v10.141.0, 설계 §6; 작업·모니터·예약은
+        5c-1 결정 C) — main 이 제자리 대기에 들어갈 때만. 깰 때는 찍지 않는다(다음 줄이 그 이유를 말한다)."""
+        parts = list(others or [])
+        if awaited:
+            n = len(awaited)
+            ids = ", ".join(str(r.get("id")) for r in awaited)
+            parts.insert(0, f"{n} repl{'ies' if n != 1 else 'y'} ({ids})")
+        if not waiting or not parts:
             return
-        n = len(awaited)
-        ids = ", ".join(str(r.get("id")) for r in awaited)
         text = (
-            f"⏳ waiting for {n} repl{'ies' if n != 1 else 'y'} ({ids}) — type to steer "
+            f"⏳ waiting for {', '.join(parts)} — type to steer "
             "or give new work, Enter to send"
         )
         self._p(f"  [{_MUTED}]{escape(text)}[/]")

@@ -56,7 +56,7 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
 | `agent` | 깊이 상한 아래의 모든 루프 | run · spawn · status · resume · kill — 같은 스키마(루프별 축소판 없음) |
 | `message` | main · 모든 에이전트 | 요청(기본 — 상대가 `reply` 를 빚진다) 또는 통지(`expects_reply` false). 받는 이 = 키·이름·`"main"` |
 | `reply` | main · 모든 에이전트 | 빚 갚기 — run 에이전트의 "결과" 도 이것 |
-| `wait` | 깨울 길이 있는 루프(강제 탑재) | main 은 기다리는 회신이 있으면 제자리, 에이전트는 런을 끝내고 받은편지함이 깨운다 |
+| `wait` | 깨울 길이 있는 루프(강제 탑재) | 모두 제자리 — 런을 끝내지 않고 깨울 것(회신·메일·작업·모니터·사람의 말·체크인)을 기다린다(v10.163.0) |
 
 사람의 `@agt-<key>` 명령과 웹 채널 직접 입력(`/api/agent/<key>/input`)은 그대로 `request(author="user:…")` 다 —
 일하는 run 에이전트에도 쓸 수 있다(시안 C). 사람의 `@<profile> <task>` 는 루프 밖의 run 하나를 띄우고
@@ -72,14 +72,14 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
   남아 있으면 `complete` 를 되돌린다 — 되돌림 예산 8·정책은 장부의 것 그대로. 예산이 다하면 결과 말미에
   "⏳ N repl… you asked for had not arrived when this run closed" 와 목록을 적는다(회신은 그래도 메일로 온다).
   웹 📋 띠는 같은 사본(`Ledger.snapshot`, source "awaiting")을 그린다.
-- **제자리 대기.** `MainLoop.wait_policy` 는 기다리는 회신이 있으면 `WAIT_BLOCK` — `dispatch._wait_in_place` 가
+- **제자리 대기.** 받아들여진 `wait` 는 모두(v10.163.0 — 종전엔 `MainLoop.wait_policy` 가 기다리는 회신이 있을 때만 `WAIT_BLOCK`) — `dispatch._wait_in_place` 가
   `Mailbox.wait` → `AgentRegistry.wait_mail` 로 메일(회신·작업 통지·체크인 — `Mailbox.arrived`, main 은 사람의 말을 세지 않는다) 또는 사람 입력
   (`wait_input`: 웹은 `runtime.wait_for_human_words`, run 은 터미널 줄을 main 앞 사람의 말(`MainInput`)로 넣는 `main._terminal_steer_input` — 둘 다 대기 중
   친 명령(`/stop agt-3` 등 — 판정은 표면의 `is_command`)은 그 자리에서 라우팅하고 깨우지 않는다)이 올 때까지
   막고, 깨면 같은 런의 다음 턴 경계 흡수(`MainLoop.intake`)가 읽는다. 사람 입력에 깨면 관찰
   "the wait was interrupted — the user wrote to you; … still awaited, so `wait` again when you are done" 를 남긴다.
-  같은 런이라 감사(auditor)의 구간이 회신까지 덮는다. 기다리는 회신 없이 작업·모니터만 기다리면 지금처럼 런을 끝낸다.
-  에이전트의 `wait` 는 그대로다(런 끝, 메일로 깸).
+  같은 런이라 감사(auditor)의 구간이 회신까지 덮는다. `[v10.163.0 에서 바뀜]` 작업·모니터만 기다려도, 에이전트가
+  기다려도 같다 — 제자리에서 기다리고 깨면 같은 런을 잇는다(종전엔 런을 끝냈다).
 - **회신·통지는 항목이 아니다 (사용자 결정).** 내가 보낸 요청의 회신(명시 `reply`·런 끝 폴백 요약)은 도착하면 그 기다리는
   회신 항목을 닫고(보낸 쪽 기록이 지워진다) 내용만 전한다 — 새 장부 항목(`n-`)을 만들지 않는다. 통지(`expects_reply` false)도
   읽으면 끝이다. 요청(`expects_reply` true)만 받는 쪽에 빚을 만든다. main 은 `core.mail_item` 이 `is_reply_or_notice` 를 장부

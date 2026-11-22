@@ -269,7 +269,8 @@ class LLMCaller:
         return build_session_state(
             compaction_notice=notice,
             notice_memory="memory" in self.cfg.tools_list,
-            turn=self.state.turn,
+            # 꼬리의 턴 줄은 구간의 턴(5c-1) — 턴 상한이 세는 것과 같다
+            turn=self.state.turn - self.state.segment_turn0,
             max_turns=self.cfg.kind.max_turns,
             agents=agents,
             memory=memory,

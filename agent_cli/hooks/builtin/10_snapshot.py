@@ -11,11 +11,14 @@
   요약(`Tool.summary_arg`: 명령·경로)을 붙여 `list` 만 보고 "망치기 직전" 을 고를 수
   있게(v10.80.0; 종전 "before shell (turn 18)" 만으로는 어느 명령인지 history 를
   열어야 했다).
+- ``PreWait``: 받아들여진 `wait` 가 기다리기 직전 — "before wait (turn N)" (5c-1 결정 K). `wait` 는 런을 끝내지
+  않아 그 자리의 런 끝 체크포인트가 없다: 모델이 마지막으로 고친 뒤, 기다리는 동안 남(작업·다른 에이전트·사람)이
+  바꾸기 전의 지점이다. 최소 간격을 지키지 않는다(``force``) — 건너뛰면 그 지점을 잃는다.
 - ``OnSessionEnd``: 마지막 체크포인트 — 세션 끝 상태도 복원 가능하게.
 
 여러 루프(main·상주·스킬·일회성)가 같은 세션 러너를 쓰므로 이 훅은 루프마다 불린다
 — `get_snapshot` 이 워크스페이스당 하나를 돌려주고 `init` 은 한 번만 일어난다.
-함수 이름은 ``EVENT_TO_FUNC`` 대로(``on_session_start`` / ``pre_tool_use`` /
+함수 이름은 ``EVENT_TO_FUNC`` 대로(``on_session_start`` / ``pre_tool_use`` / ``pre_wait`` /
 ``on_session_end``).
 """
 
@@ -23,9 +26,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_cli.snapshot import MUTATING_TOOLS, checkpoint_label
+from agent_cli.snapshot import MUTATING_TOOLS, checkpoint_label, get_snapshot
 
-EVENTS = ["OnSessionStart", "PreToolUse", "OnSessionEnd"]
+EVENTS = ["OnSessionStart", "PreToolUse", "PreWait", "OnSessionEnd"]
 
 _SECTION = "Workspace snapshot"
 
@@ -74,6 +77,14 @@ def pre_tool_use(ctx):
     if store is not None and store.enabled:
         summary = _call_summary(ctx.tool_name, ctx.tool_input)
         store.checkpoint(checkpoint_label(ctx.tool_name, ctx.turn, summary))
+
+
+def pre_wait(ctx):
+    if not _enabled():
+        return
+    store = get_snapshot(Path.cwd())
+    if store is not None and store.enabled:
+        store.checkpoint(f"before wait (turn {ctx.turn})", force=True)
 
 
 def on_session_end(ctx):

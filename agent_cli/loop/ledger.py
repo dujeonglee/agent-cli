@@ -119,7 +119,7 @@ class Ledger:
     def add_request(self, rid: str, author: str, text: str, *, turn: int = 0) -> None:
         """``turn`` (v10.119.0): 오른 때의 턴 — 화면의 "N turns" 만 쓴다(꼬리는
         안 읽는다). 항목 dict 에 넣지 않고 따로 둔다: 그 dict 는 최종 카드의
-        ``requests``·``park_requests`` 로 그대로 흘러가 모양이 바뀌면 안 된다."""
+        ``requests`` 로 그대로 흘러가 모양이 바뀌면 안 된다."""
         self.requests.append(
             {"id": str(rid), "author": author or "", "text": text or ""}
         )
@@ -178,6 +178,10 @@ class Ledger:
                 r for r in self.requests if str(r.get("id")) not in claimed
             ]
         return list(self.requests)
+
+    def new_segment(self) -> None:
+        """구간(깨어 있는 토막)이 새로 시작한다 — 되돌림 예산을 다시 :data:`NAG_BUDGET` 으로(5c-1). 항목은 그대로다."""
+        self.budget = NAG_BUDGET
 
     def spend(self) -> bool:
         """되돌림 한 번을 쓴다 — 남았으면 True."""

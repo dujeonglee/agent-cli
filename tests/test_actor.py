@@ -108,9 +108,7 @@ class TestRunEnd:
         assert RunEnd.of(self._r()).outcome == "done"
         assert RunEnd.of(self._r(success=False)).outcome == "failed"
         assert RunEnd.of(self._r(), stopped=True).outcome == "stopped"
-        assert (
-            RunEnd.of(self._r(waiting=True), stopped=True).outcome == "wait"
-        )  # wait 가 먼저
+        # `wait` 는 런의 끝이 아니다(5c-1) — "wait" 결말이 없다
         assert RunEnd.of((self._r(), 0.1)).outcome == "done"  # 에이전트의 (결과, 초)
         boom = RuntimeError("x")
         end = RunEnd.crashed(boom)
