@@ -125,6 +125,10 @@ class Recorder:
         #: 원인 미상의 사망을 흉내 낸다(요청 처리기 밖의 기계 사망 — `test_machinery_crash_notifies_main` 과 같은
         #: 수단). 기록은 터지기 전에 남는다.
         self.crash_on_start: dict[str, threading.Event] = {}
+        #: ``(사건 이름, 레인)`` → 그 레인의 스레드가 그 사건을 적은 뒤 던질 예외 — **런 안의 예외**다(에이전트의
+        #: `wait_in_place(True)` 면 제자리 대기의 대기 줄에서 — `LoopKind.run` 의 ``except Exception`` →
+        #: `ResidentLoop.crashed`, 제품에 있는 길). 한 번 쓰면 빠진다.
+        self.raise_in: dict[tuple[str, str], Exception] = {}
         #: ``(사건 이름, 에이전트 키 또는 "*", 조건)`` — 그 키의 스레드가 그 사건을 적은 뒤 ``조건`` 이 참이 될 때까지 그
         #: 스레드를 잡는다. 그 스레드가 다음에 짓는 꼬리(로스터의 남의 상태)보다 다른 배우의 사건을 앞세운다.
         #: 한 번 쓰면 빠진다(`hold`).
@@ -185,6 +189,9 @@ class Recorder:
                 if not gate.wait(_PATIENCE_S):
                     raise TimeoutError("oracle: crash gate never opened")
                 raise MemoryError("oracle: simulated crash in worker machinery")
+            exc = self.raise_in.pop((name, self.lane()), None)
+            if exc is not None:
+                raise exc
             if name == "wait_in_place" and args and args[0]:
                 self.main_waiting.set()
             if name == "wait_in_place" and args and not args[0]:
@@ -2988,6 +2995,135 @@ def s41_close_while_a_resident_is_in_a_call(root: Path) -> dict:
     return s.collect(facts)
 
 
+def s42_run_crashes_while_waiting(root: Path) -> dict:
+    """5e1 덮개(고칠 후보 3-4): 상주 aa 가 기다리는 중 그 작업 구간이 예외로 끝난다 — 제품에 있는 길(런 안의 예외 →
+    `ResidentLoop.crashed`). main 이 aa 에게 과제(r-…)를 맡기고 제자리에서 기다린다 → aa 가 상주 bb 에게 회신 기대
+    `message` 를 보내고 `wait` → 받아들여진 뒤 aa 의 대기 줄(`wait_in_place(True)`)에서 `RuntimeError`
+    (`Recorder.raise_in`). 고정하는 것: ① aa 가 빚진 main 에게 가는 실패 회신의 글 ② aa 가 기다리던 bb 의 회신 — bb 가
+    나중에 갚으면 aa 는 무엇을 읽는가 ③ aa 의 기다림 표시·체크인 타이머가 남는가 ④ aa 가 살아 다음 요청을 받는가. 순서:
+    bb 는 aa 의 런이 끝난(한가한) 뒤에 갚고, main 은 aa 의 실패 회신을 읽은 뒤 aa 에게 다시 묻는다."""
+    box: dict = {}
+    facts: dict = {}
+    bb_go = threading.Event()
+
+    def aa_waits(msgs):
+        s = box["s"]
+        aa = _agent_key(s, "aa")
+        s.recorder.raise_in[("wait_in_place", f"agent-{aa}")] = RuntimeError(
+            "oracle: the run failed while waiting"
+        )
+        return call("wait")
+
+    def after_aa_read_k2(step):
+        # aa 가 bb 의 회신으로 연 런을 끝낸 뒤 — main 의 다음 요청이 그 런에 흡수되지 않고 새 런을 연다
+        def go(m):
+            s = box["s"]
+            aa = _agent_key(s, "aa")
+            until(
+                lambda: (
+                    len(p.calls.get("TASK-K1", [])) >= 3 and s.agent_state(aa) == "idle"
+                ),
+                "aa read K2",
+            )
+            return step
+
+        return go
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="spawn", name="bb"),
+                call("agent", mode="spawn", name="aa", task="TASK-K1 ask bb"),
+                _after_runs_began(box, 1, call("wait")),
+                # aa 의 실패 회신을 읽은 뒤 — aa 가 살아 있는가: 다시 묻는다(aa 가 bb 의 회신을 읽고 난 뒤)
+                after_aa_read_k2(
+                    call("message", to="aa", text="TASK-K3 are you there")
+                ),
+                call("wait"),
+                # 그 `wait` 의 결과를 본 뒤(여섯째 호출) — aa 의 회신이 온 다음에 끝낸다
+                lambda m: (
+                    until(
+                        lambda: not box["s"].reg.awaited_replies("main"), "aa answered"
+                    ),
+                    complete_all("main read it")(m),
+                )[1],
+            ]
+            + [complete_all("main more")] * 10,
+            "TASK-K1": [
+                _main_waits_then(
+                    box,
+                    lambda m: _held_peer_message(
+                        box, "aa", "bb", "TASK-K2 compute", sender_ends_run=True
+                    ),
+                ),
+                aa_waits,
+                # bb 의 회신이 연 aa 의 새 런 — 읽고 끝낸다(갚을 것이 없다: main 의 과제는 실패 회신으로 닫혔다)
+                call("complete", result="aa read K2", answers=[]),
+                # main 이 다시 물은 런 — 살아 있다: main 이 `wait` 의 결과를 본 뒤(여섯째 호출 시작) 갚는다. 같은 ctx 라
+                # 대본은 TASK-K1 이다
+                _after_main_calls(
+                    box,
+                    6,
+                    lambda m: call("reply", id=owed_id(m), text="yes, still here"),
+                ),
+                # aa 의 회신이 연 main 의 메일 런(일곱째 호출)이 시작된 뒤 — 그 꼬리가 aa 를 [busy] 로 읽게
+                _after_main_calls(
+                    box,
+                    7,
+                    lambda m: call("complete", result="answered main", answers=[]),
+                ),
+            ]
+            + [complete_all("aa more")] * 10,
+            "TASK-K2": [
+                lambda m: (
+                    bb_go.wait(_PATIENCE_S),
+                    call("reply", id=owed_id(m), text="K2 done"),
+                )[1],
+                call("complete", result="ok"),
+            ],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.say("MAIN go", nickname="dj")
+
+    def done(s):
+        until(lambda: len(s.agent_keys()) == 2, "spawned")
+        aa = _agent_key(s, "aa")
+        # aa 의 런이 예외로 끝났다(한가함) — 그 직후의 사실
+        until(
+            lambda: (
+                s.agent_state(aa) == "idle" and len(p.calls.get("TASK-K2", [])) >= 1
+            ),
+            "aa's run crashed, bb in its call",
+        )
+        facts["after_crash"] = {
+            "aa_waiting_mark": s.main_input.post.is_waiting(f"agent:{aa}"),
+            "aa_checkin_armed": f"agent:{aa}" in s.reg._checkin_armed,
+            "awaited_aa": s.reg.awaited_replies(f"agent:{aa}"),
+            "awaited_main": s.reg.awaited_replies("main"),
+            "roster": _roster(s),
+        }
+        bb_go.set()
+        until(
+            lambda: (
+                runs_ended(s) >= 1
+                and all(s.agent_state(k) in ("idle", "dead") for k in s.agent_keys())
+            ),
+            "settle",
+        )
+        facts["end"] = {
+            "aa_waiting_mark": s.main_input.post.is_waiting(f"agent:{aa}"),
+            "aa_checkin_armed": f"agent:{aa}" in s.reg._checkin_armed,
+            "awaited_aa": s.reg.awaited_replies(f"agent:{aa}"),
+            "awaited_main": s.reg.awaited_replies("main"),
+            "roster": _roster(s),
+            "queue_lines": s.reg.pending_mail(),
+        }
+
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
 def s32_quiet_reply_then_waking_mail(root: Path) -> dict:
     """ "Stop everything" 의 깨우지 않는 정지 회신이 한가한 main 앞에 먼저 서고, 그 뒤 작업 통지(깨움)가 온다 — 메일
     런이 열리고 그 첫 턴 경계가 둘을 **도착 순서**로 읽는다 (web). s11 과 같은 정지, 다음 런을 사람 말 대신 메일이 연다."""
@@ -3111,6 +3247,7 @@ SCENARIOS = {
     "s39_kill_a_waiting_requester": s39_kill_a_waiting_requester,
     "s40_close_while_main_is_in_a_call": s40_close_while_main_is_in_a_call,
     "s41_close_while_a_resident_is_in_a_call": s41_close_while_a_resident_is_in_a_call,
+    "s42_run_crashes_while_waiting": s42_run_crashes_while_waiting,
 }
 
 
