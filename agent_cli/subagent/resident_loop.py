@@ -18,6 +18,7 @@ spawner 의 깊이 +1" 을 다시 읽어 흔들렸다), 스택은 호출자의 �
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 from agent_cli.actor import RunEnd
@@ -190,8 +191,11 @@ class ResidentLoop(LoopKind):
         self.binding = binding
         self.ctx = ctx
         tm.ctx = ctx
-        if tm.restarted:  # 재시작이 되살렸다 — 컨텍스트 끝에 사실 기록 한 줄(5c-0)
-            record_restart(ctx)
+        # 재시작이 되살렸다 — 컨텍스트 끝에 사실 기록 한 줄(5c-0). 모델은 그것을 읽고, 사람은 🤝 창의 한 줄로 본다
+        # (``restarted`` — 웹만 그린다, v10.165.0). 기록을 적지 않은 때(런 없이 거듭 재시작)는 줄도 없다
+        if tm.restarted and record_restart(ctx):
+            line = {"key": tm.key, "direction": "restarted", "author": "", "text": ""}
+            self.registry._record(tm, {**line, "to": tm.key, "ts": time.time()})
 
     # ── ⑫ 시작 — 받은편지함 항목 → 시작 메시지 + 회계 ──
     def start(self, items: list[dict]) -> Start:
@@ -332,8 +336,6 @@ class ResidentLoop(LoopKind):
         - 세션 종료로 끝난 런(``session_ended`` — 5e1)은 아무것도 하지 않는다: 회신·폴백·우편 정리·처리 수 없이
           그대로 돌려준다. 우편은 프로세스와 함께 사라지고(5c-0), 마지막 저장은 `shutdown_all` 이 한다.
         """
-        import time as _time
-
         if result is not None and getattr(result, "session_ended", False):
             return result, secs
 
@@ -366,7 +368,7 @@ class ResidentLoop(LoopKind):
             "direction": "out",
             "author": tm.key,
             "success": success,
-            "ts": _time.time(),
+            "ts": time.time(),
             "profile": tm.profile_name,
             "instance_name": tm.instance_name,
         }

@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli import item_ids
+from agent_cli.subagent import conversation_log
 from tests.test_agents_live import (
     _FakeLoopResult,
     _RecordingRunner,
@@ -291,6 +292,35 @@ def test_a_revived_resident_reads_the_restart_record(tmp_path, renderer, regs): 
     assert _is_restart_record(_last(reg2.get(key).ctx))
 
 
+def _restart_lines(reg, key) -> list[dict]:
+    return [
+        ln
+        for ln in conversation_log.read(reg.get(key).home_dir)
+        if ln["direction"] == "restarted"
+    ]
+
+
+def test_a_revived_resident_gets_one_restart_line_in_its_window(
+    tmp_path,
+    renderer,  # noqa: F811
+    regs,
+):
+    """재시작 기록을 적은 때 🤝 창에도 한 줄(v10.165.0) — `conversation.jsonl` 에 남고(resume 재생이 다시 그린다)
+    화면에 나간다. 기록을 적지 않는 거듭 재시작(사이에 런이 없다)에는 줄도 없다."""
+    reg1, key = _mid_run(tmp_path, regs)
+    reg1.get(key).ctx.add({"role": "user", "content": "task-1"})
+    reg2, _rec = _restart(tmp_path, regs)
+    assert wait_until(lambda: reg2.get(key).state == "idle")
+    (line,) = _restart_lines(reg2, key)
+    assert (line["key"], line["to"], line["text"]) == (key, key, "")
+    shown = [c[1] for c in renderer.named("agent_message")]
+    assert [c["key"] for c in shown if c["direction"] == "restarted"] == [key]
+    reg3, _rec = _restart(tmp_path, regs)
+    assert wait_until(lambda: reg3.get(key).state == "idle")
+    assert _is_restart_record(_last(reg3.get(key).ctx))
+    assert len(_restart_lines(reg3, key)) == 1
+
+
 def test_no_restart_record_for_a_run_agent_or_a_resident_revived_after_a_kill(
     tmp_path,
     renderer,  # noqa: F811
@@ -313,3 +343,4 @@ def test_no_restart_record_for_a_run_agent_or_a_resident_revived_after_a_kill(
     assert reg3.resume_teammate(key) == ""  # ✕ 뒤 사람이 되살림 — 재시작이 아니다
     assert wait_until(lambda: reg3.get(key).state == "idle")
     assert not _is_restart_record(_last(reg3.get(key).ctx))
+    assert _restart_lines(reg3, key) == []  # 창의 재시작 줄도 없다

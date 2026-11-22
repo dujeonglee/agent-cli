@@ -526,6 +526,14 @@
      "text": "TASK-W2 compute 6*7",
      "to": "agt-B",
      "ts": "<t>"
+    },
+    {
+     "author": "",
+     "direction": "restarted",
+     "key": "agt-A",
+     "text": "",
+     "to": "agt-A",
+     "ts": "<t>"
     }
    ],
    "agents/agt-B/conversation.jsonl": [
@@ -539,10 +547,46 @@
      "text": "TASK-W2 compute 6*7",
      "to": "agt-B",
      "ts": "<t>"
+    },
+    {
+     "author": "",
+     "direction": "restarted",
+     "key": "agt-B",
+     "text": "",
+     "to": "agt-B",
+     "ts": "<t>"
     }
    ]
   },
   "events": {
+   "agent-agt-A": [
+    [
+     "agent_message",
+     [],
+     {
+      "author": "",
+      "direction": "restarted",
+      "key": "agt-A",
+      "text": "",
+      "to": "agt-A",
+      "ts": "<t>"
+     }
+    ]
+   ],
+   "agent-agt-B": [
+    [
+     "agent_message",
+     [],
+     {
+      "author": "",
+      "direction": "restarted",
+      "key": "agt-B",
+      "text": "",
+      "to": "agt-B",
+      "ts": "<t>"
+     }
+    ]
+   ],
    "main": [
     [
      "agent_message",

@@ -130,7 +130,7 @@ export function ensureRunBlock(d) {
   var body = el("div", ["run-body"]);
   card.appendChild(head);
   card.appendChild(body);
-  var blk = { card: card, head: head, body: body, key: key, items: items, closed: false };
+  var blk = { card: card, head: head, body: body, key: key, items: items, closed: false, ts: endSecs(d.ts) };
   runBlocks[d.task_id] = blk;
   // run 에이전트는 받은편지함이 없다 — 머리는 과제 원문과 부른 쪽(부른 자리의 채널)
   if (d.run) head.appendChild(runItem({ text: d.label, author: channelOf(d.caller_task || "") }));
@@ -334,6 +334,8 @@ function renderFallbackRow(blk, d) {
   scheduleScroll();
 }
 
+const RESTARTED_TEXT = "↻ Session restarted — work in progress was cut off";
+
 export function ovOnAgentMsg(d) {
   if (!d || !d.key) return;
   var key = d.key;
@@ -396,6 +398,20 @@ export function ovOnAgentMsg(d) {
     }
     return;
   }
+  if (d.direction === "restarted") {
+    // 세션 재시작 (v10.165.0) — 그 채널 루트의 흐린 한 줄. resume 은 옛 런 블록을 먼저 재생하고 이 줄을 뒤에
+    // 보내므로, 자기 시각보다 늦게 시작한 첫 런 블록 앞에 세운다(없으면 끝).
+    var rc = el("div", ["card", "card-restarted"], RESTARTED_TEXT);
+    finishCard(rc, { ts: d.ts }, key);
+    var at = endSecs(d.ts);
+    var next = null;
+    Object.keys(runBlocks).forEach(function (tid) {
+      var b = runBlocks[tid];
+      if (b.key === key && b.ts > at && (!next || b.ts < next.ts)) next = b;
+    });
+    if (next) $messages.insertBefore(rc, next.card);
+    return;
+  }
   if (d.direction === "question") {
     // 대화 줄은 `→ ask` 도구 줄이 맡는다. 트레이는 **주소가 사람인 질문에만**
     // 뜨고, 무엇을 띄울지는 roster 의 `open_questions` 가 정한다.
@@ -414,6 +430,7 @@ export function ovOnAgentCleared(key) {
   $messages
     .querySelectorAll(
       ':scope > .card-queued[data-ch="' + ch + '"], ' +
+      ':scope > .card-restarted[data-ch="' + ch + '"], ' +
       ':scope > .card-run[data-ch="' + ch + '"] .run-head > .run-item, ' +
       ':scope > .card-run[data-ch="' + ch + '"] .run-body > .card-fallback'
     )
