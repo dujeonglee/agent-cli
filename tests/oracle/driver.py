@@ -1527,12 +1527,11 @@ def s14_restart_resume(root: Path, *, query: bool) -> dict:
     until(lambda: s.agent_state(worker) == "idle" and s.agent_state(asker) == "idle")
     # 펌프가 없는 동안: asker 가 main 에게 묻고(미배달 요청) 기다린다, worker 는 첫 일 도중 · 둘째는 줄에
     s.reg.request(asker, "TASK-P ask main about the branch")
-    # `message` 는 asker 의 TASK-P 빚을 갚지 않는다(v10.145.1) — 펌프가 없어 main 이 집지 않은 요청은 `wait` 근거가
-    # 아니므로 asker 의 런은 되묻기 끝에 폴백으로 끝난다. 그 폴백까지(메일 둘) 잡는다 — 하나에서 멈추면 폴백과 경주한다.
-    until(
-        lambda: len(s.reg.pending_mail()) == 2, "asker's request and its run's fallback"
-    )
-    until(lambda: s.agent_state(asker) == "idle")
+    # `[5c-2 C 에서 바뀜]` main 앞에 줄 선 요청은 `wait` 의 근거다("main has your request queued") — asker 는 받아들여져
+    # 제자리에서 기다리고, 세션 종료가 그 작업 구간을 멈춘다. 종전엔 main 이 집지 않은 요청이 근거가 아니어서 거절됐고
+    # asker 의 런은 되묻기 끝에 폴백으로 끝났다(메일 둘).
+    until(lambda: len(s.reg.pending_mail()) == 1, "asker's request")
+    until(lambda: _waits(s, f"agent:{asker}"), "asker waits in place")
     # worker 의 첫 일은 세션 종료가 멈춘다 — 그 런의 시작을 종료(로스터의 dead)까지 잡아, 모델 호출 전에 멈추게 한다
     s.recorder.hold("begin_agent_work", worker, lambda: s.agent_state(worker) == "dead")
     s.reg.request(worker, "TASK-O1 first job")
