@@ -769,6 +769,25 @@ def _from_driver_lane(send):
     return out[0]
 
 
+def _hold_parent_until_its_run_is_busy(s: Session, parent: str) -> None:
+    """``parent`` 가 run 에이전트를 띄운 뒤 — 그 run 이 과제를 집을 때까지(``busy``) ``parent`` 의 다음 꼬리를 잡는다.
+    잡는 자리는 ``parent`` 스레드의 다음 창 줄(`agent_message` — 그 과제의 in 줄, 띄운 직후)이다. 안 잡으면 부하 아래
+    ``parent`` 의 꼬리가 run 을 "starting · 1 queued" 로 읽는다(컨테이너 cpus 0.5, 750회 중 12회 — s34·s39)."""
+    me = f"agent-{parent}"
+
+    def kid_busy() -> bool:
+        if threading.current_thread().name != me:
+            return True
+        kids = [
+            k
+            for k in s.agent_keys()
+            if (s.reg.get(k).parent or "") == f"agent:{parent}"
+        ]
+        return bool(kids) and all(s.agent_state(k) == "busy" for k in kids)
+
+    s.recorder.hold("agent_message", "*", kid_busy)
+
+
 def _queued(s: Session, key: str) -> int:
     """에이전트 ``key`` 의 로스터 줄 선 수(``pending_requests``) — 꼬리 `## Live Agents` 가 "· N queued" 로 싣는 값."""
     return next(
@@ -1964,6 +1983,7 @@ def s34_parent_dies_with_its_run_agent(root: Path) -> dict:
         aa = _agent_key(s, "aa")
         # 다음 에이전트 런의 시작(띄운 run 의 것)을 aa 가 한가해질 때까지 잡는다
         s.recorder.hold("begin_agent_work", "*", lambda: s.agent_state(aa) == "idle")
+        _hold_parent_until_its_run_is_busy(s, aa)
         return call("agent", mode="run", task="TASK-G2 child work")
 
     def kid_works(msgs):
@@ -2058,6 +2078,7 @@ def s39_kill_a_waiting_requester(root: Path) -> dict:
         aa = _agent_key(s, "aa")
         # 띄운 run 의 런 시작을 aa 가 기다리기 시작할 때까지 잡는다
         s.recorder.hold("begin_agent_work", "*", lambda: _waits(s, f"agent:{aa}"))
+        _hold_parent_until_its_run_is_busy(s, aa)
         return call("agent", mode="run", task="TASK-X3 child work")
 
     def kid_works(msgs):
@@ -2867,10 +2888,19 @@ def s38_close_while_main_waits(root: Path) -> dict:
     t = s.pump_in_thread()
     assert s.recorder.main_waiting.wait(_PATIENCE_S)
     before = len(p.calls.get("MAIN", []))
+    aa = _agent_key(s, "aa")
+
+    def ends_after_aa_stopped(args, kwargs):
+        # 닫힌 뒤 main 의 런 끝 띠(`open_items`) — aa 의 평생 정지가 선 뒤에 그린다: 그 뒤로 aa 에게 보낸 기다리는 회신은
+        # 장부 사본에서 빠진다(받을 이 없음 — `awaited_replies`). 5e1 부터 main 은 정지로 끝나 그 띠가 정리(aa 멈춤)와
+        # 앞뒤가 갈렸다(cpus 0.5, 750회 중 68회)
+        if s.main_input.closed():
+            until(lambda: s.reg.get(aa).stop_event.is_set(), "aa stopped by the close")
+
+    s.recorder.rules["open_items"] = ends_after_aa_stopped
     s.stop_pump()
     closer = threading.Thread(target=s.close, daemon=True, name="oracle-close")
     closer.start()
-    aa = _agent_key(s, "aa")
     until(lambda: s.reg.get(aa).stop_event.is_set(), "aa stopped by the close")
     hold.set()
     until(lambda: not closer.is_alive() and not t.is_alive(), "closed")
