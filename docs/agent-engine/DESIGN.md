@@ -125,9 +125,20 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
 | 아직 시작 안 한 대기 요청 | 남김 — 다음 차례에 처리 | removed 회신 | 내려온다 — 회신의 동사·표지는 원인을 따른다(■ stopped · ✕ removed, v10.146.6) |
 | 그 에이전트가 기다리던 회신(자기가 맡긴 하위 일) | 그대로 — 하위 에이전트는 계속 | 하위 run 은 함께 멈춤 · 하위 상주는 남음 | 〃 |
 
-사람 주소의 빚(채널에 사람이 직접 쓴 요청)은 회신하지 않는다 — 창이 곧 배달이다. 세션 종료(`shutdown_all`)는 사람의
-정지가 아니다: 원인(`stop_cause`)이 비고 아무에게도 회신하지 않는다 — 재시작은 명단과 컨텍스트만 올리고 빚·줄은
-버린다(v10.160.0, 5c-0; 종전엔 재시작이 끊긴 요청을 되넣었다).
+사람 주소의 빚(채널에 사람이 직접 쓴 요청)은 회신하지 않는다 — 창이 곧 배달이다. 세션 종료는 사람의 정지가 아니다:
+원인(`stop_cause`)이 비고 아무에게도 회신하지 않는다 — 재시작은 명단과 컨텍스트만 올리고 빚·줄은 버린다(v10.160.0, 5c-0;
+종전엔 재시작이 끊긴 요청을 되넣었다).
+
+**세션 종료는 원인이 있는 정지 하나다 (v10.164.0, 5e1).** 닫는 쪽은 main 상자를 닫는다(`MainInput.close` — 웹 서버가
+내려갈 때, 정리의 `AgentRegistry.shutdown_all` 이 맨 먼저). 닫으면 일하던 작업 구간의 정지 플래그가 선다 — main 은
+`MainInput.close` 가 지금 런의 플래그를(펌프가 런을 열 때 `bind_stop` 으로 건 것), 에이전트는 `shutdown_all` 의 평생 정지가.
+main·에이전트가 같은 플래그를 같은 자리(턴 경계·스트림·도구 직전·전경 `shell`·MCP·제자리 대기)에서 보고, 엔진의 정지
+처리(`AgentLoop._on_interrupt`)가 "세션이 닫혔는가"(`LoopKind.session_ended` — main 은 `MainInput.closed`, 에이전트는
+레지스트리 우편의 main 상자)를 읽어 그렇다면 `[interrupt]` 기록·카드 없이 `ToolResult(session_ended=True)` 로 끝낸다. 끝
+정리는 그 원인(`RunEnd` "session_end")이면 아무것도 하지 않는다 — 정지·폴백 회신, 체크인, 감사, 우편 정리, 처리 수,
+일회용 에이전트의 `OnAgentEnd` 훅 모두 없다(`MainActor.ended`·`ResidentLoop.finish`·`AgentActor.ended`). run 의 Ctrl+C·
+SIGTERM 은 그대로다(첫 누름은 사람의 정지, 끝내는 길은 예외 — 에이전트는 `shutdown_all` 이 main 상자를 닫아 같은 사실을
+본다). 5c-pre 의 닫힘 전용 길(`Mailbox(closed=)`·"closed")은 지웠다.
 
 **회신.** 회신이므로(P2 규칙) 요청자의 기다리는 회신을 닫고 새 장부 항목을 만들지 않는다. 봉투는 회신 모양 그대로에
 머리 끝 표지(`mark`)만 더한다:
