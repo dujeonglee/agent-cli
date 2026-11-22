@@ -191,7 +191,7 @@ class TestCaller:
         assert c.stop_event is state.stop_event
 
     def test_main_session_is_depth_zero_with_every_tool(self):
-        c = Caller.main_session(binding=None, ctx=None, session=None)
+        c = Caller.main_session(binding=None, ctx=None, session=None, mcp_manager=None)
         assert c.owner == "main" and c.depth == 0 and c.tools is None
 
     def test_make_caller_is_a_main_caller(self):

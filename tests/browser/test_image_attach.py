@@ -303,7 +303,13 @@ def test_image_only_message_opens_a_run_and_the_worker_lives_on(stack, page, ws)
     caps = ModelCapabilities(32768, 4096, True, supports_vision=True)
     stack.server.binding.capabilities = caps
     spec = SimpleNamespace(
-        binding=None, max_turns=0, verbose=False, max_depth=2, ctx=None, session=None
+        binding=None,
+        max_turns=0,
+        verbose=False,
+        max_depth=2,
+        ctx=None,
+        session=None,
+        mcp_manager=None,
     )
     output = WebDispatchOutput(stack.renderer)
     surface = WebSurface(

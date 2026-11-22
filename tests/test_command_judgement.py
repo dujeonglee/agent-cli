@@ -59,7 +59,13 @@ TABLE: dict[str, tuple] = {
 
 def _spec():
     return SimpleNamespace(
-        binding=None, max_turns=0, verbose=False, max_depth=2, ctx=None, session=None
+        binding=None,
+        max_turns=0,
+        verbose=False,
+        max_depth=2,
+        ctx=None,
+        session=None,
+        mcp_manager=None,
     )
 
 

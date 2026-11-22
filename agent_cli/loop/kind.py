@@ -39,7 +39,7 @@ from agent_cli.loop.ports import (
     _hook_runner_port,
     _hook_unwired,
 )
-from agent_cli.session_slots import get_agent_registry
+from agent_cli.session_slots import get_agent_registry, get_hook_runner
 from agent_cli.wake import Mailbox, _private_inbox, release_owner
 
 
@@ -148,6 +148,7 @@ class Caller:
         binding,
         ctx,
         session,
+        mcp_manager,
         max_turns: int = 0,
         max_depth: int = 2,
         hooks_config: dict | None = None,
@@ -155,10 +156,10 @@ class Caller:
         graceful_interrupt: bool = False,
         verbose: bool = False,
         agent_registry=None,
-        hook_runner=None,
-        mcp_manager=None,
     ) -> Caller:
-        """루프 **밖**의 디스패치(`@agent`·`/skill`) — 감싸는 루프가 없으니 main 세션이 호출자다."""
+        """루프 **밖**의 디스패치(`@agent`·`/skill`) — 감싸는 루프가 없으니 main 세션이 호출자다.
+        훅 러너는 세션의 것(종류들의 포트와 같은 슬롯), ``mcp_manager`` 는 main 의 것 — 루프 안에서 부른
+        호출자(`from_loop`)가 main 에서 갖는 값과 같다."""
         return cls(
             owner="main",
             depth=0,
@@ -167,7 +168,7 @@ class Caller:
             binding=binding,
             tools=None,
             hooks_config=hooks_config,
-            hook_runner=hook_runner,
+            hook_runner=get_hook_runner(),
             mcp_manager=mcp_manager,
             agent_registry=agent_registry,
             session=session,

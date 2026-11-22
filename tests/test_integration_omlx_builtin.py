@@ -212,6 +212,7 @@ class TestAgentDispatchIntegration:
             "",
             max_turns=5,
             ctx=ctx,
+            mcp_manager=None,
         )
         assert result is not _AGENT_NOT_FOUND
         assert result is not None
@@ -231,5 +232,6 @@ class TestAgentDispatchIntegration:
             "openai",
             OMLX_BASE_URL,
             "",
+            mcp_manager=None,
         )
         assert result is _AGENT_NOT_FOUND

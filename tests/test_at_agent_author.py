@@ -37,7 +37,13 @@ def live(tmp_path):
     key, _ = reg.spawn(name="a")
     assert wait_until(lambda: reg.get(key).state == "idle")
     spec = SimpleNamespace(
-        binding=None, max_turns=0, verbose=False, max_depth=2, ctx=None, session=None
+        binding=None,
+        max_turns=0,
+        verbose=False,
+        max_depth=2,
+        ctx=None,
+        session=None,
+        mcp_manager=None,
     )
     surface = WebSurface(
         renderer=MagicMock(),
@@ -92,7 +98,13 @@ def test_spawn_task_is_labelled_too(tmp_path, monkeypatch):
         lambda name: (name[: -len("-spawn")], "spawn"),
     )
     spec = SimpleNamespace(
-        binding=None, max_turns=0, verbose=False, max_depth=2, ctx=None, session=None
+        binding=None,
+        max_turns=0,
+        verbose=False,
+        max_depth=2,
+        ctx=None,
+        session=None,
+        mcp_manager=None,
     )
     dispatch = _command_dispatch(
         spec, SimpleNamespace(agent_registry=reg), MagicMock, graceful_interrupt=True
