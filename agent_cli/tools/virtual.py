@@ -87,7 +87,7 @@ class WaitTool(Tool):
 
     name = "wait"
     terminal = True
-    #: 깨울 길이 있는 루프에만 (`LoopPorts.wakeable`) — 스킬·일회성 런은 결과가
+    #: 깨울 길이 있는 루프에만 (`LoopPorts.wakeable`) — 스킬 런은 결과가
     #: 호출자에게 돌아가므로 "기다린다" 가 성립하지 않는다.
     requires_handler = "wake"
     #: 깨울 길이 있는 루프면 프로파일 allowed-tools 와 무관하게 붙는다 (v10.141.0) — `message`

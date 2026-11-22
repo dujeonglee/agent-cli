@@ -220,7 +220,7 @@ def wake_items(
 
 def schedule_wakes(owner: str) -> bool:
     """켜진 예약이 이 주소의 `wait` 를 받아들일 근거인가 — main 만. 예약은 세션 것이라 main 에게 발화한다(사람의
-    말로 main 앞에 선다). 에이전트·private 주소(one-shot·하니스 작업)의 근거로 세면 예약이 그를 깨우지 않는데도
+    말로 main 앞에 선다). 에이전트·private 주소(하니스 작업)의 근거로 세면 예약이 그를 깨우지 않는데도
     `wait` 가 받아들여져 막힌다 (v10.84.0 private, 5b 변화 8 에이전트)."""
     return owner == "main"
 

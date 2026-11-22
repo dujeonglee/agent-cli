@@ -168,9 +168,8 @@ class MainActor:
     """main 의 액터 (`actor.run_actor`) — main 상자에서 런을 열 것(사람의 말 먼저, 없으면 깨우는 메일)을 꺼내, 명령이면
     그 자리에서 라우팅하고 아니면 런을 돌린다. 수명은 세션이다 — 정책(`LifetimePolicy`)이 끝을 정하거나 상자가 닫힌다.
 
-    런의 예외는 표면이 정한다(`run_failed` — web 은 알리고 계속, run 은 전파). 그 길에서는 런 끝 정리(빚 정리·감사·
-    표면의 `run_ended`)를 부르지 않는다(`tests/test_actor_lifetime.py` 의 웹 main 런 예외 — 끝내기 규칙을 모으는 단계의
-    자리)."""
+    런의 예외는 표면이 정한다(`run_failed`) — web 은 삼키고 `ended` 가 ``crashed`` 로 끝 정리를 한다, run 은
+    전파한다(정리 없음)."""
 
     def __init__(self, deps: PumpDeps):
         self.deps = deps

@@ -3,7 +3,7 @@
 세 조각을 소유한다:
 
 - :class:`AgentRuntime` — 상주/서브 에이전트에 넘기는 provider 배선
-  13키의 **단일 정의**. 종전엔 run/web(main.py)/tool_bridge 세 곳이 같은
+  묶음의 **단일 정의**. 종전엔 run/web(main.py)/tool_bridge 세 곳이 같은
   dict 리터럴을 손으로 나열했고, 키 구성부터 어긋나 있었다(run/web 엔
   ``compaction_enabled`` 부재, web 은 ``hooks_config`` 를 None 으로 고정).
 - :func:`build_agent_registry` / :func:`wire_agent_mail` — registry 생성+
@@ -58,7 +58,7 @@ from agent_cli.wake import Mailbox
 class AgentRuntime:
     """상주/서브 에이전트 실행에 필요한 provider 배선 묶음.
 
-    소비자(AgentRegistry._run_message / runner)는 dict 를 기대하므로
+    소비자(에이전트 레지스트리·`agent` 도구·하니스 작업)는 dict 를 기대하므로
     경계에서는 :meth:`as_dict` 로 넘긴다 — 필드명 == 종전 dict 키
     (계약은 tests 의 키-셋 핀 테스트가 고정). ``compaction_enabled`` 는
     소비 측 기본값(True)과 같아, 키를 늘 싣는 것이 종전 run/web 의

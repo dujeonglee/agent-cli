@@ -1,4 +1,4 @@
-"""Agent loop: ReAct pattern with M1/M2 module integration."""
+"""루프 엔진 `AgentLoop` — 런 하나를 돈다 (docs/ARCHITECTURE.md §5.1)."""
 
 from __future__ import annotations
 
@@ -19,11 +19,6 @@ from agent_cli.constants import (
     STOP_SERVER_ERROR,
 )
 from agent_cli.context.manager import ContextManager
-
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.dispatch import TurnDispatcher, _append_observation, show_open_items
 from agent_cli.loop.kind import LoopKind, Start
 from agent_cli.loop.llm import LLMCaller, UsageTotals, _build_token_stats
@@ -312,10 +307,8 @@ class AgentLoop:
                 "view_image" if "view_image" in self._config.tools_list else None
             )
 
-    # ── C1 PR-1 property 브리지 ──────────────────────────────────
-    # 기존 ``self.X`` 접근 표면을 유지한 채 소유권만 LoopConfig/LoopState 로
-    # 옮기는 호환 shim. PR-2/3 에서 메서드가 협력 객체로 이주하며 그 객체가
-    # config/state 를 직접 읽게 되면, 이주분의 브리지 의존은 소멸한다.
+    # ── property 브리지 ──────────────────────────────────────────
+    # 기존 ``self.X`` 접근을 LoopConfig/LoopState 로 넘긴다.
     # (config 필드는 재할당 금지 — setter 없음이 의도. state 필드는 가변.)
 
     @property
@@ -1361,6 +1354,3 @@ class AgentLoop:
             f"run_loop returning None: max_turns={self.max_turns} reached, skill_name={self.skill_name}"
         )
         return ToolResult(False, error=f"Max turns ({self.max_turns}) reached")
-
-
-# Backward-compatible wrapper

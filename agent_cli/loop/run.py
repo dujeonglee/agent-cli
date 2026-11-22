@@ -1,4 +1,4 @@
-"""Agent loop: ReAct pattern with M1/M2 module integration."""
+"""엔진 진입점 `run_loop(kind, start, ctx)` (docs/ARCHITECTURE.md §5.1)."""
 
 from __future__ import annotations
 

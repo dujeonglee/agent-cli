@@ -1,4 +1,4 @@
-"""Agent loop: ReAct pattern with M1/M2 module integration."""
+"""`AgentLoop` 의 협력자 `TurnDispatcher` — 턴 처리 (docs/ARCHITECTURE.md §5.1)."""
 
 from __future__ import annotations
 
@@ -8,24 +8,12 @@ import re
 import time
 
 from agent_cli import render as render_surface
-
-#: message/ask 빚을 남긴 채 `complete` 하려는 주체를 독촉하는 상한 (v9.21.0;
-#: v9.22.0 부터 main·상주 공통, 질문(answer)·회신(reply) 공통).
-#: 1회는 "깜빡함" 을, 3회면 "이해 못 함" 까지 잡는다. 사용자 결정. 무제한이면
-#: 아무것도 런을 못 멈춘다 — 개입은 max_turns 미계수, B1 은 도구 경로에만
-#: 있어 반복 complete 을 안 본다. 실측(a209hq): 플레이어 셋은 1회에 응했고
-#: 오케스트레이터만 1회를 넘겼다.
 from agent_cli.constants import format_duration
 from agent_cli.dialects import try_foreign_parse
 from agent_cli.dialects.base import ParsedTurn
 from agent_cli.dialects.recovery.json import describe_json_error
 from agent_cli.hooks.events import PRE_WAIT
 from agent_cli.loop.kind import WAIT_NOTHING_PENDING, Caller
-
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.ledger import wrong_closer_hint
 from agent_cli.loop.reroute import reroute
 from agent_cli.loop.skill_invoke import _handle_run_skill
@@ -962,7 +950,7 @@ class TurnDispatcher:
         carries the SAME hook/history contract as the single-op path
         (PreToolUse per edit — any block aborts the whole batch, PostToolUse
         once, ``recent_tool_history`` per edit), while keeping the batch
-        semantics (one ``apply_edits_batch`` apply → one write, all-or-nothing,
+        semantics (one ``apply_edits_batch_parts`` apply → one write, all-or-nothing,
         ONE combined observation). Each op's flat input is still rendered as
         its own action card, matching the single-op render.
         """
@@ -1020,7 +1008,7 @@ class TurnDispatcher:
         if op.action == "complete":
             return self._op_complete(llm_text, turn, op, outcome)
 
-        # 7b. wait (v10.65.0) — 닫지 않고 끝낸다, 깨울 것이 있을 때만.
+        # 7b. wait (v10.65.0) — 깨울 것이 있으면 그 자리에서 기다린다(런을 끝내지 않는다).
         if op.action == "wait":
             return self._op_wait(llm_text, turn, op, outcome)
 
@@ -1122,7 +1110,7 @@ class TurnDispatcher:
         return ToolResult(True, output=answer)
 
     def _op_wait(self, llm_text: str, turn, op, outcome: dict):
-        """terminal ``wait`` op (v10.65.0, docs/wait/DESIGN.md) — 런을 끝내지 않는다(5c-1).
+        """``wait`` op (v10.65.0, docs/wait/DESIGN.md) — 런을 끝내지 않는다(5c-1).
 
         깨울 것(`ports.mailbox.wake_sources`)이 있으면: 호출과 관찰을 기록하고(히스토리는 보통의 op + 관찰
         모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다) **그 자리에서** 깨울 것이 올 때까지 막는다
@@ -1825,7 +1813,6 @@ class TurnDispatcher:
         )
         return _CONTINUE
 
-    # No usable action on this op — fall through to recovery.
     def _op_bad_arguments(self, llm_text: str, turn, op, outcome: dict, accumulate):
         """호출 인자가 JSON 이 아닌 op (v10.20.0) — 실행 없이 어디서 깨졌는지
         알린다. 배치 안이면 그 op 의 자리에 실패 메모로, 홀로면 형식 개입으로."""
@@ -1907,11 +1894,11 @@ class TurnDispatcher:
             nudge=nudge,
         )
 
-    # ── C1 PR-2: 도구 호출은 ToolBridge 소유 — 아래는 기존 호출면 유지용
-    #    위임 (dispatch 클러스터가 PR-3 에서 승격되면 bridge 를 직접 주입받아
-    #    이 위임들도 소멸).
 
-
+# Fields a model might use to wrap a question's text inside a dict —
+# e.g. `questions=[{"question": "..."}]` drift observed with qwen3.6
+# in S25FE-kernel session 1776954600. Checked in priority order, so a
+# `question` key wins over `text` when both are present.
 _QUESTION_TEXT_KEYS = ("question", "text", "content", "q")
 
 
@@ -2120,7 +2107,7 @@ def _combined_tool_label(names: list[str]) -> str:
 def show_open_items(cfg, state) -> None:
     """장부를 사람 화면에 (v10.119.0, docs/ledger/DESIGN.md §15) — 런 시작·턴 경계·
     `complete` 정산·런 끝에서 부른다. **main 런만**: 사람 요청을 받는 런(입력 큐가
-    있는 종류 — `tracks_run_authors`)의 장부가 사람이 보는 장부다. 상주·one-shot·
+    있는 종류 — `tracks_run_authors`)의 장부가 사람이 보는 장부다. 상주·
     스킬 루프도 같은 렌더러를 쓰므로 거르지 않으면 main 의 띠를 덮어쓴다. 같은
     스냅샷이 연달아 와도 렌더러가 거른다. 모델 입력과 무관하다."""
     if not cfg.kind.tracks_run_authors:
