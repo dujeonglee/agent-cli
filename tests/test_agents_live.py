@@ -1321,7 +1321,8 @@ class TestAskRouting:
         reg = make_registry(tmp_path, runner=runner)
         key, _ = reg.spawn()
         reg.request(key, "task", author="user:bob")
-        assert wait_until(lambda: len(seen) == 1)
+        # 러너는 쿼리를 적은 **뒤에** 묻는다 — 적힌 것이 아니라 질문이 선 것을 기다린다
+        assert wait_until(lambda: len(reg.open_human_questions()) == 1)
         (qid,) = [q.id for q in reg.open_human_questions()]
         assert reg.answer_question(qid, "the blue one", by="user:bob") == ""
         assert wait_until(lambda: len(seen) == 2)
