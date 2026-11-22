@@ -50,21 +50,20 @@ def test_a_run_that_ends_owing_two_replies_shows_two_fallback_rows(
         absorb.set()
         assert _wait(lambda: reg.get(key).state == "idle")
 
-        def check(peer_label):
+        def tails():
             rows = page.locator(
                 f'#messages > .card-run[data-task-id="{key}#r-901"] .run-body > .card-fallback'
             )
             assert _wait(lambda: rows.count() == 2)
-            tails = [rows.nth(i).locator(".peer").inner_text() for i in range(2)]
-            assert tails[0] == "main" and peer_label(tails[1])
             assert page.locator("#messages .card-fallback").count() == 2
+            return [rows.nth(i).locator(".peer").inner_text() for i in range(2)]
 
-        check(lambda t: t.endswith("peer"))
+        live = tails()
+        assert live[0] == "main" and live[1].endswith(" peer")
         page.reload()
         assert _wait(lambda: _chip(page, key).count() > 0)
         _chip(page, key).click()
-        # 다시 붙으면 꼬리의 이름은 로스터보다 먼저 그려져 다른 글자일 수 있다(줄과 받는 이는 같다)
-        check(lambda t: t != "main")
+        assert tails() == live  # 다시 붙어도 같은 글자 — 로스터가 줄보다 먼저 온다
     finally:
         absorb.set()
         door.set()
