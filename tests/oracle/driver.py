@@ -131,6 +131,8 @@ class Recorder:
         self.holds: list[list] = []
         #: 렌더러 메서드 이름 → ``(args, kwargs)`` 를 받아 그 스레드를 잡는 규칙 — 세션이 건다(`Session.settle_rules`).
         #: 기록되는 사건이든(적은 뒤) 아니든(관찰 카드 등) 같다. 한 번 쓰고 빠지지 않는다 — 모든 시나리오의 규칙이다.
+        #: 규칙은 main 의 것이다 — **main 이 아닌 레인의 호출은 규칙을 거치지 않는다**(조용히 넘긴다, `_ruled_here`).
+        #: 5c-1 부터 에이전트도 제자리 대기마다 `wait_in_place` 를 부른다 — 에이전트를 잡을 규칙이 필요하면 hold 를 쓴다.
         self.rules: dict = {}
 
     def hold(self, event: str, key: str, cond) -> None:
@@ -144,6 +146,10 @@ class Recorder:
             return t.name
         return "other"
 
+    def _ruled_here(self) -> bool:
+        """규칙을 부를 레인인가 — main 레인만(`rules` 의 주석)."""
+        return self.lane() == "main"
+
     def __getattr__(self, name):
         target = getattr(self._inner, name)
         if not callable(target):
@@ -154,7 +160,8 @@ class Recorder:
                 return target
 
             def ruled(*args, **kwargs):
-                rule(args, kwargs)
+                if self._ruled_here():
+                    rule(args, kwargs)
                 return target(*args, **kwargs)
 
             return ruled
@@ -166,7 +173,7 @@ class Recorder:
                 )
                 self.counts[name] = self.counts.get(name, 0) + 1
             rule = self.rules.get(name)
-            if rule is not None:
+            if rule is not None and self._ruled_here():
                 rule(args, kwargs)
             for h in list(self.holds):
                 if h[0] == name and h[1] in ("*", kwargs.get("key")):
@@ -1862,7 +1869,7 @@ def s22_agent_dies(root: Path, *, who: str) -> dict:
             # main 은 aa 의 회신에 제자리 대기에서 깨지만, 깸은 메일 폴링(`AgentRegistry.wait_mail` — 입력 대기와 번갈아
             # 0.25초)에 달려 대본의 ✕·사망과 앞뒤가 갈린다(cpus 0.25, 750회 중 1회). 깬 main 이 회신과 died 통지를 한
             # 턴 경계에서 함께 읽게 — 사망의 정리(기다리던 회신 닫기)까지 main 을 잡는다
-            if args and args[0] is False and s.recorder.lane() == "main":
+            if args and args[0] is False:
                 until(death_settled.is_set, "aa's death settled")
 
         s.recorder.rules["wait_in_place"] = main_wakes_after_the_death
@@ -1988,7 +1995,7 @@ def s34_parent_dies_with_its_run_agent(root: Path) -> dict:
     def main_wakes_after_the_run_is_down(args, kwargs):
         # main 이 제자리 대기에서 깨는 자리 — 다음 꼬리의 로스터가 run 의 내려옴을 본 뒤에 짓게. main 은 aa 의 회신에
         # 먼저 깰 수 있다(메일 폴링) — aa 의 사망 정리(기다리던 회신 닫기)까지 잡아 회신과 died 통지를 한 턴 경계에서 읽게
-        if args and args[0] is False and s.recorder.lane() == "main":
+        if args and args[0] is False:
             until(lambda: kid_key() and s.agent_state(kid_key()) == "dead", "run down")
             until(death_settled.is_set, "aa's death settled")
 
@@ -2089,9 +2096,9 @@ def s39_kill_a_waiting_requester(root: Path) -> dict:
         return keys[0] if keys else ""
 
     def main_wakes_after_both_are_down(args, kwargs):
-        # main 이 제자리 대기에서 깨는 자리 — 다음 꼬리의 로스터가 aa·run 의 내려옴을 본 뒤에 짓게. 에이전트도 제자리
-        # 대기에서 이 표시를 부르므로(5c-1) main 의 것만 본다
-        if args and args[0] is False and s.recorder.lane() == "main":
+        # main 이 제자리 대기에서 깨는 자리 — 다음 꼬리의 로스터가 aa·run 의 내려옴을 본 뒤에 짓게(규칙은 main 레인에서만
+        # 불린다 — `Recorder.rules`)
+        if args and args[0] is False:
             until(
                 lambda: (
                     kid_key()
