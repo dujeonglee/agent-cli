@@ -196,13 +196,7 @@ def reply_refusal(verdict: Verdict, text: str, id: str, facts: ReplyFacts) -> st
 
 
 class QuestionPort:
-    """루프가 질문 목록에 닿는 **유일한 seam** (DESIGN.md §4).
-
-    콜러블 셋을 ``LoopConfig``·``AgentLoop.__init__``·``run_loop``·
-    ``ResidentLoop`` 에 꿰면 15군데가 된다 —
-    객체 하나로 묶는다. **레지스트리 자체는 절대 넘기지 않는다**:
-    포트의 ``agent_registry``(``kind.ports``)가 "teammate 안 teammate 금지"의 단일
-    가드이므로 서브루프에 닿으면 안 된다.
+    """루프가 질문·회신 빚에 닿는 seam (DESIGN.md §4).
 
     표면은 ``ask``·``reply``·``debts`` 다. main 도 같은 포트를 받는다
     (``key=None``) — 빚을 갚는 `reply` 가 루프와 무관하게 하나이기 때문이다.
@@ -275,7 +269,7 @@ class QuestionPort:
         `answers` 와 같은 원칙, 사용자 결정). id 가 전역에서 유일하므로 그것만으로
         상대가 정해진다 — v10.77.0 에서 ``to`` 를 지웠다(C).
         돌려받을 것이 없으므로 `expects_reply=False` 로 간다.
-        **빚진 게 없으면 거부한다**(사용자 결정): 회신·질문·독촉으로 시작한
+        **빚진 게 없으면 거부한다**(사용자 결정): 회신·통지로 시작한
         런엔 답할 상대가 없고, "확인했습니다" 류의 ack 가 정확히 여기서
         새어 나온다. 거부 문구가 `message` 로 안내한다.
         """

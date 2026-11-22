@@ -6,14 +6,14 @@
 ``agent:<key>``, 깊이는 띄운 호출자 +1(`AgentInstance.caller_runtime`; 종전엔 런마다 "가장 최근
 spawner 의 깊이 +1" 을 다시 읽어 흔들렸다), 스택은 호출자의 것(엔진이 자기 프로파일을 얹는다),
 바인딩은 프로파일이 모델을 고정하면 그 복사본(한 번만 계산),
-도구는 프로파일 allowlist(엔진이 `message`·`reply` 를 강제 탑재), 포트는 `make_ports`
-(종전 `runtime.ports_for_resident`). ctx 는 워커 스레드에서 `open()` 으로 한 번 만든다 —
+도구는 프로파일 allowlist(엔진이 `message`·`reply` 를 강제 탑재), 포트는 `make_ports`.
+ctx 는 워커 스레드에서 `open()` 으로 한 번 만든다 —
 `create_subagent_ctx` 의 `note_scope_ctx` 가 그 스레드의 스코프(에이전트 키)에 등록되게.
 
 런의 단계: ⑫ `start(items)` 가 받은편지함 항목(단건 또는 사람-직접 묶음)을 시작 메시지·
 회계(`user_requests`·`request_id`)로 바꾸고, ⑭ 스코프는 작업 카드(`begin_agent_work`/
 `end_agent_work`), ⑰ `finish` 가 회신 계약·빚·`run_ended`·`_close_run` 후처리까지 한 벌로 한다(v10.89.0). 런마다 거둘 것은 없다
-(상주는 잡·모니터를 런 너머로 가진다) — 에이전트가 죽을 때 워커가 `_drop_monitors` 로 거둔다.
+(상주는 잡·모니터를 런 너머로 가진다) — 에이전트가 죽을 때 워커가 `release_owner` 로 거둔다.
 """
 
 from __future__ import annotations
@@ -282,7 +282,7 @@ class ResidentLoop(LoopKind):
                 if len(items) == 1
                 else "\n".join(self.registry._model_text(it) for it in items)
             ),
-            # 요청 발신 시각을 scope_start(nav_ts)로 실어 스윔레인 화살표가 이 카드로 오게
+            # 요청 발신 시각 — scope_start 의 `nav_ts`(읽는 화면은 지금 없다)
             req_ts=first.get("ts"),
             items=[it["id"] for it in items] if len(items) > 1 else None,
             # run 의 과제 런: 부른 자리에 한 줄 카드 (docs/agent-engine/DESIGN.md §2.5)
@@ -375,7 +375,7 @@ class ResidentLoop(LoopKind):
                 tm,
                 {**line, "text": output, "item": iid, "to": author, "fallback": False},
             )
-        # 런 끝 정리 — 판정은 `run_ended` 한 곳에 (wait·중단·보통)
+        # 런 끝 정리 — 판정은 `run_ended` 한 곳에 (중단·보통)
         reg.run_ended(
             me,
             output,
