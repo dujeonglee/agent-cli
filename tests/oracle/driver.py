@@ -2876,7 +2876,8 @@ def s38_close_while_main_waits(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="spawn", name="aa"),
-                call("message", to="aa", text="TASK-C look"),
+                # 요청의 창 줄에서 main 을 aa 가 집을 때(busy)까지 잡는다 — main 의 다음 꼬리
+                lambda m: _held_request_to(box, "aa", "TASK-C look"),
                 call("wait"),
             ]
             + [complete_all("main after close")] * 4,
@@ -2938,11 +2939,9 @@ def s40_close_while_main_is_in_a_call(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="spawn", name="aa"),
-                lambda m: call(
-                    "message",
-                    to="aa",
-                    text="TASK-Q ask me which file",
-                    expects_reply=False,
+                # 통지의 창 줄에서 main 을 aa 가 집을 때(busy)까지 잡는다 — main 의 다음 꼬리
+                lambda m: _held_request_to(
+                    box, "aa", "TASK-Q ask me which file", expects_reply=False
                 ),
                 after_aa_asked,
                 main_in_a_call,
@@ -2950,12 +2949,14 @@ def s40_close_while_main_is_in_a_call(root: Path) -> dict:
             + [complete_all("main after close")] * 12,
             "TASK-Q": [
                 lambda m: call("message", to="main", text="which file should I use?"),
-                # main 이 그 물음을 턴 경계에서 읽어 빚으로 적은 뒤 — aa 의 되묻기의 `wait` 권유는 main 이 빚진 쪽인가에
-                # 달렸다(깨울 것 `wake_sources`): 먼저 끝내면 되묻기 글이 main 의 턴 경계와 앞뒤가 갈린다
+                # main 이 그 물음을 턴 경계에서 읽어 빚으로 적고 다음 호출에 든 뒤(꼬리를 지은 뒤 — 그 꼬리가 aa 를
+                # [busy] 로 읽는다). aa 의 되묻기의 `wait` 권유는 main 이 빚진 쪽인가에 달렸다(깨울 것
+                # `wake_sources`): 먼저 끝내면 되묻기 글이 main 의 턴 경계와, aa 의 한가함이 main 의 꼬리와 앞뒤가 갈린다
                 lambda m: (
                     until(
-                        lambda: len(box["s"].reg.reply_debts("main")) == 1,
-                        "main owes aa",
+                        lambda: len(box["s"].reg.reply_debts("main")) == 1
+                        and len(p.calls.get("MAIN", [])) >= 4,
+                        "main owes aa and is in its next call",
                     ),
                     call("complete", result="asked main", answers=[]),
                 )[1],
@@ -3001,9 +3002,8 @@ def s41_close_while_a_resident_is_in_a_call(root: Path) -> dict:
         {
             "MAIN": [
                 call("agent", mode="spawn", name="aa"),
-                lambda m: call(
-                    "message", to="aa", text="TASK-W work", expects_reply=False
-                ),
+                # 통지의 창 줄에서 main 을 aa 가 집을 때(busy)까지 잡는다 — main 의 다음 꼬리
+                lambda m: _held_request_to(box, "aa", "TASK-W work", expects_reply=False),
                 complete_all("main done"),
             ]
             + [complete_all("main again")] * 4,
@@ -3049,31 +3049,15 @@ def s42_run_crashes_while_waiting(root: Path) -> dict:
         )
         return call("wait")
 
-    def after_aa_read_k2(step):
-        # aa 가 bb 의 회신으로 연 런을 끝낸 뒤 — main 의 다음 요청이 그 런에 흡수되지 않고 새 런을 연다
-        def go(m):
-            s = box["s"]
-            aa = _agent_key(s, "aa")
-            until(
-                lambda: (
-                    len(p.calls.get("TASK-K1", [])) >= 3 and s.agent_state(aa) == "idle"
-                ),
-                "aa read K2",
-            )
-            return step
-
-        return go
-
     p = Provider(
         {
             "MAIN": [
                 call("agent", mode="spawn", name="bb"),
                 call("agent", mode="spawn", name="aa", task="TASK-K1 ask bb"),
                 _after_runs_began(box, 1, call("wait")),
-                # aa 의 실패 회신을 읽은 뒤 — aa 가 살아 있는가: 다시 묻는다(aa 가 bb 의 회신을 읽고 난 뒤)
-                after_aa_read_k2(
-                    call("message", to="aa", text="TASK-K3 are you there")
-                ),
+                # aa 의 실패 회신을 읽은 뒤 — aa 가 살아 있는가: 다시 묻는다(aa 가 bb 의 회신을 읽고 난 뒤 — main 의 첫
+                # 깸 규칙). 요청의 창 줄에서 main 을 aa 가 집을 때(busy)까지 잡는다 — main 의 다음 꼬리
+                lambda m: _held_request_to(box, "aa", "TASK-K3 are you there"),
                 call("wait"),
                 # 받아들여진다(5e1 — aa 의 표시가 내려갔다) — 위의 `wait` 가 제자리에서 aa 의 회신을 기다린다
                 complete_all("main read it"),
@@ -3111,6 +3095,26 @@ def s42_run_crashes_while_waiting(root: Path) -> dict:
         }
     )
     s = box["s"] = Session(root, p, path="web")
+    first_wake = threading.Event()
+
+    def main_reads_the_crash_after_k2(args, kwargs):
+        # main 의 첫 깸(aa 의 실패 회신) — bb 가 갚고 끝나고(idle) aa 가 bb 의 회신으로 연 런을 끝낸(idle, 그 런의
+        # 호출까지 셋) 뒤에 꼬리를 짓게 잡는다. 제자리 대기는 창구 조건변수와 사람 입력을 번갈아 보므로 실패 회신이
+        # 들자마자 깨는지 한 바퀴 뒤에 깨는지가 시각에 달렸다(프로브 3회 중 1회 bb 가 [busy]). 둘째 깸(aa 의 K3
+        # 회신)은 잡지 않는다 — 그때 aa 는 main 의 런이 끝나기를 기다리며 busy 다
+        if args and args[0] is False and not first_wake.is_set():
+            first_wake.set()
+            aa, bb = _agent_key(s, "aa"), _agent_key(s, "bb")
+            until(
+                lambda: (
+                    len(p.calls.get("TASK-K1", [])) >= 3
+                    and s.agent_state(aa) == "idle"
+                    and s.agent_state(bb) == "idle"
+                ),
+                "aa read K2, bb done",
+            )
+
+    s.recorder.rules["wait_in_place"] = main_reads_the_crash_after_k2
     s.say("MAIN go", nickname="dj")
 
     def done(s):
