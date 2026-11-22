@@ -2857,31 +2857,38 @@ def s37_command_queued_before_wait(root: Path) -> dict:
 
 def s38_close_while_main_waits(root: Path) -> dict:
     """웹 방을 닫을 때 main 이 상주 aa 의 회신을 제자리에서 기다리고 있다 — 웹 호스트와 같은 순서로 닫는다: main 상자를
-    닫고(`stop_pump`), 정리(`close` — 에이전트를 멈춘다). aa 는 모델 호출 안에서 붙잡혀 있다가 정리가 그를 멈추면(평생
-    정지 ``stop_event`` — 제품이 판정에 쓰는 값) 풀린다. 동기 지점: main 의 제자리 대기 시작(``main_waiting``),
-    aa 의 ``stop_event``.
+    닫고(`stop_pump`), 정리(`close` — 에이전트를 멈춘다). aa 는 main 의 요청을 집었고(busy) 첫 모델 호출 전에 정리가
+    그를 멈춘다 — 작업 카드(`begin_agent_work`)에서 평생 정지(``stop_event`` — 제품이 판정에 쓰는 값)까지 잡는다
+    (기대값은 aa 의 호출 0). 동기 지점: aa 의 일 집기(busy), main 의 제자리 대기 시작(``main_waiting``), aa 의
+    ``stop_event``.
 
     `[5c-pre 에서 바뀜]` main 상자가 닫히면 제자리 대기가 끝나고 런은 세션 종료로 끝난다 — 닫는 도중 호출 0, 마지막
     레코드는 받아들여진 `wait` 의 관찰. 종전엔 정리가 aa 를 멈추면 깨울 것이 사라져("nothing") 런이 이어지고 닫는
     도중 모델을 한 번 더 불렀다."""
     box: dict = {}
     facts: dict = {}
-    hold = threading.Event()
 
-    def aa_works(msgs):
-        until(hold.is_set, "released")
-        return call("reply", id=owed_id(msgs), text="late")
+    def ask_aa(msgs):
+        # aa 의 작업 카드를 평생 정지까지 잡는다 — main 이 aa 가 집을 때까지 잡혀 있는 동안 aa 가 첫 호출에 앞서
+        # 들지 않게(soak 432회 중 6회, `_held_request_to` 를 넣은 뒤). aa 는 `start`(busy) 뒤에 잡히므로 main 은 풀린다
+        s = box["s"]
+        aa = _agent_key(s, "aa")
+        s.recorder.hold(
+            "begin_agent_work", aa, lambda: s.reg.get(aa).stop_event.is_set()
+        )
+        return _held_request_to(box, "aa", "TASK-C look")
 
     p = Provider(
         {
             "MAIN": [
                 call("agent", mode="spawn", name="aa"),
                 # 요청의 창 줄에서 main 을 aa 가 집을 때(busy)까지 잡는다 — main 의 다음 꼬리
-                lambda m: _held_request_to(box, "aa", "TASK-C look"),
+                ask_aa,
                 call("wait"),
             ]
             + [complete_all("main after close")] * 4,
-            "TASK-C": [aa_works],
+            # aa 는 모델을 부르지 않는다(첫 호출 전에 멈춘다) — 기록의 배우 칸은 남긴다
+            "TASK-C": [],
         }
     )
     s = box["s"] = Session(root, p, path="web")
@@ -2904,7 +2911,6 @@ def s38_close_while_main_waits(root: Path) -> dict:
     closer = threading.Thread(target=s.close, daemon=True, name="oracle-close")
     closer.start()
     until(lambda: s.reg.get(aa).stop_event.is_set(), "aa stopped by the close")
-    hold.set()
     until(lambda: not closer.is_alive() and not t.is_alive(), "closed")
     facts["main_calls_during_close"] = len(p.calls.get("MAIN", [])) - before
     return s.collect(facts)
@@ -2948,14 +2954,24 @@ def s40_close_while_main_is_in_a_call(root: Path) -> dict:
             ]
             + [complete_all("main after close")] * 12,
             "TASK-Q": [
-                lambda m: call("message", to="main", text="which file should I use?"),
+                # main 이 둘째 호출에 든(꼬리를 지은) 뒤에 묻는다 — 먼저 오면 main 이 그 전 턴 경계에서 흡수해 셋째
+                # 걸음(`after_aa_asked`)이 상자에서 볼 요청이 없다(soak 432회 중 2회 시간 초과, 설계자 사본 g87 의 1회도)
+                lambda m: (
+                    until(
+                        lambda: len(p.calls.get("MAIN", [])) >= 3,
+                        "main is in its second call",
+                    ),
+                    call("message", to="main", text="which file should I use?"),
+                )[1],
                 # main 이 그 물음을 턴 경계에서 읽어 빚으로 적고 다음 호출에 든 뒤(꼬리를 지은 뒤 — 그 꼬리가 aa 를
                 # [busy] 로 읽는다). aa 의 되묻기의 `wait` 권유는 main 이 빚진 쪽인가에 달렸다(깨울 것
                 # `wake_sources`): 먼저 끝내면 되묻기 글이 main 의 턴 경계와, aa 의 한가함이 main 의 꼬리와 앞뒤가 갈린다
                 lambda m: (
                     until(
-                        lambda: len(box["s"].reg.reply_debts("main")) == 1
-                        and len(p.calls.get("MAIN", [])) >= 4,
+                        lambda: (
+                            len(box["s"].reg.reply_debts("main")) == 1
+                            and len(p.calls.get("MAIN", [])) >= 4
+                        ),
                         "main owes aa and is in its next call",
                     ),
                     call("complete", result="asked main", answers=[]),
@@ -3003,7 +3019,9 @@ def s41_close_while_a_resident_is_in_a_call(root: Path) -> dict:
             "MAIN": [
                 call("agent", mode="spawn", name="aa"),
                 # 통지의 창 줄에서 main 을 aa 가 집을 때(busy)까지 잡는다 — main 의 다음 꼬리
-                lambda m: _held_request_to(box, "aa", "TASK-W work", expects_reply=False),
+                lambda m: _held_request_to(
+                    box, "aa", "TASK-W work", expects_reply=False
+                ),
                 complete_all("main done"),
             ]
             + [complete_all("main again")] * 4,
