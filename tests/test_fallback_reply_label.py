@@ -98,15 +98,33 @@ def _run_with_two_requests(reg, key, door, *, first_author="main") -> tuple[str,
     return first, second
 
 
-def test_the_window_shows_one_fallback_line_for_a_run_with_two_debts(helper_door):
-    """[A1 에서 바뀜] 폴백은 빚마다 가는데(위 테스트) 창의 줄은 그 구간의 첫 항목 하나뿐이다."""
+def test_the_window_shows_a_fallback_line_per_debt(helper_door):
+    """폴백은 빚마다 가고(위 테스트) 창의 줄도 빚마다 하나다 — 그 빚의 id 와 상대로 (v10.165.0; 종전엔 첫 항목 하나)."""
     reg, key, door = helper_door
-    first, _second = _run_with_two_requests(reg, key, door)
-    assert _out_lines(reg, key) == [(first, "main", True, NO_REPLY_LABEL)]
+    first, second = _run_with_two_requests(reg, key, door)
+    assert _out_lines(reg, key) == [
+        (first, "main", True, NO_REPLY_LABEL),
+        (second, "main", True, NO_REPLY_LABEL),
+    ]
 
 
-def test_a_human_run_with_a_debt_labels_the_humans_line_as_the_fallback(helper_door):
-    """[A1 에서 바뀜] 사람이 창에서 연 구간에 main 의 빚이 남으면 사람 줄 하나에 폴백 라벨이 붙는다."""
+def test_a_human_run_with_a_debt_keeps_the_fallback_for_the_creditor(helper_door):
+    """사람이 창에서 연 구간에 main 의 빚이 남았다 — 폴백 줄은 빚의 상대(main)에게, 사람에게는 라벨 없는 결과 줄
+    (v10.165.0; 종전엔 사람 줄 하나에 폴백 라벨이 붙었다)."""
     reg, key, door = helper_door
-    first, _second = _run_with_two_requests(reg, key, door, first_author="user:dj")
-    assert _out_lines(reg, key) == [(first, "user:dj", True, NO_REPLY_LABEL)]
+    first, second = _run_with_two_requests(reg, key, door, first_author="user:dj")
+    assert _out_lines(reg, key) == [
+        (second, "main", True, NO_REPLY_LABEL),
+        (first, "user:dj", False, "ok"),
+    ]
+
+
+def test_a_human_run_without_debts_keeps_its_one_line(helper_door):
+    reg, key, door = helper_door
+    tm = reg.get(key)
+    assert reg.request(key, "hello", author="user:dj") == ""
+    assert wait_until(lambda: tm.state == "busy" and tm.current_item)
+    first = tm.current_item
+    door.set()
+    assert wait_until(lambda: tm.state == "idle")
+    assert _out_lines(reg, key) == [(first, "user:dj", False, "ok")]
