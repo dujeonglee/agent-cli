@@ -2194,6 +2194,21 @@ class TestStickyState:
         # all appended-after the buffer, before viewers tail
         assert ev.index("worker_state") > ev.index("ready")
 
+    def test_the_roster_comes_after_the_lines_it_names(self):
+        """[이름표 수정에서 바뀜] 다시 접속한 화면이 받는 스냅샷 — 로스터는 버퍼의 줄(에이전트의 창 줄·도구 줄)
+        **뒤**에 온다. 프런트는 줄을 그릴 때 로스터에서 이름을 풀므로 그때 로스터가 비어 있다."""
+        r = WebRenderer()
+        r.header(provider="openai", model="m", max_turns=0)
+        r.agent_roster([{"key": "agt-1", "name": "peer", "state": "busy"}])
+        r.agent_message(
+            key="agt-1", direction="in", author="main", text="task", item="r-1"
+        )
+        r.action("message", json.dumps({"to": "agt-1", "text": "hi"}), 1)
+        ev = self._events(r.hub.register(WebConnection(id="c1")))
+        assert ev.index("agent_roster") > ev.index("agent_msg")
+        assert ev.index("agent_roster") > ev.index("assistant_turn")
+        assert ev[:2] == ["identity", "ready"]
+
     def test_latest_value_wins(self):
         r = WebRenderer()
         r.worker_busy()
