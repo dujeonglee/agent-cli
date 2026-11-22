@@ -5,7 +5,8 @@
 에이전트의 회신을 기다림 / main 한가·에이전트가 작업만 기다림. 동기 지점은 제품이 판정에 쓰는 값이다 — 호출 안(대본이
 잡은 모델 호출), 기다림 표시(`PostOffice.is_waiting`), 작업 목록, 한가함. 파일은 그 뒤 제품이 쓴 것을 읽는다.
 
-``[A1 에서 바뀜]`` 표지가 붙은 단정은 그 커밋에서 뒤집힌다.
+기다리는 쪽은 "일하는 중" 에 세지 않는다(`agents.working`) — 작업 상태 ``busy`` 는 그대로다. main 의 `waiting` 은
+받아들여진 `wait` 의 대기 줄과 함께 선다.
 """
 
 from __future__ import annotations
@@ -106,6 +107,11 @@ def agents_of(st: dict) -> tuple:
     )
 
 
+def waiting_of(st: dict) -> tuple:
+    a = st.get("agents") or {}
+    return (a.get("waiting"), sorted(x["name"] for x in a["list"] if x["waiting"]))
+
+
 @pytest.fixture
 def scene(home):
     made: list[Scene] = []
@@ -139,11 +145,14 @@ def test_main_waits_for_a_reply_while_the_agent_works(scene):
     sc.start()
     until(lambda: "aa" in sc.inside and sc.waiting("main"), "main waits, aa in a call")
     st = sc.status_when(
-        lambda st: (st.get("agents") or {}).get("working") == 1, "aa counted working"
+        lambda st: (
+            st.get("waiting") is True and (st.get("agents") or {}).get("working") == 1
+        ),
+        "main waiting, aa counted working",
     )
     assert st["busy"] is True
-    assert "waiting" not in st  # [A1 에서 바뀜] True
     assert agents_of(st) == (1, 1, [("aa", "busy")])
+    assert waiting_of(st) == (0, [])
 
 
 def test_main_waits_for_a_job_only(scene):
@@ -153,8 +162,8 @@ def test_main_waits_for_a_job_only(scene):
         lambda: bool(sc.s.stores.jobs.running()) and sc.waiting("main"),
         "main waits on a job",
     )
-    st = sc.status_when(lambda st: st.get("busy") is True, "main busy")
-    assert "waiting" not in st  # [A1 에서 바뀜] True
+    st = sc.status_when(lambda st: st.get("waiting") is True, "main waiting")
+    assert st["busy"] is True  # 기다림은 작업 구간 안이다
     assert "agents" not in st
 
 
@@ -186,16 +195,15 @@ def test_idle_main_and_an_agent_waiting_for_another_agent(scene):
         lambda: "bb" in sc.inside and sc.s.main_idle() and sc.waiting(sc.agent("aa")),
         "aa waits, bb in a call, main idle",
     )
-    # [A1 에서 바뀜] 일하는 수 2 → 1, 기다리는 수 1, aa 의 waiting 참
     st = sc.status_when(
         lambda st: (
-            st.get("busy") is False and (st.get("agents") or {}).get("working") == 2
+            st.get("busy") is False and (st.get("agents") or {}).get("waiting") == 1
         ),
-        "main idle, both counted working",
+        "main idle, aa counted waiting",
     )
-    assert "waiting" not in st
-    assert agents_of(st) == (2, 2, [("aa", "busy"), ("bb", "busy")])
-    assert "waiting" not in st["agents"]
+    assert "waiting" not in st  # main 은 기다리지 않는다
+    assert agents_of(st) == (1, 2, [("aa", "busy"), ("bb", "busy")])
+    assert waiting_of(st) == (1, ["aa"])
 
 
 def test_idle_main_and_an_agent_waiting_for_a_job_only(scene):
@@ -220,12 +228,12 @@ def test_idle_main_and_an_agent_waiting_for_a_job_only(scene):
         ),
         "aa waits on a job, main idle",
     )
-    # [A1 에서 바뀜] 일하는 수 1 → 0, 기다리는 수 1, aa 의 waiting 참
     st = sc.status_when(
         lambda st: (
-            st.get("busy") is False and (st.get("agents") or {}).get("working") == 1
+            st.get("busy") is False and (st.get("agents") or {}).get("waiting") == 1
         ),
-        "main idle, aa counted working",
+        "main idle, aa counted waiting",
     )
-    assert agents_of(st) == (1, 1, [("aa", "busy")])
-    assert "waiting" not in st["agents"]
+    assert "waiting" not in st
+    assert agents_of(st) == (0, 1, [("aa", "busy")])
+    assert waiting_of(st) == (1, ["aa"])

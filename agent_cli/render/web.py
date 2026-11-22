@@ -91,10 +91,19 @@ def _iso_to_epoch(ts) -> float | None:
 # Sticky slots whose change flips a field of ``status.json``: ``worker_state``
 # → busy, ``input_required`` → awaiting_input, ``agent_roster`` → agents,
 # ``open_items`` → open_items (v10.119.0), ``stuck`` → stuck (v10.120.0),
-# ``jobs`` → jobs (v10.121.0), and every ``knob:<name>`` → knobs (+ grammar). A set_sticky/clear_sticky on any of
-# them republishes the status sidecar (viewers republish on register/unregister).
+# ``jobs`` → jobs (v10.121.0), ``waiting_in_place`` → waiting (v10.165.0), and every ``knob:<name>`` → knobs
+# (+ grammar). A set_sticky/clear_sticky on any of them republishes the status sidecar (viewers republish on
+# register/unregister).
 _STATUS_STICKY_KEYS = frozenset(
-    {"worker_state", "input_required", "agent_roster", "open_items", "stuck", "jobs"}
+    {
+        "worker_state",
+        "input_required",
+        "agent_roster",
+        "open_items",
+        "stuck",
+        "jobs",
+        "waiting_in_place",
+    }
 )
 
 
@@ -1855,22 +1864,32 @@ class WebRenderer(Renderer):
     @staticmethod
     def _agents_summary_from(roster: list | None) -> dict | None:
         """roster sticky payload → status.json/health 용 요약. dead 는
-        제외(표시 대상 아님 — resume 부활 전까지 리소스도 안 씀)."""
+        제외(표시 대상 아님 — resume 부활 전까지 리소스도 안 씀).
+
+        ``waiting`` (v10.165.0): 받아들여진 `wait` 로 기다리는 에이전트(로스터의 ``waiting`` 칸 — 우편의 기다림
+        표시). 작업 상태는 그대로 ``busy`` 지만 "작업 중" 에는 세지 않는다 — ``working`` 과 ``waiting`` 은 겹치지 않는다."""
         if not roster:
             return None
         alive = [a for a in roster if a.get("state") != "dead"]
+        waiting = [a for a in alive if a.get("waiting")]
         return {
             "alive": len(alive),
             # "작업 중" = idle/dead 외 전부 (busy/starting —
             # 어휘는 AgentRegistry.state_is_active 와 동일 규칙. ★실제 worker
-            # 는 "working" 상태를 쓰지 않는다 — v7.11.1 버그 수리)
-            "working": sum(1 for a in alive if a.get("state") not in ("idle", "dead")),
+            # 는 "working" 상태를 쓰지 않는다 — v7.11.1 버그 수리)에서 기다리는 쪽을 뺀 수
+            "working": sum(
+                1
+                for a in alive
+                if a.get("state") not in ("idle", "dead") and not a.get("waiting")
+            ),
+            "waiting": len(waiting),
             "list": [
                 {
                     "key": a.get("key", ""),
                     "profile": a.get("profile", ""),
                     "name": a.get("name", ""),
                     "state": a.get("state", ""),
+                    "waiting": bool(a.get("waiting")),
                 }
                 for a in alive
             ],
@@ -1914,6 +1933,8 @@ class WebRenderer(Renderer):
         open_items = self._open_items_summary_from(sticky.get("open_items"))
         stuck = self._stuck_summary_from(sticky.get("stuck"))
         jobs = self._jobs_summary_from(sticky.get("jobs"))
+        # main 이 제자리에서 기다리는 중 — 받아들여진 `wait` 의 대기 줄(`wait_in_place`)과 함께 서고 내린다
+        waiting = "waiting_in_place" in sticky
         try:
             write_status_file(
                 self._status_dir,
@@ -1927,6 +1948,7 @@ class WebRenderer(Renderer):
                 open_items=open_items,
                 stuck=stuck,
                 jobs=jobs,
+                waiting=waiting,
             )
         except OSError:
             pass  # best-effort: a status write must never break the session

@@ -2104,6 +2104,33 @@ class TestAutoSpawn:
 # ── 다중 인스턴스 + Live Teammates 광고 (v4.60.0) ──
 
 
+class TestWaitingInRoster:
+    """로스터의 ``waiting`` 칸은 우편의 기다림 표시다(v10.165.0) — 바뀔 때마다 로스터가 다시 나간다."""
+
+    def test_mark_and_clear_show_in_the_roster_and_renotify(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn(profile="", name="ui")
+        addr = f"agent:{key}"
+        assert reg.roster_snapshot()[0]["waiting"] is False
+        before = len(renderer.named("agent_roster"))
+        reg.mark_waiting(addr)
+        assert renderer.named("agent_roster")[-1][1]["roster"][0]["waiting"] is True
+        reg.clear_waiting(addr)
+        assert renderer.named("agent_roster")[-1][1]["roster"][0]["waiting"] is False
+        assert len(renderer.named("agent_roster")) == before + 2
+        reg.shutdown_all()
+
+    def test_mains_mark_is_not_a_roster_change(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        reg.spawn(profile="", name="ui")
+        before = len(renderer.named("agent_roster"))
+        reg.mark_waiting("main")
+        reg.clear_waiting("main")
+        assert len(renderer.named("agent_roster")) == before
+        assert reg.roster_snapshot()[0]["waiting"] is False
+        reg.shutdown_all()
+
+
 class TestMultiInstance:
     def test_same_role_spawns_multiple(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
@@ -2111,7 +2138,7 @@ class TestMultiInstance:
         k2, e2 = reg.spawn(profile="", name="api")
         assert e1 == e2 == "" and k1 != k2
         assert reg.get(k1).instance_name == "ui"
-        assert reg.get(k2).snapshot(pending_requests=0)["name"] == "api"
+        assert reg.get(k2).snapshot(pending_requests=0, waiting=False)["name"] == "api"
         reg.shutdown_all()
 
     def test_invalid_instance_name_rejected(self, tmp_path, renderer):
@@ -4149,11 +4176,11 @@ def test_roster_snapshot_snapshots_agents_before_iterating(tmp_path):
             self.key = key
             self.state = "idle"
 
-        def snapshot(self, *, pending_requests):
+        def snapshot(self, *, pending_requests, waiting):
             return {"key": self.key}
 
     class _Mutating(_Inert):
-        def snapshot(self, *, pending_requests):
+        def snapshot(self, *, pending_requests, waiting):
             # A concurrent spawn landing mid-iteration.
             k = f"z{len(reg._agents)}"
             reg._agents[k] = _Inert(k)

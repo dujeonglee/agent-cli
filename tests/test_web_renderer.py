@@ -99,7 +99,35 @@ class TestStatusPublishing:
         s = WebRenderer._agents_summary_from(
             [{"key": "a", "profile": "p", "name": "", "state": "dead"}]
         )
-        assert s == {"alive": 0, "working": 0, "list": []}
+        assert s == {"alive": 0, "working": 0, "waiting": 0, "list": []}
+
+    def test_a_waiting_agent_is_not_counted_working(self):
+        """v10.165.0: 기다리는 에이전트(로스터 ``waiting``)는 상태가 busy 여도 "작업 중" 에 세지 않는다."""
+        s = WebRenderer._agents_summary_from(
+            [
+                {"key": "a", "name": "aa", "state": "busy", "waiting": True},
+                {"key": "b", "name": "bb", "state": "busy", "waiting": False},
+                {"key": "c", "name": "cc", "state": "idle"},
+                {"key": "d", "name": "dd", "state": "dead", "waiting": True},
+            ]
+        )
+        assert (s["alive"], s["working"], s["waiting"]) == (3, 1, 1)
+        assert [(a["key"], a["state"], a["waiting"]) for a in s["list"]] == [
+            ("a", "busy", True),
+            ("b", "busy", False),
+            ("c", "idle", False),
+        ]
+
+    def test_main_waiting_follows_the_wait_row(self, tmp_path):
+        """v10.165.0: main 의 ``waiting`` 은 대기 줄(`wait_in_place`)과 함께 서고 내린다 — 없으면 키도 없다."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.worker_busy()
+        assert "waiting" not in read_status_file(tmp_path)
+        r.wait_in_place(True, [{"id": "r-1", "from": "agent:agt-1"}])
+        st = read_status_file(tmp_path)
+        assert st["waiting"] is True and st["busy"] is True
+        r.wait_in_place(False, [])
+        assert "waiting" not in read_status_file(tmp_path)
 
     def test_roster_updates_refresh_status_file(self, tmp_path):
         """상태 전이(working→idle)마다 파일이 최신값으로 재발행 —
