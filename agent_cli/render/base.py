@@ -448,10 +448,12 @@ class Renderer(ABC):
         (5.13) = resume 재생 시 원래 발생 시각. ``fallback`` (v9.23.0) =
         하네스가 대신 보낸 런 요약(회신 없이 끝난 런) — 도구 호출이 없는
         유일한 발신이라 웹이 이것만 따로 그린다. ``item`` (v10.77.0) = 그 배달의
-        id(수신 줄) 또는 그 발신을 낸 런의 id(회신·폴백). ``direction="absorbed"`` +
+        id(수신 줄), 그 발신을 낸 런의 id(사람에게 가는 결과 줄), 폴백 줄은 그 폴백이 갚는
+        빚의 id(v10.165.0 — 빚마다 한 줄). ``direction="absorbed"`` +
         ``absorbed_into`` (v10.8.2) = 받은편지함의 이 항목(``item``)이 **도는 런**
         (``absorbed_into`` = 그 런의 id)에 턴 경계에서 흡수됐다 — 웹이 ⏳ 대기
-        줄을 그 런 블록 머리로 옮긴다. 기본 no-op."""
+        줄을 그 런 블록 머리로 옮긴다. ``direction="restarted"`` (v10.165.0) = 세션 재시작이
+        이 에이전트를 되살렸다 — 웹이 채널에 한 줄 그린다(``author``·``text`` 는 빈 값). 기본 no-op."""
 
     def clear_agent_conversation(self, key: str) -> None:
         """한 teammate 의 대화 기록을 표면에서 정리 (5.13, kill 시). web 은
