@@ -24,6 +24,7 @@ from agent_cli.dialects import get as get_dialect
 from agent_cli.jobs import JobRegistry
 from agent_cli.loop.core import mail_item
 from agent_cli.monitor import MonitorRegistry, build
+from agent_cli.prompts.system_prompt import build_live_agents_section
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.session_slots import (
@@ -434,6 +435,32 @@ class TestAgentLines:
             ["agent:p (explorer) · owes you a reply · idle"],
             True,
             False,
+        )
+
+    def test_a_waiting_agent_reads_as_busy_in_the_three_places(self, reg):
+        """[B 에서 바뀜] 받아들여진 `wait` 로 기다리는 에이전트(기다림 표시)를 모델이 읽는 세 자리 — 꼬리의
+        `## Live Agents`, 폴백 회신의 꼬리, 체크인의 줄 선 요청 줄 — 가 모두 작업 상태 "busy" 로 말한다."""
+        _fake_agent(
+            reg,
+            "w",
+            state="busy",
+            current_author="agent:z",
+            last_at=time.time() - 60,
+            inbox=[{"author": "main"}],
+        )
+        reg.mark_waiting("agent:w")
+        assert "- `w` (explorer) [busy · 1 queued]" in build_live_agents_section(
+            reg, include_state=True
+        )
+        fallback = {"kind": "reply", "key": "w", "output": "summary", "success": True}
+        assert build_reply_record(fallback, registry=reg)["content"].endswith(
+            "(agent status: busy · 1 queued — remaining replies arrive automatically; "
+            "no need to poll.)"
+        )
+        (line,) = reg.checkin_agent_lines("main", {})[0]
+        assert line == (
+            "agent:w (explorer) · has your request queued, next in line · busy on "
+            "another request, last step 1m ago"
         )
 
     def test_pending_for_text_is_unchanged(self, reg):
