@@ -2859,6 +2859,123 @@ def s38_close_while_main_waits(root: Path) -> dict:
     return s.collect(facts)
 
 
+def s40_close_while_main_is_in_a_call(root: Path) -> dict:
+    """웹 방을 닫을 때 main 이 모델 호출 도중이다 — aa 가 main 에게 물어 main 이 회신 r-… 를 빚졌다. 웹 호스트와 같은
+    순서로 닫는다(main 상자를 닫고 정리 — `close`). main 의 호출은 붙잡혀 있다가 상자가 닫힌 뒤에 돌아온다. 동기 지점:
+    main 이 그 호출 안에 들었고 빚이 적혔다(`reply_debts`), 상자가 닫혔다(`MainInput.closed`).
+
+    `[5e1 에서 바뀜]` 지금: 그 호출이 돌아오면 도구가 돌고, 빚 때문에 `complete` 가 되돌아와 되묻기 예산을 다 쓴다 — 닫는
+    도중 모델 호출 9번."""
+    box: dict = {}
+    facts: dict = {}
+    gate, inside = threading.Event(), threading.Event()
+
+    def main_in_a_call(msgs):
+        inside.set()
+        until(gate.is_set, "released")
+        return call("shell", command="true")
+
+    def after_aa_asked(msgs):
+        until(
+            lambda: any(
+                "request [" in str(x.get("text")) for x in box["s"].reg.pending_mail()
+            ),
+            "aa asked main",
+        )
+        return call("shell", command="true")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="spawn", name="aa"),
+                lambda m: call(
+                    "message",
+                    to="aa",
+                    text="TASK-Q ask me which file",
+                    expects_reply=False,
+                ),
+                after_aa_asked,
+                main_in_a_call,
+            ]
+            + [complete_all("main after close")] * 12,
+            "TASK-Q": [
+                lambda m: call("message", to="main", text="which file should I use?"),
+                # main 이 그 물음을 턴 경계에서 읽어 빚으로 적은 뒤 — aa 의 되묻기의 `wait` 권유는 main 이 빚진 쪽인가에
+                # 달렸다(깨울 것 `wake_sources`): 먼저 끝내면 되묻기 글이 main 의 턴 경계와 앞뒤가 갈린다
+                lambda m: (
+                    until(
+                        lambda: len(box["s"].reg.reply_debts("main")) == 1,
+                        "main owes aa",
+                    ),
+                    call("complete", result="asked main", answers=[]),
+                )[1],
+            ]
+            + [complete_all("aa more")] * 4,
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    t = s.pump_in_thread()
+    until(
+        lambda: inside.is_set() and len(s.reg.reply_debts("main")) == 1,
+        "main in a call, owing aa",
+    )
+    # aa 가 그 런을 끝낸 뒤(한가함) — 닫힐 때 aa 가 하던 일이 이 장면에 섞이지 않게
+    until(lambda: s.agent_state(_agent_key(s, "aa")) == "idle", "aa done")
+    before = len(p.calls.get("MAIN", []))
+    closer = threading.Thread(target=s.close, daemon=True, name="oracle-close")
+    closer.start()
+    until(s.main_input.closed, "main's box closed")
+    gate.set()
+    until(lambda: not closer.is_alive() and not t.is_alive(), "closed")
+    facts["main_calls_during_close"] = len(p.calls.get("MAIN", [])) - before
+    return s.collect(facts)
+
+
+def s41_close_while_a_resident_is_in_a_call(root: Path) -> dict:
+    """웹 방을 닫을 때 상주 aa 가 모델 호출 도중이다(main 은 한가). 웹 호스트와 같은 순서로 닫는다. aa 의 호출은 붙잡혀
+    있다가 정리가 aa 를 멈춘 뒤(평생 정지 ``stop_event``)에 돌아온다.
+
+    `[5e1 에서 바뀜]` 지금: aa 는 모델을 다시 부르지 않지만 history 끝에 사람의 정지와 같은 기록 "⚡ User interrupted.
+    Waiting for new instructions." 이 남고(사람은 멈추지 않았다) 처리 수가 1 이다."""
+    box: dict = {}
+    facts: dict = {}
+    gate, inside = threading.Event(), threading.Event()
+
+    def aa_in_a_call(msgs):
+        inside.set()
+        until(gate.is_set, "released")
+        return call("shell", command="true")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call("agent", mode="spawn", name="aa"),
+                lambda m: call(
+                    "message", to="aa", text="TASK-W work", expects_reply=False
+                ),
+                complete_all("main done"),
+            ]
+            + [complete_all("main again")] * 4,
+            "TASK-W": [aa_in_a_call] + [complete_all("aa after")] * 4,
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    t = s.pump_in_thread()
+    until(lambda: inside.is_set() and s.main_idle(), "aa in a call, main idle")
+    aa = _agent_key(s, "aa")
+    before = len(p.calls.get("TASK-W", []))
+    closer = threading.Thread(target=s.close, daemon=True, name="oracle-close")
+    closer.start()
+    until(lambda: s.reg.get(aa).stop_event.is_set(), "aa stopped by the close")
+    gate.set()
+    until(lambda: not closer.is_alive() and not t.is_alive(), "closed")
+    facts["aa_calls_during_close"] = len(p.calls.get("TASK-W", [])) - before
+    facts["roster"] = _roster(s)
+    return s.collect(facts)
+
+
 def s32_quiet_reply_then_waking_mail(root: Path) -> dict:
     """ "Stop everything" 의 깨우지 않는 정지 회신이 한가한 main 앞에 먼저 서고, 그 뒤 작업 통지(깨움)가 온다 — 메일
     런이 열리고 그 첫 턴 경계가 둘을 **도착 순서**로 읽는다 (web). s11 과 같은 정지, 다음 런을 사람 말 대신 메일이 연다."""
@@ -2980,6 +3097,8 @@ SCENARIOS = {
     "s37_command_queued_before_wait": s37_command_queued_before_wait,
     "s38_close_while_main_waits": s38_close_while_main_waits,
     "s39_kill_a_waiting_requester": s39_kill_a_waiting_requester,
+    "s40_close_while_main_is_in_a_call": s40_close_while_main_is_in_a_call,
+    "s41_close_while_a_resident_is_in_a_call": s41_close_while_a_resident_is_in_a_call,
 }
 
 

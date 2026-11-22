@@ -218,3 +218,160 @@ def test_a_session_ended_run_is_session_end_and_its_end_settles_nothing():
     deps.auditor.run_ended.assert_not_called()
     deps.surface.run_ended.assert_not_called()
     deps.surface.bind_stop.assert_called_once_with(None)
+
+
+# ── 일하는 중에 닫힐 때 (5e1 — 지금 값 고정) ──────────────────────────────
+
+
+def _records(s, key: str | None = None) -> list[dict]:
+    """main(``key`` 가 None) 또는 에이전트 ``key`` 의 history 레코드."""
+    if key is None:
+        return _main_records(s)
+    path = next(p for p in s.sdir.rglob("history.jsonl") if key in str(p))
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _close_mid_work(home, scene: str):
+    """세션을 일하는 중에 닫는다 — 웹 호스트와 같은 순서(main 상자를 닫고 정리). ``scene``:
+
+    - ``main_call``: main 이 모델 호출 도중이고, aa 가 물어 main 이 회신을 빚졌다.
+    - ``main_shell``: main 이 전경 `shell` 도중.
+    - ``resident``: 상주 aa 가 모델 호출 도중, main 은 한가.
+    - ``run_agent``: 일회용 에이전트가 모델 호출 도중, main 은 그 회신을 제자리에서 기다림.
+
+    돌려주는 것: ``(s, 닫기 시작한 뒤의 배우별 모델 호출 수, 에이전트 키들)``."""
+    box: dict = {}
+    gate, inside = threading.Event(), threading.Event()
+    flag = home / "shell.flag"
+
+    def slow(step):
+        def go(m):
+            inside.set()
+            until(gate.is_set, "released")
+            return step
+
+        return go
+
+    def after_aa_asked(m):
+        until(
+            lambda: any(
+                "request [" in str(x.get("text")) for x in box["s"].reg.pending_mail()
+            ),
+            "aa asked main",
+        )
+        return call("shell", command="true")
+
+    scripts = {
+        "main_call": {
+            "MAIN": [
+                call("agent", mode="spawn", name="aa"),
+                lambda m: call(
+                    "message",
+                    to="aa",
+                    text="TASK-A ask me which file",
+                    expects_reply=False,
+                ),
+                after_aa_asked,
+                slow(call("shell", command="true")),
+            ]
+            + [complete_all("main after")] * 12,
+            "TASK-A": [
+                lambda m: call("message", to="main", text="which file should I use?"),
+                lambda m: call("complete", result="asked main", answers=[]),
+            ]
+            + [complete_all("aa more")] * 4,
+        },
+        "main_shell": {
+            "MAIN": [call("shell", command=f"touch {flag}; sleep 2")]
+            + [complete_all("main after")] * 6
+        },
+        "resident": {
+            "MAIN": [
+                call("agent", mode="spawn", name="aa"),
+                lambda m: call("message", to="aa", text="TASK-A work"),
+            ]
+            + [complete_all("main done")] * 10,
+            "TASK-A": [slow(call("shell", command="true"))]
+            + [complete_all("aa after")] * 4,
+        },
+        "run_agent": {
+            "MAIN": [
+                call("agent", mode="run", task="TASK-R count things"),
+                call("wait"),
+            ]
+            + [complete_all("main after")] * 6,
+            "TASK-R": [slow(call("shell", command="true"))]
+            + [complete_all("r after")] * 4,
+        },
+    }
+    p = Provider(scripts[scene])
+    s = box["s"] = Session(home, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    pump = s.pump_in_thread()
+    if scene == "main_call":
+        until(
+            lambda: inside.is_set() and len(s.reg.reply_debts("main")) == 1,
+            "main in a call, owing aa",
+        )
+    elif scene == "main_shell":
+        until(flag.exists, "foreground shell running")
+    else:
+        until(
+            lambda: inside.is_set() and (scene != "resident" or s.main_idle()),
+            "agent in a call",
+        )
+    keys = s.agent_keys()
+    before = {k: len(v) for k, v in p.calls.items()}
+    closer = threading.Thread(target=s.close, daemon=True)
+    closer.start()
+    until(
+        lambda: (
+            s.main_input.closed()
+            and (
+                scene.startswith("main")
+                or all(s.reg.get(k).stop_event.is_set() for k in keys)
+            )
+        ),
+        "the close reached its stop",
+    )
+    gate.set()
+    until(lambda: not closer.is_alive() and not pump.is_alive(), "closed")
+    calls = {k: len(v) - before.get(k, 0) for k, v in p.calls.items()}
+    return s, calls, keys
+
+
+def test_closing_while_main_is_in_a_model_call_owing_a_reply(home):
+    """`[5e1 에서 바뀜]` 지금: 그 호출이 돌아오면 도구가 돌고, 빚 때문에 `complete` 가 되돌아와 되묻기 예산을 다 쓴다 —
+    닫는 도중 모델 호출 9번, history 끝은 되묻기 관찰."""
+    s, calls, _ = _close_mid_work(home, "main_call")
+    assert calls["MAIN"] == 9
+    last_user = [r for r in _records(s) if r.get("role") == "user"][-1]
+    assert last_user.get("tool") == "complete"
+    assert str(last_user.get("content")).startswith(
+        "Observation: your result was delivered, but 1 item is still open:"
+    )
+
+
+def test_closing_while_main_runs_a_foreground_shell(home):
+    """`[5e1 에서 바뀜]` 지금: 명령이 끝까지 돌고("(no output)") 모델을 한 번 더 부른다."""
+    s, calls, _ = _close_mid_work(home, "main_shell")
+    assert calls["MAIN"] == 1
+    shell = [r for r in _records(s) if r.get("tool") == "shell"][-1]
+    assert shell.get("content") == "Observation: (no output)"
+
+
+@pytest.mark.parametrize("scene", ["resident", "run_agent"])
+def test_closing_while_an_agent_is_in_a_model_call(home, scene):
+    """`[5e1 에서 바뀜]` 지금: 에이전트는 모델을 다시 부르지 않지만, history 끝에 사람의 정지와 같은 기록
+    "⚡ User interrupted. Waiting for new instructions." 이 남고(사람은 멈추지 않았다) 처리 수가 1 이다."""
+    s, calls, (key,) = _close_mid_work(home, scene)
+    assert sum(calls.values()) == 0
+    last = _records(s, key)[-1]
+    assert last.get("tool") == "interrupt"
+    assert last.get("content") == "⚡ User interrupted. Waiting for new instructions."
+    (row,) = s.reg.roster_snapshot()
+    assert row["handled"] == 1
