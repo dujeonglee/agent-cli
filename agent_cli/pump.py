@@ -175,6 +175,12 @@ class MainActor:
     def __init__(self, deps: PumpDeps):
         self.deps = deps
 
+    def _bind_stop(self, event: threading.Event | None) -> None:
+        """이 런의 정지 플래그를 건다(None = 해제) — 표면(■·Ctrl+C 가 세운다)과 main 상자(닫기가 세운다,
+        `MainInput.close`) 둘에. 정지를 세우는 쪽이 어느 것이든 같은 플래그다."""
+        self.deps.surface.bind_stop(event)
+        self.deps.main_input.bind_stop(event)
+
     def route(self, text: str, item: dict | None = None) -> bool:
         """런 **도중** 주입된 아이템의 라우팅(``LoopPorts.route_message``) — 표면의 명령 라우팅 그대로."""
         return self.deps.surface.route(text, item=item)
@@ -219,7 +225,7 @@ class MainActor:
         # "Stop everything" 의 조용함은 그 정지 하나의 것 — 새 런은 깨우는 정지 회신으로 시작한다
         if d.agent_registry is not None:
             d.agent_registry.main_stop_wakes = True
-        d.surface.bind_stop(stop_event)
+        self._bind_stop(stop_event)
         start = d.main.start(item, stop_event)
         if item is None or not item.get("command"):
             return start
@@ -231,10 +237,10 @@ class MainActor:
                 if not d.surface.run_failed(exc):
                     raise
             finally:
-                d.surface.bind_stop(None)
+                self._bind_stop(None)
             return None
         if routed:
-            d.surface.bind_stop(None)
+            self._bind_stop(None)
             return None
         return start
 
@@ -256,7 +262,7 @@ class MainActor:
                     raise
             finally:
                 if not swallowed:
-                    d.surface.bind_stop(None)
+                    self._bind_stop(None)
             return RunEnd.crashed(exc)
         stop = getattr(start, "stop_event", None)
         return RunEnd.of(result, stopped=bool(stop is not None and stop.is_set()))
@@ -282,7 +288,7 @@ class MainActor:
         우편을 올리지 않는다, 5c-0). 중단 핸들만 푼다."""
         d = self.deps
         if end.outcome == "session_end":
-            d.surface.bind_stop(None)
+            self._bind_stop(None)
             return False
         result = end.result
         if end.outcome == "crashed":
@@ -322,5 +328,5 @@ class MainActor:
                 if not d.surface.run_failed(exc):
                     raise
         finally:
-            d.surface.bind_stop(None)
+            self._bind_stop(None)
         return False

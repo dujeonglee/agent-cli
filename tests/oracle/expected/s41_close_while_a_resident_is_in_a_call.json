@@ -232,7 +232,7 @@
   "aa_calls_during_close": 0,
   "roster": [
    {
-    "handled": 1,
+    "handled": 0,
     "key": "agt-A",
     "name": "aa",
     "pending_requests": 0,
@@ -268,12 +268,6 @@
    {
     "content": "── notice [n-1] from main ──\nTASK-W work",
     "role": "user"
-   },
-   {
-    "content": "⚡ User interrupted. Waiting for new instructions.",
-    "role": "user",
-    "success": false,
-    "tool": "interrupt"
    }
   ],
   "history.jsonl": [

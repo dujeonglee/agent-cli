@@ -507,7 +507,12 @@ class Session:
         self.main_input.close()
 
     def close(self) -> None:
+        """웹 호스트와 같은 순서 — main 상자를 닫고(`stop_pump`) 정리(`teardown`)."""
         self.stop_pump()
+        self.teardown()
+
+    def teardown(self) -> None:
+        """세션 정리(`teardown_session`)만 — run 의 종료처럼 main 상자를 닫는 이가 없을 때(정리의 `shutdown_all` 이 닫는다)."""
         teardown_session(
             None,
             self.ctx,

@@ -2452,8 +2452,9 @@ class AgentRegistry:
             pass  # 화면은 best-effort — 정리를 막지 않는다
 
     def shutdown_all(self, *, deadline: float | None = None) -> None:
-        """세션 종료 — 전원 kill. main 부트스트랩의 finally 에서 호출. ``deadline``
-        (SIGTERM 경로, v10.134.1)이 있으면 워커를 그 안에서만 기다린다."""
+        """세션 종료 — main 상자를 먼저 닫고(멈추는 런이 그 사실을 읽는다, 5e1) 전원 kill. main 부트스트랩의 finally 에서
+        호출. ``deadline``(SIGTERM 경로, v10.134.1)이 있으면 워커를 그 안에서만 기다린다. 마지막 저장은 revivable 그대로(D7)."""
+        self._post.close("main")
         self._cancel_checkins()  # main 포함 — 끝나는 세션에 알림이 쌓이지 않게
         for tm in list(self._agents.values()):
             self._drop_monitors(tm.key)
@@ -2461,7 +2462,6 @@ class AgentRegistry:
         for tm in list(self._agents.values()):
             if tm.worker is not None:
                 tm.worker.join(timeout=wait_left(deadline, 5.0))
-        # 최종 스냅샷 — revivable 유지 상태로 기록돼 resume 이 되살린다 (D7).
         self._save_state()
 
     def resume_teammate(self, key: str, *, parent_ctx=None) -> str:

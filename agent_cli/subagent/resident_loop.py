@@ -132,6 +132,10 @@ class ResidentLoop(LoopKind):
         """run 에이전트는 런이 끝나면 내려간다; 상주는 다음 메시지가 새 런을 연다(ctx 는 수명에 하나)."""
         return WAIT_NEXT_KEEP_WORKING if self.tm.ends_after_task else WAIT_NEXT_RESIDENT
 
+    def session_ended(self) -> bool:
+        """세션이 끝나는 중인가 — main 상자가 닫혔다(`shutdown_all` 이 맨 먼저 닫는다, 5e1). main 과 같은 사실이다."""
+        return self.registry._post.is_closed("main")
+
     def intake(self) -> list[dict]:
         """런 도중 받은편지함에 도착한 항목을 지금 흡수한다 (v9.25.0) — 11시간 런 동안
         오케스트레이터 메시지 8건이 안 읽히던 것."""
@@ -325,8 +329,13 @@ class ResidentLoop(LoopKind):
           단건과 같은 판정으로 떨어진다).
         - ``handled``/``state`` 는 **정리 뒤**(`_close_run`) — idle 은 '이 런의 일이 다
           끝났다' 여야 한다(v9.22.4, Linux CI 레이스).
+        - 세션 종료로 끝난 런(``session_ended`` — 5e1)은 아무것도 하지 않는다: 회신·폴백·우편 정리·처리 수 없이
+          그대로 돌려준다. 우편은 프로세스와 함께 사라지고(5c-0), 마지막 저장은 `shutdown_all` 이 한다.
         """
         import time as _time
+
+        if result is not None and getattr(result, "session_ended", False):
+            return result, secs
 
         from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
@@ -451,7 +460,10 @@ class AgentActor:
     def ended(self, start: Start, end: RunEnd) -> bool:
         """run 에이전트는 런이 끝나면 내려온다 — `complete`·정지·턴 상한·오류 어느 끝이든(사용자 결정 2026-11-15:
         회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도 남으면 런 끝 폴백이 런 요약으로
-        회신한다). `wait` 는 런을 끝내지 않는다(5c-1). 런 중간의 `reply` 는 끝이 아니다."""
+        회신한다). `wait` 는 런을 끝내지 않는다(5c-1). 런 중간의 `reply` 는 끝이 아니다. 세션 종료(``session_end``)는
+        과제의 끝이 아니다 — 내려옴(`OnAgentEnd` 훅)도 없이 워커를 끝낸다(5e1 결정 E)."""
+        if end.outcome == "session_end":
+            return True
         if self.tm.ends_after_task:
             self._come_down(end.result)
             return True

@@ -773,6 +773,7 @@ class MainLoop(LoopKind):
         self.record_turns = record_turns
         self.hooks_config = hooks_config
         self.graceful_interrupt = graceful_interrupt
+        self._session_closed = session_closed
         self.ports = self.make_ports(
             agent_registry=agent_registry,
             mcp_manager=mcp_manager,
@@ -831,6 +832,10 @@ class MainLoop(LoopKind):
         )
 
     # ── 엔진이 묻는 것 (v10.88.0) ──
+    def session_ended(self) -> bool:
+        """main 상자가 닫혔는가(`MainInput.closed`) — 세션이 끝나는 중이다(5e1)."""
+        return bool(self._session_closed is not None and self._session_closed())
+
     def wait_refused_next(self) -> str:
         """main 은 요청을 보내야 회신이 온다 — 깨울 것이 없으면 그 길을 말한다."""
         return WAIT_NEXT_MAIN

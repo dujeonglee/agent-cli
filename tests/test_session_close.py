@@ -12,6 +12,7 @@ import threading
 
 import pytest
 
+from agent_cli.main_input import MainInput
 from agent_cli.render import get_renderer, set_renderer
 from tests.oracle.driver import (
     Provider,
@@ -148,9 +149,10 @@ def test_closing_main_s_box_alone_ends_the_in_place_wait(home):
     s.close()
 
 
-def test_a_working_main_goes_on_while_the_session_closes(home):
-    """일하는 중(모델 호출 도중)이던 main — 닫힌 뒤 그 호출이 돌아오면 도구가 돌고 한 번 더 부른다. 5c-pre 는 이 길을
-    바꾸지 않는다(고칠 후보 — 5e)."""
+def test_a_working_main_stops_when_the_session_closes(home):
+    """일하는 중(모델 호출 도중)이던 main — 닫기가 지금 작업 구간의 정지 플래그를 세운다(`MainInput.close`, 5e1). 그
+    호출이 돌아와도 도구는 돌지 않고(도구 실행 직전의 정지 판정) 모델을 다시 부르지 않는다. `[interrupt]` 기록도 없다 —
+    사람의 정지가 아니다. (종전: 도구가 돌고 한 번 더 불렀다.)"""
     gate = threading.Event()
     inside = threading.Event()
 
@@ -170,9 +172,9 @@ def test_a_working_main_goes_on_while_the_session_closes(home):
     closer.start()
     gate.set()
     until(lambda: not closer.is_alive() and not pump.is_alive(), "closed")
-    assert len(p.calls["MAIN"]) - before == 1
+    assert len(p.calls["MAIN"]) - before == 0
     tools = [r.get("tool") for r in _main_records(s) if r.get("role") == "user"]
-    assert "shell" in tools and "interrupt" not in tools
+    assert "shell" not in tools and "interrupt" not in tools
 
 
 # ── 단위 — 메일함의 닫힘·런 끝의 종류·런 끝 정리 ──────────────────────────
@@ -235,13 +237,16 @@ def _records(s, key: str | None = None) -> list[dict]:
     ]
 
 
-def _close_mid_work(home, scene: str):
+def _close_mid_work(home, scene: str, *, box_first: bool = True):
     """세션을 일하는 중에 닫는다 — 웹 호스트와 같은 순서(main 상자를 닫고 정리). ``scene``:
 
     - ``main_call``: main 이 모델 호출 도중이고, aa 가 물어 main 이 회신을 빚졌다.
     - ``main_shell``: main 이 전경 `shell` 도중.
     - ``resident``: 상주 aa 가 모델 호출 도중, main 은 한가.
     - ``run_agent``: 일회용 에이전트가 모델 호출 도중, main 은 그 회신을 제자리에서 기다림.
+
+    ``box_first`` 가 거짓이면 main 상자를 닫지 않고 정리(`Session.teardown`)만 한다 — run 의 종료(main 상자를 아무도
+    닫지 않는다)와 같다: 정리의 `shutdown_all` 이 먼저 main 상자를 닫는다.
 
     돌려주는 것: ``(s, 닫기 시작한 뒤의 배우별 모델 호출 수, 에이전트 키들)``."""
     box: dict = {}
@@ -326,7 +331,7 @@ def _close_mid_work(home, scene: str):
         )
     keys = s.agent_keys()
     before = {k: len(v) for k, v in p.calls.items()}
-    closer = threading.Thread(target=s.close, daemon=True)
+    closer = threading.Thread(target=s.close if box_first else s.teardown, daemon=True)
     closer.start()
     until(
         lambda: (
@@ -345,33 +350,68 @@ def _close_mid_work(home, scene: str):
 
 
 def test_closing_while_main_is_in_a_model_call_owing_a_reply(home):
-    """`[5e1 에서 바뀜]` 지금: 그 호출이 돌아오면 도구가 돌고, 빚 때문에 `complete` 가 되돌아와 되묻기 예산을 다 쓴다 —
-    닫는 도중 모델 호출 9번, history 끝은 되묻기 관찰."""
+    """`[5e1 에서 바뀜]` 닫기가 정지를 세워 그 호출의 응답은 실행되지 않는다 — 닫는 도중 모델 호출 0, history 끝은 그
+    호출 앞의 마지막 두 기록(도구 관찰과 aa 의 물음). 종전: 도구가 돌고, 빚 때문에 `complete` 가 되돌아와 되묻기 예산을 다
+    썼다 — 호출 9번."""
     s, calls, _ = _close_mid_work(home, "main_call")
-    assert calls["MAIN"] == 9
-    last_user = [r for r in _records(s) if r.get("role") == "user"][-1]
-    assert last_user.get("tool") == "complete"
-    assert str(last_user.get("content")).startswith(
-        "Observation: your result was delivered, but 1 item is still open:"
+    assert calls["MAIN"] == 0
+    *_, shell, asked = [r for r in _records(s) if r.get("role") == "user"]
+    assert (shell.get("tool"), shell.get("content")) == (
+        "shell",
+        "Observation: (no output)",
     )
+    assert asked.get("tool") == "agent"
+    assert "which file should I use?" in str(asked.get("content"))
+    assert not any(r.get("tool") == "interrupt" for r in _records(s))
 
 
 def test_closing_while_main_runs_a_foreground_shell(home):
-    """`[5e1 에서 바뀜]` 지금: 명령이 끝까지 돌고("(no output)") 모델을 한 번 더 부른다."""
+    """`[5e1 에서 바뀜]` 전경 `shell` 이 정지 플래그를 보고(0.2초마다) 명령을 끝낸다 — 그 관찰은 "This run was stopped,
+    so the command was ended after …" 이고 모델을 다시 부르지 않는다. 종전: 명령이 끝까지 돌고("(no output)") 한 번 더
+    불렀다."""
     s, calls, _ = _close_mid_work(home, "main_shell")
-    assert calls["MAIN"] == 1
+    assert calls["MAIN"] == 0
     shell = [r for r in _records(s) if r.get("tool") == "shell"][-1]
-    assert shell.get("content") == "Observation: (no output)"
+    assert str(shell.get("content")).startswith(
+        "Observation: This run was stopped, so the command was ended after"
+    )
 
 
 @pytest.mark.parametrize("scene", ["resident", "run_agent"])
 def test_closing_while_an_agent_is_in_a_model_call(home, scene):
-    """`[5e1 에서 바뀜]` 지금: 에이전트는 모델을 다시 부르지 않지만, history 끝에 사람의 정지와 같은 기록
-    "⚡ User interrupted. Waiting for new instructions." 이 남고(사람은 멈추지 않았다) 처리 수가 1 이다."""
+    """`[5e1 에서 바뀜]` 에이전트는 세션 종료로 끝난다 — 모델을 다시 부르지 않고, history 끝은 받은 과제 그대로(기록
+    없음), 끝 정리를 하지 않아 처리 수는 0(결정 F). 종전: 사람의 정지와 같은 기록 "⚡ User interrupted. Waiting for new
+    instructions." 이 남고(사람은 멈추지 않았다) 처리 수가 1 이었다."""
     s, calls, (key,) = _close_mid_work(home, scene)
     assert sum(calls.values()) == 0
-    last = _records(s, key)[-1]
-    assert last.get("tool") == "interrupt"
-    assert last.get("content") == "⚡ User interrupted. Waiting for new instructions."
+    records = _records(s, key)
+    assert not any(r.get("tool") == "interrupt" for r in records)
+    assert records[-1].get("role") == "user" and "TASK-" in str(
+        records[-1].get("content")
+    )
     (row,) = s.reg.roster_snapshot()
-    assert row["handled"] == 1
+    assert row["handled"] == 0
+
+
+def test_the_run_path_close_without_the_box_is_a_session_end_too(home):
+    """run 의 종료는 main 상자를 닫는 이가 없다 — 정리의 `shutdown_all` 이 맨 먼저 main 상자를 닫으므로(안 B) 멈추는
+    에이전트도 세션 종료로 끝난다: `[interrupt]` 기록 없음."""
+    s, calls, (key,) = _close_mid_work(home, "resident", box_first=False)
+    assert sum(calls.values()) == 0
+    assert not any(r.get("tool") == "interrupt" for r in _records(s, key))
+
+
+def test_closing_sets_the_bound_stop_and_a_stop_bound_after_the_close_at_once():
+    """`MainInput.close` 는 지금 런의 정지 플래그를 세운다. 닫힌 뒤 걸린 플래그(닫힘과 런 시작이 엇갈림)는 거는 순간
+    선다 — 그 런도 첫 정지 판정에서 끝난다."""
+    q = MainInput()
+    running = threading.Event()
+    q.bind_stop(running)
+    assert not running.is_set()
+    q.close()
+    assert running.is_set() and q.closed()
+    late = threading.Event()
+    q.bind_stop(late)
+    assert late.is_set()
+    q.bind_stop(None)
+    q.close()  # 멱등

@@ -76,7 +76,8 @@ class TestMainRunEnd:
             if start.query == "boom":
                 raise RuntimeError("run died")
             if len(seen) == 2:
-                q.close()
+                q.close()  # 세션이 닫힌다 — 이 런은 세션 종료로 끝나 끝 정리를 하지 않는다(5e1)
+                return ToolResult(False, error="session ended", session_ended=True)
             return ToolResult(True, output="ok")
 
         done = threading.Event()
@@ -91,7 +92,7 @@ class TestMainRunEnd:
         t.start()
         assert done.wait(10)
         assert seen == ["boom", "fine"]
-        assert reg.ended == [("main", ""), ("main", "ok")]
+        assert reg.ended == [("main", "")]  # 둘째 런은 세션 종료 — 끝 정리 없음
         kinds = [c[0] for c in surface.calls]
         assert kinds.count("run_failed") == 1
         first_end = kinds.index("run_ended")

@@ -608,7 +608,12 @@ class AgentLoop:
             without relying on the legacy prefix match.
         Shared by both surfaces: Ctrl+C (chat) and the web stop button
         both land here through ``stop_event`` → ``_should_continue``.
+
+        세션 종료(main 상자가 닫혀 정지가 섬 — `LoopKind.session_ended`, 5e1)는 사람의 정지가 아니다: 기록·화면 카드
+        없이 ``session_ended`` 결과로 끝낸다 — 끝 정리가 그것을 읽고 아무것도 하지 않는다.
         """
+        if self._config.kind.session_ended():
+            return ToolResult(False, error="session ended", session_ended=True)
         if self.ctx:
             self.ctx.add(interrupt_record(INTERRUPT_NOTICE))
         # Surface through the renderer (CLI console / web SSE), not a
