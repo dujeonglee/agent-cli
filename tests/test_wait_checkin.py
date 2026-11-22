@@ -35,7 +35,7 @@ from agent_cli.session_slots import (
 )
 from agent_cli.subagent.agent_mail import build_reply_record
 from agent_cli.subagent.agents_live import AgentInstance
-from agent_cli.wake import Mailbox
+from agent_cli.wake import Mailbox, wake_name
 from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
 from tests.mail_support import absorbed_mail, agent_wake_lines, checkin_ids
@@ -446,6 +446,13 @@ class TestAgentLines:
         _fake_agent(reg, "b", state="busy", current_author="agent:a")
         (line,) = reg.checkin_agent_lines("main", {})[0]
         assert line == "agent:a (coder) · owes you a reply · itself waiting on b"
+
+    def test_wake_names(self):
+        """기다림 줄에 쓰는 이름 — id 하나에 이름 하나."""
+        assert [
+            wake_name(i)
+            for i in ("agent:agt-5", "main", "job:3", "mon:m-2", "schedule")
+        ] == ["agt-5", "main", "job #3", "monitor m-2", "a schedule"]
 
     def test_a_waiting_agent_reads_as_waiting_in_the_three_places(self, reg):
         """받아들여진 `wait` 로 기다리는 에이전트(우편의 기다림 표시)를 모델이 읽는 세 자리 — 꼬리의 `## Live Agents`,
