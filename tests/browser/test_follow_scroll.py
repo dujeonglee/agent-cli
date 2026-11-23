@@ -274,3 +274,49 @@ class TestNewCountInsideARunBlock:
         assert jump.inner_text() == "↓ 3 new"
         jump.click()
         assert _wait(lambda: _dist(page) < 2 and jump.is_hidden())
+
+
+class TestWhatCountsAsThePersonScrolling:
+    """휠 말고 사람의 굴림으로 보는 것 둘 — 굴리는 키, 타임라인 위에서 포인터를 누른 채 옮겨진 위치(스크롤바 끌기·
+    끌어 고르기). 프로그램이 쓴 위치는 사람의 굴림이 아니다."""
+
+    def _open_following(self, stack, page):
+        stack.emit_ready()
+        _fill(stack, 40)
+        page.goto(stack.url)
+        assert _wait(lambda: _cards(page) >= 40 and _dist(page) < 2)
+
+    def test_a_scroll_key_unpins_but_not_while_typing(self, stack, page):
+        self._open_following(stack, page)
+        page.locator("#input").click()
+        page.keyboard.press("PageUp")  # 입력창 안 — 타임라인을 굴리는 키가 아니다
+        _fill(stack, 1, start=40)
+        assert _wait(lambda: _cards(page) >= 41 and _dist(page) < 2)
+        assert page.evaluate(PINNED) == "1"
+
+        page.locator("#messages").click(
+            position={"x": 5, "y": 5}
+        )  # 초점을 타임라인 쪽으로
+        page.keyboard.press("PageUp")
+        assert _wait(lambda: page.evaluate(PINNED) == "0")
+        assert _dist(page) > 48
+
+    def test_a_position_moved_while_the_pointer_is_held_unpins(self, stack, page):
+        """스크롤바 끌기가 페이지에 보이는 모양 — 타임라인 위 `pointerdown` 뒤 놓기 전에 위치가 옮겨진다. 헤드리스
+        크롬은 스크롤바를 그리지 않아(폭 0) 엄지를 직접 끌 수 없다: 진짜 포인터를 누른 채 위치를 옮긴다."""
+        self._open_following(stack, page)
+        box = page.locator("#messages").bounding_box()
+        page.mouse.move(box["x"] + 3, box["y"] + box["height"] - 3)
+        page.mouse.down()
+        page.evaluate("document.getElementById('messages').scrollTop -= 900")
+        assert _wait(lambda: page.evaluate(PINNED) == "0")
+        _fill(stack, 1, start=40)  # 누르고 있는 동안 온 카드 — 끌려가지 않는다
+        assert _wait(lambda: _cards(page) >= 41)
+        assert _dist(page) > 900
+        page.mouse.up()
+
+    def test_a_position_written_by_a_program_does_not_unpin(self, stack, page):
+        self._open_following(stack, page)
+        page.evaluate("document.getElementById('messages').scrollTop -= 900")
+        assert _wait(lambda: _dist(page) < 2)  # 따라가는 중이라 바닥으로 다시 간다
+        assert page.evaluate(PINNED) == "1"
