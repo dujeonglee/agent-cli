@@ -7,12 +7,16 @@
 
 각 테스트는 그 엇갈림을 조건 대기로 세운다(sleep 없음): 첫째 스레드가 뜬 뒤 붙들린 사이 둘째가 상태를 바꿔 새 값을
 내려 한다.
+
+``[한 걸음에서 바뀜]`` 표지가 붙은 테스트는 그 자리가 아직 묶이지 않은 지금 값이다 — 그 자리를 고치는 커밋에서 뒤집힌다.
 """
 
 from __future__ import annotations
 
 import threading
 
+from agent_cli.instance_file import read_status_file
+from agent_cli.jobs import JobRegistry
 from agent_cli.render.web import WebRenderer
 from agent_cli.web.server import WebServer
 from tests.test_agents_live import (
@@ -20,6 +24,29 @@ from tests.test_agents_live import (
     renderer,  # noqa: F401
     wait_until,
 )
+
+
+class Overlap:
+    """묶이지 않은 자리의 엇갈림 — 첫째 스레드를 "뜬 뒤" 에 붙들고, 둘째가 새 값을 다 낸 뒤 놓는다."""
+
+    def __init__(self):
+        self.first_read = threading.Event()
+        self.second_done = threading.Event()
+
+    def hold_first(self) -> None:
+        """뜨는 함수 안에서 부른다 — 첫째 스레드면 붙든다."""
+        if threading.current_thread().name == "first":
+            self.first_read.set()
+            assert self.second_done.wait(10)
+
+    def run(self, first, second) -> None:
+        t = threading.Thread(target=first, name="first")
+        t.start()
+        assert self.first_read.wait(10)
+        second()  # 상태를 바꾸고 새 값을 낸다
+        self.second_done.set()
+        t.join(10)
+        assert not t.is_alive()
 
 
 class Step:
@@ -93,3 +120,22 @@ def test_the_queue_shown_last_is_the_newest(monkeypatch):
     ov.run(server.broadcast_queue, lambda: server.main_input.wait_to_open(0))
     assert real() == []
     assert r.hub.sticky_payload("queue")["pending"] == []
+
+
+def test_an_older_job_list_overwrites_a_newer_one(tmp_path, monkeypatch):
+    """[한 걸음에서 바뀜] 작업 — 먼저 뜬 작업 목록이 나중에 나가, 끝난 작업이 칩과 status.json 에 남는다."""
+    r = WebRenderer(session_dir=str(tmp_path))
+    jobs = JobRegistry(tmp_path)
+    jobs.deliver = lambda *a, **k: ""
+    jobs.on_change = r.jobs_changed
+    try:
+        job = jobs.start("sleep 60", owner="main")
+        assert r.hub.sticky_payload("jobs")["count"] == 1
+        ov, real = Overlap(), jobs.view
+        monkeypatch.setattr(jobs, "view", lambda: (real(), ov.hold_first())[0])
+        ov.run(jobs._changed, lambda: jobs._finish(job, 0, notify=False))
+        assert real()["count"] == 0
+        assert r.hub.sticky_payload("jobs")["count"] == 1
+        assert read_status_file(tmp_path)["jobs"]["count"] == 1
+    finally:
+        jobs.stop_all()
