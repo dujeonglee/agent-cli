@@ -1,11 +1,15 @@
 """Tests for the fetch tool."""
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
+from agent_cli.tools.base import RunContext
 from agent_cli.tools.fetch import (
     _PROXY_VARS,
     FetchTool,
@@ -82,7 +86,7 @@ class TestFetchSingle:
         mock_resp.content = b"<h1>Hello</h1><p>World</p>"
 
         with patch("agent_cli.tools.fetch.requests.get", return_value=mock_resp):
-            content, error = _fetch_single("https://example.com")
+            content, error = _fetch_single("https://example.com", None)
             assert error is None
             assert "Hello" in content
 
@@ -91,7 +95,7 @@ class TestFetchSingle:
         mock_resp.status_code = 404
 
         with patch("agent_cli.tools.fetch.requests.get", return_value=mock_resp):
-            _, error = _fetch_single("https://example.com/missing")
+            _, error = _fetch_single("https://example.com/missing", None)
             assert error.startswith(
                 "Fetch failed (http-missing): https://example.com/missing\n"
             )
@@ -103,7 +107,7 @@ class TestFetchSingle:
             "agent_cli.tools.fetch.requests.get",
             side_effect=req.exceptions.Timeout(),
         ):
-            _, error = _fetch_single("https://slow.example.com")
+            _, error = _fetch_single("https://slow.example.com", None)
             assert error.startswith(
                 "Fetch failed (timeout): https://slow.example.com\n"
             )
@@ -115,7 +119,7 @@ class TestFetchSingle:
             "agent_cli.tools.fetch.requests.get",
             side_effect=req.exceptions.ConnectionError(),
         ):
-            _, error = _fetch_single("https://nonexistent.example.com")
+            _, error = _fetch_single("https://nonexistent.example.com", None)
             assert error.startswith(
                 "Fetch failed (connect): https://nonexistent.example.com\n"
             )
@@ -127,7 +131,7 @@ class TestFetchSingle:
         mock_resp.content = b"Plain text content"
 
         with patch("agent_cli.tools.fetch.requests.get", return_value=mock_resp):
-            content, error = _fetch_single("https://example.com/file.txt")
+            content, error = _fetch_single("https://example.com/file.txt", None)
             assert error is None
             assert "Plain text content" in content
 
@@ -143,7 +147,7 @@ def _resp(ct: str, body, *, apparent: str = "utf-8"):
 
 def _get(resp, url="https://example.com/x"):
     with patch("agent_cli.tools.fetch.requests.get", return_value=resp):
-        return _fetch_single(url)
+        return _fetch_single(url, None)
 
 
 class TestBodyKinds:
@@ -1136,3 +1140,130 @@ class TestDownloadFailureText:
             "Retrying will not help; this source needs an account."
         )
         assert not (tmp_path / "p.html").exists()
+
+
+#: 사건을 기다리는 상한 — 넘으면 테스트가 실패한다(결과를 바꾸는 값이 아니다)
+_PATIENCE_S = 20
+
+
+class _HeldServer:
+    """요청을 받은 뒤 응답을 쥐고 있는 로컬 서버(127.0.0.1, 임시 포트) — ``got`` 은 요청이 닿았다, ``release`` 를
+    세우면 그제야 답한다. 시간으로 맞추지 않는다: 순서는 이 두 사건이 정한다."""
+
+    def __init__(self):
+        self.got = threading.Event()
+        self.release = threading.Event()
+        held = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                held.got.set()
+                held.release.wait(_PATIENCE_S)
+                body = b"late answer"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                try:
+                    self.wfile.write(body)
+                except OSError:
+                    pass  # 받는 쪽이 요청을 버렸다
+
+            def log_message(self, *args):
+                pass
+
+        self._srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._srv.server_address[1]}/held"
+        threading.Thread(target=self._srv.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.release.set()
+        self._srv.shutdown()
+        self._srv.server_close()
+
+
+@pytest.fixture
+def held_server():
+    srv = _HeldServer()
+    yield srv
+    srv.close()
+
+
+def _fetch_in_thread(args: dict, stopped):
+    """``FetchTool`` 을 옆 스레드에서 — ``(스레드, 결과 상자)``."""
+    box: dict = {}
+
+    def go():
+        box["result"] = FetchTool()._run(args, ctx=RunContext(stopped=stopped))
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    return t, box
+
+
+class TestStopsWithTheRun:
+    """작업 구간이 멈추면 그 안의 `fetch` 도 멈춘다 (전경 `shell`·MCP 호출과 같은 플래그·같은 간격) — 서버가 응답을
+    쥐고 있는 동안. 종전엔 정지가 서도 요청의 시한(15초)을 다 기다렸고 "timeout … One retry may succeed" 가 남았다."""
+
+    def test_a_stop_during_the_request_gives_it_up(self, held_server):
+        stop = threading.Event()
+        t, box = _fetch_in_thread({"url": held_server.url}, stop.is_set)
+        assert held_server.got.wait(_PATIENCE_S)
+        stop.set()  # 요청이 서버에 닿은 뒤에 멈춘다
+        t.join(_PATIENCE_S)
+        assert not held_server.release.is_set()  # 서버는 아직 답하지 않았다
+        result = box["result"]
+        assert not result.success
+        assert (
+            result.error
+            == "This run was stopped, so the request was given up after 0s."
+        )
+
+    def test_the_observation_says_stopped_not_timeout(self, held_server):
+        t, box = _fetch_in_thread({"url": held_server.url}, lambda: True)
+        t.join(_PATIENCE_S)
+        body = FetchTool().render_observation(box["result"], {"url": held_server.url})
+        assert "This run was stopped" in body
+        assert "timeout" not in body and "retry" not in body
+
+    def test_a_download_is_given_up_too(self, held_server, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        t, box = _fetch_in_thread(
+            {"url": held_server.url, "download_to": "out.bin"}, lambda: True
+        )
+        t.join(_PATIENCE_S)
+        assert not box["result"].success
+        assert box["result"].error.startswith("This run was stopped")
+        assert not (tmp_path / "out.bin").exists()
+
+    def test_without_a_stop_it_waits_for_the_answer(self, held_server):
+        """정지가 서지 않은 채 정지를 한 번 이상 묻고도(요청이 살아 있는 동안) 기다린다 — 서버는 그 뒤에야 답한다."""
+        asked = threading.Event()
+
+        def not_stopped() -> bool:
+            asked.set()
+            return False
+
+        t, box = _fetch_in_thread({"url": held_server.url}, not_stopped)
+        assert asked.wait(_PATIENCE_S)
+        held_server.release.set()
+        t.join(_PATIENCE_S)
+        assert box["result"].success
+        assert "late answer" in box["result"].output
+
+    def test_a_loop_without_a_stop_flag_waits_too(self, held_server):
+        t, box = _fetch_in_thread({"url": held_server.url}, None)
+        assert held_server.got.wait(_PATIENCE_S)
+        held_server.release.set()
+        t.join(_PATIENCE_S)
+        assert box["result"].success
+
+    def test_a_request_error_still_reads_as_before(self):
+        """옆 스레드에서 난 요청의 예외는 그대로 올라와 종전의 세 줄 문구가 된다."""
+        with patch(
+            "agent_cli.tools.fetch.requests.get",
+            side_effect=requests.exceptions.ConnectTimeout("slow"),
+        ):
+            content, err = _fetch_single("https://example.com", lambda: False)
+        assert content == ""
+        assert err.startswith("Fetch failed (timeout): https://example.com")

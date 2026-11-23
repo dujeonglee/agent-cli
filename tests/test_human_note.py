@@ -428,13 +428,17 @@ class TestFetchDownload:
         _, outside = ws
         dest = str(outside / "f.bin")
         monkeypatch.setattr(
-            fetch_mod, "_download", lambda url, d: (f"Saved {d} (3 bytes)", None)
+            fetch_mod,
+            "_download",
+            lambda url, d, stopped: (f"Saved {d} (3 bytes)", None),
         )
         _answer(monkeypatch, ("y", "unzip it next"))
         r = _call("fetch", {"url": "https://x.test/f", "download_to": dest})
         assert r.output == f"Saved {dest} (3 bytes)\n" + APPROVE.format("unzip it next")
 
-        monkeypatch.setattr(fetch_mod, "_download", lambda url, d: ("", "HTTP 404"))
+        monkeypatch.setattr(
+            fetch_mod, "_download", lambda url, d, stopped: ("", "HTTP 404")
+        )
         monkeypatch.setattr(_confine, "_session_root_allowlist", set())
         _answer(monkeypatch, ("y", "try the mirror"))
         r = _call("fetch", {"url": "https://x.test/f", "download_to": dest})

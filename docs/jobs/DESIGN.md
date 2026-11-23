@@ -63,6 +63,10 @@ timeout=)` 이 `/bin/sh` 만 죽였고, 그 아래 `apt-get` 이 dpkg 잠금을 
 " It printed nothing before that."). 주체가 없다 — 도구는 누가 멈췄는지 모른다(사람의 ■·Ctrl+C, 모델의 `agent` `kill`,
 세션 종료). background 교정 줄도 없다(시간 문제가 아니다). 결과는 관찰로 기록·표시되고 런은 다음 경계에서 `[interrupt]` 로
 끝난다 — 모델 호출 없음, 다음 런의 history 에 남는다. `background` 작업은 정지와 무관하게 산다(종전과 같다).
+`fetch` 도 같은 플래그를 같은 간격으로 본다(`tools/fetch.py` `_get_or_stop` — 요청을 옆 스레드에서 돌리고 기다리는
+쪽이 `STOP_POLL_S` 마다 본다): 서면 요청을 버리고 "This run was stopped, so the request was given up after 0s." — 버린
+요청은 제 시한에 스스로 끝난다. 종전엔 정지 뒤에도 시한 15초를 다 기다렸고, 세션을 닫으면 정리가 끝난 뒤에 main 이
+기록에 "Fetch failed (timeout)" 을 썼다.
 기다리는 도중 끊겨도(CLI 의 창 밖 Ctrl+C 가 던지는 `KeyboardInterrupt`, SIGTERM 의 `Terminated`) 그룹을 끝내고 그대로
 던진다 — 명령은 `start_new_session` 이라 터미널의 SIGINT 를 받지 않아, 종전엔 고아로 남았다(테스트가 재현).
 테스트: `tests/test_shell_stop.py`.
