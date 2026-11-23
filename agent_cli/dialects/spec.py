@@ -99,12 +99,6 @@ class DialectSpec:
     value_mode: str = "raw"
     """``raw``: 태그 안 원문, 스키마가 string 이 아닌 param 만 JSON 으로 복원.
     ``json``: 값 자체가 JSON."""
-    op_shape: str = "name_arguments"
-    """JSON 계열의 op 객체 모양: ``name_arguments`` (``{"name","arguments"}``) |
-    ``flat_action`` (``{"action", …params}``)."""
-    section: tuple[str, str] | None = None
-    """섹션 래퍼(MiniMax 류 — 여러 호출을 한 번 더 감싸는 태그). 평문 태그 가족
-    넷에는 없다; 예약."""
 
     # ── 우리 축 ──
     terminal_op: str = "complete"
@@ -152,9 +146,4 @@ class DialectSpec:
     def closer_tag_name(self) -> str:
         """``</parameter>`` → ``parameter`` (키-이름 closer 대안의 짝)."""
         m = re.match(r"</([\w:.\-]+)>", self.param_close)
-        return m.group(1) if m else ""
-
-    def tag_name(self, token: str) -> str:
-        """``<tool_call>``/``<function=`` → ``tool_call``/``function``."""
-        m = re.match(r"</?([\w:.\-]+)", token)
         return m.group(1) if m else ""

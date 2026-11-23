@@ -1624,10 +1624,10 @@ class TestRunSkillTool:
 
     def test_run_skill_schema_exists(self):
         """run_skill has a schema with name (required) and arguments."""
-        from agent_cli.tools.registry import TOOL_SCHEMAS
+        from agent_cli.tools.registry import TOOLS
 
-        assert "run_skill" in TOOL_SCHEMAS
-        schema = TOOL_SCHEMAS["run_skill"]
+        assert "run_skill" in TOOLS
+        schema = TOOLS["run_skill"]
         assert "name" in schema.parameters["required"]
 
 

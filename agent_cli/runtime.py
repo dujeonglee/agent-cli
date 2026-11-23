@@ -3,7 +3,7 @@
 세 조각을 소유한다:
 
 - :class:`AgentRuntime` — 상주/서브 에이전트에 넘기는 provider 배선
-  13키의 **단일 정의**. 종전엔 run/web(main.py)/tool_bridge 세 곳이 같은
+  묶음의 **단일 정의**. 종전엔 run/web(main.py)/tool_bridge 세 곳이 같은
   dict 리터럴을 손으로 나열했고, 키 구성부터 어긋나 있었다(run/web 엔
   ``compaction_enabled`` 부재, web 은 ``hooks_config`` 를 None 으로 고정).
 - :func:`build_agent_registry` / :func:`wire_agent_mail` — registry 생성+
@@ -58,7 +58,7 @@ from agent_cli.wake import Mailbox
 class AgentRuntime:
     """상주/서브 에이전트 실행에 필요한 provider 배선 묶음.
 
-    소비자(AgentRegistry._run_message / runner)는 dict 를 기대하므로
+    소비자(에이전트 레지스트리·`agent` 도구·하니스 작업)는 dict 를 기대하므로
     경계에서는 :meth:`as_dict` 로 넘긴다 — 필드명 == 종전 dict 키
     (계약은 tests 의 키-셋 핀 테스트가 고정). ``compaction_enabled`` 는
     소비 측 기본값(True)과 같아, 키를 늘 싣는 것이 종전 run/web 의
@@ -164,12 +164,11 @@ def wire_monitor_delivery(registry, monitors) -> None:
 def build_hook_runner():
     """세션당 Python 훅 러너 하나 (v10.35.0) — run/web 부트스트랩이 부르고 네 포트
     종류의 `make_ports`(`MainLoop`·`ResidentLoop`·`SkillLoop`·`PrivateLoop`)가 `session_slots.get_hook_runner`
-    로 같은 인스턴스를 받는다. 셸 훅(`hooks.json`)은 종류의 `hooks_config`
-    경로가 따로 돌므로 러너엔 주지 않는다(두 번 실행 방지). `teardown_session` 이
-    푼다."""
+    로 같은 인스턴스를 받는다. 러너는 Python 훅만 돈다 — 셸 훅(`hooks.json`)은 종류의
+    `hooks_config` 경로가 따로 돈다. `teardown_session` 이 푼다."""
     from agent_cli.hooks.runner import HookRunner
 
-    runner = HookRunner(shell_hooks_config=None)
+    runner = HookRunner()
     set_hook_runner(runner)
     return runner
 
@@ -847,7 +846,6 @@ class MainLoop(LoopKind):
             peer_section="",
             ask_blocking=True,
             reports_to_caller=False,
-            peer_channel=False,
         )
 
     def tail_roster(self, tools: list[str]) -> str:

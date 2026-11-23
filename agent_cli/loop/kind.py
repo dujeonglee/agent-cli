@@ -9,8 +9,7 @@
   ⑥ ``hooks_config`` ⑦ ``ports`` ⑧ ``stop_event`` — 생성자에서 확정되는 정체.
 - ⑬ ``make_ctx`` ⑭ ``open_scope``/``close_scope`` ⑰ ``finish`` ⑱ ``release`` — 런의 단계.
   ``run()`` 이 그 순서를 한 번 적는다(템플릿).
-- ⑨–⑫·⑮·⑯(프롬프트 윤곽·꼬리 로스터·렌더·시작·흡수·wait 정책)은 PR 2 에서 엔진이 종류에게
-  묻는다 — PR 1 의 엔진은 종전 플래그를 그대로 읽는다.
+- ⑨–⑫·⑮·⑯(프롬프트 윤곽·꼬리 로스터·렌더·시작·흡수·wait 정책)은 엔진이 종류에게 묻는다.
 
 네 구현은 각자의 영역에 있다: `runtime.MainLoop` · `subagent.resident_loop.ResidentLoop`
 (run·spawn 에이전트 전부) · `skills.executor.SkillLoop` · `harness.jobs.HarnessLoop`.
@@ -79,8 +78,6 @@ class PromptProfile:
     ask_blocking: bool
     #: 종결문이 "호출자에게 보고" 어투인가 (서브루프)
     reports_to_caller: bool
-    #: 상주 모드 거절 문구가 `message` 동료 채널을 가리키는가
-    peer_channel: bool
 
 
 @dataclass(frozen=True)
@@ -293,7 +290,6 @@ class LoopKind:
             peer_section=self.peer_agents_section,
             ask_blocking=not (q is not None and getattr(q, "nonblocking", False)),
             reports_to_caller=self.depth > 0,
-            peer_channel=self.ports.message_handler is not None,
         )
 
     def tail_roster(self, tools: list[str]) -> str:
@@ -365,8 +361,8 @@ class LoopKind:
 
 class PrivateLoop(LoopKind):
     """자기 주소(``harness:``)를 가진 루프 (v10.84.0, docs/wait/DESIGN.md §7) —
-    레지스트리의 private 메일함을 턴 경계에 흡수하므로 깨울 수 있고(`wait` 광고), `wait` 는
-    런을 끝내는 대신 메일 도착까지 막는다. 끝나면 잡·모니터·메일함·체크인을 전부 거둔다."""
+    레지스트리의 private 메일함을 턴 경계에 흡수하므로 깨울 수 있다(`wait` 광고).
+    끝나면 잡·모니터·메일함·체크인을 전부 거둔다."""
 
     def __init__(self, owner: str) -> None:
         self.owner = owner
@@ -416,7 +412,6 @@ class PrivateLoop(LoopKind):
             peer_section="",
             ask_blocking=True,
             reports_to_caller=True,
-            peer_channel=False,
         )
 
     def tail_roster(self, tools: list[str]) -> str:

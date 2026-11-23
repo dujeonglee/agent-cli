@@ -141,8 +141,8 @@ es.addEventListener("thinking_tick", function (e) {
 });
 
 es.addEventListener("directives_changed", function () {
-  // Someone saved DIRECTIVE.md via the Prompt Inspector → tell the inspector
-  // IIFE to re-fetch the editor so concurrent editors don't show stale text.
+  // Someone saved DIRECTIVE.md → tell the directives drawer to re-fetch the
+  // editor so concurrent editors don't show stale text.
   window.dispatchEvent(new CustomEvent("agentcli:directives-changed"));
 });
 

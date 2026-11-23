@@ -853,7 +853,6 @@ class TestStaticUI:
         cli_only = {
             # 터미널 전용 진행 해설 — 웹엔 worker_state·스코프 카드가 이미 있다
             "spinner": "worker_state 가 대체",
-            "dispatch_progress": "호출부 0곳 (죽은 동사)",
             # 부트스트랩이 uvicorn 보다 먼저 돌아 브라우저가 붙기 전에 끝난다
             "model_detected": "서버 기동 전에 방출 — 웹에 도달 불가",
             "model_loaded": "서버 기동 전에 방출 — 웹에 도달 불가",

@@ -4,13 +4,13 @@ delegate 가 "파견"(스폰→완주→ctx 폐기)이라면 teammate 는 "상�
 spawn 이 key 를 반환하고, 이후 request 가 같은 ctx 위에서 반복 처리된다
 (D1 비동기 mailbox). 회신은 LLM 폴링이 아니라 **harness 가 배달**한다 —
 main 루프가 턴 경계에서 :meth:`AgentRegistry.absorb_main` 으로 비워
-관찰 레코드로 주입한다 (D2, ``AgentLoop._deliver_agent_mail``).
+관찰 레코드로 주입한다 (D2, ``AgentLoop._inject_mail``).
 
 스레딩 모델
 -----------
 teammate 하나 = 데몬 worker 스레드 하나. worker 는 자기 inbox 를 블록해
 메시지당 `ResidentLoop.run` (엔진 `run_loop`) 1회를
-돌리고 회신을 registry 의 공용 pending 리스트에 push 한다. 상태 전이
+돌리고 회신을 우편의 main 상자에 넣는다. 상태 전이
 (idle→busy→idle→…→dead)는 worker 루프 한 곳에만 있다.
 
 - **인터럽트 분리**: worker 는 자기 ``stop_event`` 만 본다 — main 의
@@ -19,15 +19,10 @@ teammate 하나 = 데몬 worker 스레드 하나. worker 는 자기 inbox 를 �
 - **인스펙터 (D9)**: worker 시작 시 ``begin_prompt_scope(key)`` 로 상시
   스코프를 열고(ctx 도 등록), **종료 시에만** ``end_prompt_scope`` —
   delegate 와 달리 요청 사이에도 칩이 살아 있고 동적 컨텍스트가 자란다.
-  요청별 SSE 라우팅은 별도 표면 ``begin/end_agent_work`` (renderer) —
-  스코프(상시)와 카드(요청별)를 분리한 이유는 web 렌더러의
-  ``begin_delegate_task`` 가 스코프 push 와 결합돼 있어서다.
+  요청별 SSE 라우팅은 별도 표면 ``begin/end_agent_work`` (renderer).
 - **레코드 계약**: 배달 레코드는 ``tool:"agent"`` + additive
   ``source:"agent_reply"``. ``tool:""`` 는 v4.51.0 형식-개입 레거시
   마커라 금지 (``records.is_format_intervention`` 오인 방지 — 테스트 고정).
-
-P1 경계: teammate 안 teammate 금지(레지스트리 미전파로 도구가 서브루프
-에서 자동 strip), manifest/resume 재생성은 P3, WebUI 대화 창은 P4.
 
 모듈 나눔
 ---------
@@ -101,9 +96,6 @@ from agent_cli.wake import (
 
 if TYPE_CHECKING:
     from agent_cli.context.manager import ContextManager
-
-# worker 를 inbox 블록에서 깨워 종료시키는 sentinel (identity 비교).
-
 
 _DEFAULT_MAX_AGENTS = 10
 MAX_AGENTS_MIN = 1  # smallest positive cap; 0 (or less) means unlimited
@@ -326,8 +318,7 @@ class AgentInstance:
         self.revive = False  # restore 가 세움 — worker 가 ctx 를 resume 모드로
         #: 재시작이 되살렸다(`restore`) — 첫 ctx 에 재시작 기록 한 줄(`ResidentLoop.open`). ✕ 뒤 되살림은 아니다
         self.restarted = False
-        # P4: 지금 처리 중인 request 의 화자 — "main" 이 아니면(웹 인간 개입)
-        # 그 회신/질문을 main mailbox 에 넣지 않는다 (D8: 컨텍스트 비오염).
+        # 지금 처리 중인 요청의 화자 — `reply` 거절 사유가 읽는다(`reply_facts`).
         self.current_author = "main"
         self.created_at = time.time()
         self.handled = 0  # 처리 완료한 request 수 (화면용 숫자)
@@ -693,7 +684,7 @@ class AgentRegistry:
         우편 장부의 열린 r 줄을 읽는다 — 요청이 상자에 들 때 열리고(`_enqueue`·`message_to_main`), 받는 쪽의
         빚이 끝날 때(갚음·폴백·버림 — 배달과 한 락 구간) 닫힌다(v10.145.0).
         갚음·폴백은 회신을 **배달한 뒤** 지운다: 먼저 지우면 그 틈에 요청자의 `wait` 가 기다릴
-        회신도 도착한 메일도 없는 순간을 보고 제자리 대신 런을 끝낸다.
+        회신도 도착한 메일도 없는 순간을 보고 `wait` 를 거절한다.
         받는 쪽에서 세면(빚 장부 + 받은편지함) 항목이 받은편지함을 떠나 빚으로 적히기까지의
         틈에 회신 기다림이 사라진다. 받는 쪽이 죽었으면 빼다(`wake_facts` 의 ``replies``). 읽기만 한다."""
         if not addr or is_human_addr(addr):
@@ -894,13 +885,8 @@ class AgentRegistry:
     # 요청(`expects_reply=True` 항목 / main 에 배달된 `message`)은 빚이다.
     # 갚는 길: `reply` 하나 — main·에이전트 같은 판정(`question_port.judge_reply`, v10.146.0). `message` 는
     # 갚지 않는다(v10.145.1).
-    # 런의 끝은 `run_ended` 하나로 온다(v10.77.0) — 보통의 끝은 남은 빚을 폴백
-    # (라벨 붙은 런 요약)으로 배달하고 비우며, `wait` 면 그대로 두고(다음 런이
-    # 갚는다), 중단이면 버린다. 그래서 남아 있는 빚은 언제나 `wait` 가 남긴
-    # 것이고, 런 시작이 따로 할 일이 없다(`begin_run` 삭제). 종전엔 상주의 장부가
-    # `AgentInstance` 필드 넷(current_expects_reply/current_text/
-    # current_answers/replied_this_run)이고 main 의 것이 dict 둘이라 같은
-    # 규칙을 두 벌 코드가 들었다.
+    # 런의 끝은 `run_ended` 하나다 — 보통의 끝은 남은 빚을 폴백(라벨 붙은 런 요약)으로
+    # 배달하고, 정지는 버린다.
 
     def note_owes(
         self,
@@ -1036,15 +1022,13 @@ class AgentRegistry:
 
         - ``stopped`` (정지로 끊김): 남은 빚을 버린다. 사람·모델의 정지(■·✕)는 런의 정리가
           먼저 빚진 상대 모두에게 회신했다(`answer_debts_as_stopped` — 여기 남는 것은 사람 주소의
-          빚뿐). 세션 종료의 빚은 재시작이 끊긴 요청을 새 id 로 다시 넣으며 다시 적는다 — 남기면
-          같은 요청에 빚이 둘이 되고, 죽은 채무자의 빚이 요청자의 `wait` 를 영원히 붙잡는다.
+          빚뿐).
         - 그 밖(보통의 끝): :meth:`end_run` — 남은 빚을 라벨 붙은 런 요약으로.
 
         종전엔 이 판정(``not stop_event``)이 호출부 셋에 흩어져 있었다. ``meta`` 의 ``run`` 키는 그 런을 연 배달
         id 이다. 체크인 타이머는 여기서 풀 것이 없다 — 거는 곳은 제자리 대기 하나이고 깨면 그 ``finally`` 가 푼다."""
         if stopped:
-            # 버린 빚 — 요청자는 더 기다리지 않는다(dropped). 세션 종료도 여기다(추정 버그 3 — 5단계에서
-            # outcome="session_end" 로 바뀐다)
+            # 버린 빚 — 요청자는 더 기다리지 않는다(dropped).
             self._post.end_run(debtor, run_id=self._run_of(debtor), outcome="stopped")
             return 0
         return self.end_run(debtor, output, **meta)
@@ -1080,7 +1064,7 @@ class AgentRegistry:
 
         기준을 함께 적는다: 작업별 로그 크기(P(a) "+N lines since your wait")와
         에이전트별 `last_ordinal`("N steps since your wait")."""
-        self.run_started(owner)  # 이미 걸린 것이 있으면 푼다
+        self.cancel_checkin(owner)  # 이미 걸린 것이 있으면 푼다
         if not ids:
             return None
         step = self._checkin_step(owner, ids)
@@ -1113,24 +1097,17 @@ class AgentRegistry:
         timer.start()
         return interval
 
-    def run_started(self, owner: str) -> None:
+    def cancel_checkin(self, owner: str) -> None:
         """이 소유자에게 걸린 체크인 타이머를 푼다 — 제자리 대기가 깰 때(`TurnDispatcher._wait_in_place` 의 ``finally``),
-        새로 걸기 전(`arm_checkin`), 정리(`_cancel_checkins`). 걸린 것이 없으면 no-op."""
+        새로 걸기 전(`arm_checkin`), 주인이 사라질 때(`drop_mailbox`·kill·`shutdown_all`). 걸린 것이 없으면 no-op."""
         with self._cv:
             ck = self._checkin_armed.pop(owner, None)
         if ck is not None and ck.timer is not None:
             ck.timer.cancel()
 
-    def _cancel_checkins(self, *owners: str) -> None:
-        """정리 — 소유자가 죽거나 세션이 끝난다. 빈 인자는 전부."""
-        with self._cv:
-            targets = list(owners) if owners else list(self._checkin_armed)
-        for o in targets:
-            self.run_started(o)
-
     def fire_checkin(self, owner: str) -> str:
         """타이머가 부른다(테스트는 직접) — 알림을 만들어 배달하고 본문을 돌려준다.
-        걸린 것이 없거나(런이 먼저 시작해 풀렸다) 아무것도 안 돌고 있으면 "".
+        걸린 것이 없거나(먼저 풀렸다) 아무것도 안 돌고 있으면 "".
 
         알림은 사실 진술("still running: …")이라 진짜 보고와 같은 순간에 와도
         거짓이 아니다 — 그래서 "런 진행 중" 상태도, 락 안의 확인+추가도 없다.
@@ -1518,10 +1495,6 @@ class AgentRegistry:
         런을 다시 넣을 때 원래 요청의 스냅샷을 잇기 위해. 없으면 종전대로
         main 발신이면 지금 런의 USER 목록.
 
-        v9.12 의 ``submit() -> (error, verdict)`` 은 ask 답변 슬롯 배달을
-        구분하려던 것인데, 비동기 전환으로 슬롯이 사라져 판정할 것이 없다 —
-        이름과 반환형을 원래대로 되돌렸다.
-
         ``expects_reply`` (v5.11): 이 아이템 처리 후 산출물을 발신자에게
         되돌릴지. main/watch/user·peer 요청=True(회신 라우팅), 배달된 peer
         회신=False(terminal — 수신자는 소비만, 재라우팅 없음 → 핑퐁 방지).
@@ -1568,9 +1541,8 @@ class AgentRegistry:
             "author": author,
             "hop": hop,
             "expects_reply": expects_reply,
-            # 발신 시각 — 스윔레인 요청 화살표(agent_msg "in", ts=send_ts)와
-            # 작업 카드(begin_agent_work→scope_start)가 같은 앵커를 갖도록
-            # worker 로 실어 보낸다(웹 프런트가 카드 data-nav-ts 로 사용).
+            # 발신 시각 — 🤝 창의 수신 줄(agent_msg "in", ts=send_ts)과
+            # 작업 카드(begin_agent_work→scope_start 의 `nav_ts`)가 같은 값을 갖는다.
             "ts": send_ts,
         }
         if kind:
@@ -1584,8 +1556,8 @@ class AgentRegistry:
         if ledger:
             item["ledger"] = ledger
         if not opens_run:
-            # 런을 열지 않는 항목 (v10.142.0, "Stop everything" 의 정지 회신) — 워커가 들고 있다가 다음 런의
-            # 첫 흡수에 넣는다(`_release_held`). 재시작은 버린다(5c-0).
+            # 런을 열지 않는 항목 (v10.142.0, "Stop everything" 의 정지 회신) — 봉투의 `wakes` 가 거짓이라
+            # 워커를 깨우지 않고 줄에 남아 다음 런의 첫 흡수가 읽는다(`Postbox.take_next`). 재시작은 버린다(5c-0).
             item["opens_run"] = False
         if images:
             item["images"] = [dict(r) for r in images]
@@ -1806,17 +1778,8 @@ class AgentRegistry:
         ``addr`` 은 ``"main"`` 또는 ``"agent:<key>"``. 모니터·작업 통지가 이
         한 곳으로 배달된다.
 
-        **두 백엔드는 나르는 것이 다르다** — 그래서 인자가 둘이다:
-
-        - main 에는 worker/inbox 가 없다. 메일박스가 유일한 흡수 지점이고
-          한가한 main 은 펌프가 그 상자를 기다린다. 메일박스 아이템은 **구조**를
-          싣는다(``kind``/``id``/``key``/``profile`` — UI 렌더와 ``answer(id)``
-          가 그걸 읽는다). 그래서 ``mail``.
-        - 에이전트 inbox 는 **평문**을 싣는다. 항목 1개 = 런 1개이므로 상대가
-          idle 이어도 깨어난다. 그래서 ``text``.
-
-        둘이 같은 내용인 호출부(답·독촉)는 같은 문자열을 두 번 준다. 질문만
-        본문이 갈린다(main 은 질문 원문, 에이전트는 출처를 머리에 단 한 줄).
+        main 은 메일함에 ``mail``(구조)을, 에이전트는 받은편지함에 ``text``(평문)를, private 주소는
+        private 메일함에 ``mail`` 을 받는다.
         """
         try:
             if addr == "main":
@@ -2172,7 +2135,7 @@ class AgentRegistry:
     def drop_mailbox(self, addr: str) -> int:
         """주소의 루프가 끝났다 — 체크인·기다림 표시를 풀고, private 이면 메일함을 버린다(읽을
         사람이 없다). 버린 메일 수를 돌려준다."""
-        self._cancel_checkins(addr)
+        self.cancel_checkin(addr)
         with self._cv:
             self._checkin_last.pop(addr, None)
             self._post.clear_waiting(addr)
@@ -2260,7 +2223,7 @@ class AgentRegistry:
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
         # 건 질문은 지금 닫는다 (v10.149.1) — 워커의 정리(다음 턴 경계)까지 미루면 그 사이 트레이에 남아 답이 갈 곳이 없다
         self._purge_questions_for(tm.key)
-        self._cancel_checkins(f"agent:{tm.key}")  # 죽은 에이전트에게 알림이 가지 않게
+        self.cancel_checkin(f"agent:{tm.key}")  # 죽은 에이전트에게 알림이 가지 않게
         # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
         # 현재 턴을 마저 돌고(join 은 best-effort), 그 창에 발화하면 항목이
         # 워커가 다시 꺼내지 않아 영영 안 읽힌다. 그 턴에서 새로 건 감시는
@@ -2462,7 +2425,10 @@ class AgentRegistry:
         """세션 종료 — main 상자를 먼저 닫고(멈추는 런이 그 사실을 읽는다, 5e1) 전원 kill. main 부트스트랩의 finally 에서
         호출. ``deadline``(SIGTERM 경로, v10.134.1)이 있으면 워커를 그 안에서만 기다린다. 마지막 저장은 revivable 그대로(D7)."""
         self._post.close("main")
-        self._cancel_checkins()  # main 포함 — 끝나는 세션에 알림이 쌓이지 않게
+        with self._cv:
+            armed = list(self._checkin_armed)
+        for owner in armed:  # main 포함 — 끝나는 세션에 알림이 쌓이지 않게
+            self.cancel_checkin(owner)
         for tm in list(self._agents.values()):
             self._drop_monitors(tm.key)
             self._stop_worker(tm)

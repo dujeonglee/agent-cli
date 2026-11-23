@@ -17,7 +17,7 @@ import pytest
 
 from agent_cli.dialects import get
 from agent_cli.tools.registry import (
-    TOOL_SCHEMAS,
+    TOOLS,
     allows_extra_keys,
     effective_tool_names,
     flat_param_schemas,
@@ -68,7 +68,7 @@ def _tools(wf, surface: dict | None = None):
             out.append((n, flat_param_schemas(n, p), allows_extra_keys(p)))
         return out
     for n in effective_tool_names(None, wf):
-        p = AskTool.RESIDENT_PARAMETERS if n == "ask" else TOOL_SCHEMAS[n].parameters
+        p = AskTool.RESIDENT_PARAMETERS if n == "ask" else TOOLS[n].parameters
         out.append((n, flat_param_schemas(n, p), allows_extra_keys(p)))
     return out
 

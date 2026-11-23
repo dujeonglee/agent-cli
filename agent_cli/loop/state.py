@@ -1,4 +1,4 @@
-"""Agent loop: ReAct pattern with M1/M2 module integration."""
+"""루프의 공유 상태 `LoopConfig`·`LoopState` (docs/ARCHITECTURE.md §5.1)."""
 
 from __future__ import annotations
 
@@ -11,10 +11,6 @@ from agent_cli.loop.ledger import Ledger
 if TYPE_CHECKING:
     from agent_cli.loop.kind import LoopKind
 
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
 # Loop-control sentinels: distinct from None (failure) and str (answer).
 # 모듈 상수 (C1 PR-3) — AgentLoop._execute_turn 과 TurnDispatcher 가 공유.
 _CONTINUE = object()  # keep looping

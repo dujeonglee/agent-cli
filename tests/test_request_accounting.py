@@ -84,7 +84,7 @@ def _notice(loop, **ai):
     claimed = _claimed_ids(op.action_input)
     still_open = loop._state.ledger.settle(claimed)
     return loop._dispatch._with_unanswered_notice(
-        claimed, still_open, [], ai.get("result", "")
+        claimed, still_open, ai.get("result", "")
     )
 
 

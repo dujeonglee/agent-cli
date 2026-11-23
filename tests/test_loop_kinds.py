@@ -341,7 +341,7 @@ class TestKindsStateTheirPolicy:
         o = (
             one.prompt_profile()
         )  # run 에이전트 = 에이전트: 비차단 ask, `message` 동료 채널
-        assert not o.ask_blocking and o.peer_channel and o.reports_to_caller
+        assert not o.ask_blocking and o.reports_to_caller
         assert harness.prompt_profile().role == "body"
         assert skill.renders() is False and one.renders() and main.renders()
         assert main.tracks_run_authors and not skill.tracks_run_authors

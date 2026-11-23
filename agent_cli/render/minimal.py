@@ -891,42 +891,6 @@ class MinimalRenderer(Renderer):
             self._last_term_w = 0
             self._last_painted_w = 0
 
-    def dispatch_progress(
-        self,
-        label: str,
-        turn: int,
-        tool_name: str,
-        detail: str = "",
-        thought: str = "",
-    ) -> None:
-        # Stop any active spinner before printing progress
-        self.spinner_stop()
-
-        # Delegate 🦀, skill 🪄, other ⚡
-        if "delegate" in label or "agent" in label:
-            action_icon = "🦀"
-        elif "skill:" in label:
-            action_icon = "🪄"
-        else:
-            action_icon = "⚡"
-
-        if thought:
-            t = thought.replace("\n", " ").strip()
-            self._p(
-                f"  [{_MUTED}]{label} [{turn}] 💭 {t}[/]",
-                highlight=False,
-            )
-        if tool_name == "complete":
-            self._p(
-                f"  [{_MUTED}]{label} [{turn}] ✅ {tool_name}{detail}[/]",
-                highlight=False,
-            )
-        else:
-            self._p(
-                f"  [{_MUTED}]{label} [{turn}] {action_icon} {tool_name}:{detail}[/]",
-                highlight=False,
-            )
-
     # ── User input ──────────────────────────────────
 
     def prompt_user(

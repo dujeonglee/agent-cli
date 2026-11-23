@@ -44,9 +44,7 @@ from agent_cli.session_slots import get_hook_runner
 class LoopPorts:
     """조립 지점이 루프에 건네는 능력 포트 전부."""
 
-    #: 이 루프의 주소 — ``"main"`` | ``"agent:<key>"``. 지금은 아무도 읽지
-    #: 않는다(모니터 소유자 라우팅이 C2 에서 소비한다). 값을 **먼저** 세워
-    #: 두는 이유: C2 가 이걸 220곳에 새로 꿰지 않아도 되게 하려는 것이다.
+    #: 이 루프의 주소 — ``"main"`` | ``"agent:<key>"`` | ``"harness:…"``.
     owner: str
     questions: Any
     message_handler: Any
@@ -92,9 +90,8 @@ class LoopPorts:
 
     def wakeable(self) -> bool:
         """이 루프를 **깨울 길이 있는가** (v10.65.0, `wait` 의 전제) — 턴 경계에 흡수할 상자가 있는가
-        (``mailbox.has_inbox`` — main 은 main 상자, 상주·private(one-shot·하니스)는 받은편지함). 스킬
-        루프는 없다: 결과가 호출자에게 돌아가는 인라인 런이라 끝나면 그만이고,
-        `wait` 로 끝낸 결과는 호출자에게 "기다리는 중" 으로 돌아가 버린다."""
+        (``mailbox.has_inbox`` — main 은 main 상자, 상주·private(하니스)는 받은편지함). 스킬
+        루프는 없다: 호출자의 턴 안에서 도는 인라인 런이라 받은편지함이 없다."""
         return self.mailbox.has_inbox
 
     def handler_resources(self) -> dict[str, Any]:

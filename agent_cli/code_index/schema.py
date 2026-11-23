@@ -34,7 +34,7 @@ Name resolution (v10.96.0, schema v4, docs/code-index/DESIGN.md §21)
 --------------------------------------------------------------------
 
 Every ref is resolved once at build time and the result is stored:
-`RESOLUTIONS` — `resolved` (one indexed definition, `refs.target_id`),
+`refs.resolution` — `resolved` (one indexed definition, `refs.target_id`),
 `local` (a parameter, local variable, class attribute … — not an edge),
 `candidates` (matched by name only; the count is taken at query time),
 `external` (builtins, modules outside the index, no indexed definition of
@@ -90,11 +90,6 @@ CODE_NAME_KINDS: frozenset[str] = NAME_KINDS - {"section"}
 # semantics. Unlike NAME_KINDS this has not changed from the upstream
 # tsindex schema.
 REF_KINDS: frozenset[str] = frozenset({"call", "name", "type", "registration"})
-
-#: `refs.resolution` 의 값 (v10.96.0, DESIGN §21).
-RESOLUTIONS: frozenset[str] = frozenset(
-    {"resolved", "local", "candidates", "external", "unresolved"}
-)
 
 #: 범위 규칙이 있는 언어 — 나머지는 함수 범위·인자만 알고 참조는 이름으로만 맞춘다
 #: (`candidates`). 언어가 규칙을 얻으면 여기에 더한다.

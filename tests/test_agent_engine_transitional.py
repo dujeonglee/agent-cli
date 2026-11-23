@@ -25,7 +25,8 @@ TRANSITIONAL: frozenset[tuple[str, str | None]] = frozenset(
         ("agent_cli.subagent.run_result", "RunReply"),
         ("agent_cli.subagent.run_result", "write_result_md_and_tool_result"),
         ("agent_cli.subagent.run_result", "batch_tool_result"),
-        # STATUS/RESULT 포장 — 어댑터만 쓰는 report.py 의 run 포맷터
+        # STATUS/RESULT 포장 — 어댑터만 쓰던 run 포맷터와 그 모듈(통째로 삭제)
+        ("agent_cli.subagent.report", None),
         ("agent_cli.subagent.report", "DelegateResult"),
         ("agent_cli.subagent.report", "_extract_activity_log"),
         ("agent_cli.subagent.report", "_extract_last_actions"),

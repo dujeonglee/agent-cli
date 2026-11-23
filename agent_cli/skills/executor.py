@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -126,6 +128,17 @@ def substitute_arguments(
     return result
 
 
+def generate_subdir_name(prefix: str, name: str) -> str:
+    """Unique session-subdir name: ``{prefix}_{name}_{hash}_{ts}{ms}`` — 스킬 런의 ctx 집.
+
+    The name is minted at the SCOPE-opening call site (so the resume sidecar's
+    ``ctx_dir`` matches the directory actually written) and passed down."""
+    hash_part = os.urandom(3).hex()  # 6-char hex
+    ts = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+    ms = f"{int(time.time() * 1000) % 1000:03d}"
+    return f"{prefix}_{name}_{hash_part}_{ts}{ms}"
+
+
 class SkillLoop(LoopKind):
     """스킬 실행 — 호출마다 하나, ``SkillLoop(skill, arguments, caller).run()``.
 
@@ -163,7 +176,6 @@ class SkillLoop(LoopKind):
 
         from agent_cli.hooks import merge_hooks_configs
         from agent_cli.session.store import SKILL_PREFIX
-        from agent_cli.subagent.report import generate_subdir_name
 
         self.skill = skill
         self.arguments = arguments
@@ -254,7 +266,6 @@ class SkillLoop(LoopKind):
             peer_section="",
             ask_blocking=True,
             reports_to_caller=True,
-            peer_channel=False,
         )
 
     def tail_roster(self, tools: list[str]) -> str:

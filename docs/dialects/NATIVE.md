@@ -55,7 +55,7 @@
 | `dialects/spec.py` | `server_parsed: bool = False` | 5줄 |
 | `providers/openai.py` | `CallSettings.tools`(함수 스키마 목록) → body `tools`, `tool_choice: "auto"`. `tool_calls` 수집은 v10.1.5 | ~40줄 |
 | `providers/base.py` | `CallSettings.tools: list[dict] | None` | 5줄 |
-| `tools/registry.py` | `openai_function_schemas(tool_names)` — `TOOL_SCHEMAS[n].parameters` + 설명(가이드 첫 문단) → OpenAI 함수 형식 | ~40줄 |
+| `tools/registry.py` | `openai_function_schemas(tool_names)` — `TOOLS[n].parameters` + 설명(가이드 첫 문단) → OpenAI 함수 형식 | ~40줄 |
 | `loop/llm.py` | 방언이 `server_parsed` 면 `settings.tools` 채움, 문법 비활성 | ~20줄 |
 | `loop/core.py` | `response.tool_calls` 를 배열 텍스트로 렌더(v10.1.4 `_render_server_tool_calls`) — 이미 있음. `call_id` 를 op 에 보존해 레코드로 | ~30줄 |
 | `context/render.py` | `_to_natural_language`: 방언이 `server_parsed` 면 관찰을 `tool` 역할 + `tool_call_id` 로, 같은 턴의 op 여러 개 → 관찰 여러 개 매핑(지금 배치 관찰은 `[k/N]` 한 덩어리 — op 별 분할 필요) | ~120줄 |

@@ -100,7 +100,6 @@ HERMES_JSON = DialectSpec(
     name_slot=NameSlot.JSON_KEY,
     args=ArgStyle.JSON_IN_TAG,
     value_mode="json",
-    op_shape="name_arguments",
     prose_opener="<tool_call>",
     degeneration_trigger="<",
     forbid_in_think=("<tool_call>",),

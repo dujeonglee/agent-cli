@@ -1,6 +1,6 @@
 """Hook system — Python + shell lifecycle hooks for agent-cli.
 
-Re-exports the shell hook API for backward compatibility.
+Re-exports the shell hook API.
 """
 
 from agent_cli.hooks.shell import (

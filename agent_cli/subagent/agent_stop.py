@@ -102,7 +102,6 @@ NOTES_CHARS = 300
 class StopRule(NamedTuple):
     """한 정지가 그 에이전트의 것들에 하는 일 — `STOP_RULES` 의 한 칸."""
 
-    ends_agent: bool  # 에이전트가 없어진다(내려옴·제거)
     answers_queued: (
         bool  # 시작 안 한 대기 요청에도 회신(원인의 동사 — `unstarted_reply`)
     )
@@ -111,18 +110,10 @@ class StopRule(NamedTuple):
 
 #: (원인, run 에이전트인가) → 규칙. 모든 원인에서 지금 일·그 밖의 빚은 stopped 회신이다.
 STOP_RULES: dict[tuple[str, bool], StopRule] = {
-    (STOPPED, False): StopRule(
-        ends_agent=False, answers_queued=False, stops_sub_runs=False
-    ),
-    (STOPPED, True): StopRule(
-        ends_agent=True, answers_queued=True, stops_sub_runs=True
-    ),
-    (REMOVED, False): StopRule(
-        ends_agent=True, answers_queued=True, stops_sub_runs=True
-    ),
-    (REMOVED, True): StopRule(
-        ends_agent=True, answers_queued=True, stops_sub_runs=True
-    ),
+    (STOPPED, False): StopRule(answers_queued=False, stops_sub_runs=False),
+    (STOPPED, True): StopRule(answers_queued=True, stops_sub_runs=True),
+    (REMOVED, False): StopRule(answers_queued=True, stops_sub_runs=True),
+    (REMOVED, True): StopRule(answers_queued=True, stops_sub_runs=True),
 }
 
 

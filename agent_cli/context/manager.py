@@ -108,7 +108,6 @@ _SUMMARY_CHAR_CAP = 8000  # ≈ 2000 tokens at 4 chars/token
 DEFAULT_COMPACTION_RATIO = 1.0
 COMPACTION_RATIO_MIN = 0.5
 COMPACTION_RATIO_MAX = 1.0
-COMPACTION_RATIO_STEP = 0.05
 STREAM_IDLE_TIMEOUT_MIN_S = 60
 
 
@@ -546,14 +545,6 @@ class ContextManager:
         """Set the current LLM turn index. The loop calls this at each turn
         boundary so subsequent history records carry the right ``turn``."""
         self._current_turn = turn
-
-    @property
-    def current_turn(self) -> int:
-        """The last turn index the loop stamped (0 before the first turn).
-        The authoritative "how many turns did this loop run" — unlike
-        counting history records, it survives compaction (old records
-        dropped) and is not skewed by format retries (never recorded)."""
-        return self._current_turn
 
     @property
     def token_ratio(self) -> float | None:

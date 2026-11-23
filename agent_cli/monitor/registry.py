@@ -290,14 +290,10 @@ class MonitorRegistry:
             mon.owner,
             mail={
                 "kind": "monitor",
-                # 없으면 `_deliver_agent_mail` 이 실패 관찰로 그린다.
                 "success": True,
                 "output": report,
             },
             text=report,
-            # 에이전트 inbox 로 갈 때 이 값이 `tm.current_author` 가 되고,
-            # 그 런에서 거는 ask 의 **대상**이 된다. 주소가 아닌 값이면
-            # 그 ask 가 "unroutable" 로 취소된다.
             author="main",
             # 이 런의 산출물은 어디로도 되돌아가지 않는다 — 질문·독촉·peer
             # 회신과 같은 의미다.

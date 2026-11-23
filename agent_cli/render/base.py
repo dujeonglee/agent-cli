@@ -345,10 +345,7 @@ class Renderer(ABC):
 
         ``ts`` — the scope's canonical start time (epoch seconds). Leave it
         ``None`` to have the emit point stamp "now". A parallel BATCH passes one
-        shared value for all its workers: they start within milliseconds of each
-        other, and stamping each thread separately scattered a simultaneous
-        fan-out across several rows of the swimlane's event-ordinal axis, which
-        reads as sequential. Shared ts → one row → one fork."""
+        shared value for all its workers."""
 
     def end_scope(
         self,
@@ -759,18 +756,6 @@ class Renderer(ABC):
 
     def spinner_stop(self) -> None:
         """Stop the spinner animation. Default no-op (C8)."""
-
-    def dispatch_progress(
-        self,
-        label: str,
-        turn: int,
-        tool_name: str,
-        detail: str = "",
-        thought: str = "",
-    ) -> None:
-        """Show dispatched execution progress (skill, delegate, etc.).
-        Default no-op (C8) — 진행 장식; 코어 action/observation 이 본 정보를
-        이미 나름."""
 
     def stream_chunk(self, text: str) -> None:
         """Render a streaming chunk from LLM response. Default: no-op."""

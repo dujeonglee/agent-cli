@@ -194,9 +194,6 @@ def _auto_save_detected(model: str, caps: ModelCapabilities) -> None:
 
 
 def _build_from_entry(entry: dict) -> ModelCapabilities:
-    # Legacy field `supports_tool_calling` — silently ignored if present in
-    # older models.json entries; the loop uses ReAct text parsing, not the
-    # native tool-calling API on any provider.
     sg = entry.get("supports_grammar")
     sv = entry.get("supports_vision")
     return ModelCapabilities(
@@ -290,24 +287,6 @@ def vision_known(caps: ModelCapabilities, base_url: str, model: str) -> bool | N
 
 #: 문법 프로브의 정답 — 서버가 문법을 강제하면 이것만 나올 수 있다.
 _GRAMMAR_PROBE_ANSWER = "GRAMMAR-OK"
-
-
-def probe_grammar_support(
-    provider: str, base_url: str, model: str, credentials: Credentials
-) -> bool:
-    """서버가 ``guided_grammar`` 를 **강제**하는지 한 번 묻는다 (v9.24.0).
-
-    "지원한다" 는 필드를 받아 준다는 뜻이 아니라 출력이 문법에 묶인다는
-    뜻이다 — 모르는 필드를 조용히 버리는 서버(실측: omlx 는 ``guided_regex``
-    를 그렇게 버린다)가 있어 응답 본문으로 판정한다. 어떤 실패도 False.
-    """
-    try:
-        if provider == "openai":
-            t = _OpenAITransport(base_url, model, credentials)
-            return t.grammar_probe()
-    except Exception:
-        return False
-    return False
 
 
 # Compiled patterns for efficiency. 태그 vocab 은 thinking_tags 단일 소스

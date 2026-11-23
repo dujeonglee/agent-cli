@@ -44,7 +44,6 @@ import pytest
 from agent_cli.tools import TOOLS
 from agent_cli.tools.base import Tool
 from agent_cli.tools.registry import (
-    TOOL_SCHEMAS,
     _strip_own_prefix,
     validate_tool_input,
 )
@@ -182,10 +181,6 @@ class TestNoToolIsSkipped:
 
     def test_every_registered_tool_is_covered(self):
         assert NAMES, "도구 목록이 비었다"
-        assert set(NAMES) == set(TOOL_SCHEMAS), (
-            "TOOLS 와 TOOL_SCHEMAS 가 어긋난다 — 한쪽에만 있는 도구는 "
-            "계약 검사에서 샌다"
-        )
 
     def test_no_tool_is_excluded_by_a_synthetic_example(self):
         """더미로 표준형을 못 만드는 도구가 있어도 **판정은 계속된다**.

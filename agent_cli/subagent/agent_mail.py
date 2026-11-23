@@ -17,11 +17,6 @@ from agent_cli.subagent.agents_state import WAITING, state_is_active
 from agent_cli.token_estimator import estimate_tokens
 from agent_cli.wake import harness_record
 
-#: 배달된 peer 회신의 꼬리표 (v10.1.0 문구). 종전 "`complete` alone reports to no
-#: one" 은 받은 쪽이 작별 인사를 `message` 로 되보내게 만들었고(빚 생성 → 핑퐁),
-#: 실측(cnr60g) 게임 종료 뒤 작별 인사만 다섯 왕복이 돌았다. 되받아칠 것이
-#: 없고 ack 도 원치 않는다는 사실을 말한다.
-
 
 def envelope(
     kind: str,
@@ -134,17 +129,16 @@ def view_of_inbox_item(item: dict) -> MailView:
 
 # ── 옛 저장 모양 → 봉투 (단일 구조 2단계 — 받은편지함·메일함이 우편(`agent_cli.post`)으로 옮겨 간다) ──────
 #
-# 봉투의 ``payload`` 는 옛 항목·메일 dict 의 사본이다 — 글 짓기(`view_of_*`·`build_reply_record`)와 저장(`agents.json`
-# 의 옛 모양)이 그것을 읽는다. 우편·장부는 payload 를 열지 않는다.
+# 봉투의 ``payload`` 는 옛 항목·메일 dict 의 사본이다 — 글 짓기(`view_of_*`·`build_reply_record`)가 그것을 읽는다.
+# 우편·장부는 payload 를 열지 않는다.
 #
-# 규칙은 지금 동작에서 정했다(줄 번호는 agents_live.py·resident_loop.py·loop/core.py):
-# - 에이전트 항목: 사람 author(답 ``kind: "answer"`` 포함) → `human` — 런 시작(resident_loop.py:208-220)과 흡수
-#   (agents_live.py:1866-1868)가 사람 주소의 빚을 적는다(`_deliver_answer` :1359-1367 은 author=사람·
-#   expects_reply=True). 봉투 재료 없는 회신 기대 요청 → `request` — `_enqueue`(:1738-1744)가 보낸 쪽 기록을,
-#   시작·흡수가 빚을 적는다. ``kind`` reply → `reply`, notice 또는 회신 기대 없음 → `notice`, 그 밖의 종류
-#   (job·monitor·checkin) → `system`(줄 없음 — 하니스 통지는 에이전트에서 항목이 아니다, :1900-1909).
+# 규칙은 지금 동작에서 정했다:
+# - 에이전트 항목: 사람 author(답 ``kind: "answer"`` 포함) → `human` — 런 시작과 흡수가 사람 주소의 빚을 적는다
+#   (`_deliver_answer` 는 author=사람·expects_reply=True). 봉투 재료 없는 회신 기대 요청 → `request` — `_enqueue` 가
+#   보낸 쪽 기록을, 시작·흡수가 빚을 적는다. ``kind`` reply → `reply`, notice 또는 회신 기대 없음 → `notice`, 그 밖의
+#   종류(job·monitor·checkin) → `system`(줄 없음 — 하니스 통지는 에이전트에서 항목이 아니다).
 #   ``opens_run`` 거짓 → 깨우지 않음.
-# - main·private 메일: peer_message 의 ``expects_reply`` → `request` — main 이 빚을 적는다(loop/core.py:891-901);
+# - main·private 메일: peer_message 의 ``expects_reply`` → `request` — main 이 빚을 적는다(`AgentLoop._inject_mail`);
 #   ``notice`` → `notice`; ``re`` 가 있으면(명시 회신·정지 회신) 또는 kind reply(폴백) → `reply`; 그 밖
 #   (job·monitor·harness·died·checkin) → `system`, 줄 없음 — main 앞 메일의 n- 항목은 루프 장부(`Ledger`)가 들고
 #   있다(4c 에서 옮긴다). ``wakes_main`` 거짓 → 깨우지 않음.
@@ -248,8 +242,8 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
 
     ``cap``(loop 의 ``_oversized_cap``, 0=무제한) 초과 회신은 전문 대신
     디스크 포인터 + head 발췌로 치환 — 전문은 worker 가 이미
-    ``teammates/<key>/replies/reply-<id>.md`` 에 영속했다(배달과 무관하게
-    항상 저장 — P3 resume 미배달 보존의 토대).
+    ``agents/<key>/replies/reply-<id>.md`` 에 영속했다(배달과 무관하게
+    항상 저장).
 
     ``registry`` (v7.11.0, 배달 시점에만 전달): 회신 레코드 말미에 그
     에이전트의 **배달-시점** 잔여 상태 한 줄을 동봉 — main 이 "얼마나
@@ -311,8 +305,7 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         }
 
     if reply.get("kind") == "peer_message":
-        # 상주 에이전트가 main 에게 먼저 보낸 메시지 (v5.11) — 회신 대기
-        # 아님. main 은 필요하면 `message` 로 답한다.
+        # 에이전트가 main 에게 보낸 메시지 — 통지·요청·회신 셋으로 갈린다(아래).
         msg = reply.get("output") or "(empty message)"
         if reply.get("notice"):
             # v10.1.0: 통지 — 빚도 회신도 아니다. 할 일이 없으니 괄호 줄도 없다.

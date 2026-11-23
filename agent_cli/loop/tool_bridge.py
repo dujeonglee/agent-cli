@@ -1,4 +1,4 @@
-"""Agent loop: ReAct pattern with M1/M2 module integration."""
+"""`AgentLoop` 의 협력자 `ToolBridge` — 도구 호출 (docs/ARCHITECTURE.md §5.1)."""
 
 from __future__ import annotations
 
@@ -7,11 +7,6 @@ import json
 import time
 
 from agent_cli import images as _images
-
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import LoopConfig, LoopState
 from agent_cli.paths import display_path
 from agent_cli.providers.capabilities import MIN_CONTEXT_WINDOW
@@ -183,7 +178,7 @@ class ToolBridge:
         started = time.monotonic()
         try:
             if tool_name == "agent":
-                result = self._invoke_agent(tool_input, input_dict)
+                result = self._invoke_agent(tool_input)
             else:
                 result = self._invoke_regular(tool_name, tool_input)
         except Exception as e:
@@ -217,7 +212,7 @@ class ToolBridge:
         통째로 빠졌다(훅으로 금지한 편집이 배치로는 무사통과하던 정책 구멍).
 
         배치 의미는 보존한다:
-          - **적용은 1회** (``apply_edits_batch`` — 단일 읽기→겹침 거부→
+          - **적용은 1회** (``apply_edits_batch_parts`` — 단일 읽기→겹침 거부→
             bottom-up 적용→단일 쓰기, all-or-nothing) + **관찰 1건**.
           - **PreToolUse 는 edit 별** 발화(각 edit 이 블록/수정 대상) —
             하나라도 블록되면 **배치 전체 미적용**(원자성 유지) 후 단건과
@@ -353,7 +348,7 @@ class ToolBridge:
         return None, tool_input, input_dict
 
     # ── 2. Agent dispatch (5.0.0 통합) ──────────────────────────────
-    def _invoke_agent(self, tool_input, input_dict: dict) -> ToolResult:
+    def _invoke_agent(self, tool_input) -> ToolResult:
         """agent 인터셉트 — 제네릭 execute 경로에 없는 호출자·배선이 필요해 여기서 가로챈다.
 
         모든 모드(run·spawn·status·resume·kill)가 한 길이다(docs/agent-engine/DESIGN.md §1):
@@ -577,7 +572,7 @@ class ToolBridge:
         args,
         *,
         suffix: str = "",
-    ) -> str:
+    ) -> None:
         """Render one op's observation INTO a multi-op turn's accumulator,
         charging it against the per-turn budget.
 
@@ -609,7 +604,6 @@ class ToolBridge:
                 "images": images,
             }
         )
-        return observation
 
     @staticmethod
     def accumulate_raw(

@@ -1,11 +1,7 @@
-"""Agent loop: ReAct pattern with M1/M2 module integration."""
+"""`AgentLoop` 의 협력자 `SystemPromptSvc` — 시스템 프롬프트 (docs/ARCHITECTURE.md §5.1)."""
 
 from __future__ import annotations
 
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import LoopConfig
 from agent_cli.prompts.system_prompt import build_system_prompt_sections
 
@@ -77,9 +73,3 @@ class SystemPromptSvc:
         hook_sections = [(f"Hook: {title}", text) for title, text in merged.items()]
         self.sections = static + hook_sections
         self.system = "\n\n".join(t for _, t in self.sections)
-
-
-# Fields a model might use to wrap a question's text inside a dict —
-# e.g. `questions=[{"question": "..."}]` drift observed with qwen3.6
-# in S25FE-kernel session 1776954600. Checked in priority order, so a
-# `question` key wins over `text` when both are present.

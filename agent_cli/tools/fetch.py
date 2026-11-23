@@ -196,7 +196,6 @@ class _HTMLToMarkdown(HTMLParser):
         self._skip_tag: str | None = None
         self._skip_depth = 0
         self._in_pre = False
-        self._in_code = False
         self._anchor: tuple[int, str] | None = None  # (글 시작 위치, 실을 주소)
         # 표 (v10.56.4): 행마다 한 줄, 글 있는 칸 사이만 " | ". 칸마다 [시작
         # 위치, 안에서 닫힌 행 수], 행마다 채워진 칸 수를 스택으로 — 표 안의 표도
@@ -229,7 +228,6 @@ class _HTMLToMarkdown(HTMLParser):
             self._in_pre = True
             self.result.append("\n```\n")
         elif tag == "code" and not self._in_pre:
-            self._in_code = True
             self.result.append("`")
         elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
             level = int(tag[1])
@@ -279,7 +277,6 @@ class _HTMLToMarkdown(HTMLParser):
             self._in_pre = False
             self.result.append("\n```\n")
         elif tag == "code" and not self._in_pre:
-            self._in_code = False
             self.result.append("`")
         elif tag == "a" and self._anchor:
             start, url = self._anchor

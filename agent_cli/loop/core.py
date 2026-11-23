@@ -1,4 +1,4 @@
-"""Agent loop: ReAct pattern with M1/M2 module integration."""
+"""루프 엔진 `AgentLoop` — 런 하나를 돈다 (docs/ARCHITECTURE.md §5.1)."""
 
 from __future__ import annotations
 
@@ -19,11 +19,6 @@ from agent_cli.constants import (
     STOP_SERVER_ERROR,
 )
 from agent_cli.context.manager import ContextManager
-
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.dispatch import TurnDispatcher, _append_observation, show_open_items
 from agent_cli.loop.kind import LoopKind, Start
 from agent_cli.loop.llm import LLMCaller, UsageTotals, _build_token_stats
@@ -148,7 +143,6 @@ class AgentLoop:
         self.run_authors: list[str] = []
         self.provider = binding.provider  # 엔드포인트 객체는 세션 수명 — 모델만 바뀐다
         self.ctx = ctx
-        self.agent_role = kind.agent_role
 
         # Derived wiring (finalized below, then frozen into LoopConfig)
         tools_list = kind.tools or list(TOOLS.keys())
@@ -313,10 +307,8 @@ class AgentLoop:
                 "view_image" if "view_image" in self._config.tools_list else None
             )
 
-    # ── C1 PR-1 property 브리지 ──────────────────────────────────
-    # 기존 ``self.X`` 접근 표면을 유지한 채 소유권만 LoopConfig/LoopState 로
-    # 옮기는 호환 shim. PR-2/3 에서 메서드가 협력 객체로 이주하며 그 객체가
-    # config/state 를 직접 읽게 되면, 이주분의 브리지 의존은 소멸한다.
+    # ── property 브리지 ──────────────────────────────────────────
+    # 기존 ``self.X`` 접근을 LoopConfig/LoopState 로 넘긴다.
     # (config 필드는 재할당 금지 — setter 없음이 의도. state 필드는 가변.)
 
     @property
@@ -326,14 +318,6 @@ class AgentLoop:
     @property
     def provider_name(self):
         return self._config.provider_name
-
-    @property
-    def depth(self):
-        return self._config.kind.depth
-
-    @property
-    def max_depth(self):
-        return self._config.kind.max_depth
 
     @property
     def max_turns(self):
@@ -356,32 +340,12 @@ class AgentLoop:
         return self._config.skill_stack
 
     @property
-    def agent_stack(self):
-        return self._config.agent_stack
-
-    @property
     def capabilities(self):
         return self._config.capabilities
 
     @property
     def dialect(self):
         return self._config.dialect
-
-    @property
-    def mcp_manager(self):
-        return self._config.kind.ports.mcp_manager
-
-    @property
-    def hook_runner(self):
-        return self._config.kind.ports.hook_runner
-
-    @property
-    def hooks_config(self):
-        return self._config.kind.hooks_config
-
-    @property
-    def session(self):
-        return self._config.kind.session
 
     @property
     def graceful_interrupt(self):
@@ -460,14 +424,6 @@ class AgentLoop:
     def _call_llm(self):
         """LLMCaller 위임 (기존 호출면 유지 — 테스트의 인스턴스 모킹 호환)."""
         return self._llm._call_llm()
-
-    @property
-    def overflow_retries(self):
-        return self._llm.overflow_retries
-
-    @overflow_retries.setter
-    def overflow_retries(self, v):
-        self._llm.overflow_retries = v
 
     def _fire_hook(self, event: str, **kwargs):
         """Fire a hook event if runner is available. Returns HookContext or None (`ToolBridge.fire_hook`)."""
@@ -1374,17 +1330,11 @@ class AgentLoop:
             call=call,
         )
 
-    def _task_text(self) -> str:
-        return self._dispatch._task_text()
-
     def _dispatch_tool_with_hooks(self, tool_name: str, tool_input):
         return self._tools._dispatch_tool_with_hooks(tool_name, tool_input)
 
     def _tool_observation(self, tool_name: str, result, args) -> str:
         return self._tools._tool_observation(tool_name, result, args)
-
-    def _record_tool_history(self, tool_name: str, tool_input) -> None:
-        return self._tools._record_tool_history(tool_name, tool_input)
 
     def _run_ctx(self) -> RunContext:
         return self._tools._run_ctx()
@@ -1397,14 +1347,6 @@ class AgentLoop:
     def _oversized_cap(self, v):
         self._tools._oversized_cap = v
 
-    @property
-    def recent_tool_history(self):
-        return self._tools.recent_tool_history
-
-    @recent_tool_history.setter
-    def recent_tool_history(self, v):
-        self._tools.recent_tool_history = v
-
     def _on_max_turns(self):
         """Handle max turns reached."""
         render_run_ended(f"Max turns ({self.max_turns}) reached.")
@@ -1412,6 +1354,3 @@ class AgentLoop:
             f"run_loop returning None: max_turns={self.max_turns} reached, skill_name={self.skill_name}"
         )
         return ToolResult(False, error=f"Max turns ({self.max_turns}) reached")
-
-
-# Backward-compatible wrapper

@@ -218,8 +218,7 @@ agent_cli/
 │   ├── agent_mail.py        에이전트 메일의 글 — 봉투 `envelope`·main 관찰 레코드 `build_reply_record`·대기열 한 줄·조회의 불변 사본 `MailView`
 │   ├── question_port.py     루프의 질문·회신 seam `QuestionPort` — `reply(id)` 의 판정 하나(`judge_reply`, main·에이전트 공통)와 거절 글·`ReplyDebt`
 │   ├── conversation_log.py  🤝 창의 줄 — `conversation.jsonl` 쓰기·읽기와 창에 내기(규칙: 기록이 원본, 막히지 않는 표면만 배달 구간 안)
-│   ├── agents_state.py      상태 어휘 `state_is_active`·`agents.json` 의 모양 — 명단만(항목 ↔ 에이전트), 버전·읽기
-│   └── report.py            세션 하위 디렉터리 이름(`generate_subdir_name` — 스킬 런)
+│   └── agents_state.py      상태 어휘 `state_is_active`·`agents.json` 의 모양 — 명단만(항목 ↔ 에이전트), 버전·읽기
 ├── harness/                 하니스가 자기 몫으로 돌리는 일회성 작업 — 팀원이 아니다 (docs/auditor/DESIGN.md)
 │   ├── __init__.py          패키지 표식(docstring)
 │   ├── jobs.py              `HarnessJobs` 실행기와 `HarnessLoop`(private 종류), 프로파일은 `agents/harness/`

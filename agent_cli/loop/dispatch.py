@@ -1,4 +1,4 @@
-"""Agent loop: ReAct pattern with M1/M2 module integration."""
+"""`AgentLoop` 의 협력자 `TurnDispatcher` — 턴 처리 (docs/ARCHITECTURE.md §5.1)."""
 
 from __future__ import annotations
 
@@ -8,24 +8,12 @@ import re
 import time
 
 from agent_cli import render as render_surface
-
-#: message/ask 빚을 남긴 채 `complete` 하려는 주체를 독촉하는 상한 (v9.21.0;
-#: v9.22.0 부터 main·상주 공통, 질문(answer)·회신(reply) 공통).
-#: 1회는 "깜빡함" 을, 3회면 "이해 못 함" 까지 잡는다. 사용자 결정. 무제한이면
-#: 아무것도 런을 못 멈춘다 — 개입은 max_turns 미계수, B1 은 도구 경로에만
-#: 있어 반복 complete 을 안 본다. 실측(a209hq): 플레이어 셋은 1회에 응했고
-#: 오케스트레이터만 1회를 넘겼다.
 from agent_cli.constants import format_duration
 from agent_cli.dialects import try_foreign_parse
 from agent_cli.dialects.base import ParsedTurn
 from agent_cli.dialects.recovery.json import describe_json_error
 from agent_cli.hooks.events import PRE_WAIT
 from agent_cli.loop.kind import WAIT_NOTHING_PENDING, Caller
-
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.ledger import wrong_closer_hint
 from agent_cli.loop.reroute import reroute
 from agent_cli.loop.skill_invoke import _handle_run_skill
@@ -214,7 +202,6 @@ class TurnDispatcher:
         tool_name: str = "",
         primitives=None,
         recovery_kind: str = "",
-        render: bool = False,
         store_emission: bool = True,
         nudge: dict | None = None,
     ):
@@ -235,20 +222,13 @@ class TurnDispatcher:
         ``recovery_kind`` "format" 은 fold 대상 마킹(B1 은 빈 값 유지 —
         액션 루프 넛지는 다음 파싱 성공으로 해소된 게 아니므로 접지 않는다).
         """
-        # ``render=True`` (v9.21.0): 거부를 **실패한 관찰 카드**로 남긴다.
-        # 기본(False)은 형식 거부용 — 웹의 recovery() 는 휘발 retry_tick 만
-        # 내고 카드를 안 그린다(거부된 원문은 재시도 기계지 모델의 작업이
-        # 아니다). 그런데 회신 독촉은 모델이 **일을 끝냈다고 주장한 것**을
-        # 하네스가 물리는 것이라, 아무것도 안 그리면 사용자에겐 그 complete
-        # 이 통과한 것처럼 보인다(실측 a209hq — ✅ 카드로 그려져 혼동).
         # 기록하지 않는 시도의 생각은 그리지도 않는다 (v9.24.11). 생각은
         # 턴 처리 전 보류돼 있다(render.drop_pending_thought) — 맨 먼저
         # 버려야 한다: 아래 기록 단계(ctx.add → get_renderer)가 보류분을
         # 내보내기 때문이다. 기록되는 개입(B1 등)은 그대로 보인다.
         if not store_emission:
             drop_pending_thought()
-        if not render:
-            render_recovery(llm_text, message, reason, self.state.turn)
+        render_recovery(llm_text, message, reason, self.state.turn)
         # ``store_emission=False`` (v9.21.1): 물린 `complete` 은 저장하지 않는다
         # — 거부 관찰이 원문을 인용해 자기완결이다(사용자 결정). 남기면 저장
         # 형태(`ops:[complete]`)가 history 에서 final 로 읽히고, 재시도는
@@ -263,7 +243,7 @@ class TurnDispatcher:
             tool_name=tool_name,
             success=False,
             turn=self.state.turn,
-            render=render,  # False: render_recovery already surfaced it
+            render=False,  # render_recovery already surfaced it
             recovery_kind=recovery_kind,
             store_emission=store_emission,
             nudge=nudge,
@@ -758,7 +738,6 @@ class TurnDispatcher:
             # ``Tool.terminal`` 속성 파생 (T3 선언화 — 종전 도구명 튜플).
             if tool is not None and tool.terminal:
                 self._flush_op_results(turn.record, results)
-                results = []
                 return self._dispatch_op(llm_text, turn, op, outcome)
             # Ops run sequentially, in order — the correctness guarantee for
             # side-effecting tools (write→edit same file, mkdir→touch). (The
@@ -971,7 +950,7 @@ class TurnDispatcher:
         carries the SAME hook/history contract as the single-op path
         (PreToolUse per edit — any block aborts the whole batch, PostToolUse
         once, ``recent_tool_history`` per edit), while keeping the batch
-        semantics (one ``apply_edits_batch`` apply → one write, all-or-nothing,
+        semantics (one ``apply_edits_batch_parts`` apply → one write, all-or-nothing,
         ONE combined observation). Each op's flat input is still rendered as
         its own action card, matching the single-op render.
         """
@@ -1029,7 +1008,7 @@ class TurnDispatcher:
         if op.action == "complete":
             return self._op_complete(llm_text, turn, op, outcome)
 
-        # 7b. wait (v10.65.0) — 닫지 않고 끝낸다, 깨울 것이 있을 때만.
+        # 7b. wait (v10.65.0) — 깨울 것이 있으면 그 자리에서 기다린다(런을 끝내지 않는다).
         if op.action == "wait":
             return self._op_wait(llm_text, turn, op, outcome)
 
@@ -1078,12 +1057,6 @@ class TurnDispatcher:
                 if raw
                 else "(Completed without result — model may lack capability for this task)"
             )
-        elif isinstance(op.action_input, str):
-            raw = op.action_input
-            answer = (
-                op.action_input
-                or "(Completed without result — model may lack capability for this task)"
-            )
         else:
             raw = None
             answer = (
@@ -1096,10 +1069,8 @@ class TurnDispatcher:
         # observability AND we unwrap one level so the user-facing
         # answer doesn't carry a literal ``{"result": "..."}`` prefix.
         # Single-level only (recursive nesting indicates a different
-        # bug worth surfacing). ``raw`` may be from ``op.action_
-        # input`` (dict path) or the input itself (str path); both
-        # surface as the same artifact, so we re-derive ``answer``
-        # from the unwrapped value.
+        # bug worth surfacing). ``raw`` is the ``result`` of ``op.action_
+        # input``; we re-derive ``answer`` from the unwrapped value.
         if detect_nested_envelope(raw):
             outcome["failure_signal"] = FAILURE_NESTED_ENVELOPE
             unwrapped = unwrap_nested_envelope(raw)
@@ -1132,14 +1103,14 @@ class TurnDispatcher:
             return self._nag_open_items(
                 llm_text, turn, claimed, still_open, debts, outcome, awaited
             )
-        answer = self._with_unanswered_notice(claimed, still_open, debts, answer)
+        answer = self._with_unanswered_notice(claimed, still_open, answer)
         answer = self._with_awaited_notice(awaited, answer)
         if self.ctx:
             self.ctx.add(self._terminal_record(turn, answer, claimed, still_open))
         return ToolResult(True, output=answer)
 
     def _op_wait(self, llm_text: str, turn, op, outcome: dict):
-        """terminal ``wait`` op (v10.65.0, docs/wait/DESIGN.md) — 런을 끝내지 않는다(5c-1).
+        """``wait`` op (v10.65.0, docs/wait/DESIGN.md) — 런을 끝내지 않는다(5c-1).
 
         깨울 것(`ports.mailbox.wake_sources`)이 있으면: 호출과 관찰을 기록하고(히스토리는 보통의 op + 관찰
         모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다) **그 자리에서** 깨울 것이 올 때까지 막는다
@@ -1234,7 +1205,7 @@ class TurnDispatcher:
             self.tools.fire_hook(PRE_WAIT)
             why = self._wait_in_place(renderer, mailbox, on)
         finally:
-            mailbox.run_started()  # 체크인 해제 — 다음 wait 가 다시 건다(걸리지 않았으면 할 일 없음)
+            mailbox.cancel_checkin()  # 체크인 해제 — 다음 wait 가 다시 건다(걸리지 않았으면 할 일 없음)
             mailbox.clear_waiting()
             renderer.wait_in_place(False, [])
         return self._woke(turn, mailbox, why)
@@ -1373,7 +1344,7 @@ class TurnDispatcher:
             f"{self.state.ledger.awaited_for_notice(awaited)}"
         )
 
-    def _with_unanswered_notice(self, claimed, requests, debts, answer: str) -> str:
+    def _with_unanswered_notice(self, claimed, requests, answer: str) -> str:
         """예산이 끝난 자리의 **최후 통지** — 닫히지 않은 요청을 최종 답 말미에.
 
         회계일 뿐 강제가 아니다. 모델의 주장이 정직한지는 검증할 수 없다 — 검출되는
@@ -1842,7 +1813,6 @@ class TurnDispatcher:
         )
         return _CONTINUE
 
-    # No usable action on this op — fall through to recovery.
     def _op_bad_arguments(self, llm_text: str, turn, op, outcome: dict, accumulate):
         """호출 인자가 JSON 이 아닌 op (v10.20.0) — 실행 없이 어디서 깨졌는지
         알린다. 배치 안이면 그 op 의 자리에 실패 메모로, 홀로면 형식 개입으로."""
@@ -1924,11 +1894,11 @@ class TurnDispatcher:
             nudge=nudge,
         )
 
-    # ── C1 PR-2: 도구 호출은 ToolBridge 소유 — 아래는 기존 호출면 유지용
-    #    위임 (dispatch 클러스터가 PR-3 에서 승격되면 bridge 를 직접 주입받아
-    #    이 위임들도 소멸).
 
-
+# Fields a model might use to wrap a question's text inside a dict —
+# e.g. `questions=[{"question": "..."}]` drift observed with qwen3.6
+# in S25FE-kernel session 1776954600. Checked in priority order, so a
+# `question` key wins over `text` when both are present.
 _QUESTION_TEXT_KEYS = ("question", "text", "content", "q")
 
 
@@ -2137,7 +2107,7 @@ def _combined_tool_label(names: list[str]) -> str:
 def show_open_items(cfg, state) -> None:
     """장부를 사람 화면에 (v10.119.0, docs/ledger/DESIGN.md §15) — 런 시작·턴 경계·
     `complete` 정산·런 끝에서 부른다. **main 런만**: 사람 요청을 받는 런(입력 큐가
-    있는 종류 — `tracks_run_authors`)의 장부가 사람이 보는 장부다. 상주·one-shot·
+    있는 종류 — `tracks_run_authors`)의 장부가 사람이 보는 장부다. 상주·
     스킬 루프도 같은 렌더러를 쓰므로 거르지 않으면 main 의 띠를 덮어쓴다. 같은
     스냅샷이 연달아 와도 렌더러가 거른다. 모델 입력과 무관하다."""
     if not cfg.kind.tracks_run_authors:

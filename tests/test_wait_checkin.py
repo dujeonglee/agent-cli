@@ -116,7 +116,7 @@ class TestArmAndFire:
         assert reg.next_checkin_s("main", ids) == 300
         assert reg.arm_checkin("main", ids) == 300
         assert _armed(reg).ids == ids
-        reg.run_started("main")
+        reg.cancel_checkin("main")
 
     def test_wait_arms_five_minutes_and_fires_a_fact_statement(self, reg, jobs):
         job = jobs.start("sleep 30", owner="main")
@@ -166,11 +166,11 @@ class TestArmAndFire:
         assert "  frame 2 done\n  frame 3 done\n" in text
         assert "frame 1" not in text
 
-    def test_run_started_cancels_the_timer_and_nothing_is_sent(self, reg, jobs):
+    def test_cancel_checkin_cancels_the_timer_and_nothing_is_sent(self, reg, jobs):
         jobs.start("sleep 30", owner="main")
         reg.arm_checkin("main", checkin_ids("main"))
         timer = FakeTimer.made[-1]
-        reg.run_started("main")
+        reg.cancel_checkin("main")
         assert timer.cancelled and _armed(reg) is None
         assert reg.fire_checkin("main") == "" and _mail(reg) == []
 
@@ -238,7 +238,7 @@ class TestDoubling:
         """진짜 보고로 깨면(타이머가 풀리면) 단계는 직전에 **발화한** 깨우기 기준이다."""
         jobs.start("sleep 30", owner="main")
         reg.arm_checkin("main", checkin_ids("main"))
-        reg.run_started("main")  # 발화 전에 런이 시작됐다
+        reg.cancel_checkin("main")  # 발화 전에 풀렸다
         assert reg.next_checkin_s("main", checkin_ids("main")) == 300
 
 
@@ -574,7 +574,7 @@ class TestResident:
             "agent:k", checkin_ids("agent:k")
         )  # agent:k 는 자기 작업을 기다린다
         assert {"main", "agent:k"} <= set(reg._checkin_armed)
-        reg._cancel_checkins("agent:k")
+        reg.cancel_checkin("agent:k")
         assert "agent:k" not in reg._checkin_armed and "main" in reg._checkin_armed
         reg.shutdown_all()
         assert reg._checkin_armed == {}

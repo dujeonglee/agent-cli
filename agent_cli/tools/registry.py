@@ -5,10 +5,6 @@ Each tool now owns its own schema (``name`` / ``description`` /
 subclass. This module instantiates them once into ``TOOLS`` and derives
 the schema-facing helpers (system-prompt descriptions, input validation,
 action inference) from that single collection.
-
-``TOOL_SCHEMAS`` is a back-compat alias for ``TOOLS``: callers that used
-to read ``ToolSchema`` objects keep working because ``Tool`` instances
-expose the same ``.name`` / ``.description`` / ``.parameters`` attributes.
 """
 
 from __future__ import annotations
@@ -180,12 +176,6 @@ def strip_depth_gated(tool_names: list[str], depth: int, max_depth: int) -> list
     return [t for t in tool_names if not (t in TOOLS and TOOLS[t].depth_gated)]
 
 
-# Back-compat alias — schema consumers (system prompt, MCP adapter, input
-# validation) read .name/.description/.parameters, which Tool instances
-# expose identically to the old ToolSchema dataclass.
-TOOL_SCHEMAS: dict[str, Tool] = TOOLS
-
-
 def _execute_tool(
     tool_name: str,
     action_input: dict,
@@ -354,7 +344,7 @@ def effective_tool_names(tool_names: list[str] | None, dialect=None) -> list[str
     hand-written tool list must not decide where a tool sits in the prompt.
     Names the registry does not know at import time (MCP tools, added to
     ``TOOLS`` at boot) keep the caller's order, after the built-ins."""
-    names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
+    names = tool_names if tool_names is not None else list(TOOLS.keys())
     for t in _ALWAYS_INCLUDE:
         if t not in names:
             names = [*names, t]
@@ -436,7 +426,7 @@ def tool_view(
     ``summary``, 안내 없음, 인자는 뼈대(``deferred_schema`` — D3 측정으로 V2 확정,
     v10.110.0: 인자 설명을 남긴 V1 은 정답·선택률이 같고 더 비쌌다; DESIGN §7).
     ``full=True`` 는 지연을 무시한 전문(`tool_help` 의 결과)."""
-    tool = TOOL_SCHEMAS[name]
+    tool = TOOLS[name]
     description = (description_overrides or {}).get(name, tool.description)
     params = tool.parameters
     guide = (inline_guides or {}).get(name, "")
@@ -510,7 +500,7 @@ def get_tool_descriptions(
     roster: list[str] = []
     guide_blocks: list[str] = []
     for name in ordered:
-        if TOOL_SCHEMAS.get(name) is None:
+        if TOOLS.get(name) is None:
             continue
         line, guide = render_tool_block(
             name,
@@ -574,11 +564,11 @@ def validate_tool_input(
     (False, error_message, original_input) on failure.
     Attempts auto-conversion of string inputs to dict.
     """
-    schema = TOOL_SCHEMAS.get(tool_name)
+    schema = TOOLS.get(tool_name)
     if schema is None:
         return (
             False,
-            f"Unknown tool: `{tool_name}`. Available: {', '.join(TOOL_SCHEMAS)}",
+            f"Unknown tool: `{tool_name}`. Available: {', '.join(TOOLS)}",
             action_input,
         )
 

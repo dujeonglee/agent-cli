@@ -40,11 +40,3 @@ def capture_startup_system_prompt(
         renderer.note_system_prompt(sections, turn=0)
     except Exception:
         pass
-
-
-# ``no-cache`` (revalidate-required) rather than ``no-store`` so the
-# browser can still take a 304 fast path when nothing changed, but a
-# CSS/JS edit lands without forcing the operator to hard-refresh.
-# Editable installs serve files straight from the git checkout, so an
-# in-session iteration would otherwise be invisible until the operator
-# bypassed cache manually.

@@ -4,16 +4,12 @@
 (셋째 단계였던 ``run_subagent_message`` 는 v10.87.0 에 `LoopKind.run` 으로 들어갔다):
 
 1. :func:`apply_role_overrides` — 역할 md 의 config(frontmatter)를 명시
-   파라미터보다 낮은 우선순위로 오버레이. **로더-불가지론적** — 역할 md
-   로더 자체는 공유하지 않는다 (delegate 는 ``agents/``, teammate 는
-   ``teammates/`` 로 정의 디렉토리가 분리, D11). 이 모듈은 파싱된 config
-   dict 만 받으므로 두 로더의 결과를 동일 의미로 소화한다.
+   파라미터보다 낮은 우선순위로 오버레이. **로더-불가지론적** — 이 모듈은
+   파싱된 config dict 만 받는다.
 2. :func:`create_subagent_ctx` — none(독립)/fork(히스토리 복사) ctx 생성
    + 현재 스레드의 인스펙터 스코프에 live ctx 등록 (v4.52.0).
 
-무거운 의존(context.manager, loop, render)은 함수-내부 import — exec.py
-가 지던 registry → delegate → context.manager → tools.registry 순환을
-그대로 회피한다.
+무거운 의존(context.manager, loop, render)은 함수-내부 import.
 """
 
 from __future__ import annotations

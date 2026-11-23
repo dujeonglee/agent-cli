@@ -14,14 +14,6 @@ import re
 
 from agent_cli.tools.registry import TOOLS
 
-# 키-이름 closer 수용 — 설명은 옛 xml_fc 의 _PARAM_CLOSED 주석(v7.28.1 strict 대칭).
-_PARAM_CLOSED = re.compile(
-    r"<parameter=([\w.\-]+)>(.*?)</(?:parameter|\1)>\s*"
-    r"(?=<parameter=|</function>|</tool_call>|<function=|<tool_call>|\Z)",
-    re.DOTALL | re.IGNORECASE,
-)
-
-
 # ── lenient 구제 (tool-name 태그 변종) ───────────────────────
 # 2026-07-17 bakeoff 실측: Qwen3.6-35B-A3B 가 `<function=X>` 를 `<X>` 로,
 # `<parameter=k>` 를 `<k>` 로 붕괴시키는 변종이 0-op(NO_ACTION) 마찰의

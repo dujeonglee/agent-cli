@@ -32,7 +32,7 @@ at ``web_hub._EVENT_BUFFER_MAX`` so a long-lived session cannot grow memory
 replays the buffer in order — prefixed by a ``transcript_truncated`` notice
 when older events have been dropped (the full record stays in the session's
 ``history.jsonl``) — then forwards live events from its dedicated queue.
-Transient events (``stream_chunk``, ``status``, ``spinner``) are not
+Transient events (``stream_tick``, ``status``, …) are not
 replayed — they are runtime UX, not state.
 """
 
@@ -159,8 +159,8 @@ class WebRenderer(Renderer):
         self._status_dir = Path(session_dir).resolve() if session_dir else None
         # On-disk scope log for resume. ``scope_start``/``scope_end`` have no
         # other on-disk source (unlike ``agent_msg``→``conversation.jsonl``), so
-        # the team-swimlane activity bars would vanish on resume without this.
-        # One JSON line per live scope event; ``replay_scopes`` re-emits them.
+        # the scope cards would vanish on resume without this.
+        # One JSON line per live scope event; ``replay_session`` re-emits them.
         # None (CLI / tests with no session_dir) → scope logging off.
         self._scope_log_path = (
             (self._status_dir / "scopes.jsonl") if self._status_dir else None
@@ -212,7 +212,7 @@ class WebRenderer(Renderer):
         # post-mortem.
         self._prompt_snapshots: dict[str, dict[str, Any]] = {}
         # Scope-label metadata (task_id → {"agent", "index"}) captured at
-        # ``begin_delegate_task`` so the inspector chip row can name each
+        # ``begin_scope`` so the inspector chip row can name each
         # sub-agent ("code-analyst·1") without re-deriving it from the timeline.
         self._prompt_scope_labels: dict[str, dict[str, Any]] = {}
         # Nesting depth per OPEN scope (task_id → 0 for a scope directly under
@@ -339,10 +339,10 @@ class WebRenderer(Renderer):
         Auto-attaches ``task_id`` from the per-thread delegate map
         when the emitting thread is a parallel-delegate worker, so
         every downstream event (``assistant_turn``, ``observation``,
-        ``stream_chunk``, ``error``, …) carries the routing key the
+        ``stream_tick``, ``turn_error``, …) carries the routing key the
         frontend uses to keep parallel work visually separated. Skips
         attachment for events that already carry an explicit
-        ``task_id`` (the ``delegate_task_*`` lifecycle markers fill
+        ``task_id`` (the ``scope_start``/``scope_end`` lifecycle markers fill
         it in themselves) and for events whose data shape is
         deliberately bare (e.g. ``input_resolved``).
         """
@@ -445,7 +445,7 @@ class WebRenderer(Renderer):
 
     def begin_prompt_scope(self, scope_id: str, label: str = "") -> None:
         """스코프 push (v4.52.0) — skill 등 호출자-스레드 중첩 루프용.
-        delegate 는 begin_delegate_task 가 같은 스택을 push 한다."""
+        `begin_scope` 도 같은 스택에 push 한다."""
         tid = threading.get_ident()
         with self._lock:
             self._thread_prompt_scopes.setdefault(tid, []).append(scope_id)
@@ -529,16 +529,10 @@ class WebRenderer(Renderer):
         persistent ``scope_start`` (frontend opens the card; kind styles it).
 
         Persistent (not transient): pairs with ``scope_end`` to bound the card
-        in the replay buffer, so a mid-scope reconnect still draws it. This
-        unifies what used to be two divergent paths — delegates emitted
-        ``delegate_task_start`` (a card) while skills emitted ``group_start``
-        (un-handled → ``/orchestrate`` drew no card).
+        in the replay buffer, so a mid-scope reconnect still draws it.
 
-        The event carries ``parent`` + ``depth`` so both web surfaces can show
-        CONTAINMENT: the swimlane indents a nested scope into its own slot in
-        the caller's column (an outer skill used to paint over its children —
-        identical x, identical width) and the timeline nests the child's card
-        inside its parent's body. ``parent`` defaults to the enclosing scope on
+        The event carries ``parent`` + ``depth``: the timeline nests the child's
+        card inside its parent's body. ``parent`` defaults to the enclosing scope on
         this thread's stack; ``depth`` is derived from the parent's own depth,
         so a caller never computes it. ``ts``, when given, becomes the event's
         timestamp instead of emit-time (one shared value per parallel batch).
@@ -675,10 +669,9 @@ class WebRenderer(Renderer):
             # 런의 이름표 = 배달 id (v10.77.0) — 프론트가 `[u-3]` 로 찍는다.
             "item": item,
             "agent": f"{agent_icon(key)} {label}",
-            # A resident teammate's request is NOT a nested scope of the
-            # caller: the swimlane routes it to that agent's OWN lane by the
-            # ``{key}#{item}`` task_id. Emitted anyway so every scope_start
-            # has one shape, and so the timeline keeps its card at the root.
+            # A resident agent's request is NOT a nested scope of the caller —
+            # its run block lives in that agent's channel. Emitted anyway so
+            # every scope_start has one shape.
             "parent": "",
             "depth": 0,
             # 이 스코프가 곧 채널이다 — 프런트가 이 키의 채널에 런 블록을 연다.
@@ -694,12 +687,8 @@ class WebRenderer(Renderer):
             # 박혀 resume 재생에서도 같은 블록이 선다.
             "items": [str(i) for i in (items or [item])],
         }
-        # nav_ts = the originating request's timestamp (the same value the
-        # swimlane user-mark/request arrow carries, via ``agent_message(ts=…)``).
-        # The frontend stamps the card's ``data-nav-ts`` from this so the arrow
-        # navigates here. Baked into the payload (hence into ``scopes.jsonl``), so
-        # it survives resume replay. Sessions recorded before this field lack it
-        # → the arrow falls back to the "no card" notice (as before).
+        # nav_ts = the originating request's timestamp. Baked into the payload
+        # (hence into ``scopes.jsonl``); no screen reads it now.
         if req_ts is not None:
             payload["nav_ts"] = req_ts
         if caller_task is not None:
@@ -833,10 +822,9 @@ class WebRenderer(Renderer):
         self._emit("agent_cleared", {"key": key}, persistent=False)
 
     def set_thread_status(self, status: str) -> None:
-        """Forward to the base ``_thread_status`` dict (CLI rich.Live
-        polling compatibility) AND emit a transient
-        ``delegate_task_status`` event so the frontend's task card
-        header can update its live status line."""
+        """Record the status in the base ``_thread_status`` dict AND emit a
+        transient ``scope_status`` event so the frontend's task card header
+        can update its live status line."""
         super().set_thread_status(status)
         tid = threading.get_ident()
         task_id = self._thread_to_task.get(tid)
@@ -859,7 +847,7 @@ class WebRenderer(Renderer):
         ``user_message`` for user input, ``observation`` for tool
         results, ``assistant_turn`` for assistant thought/action/final.
 
-        Transient events (``stream_chunk``, ``status``, ``spinner``)
+        Transient events (``stream_tick``, ``status``, …)
         are runtime UX only and have no on-disk counterpart, so they
         are not replayed.
 
@@ -952,8 +940,8 @@ class WebRenderer(Renderer):
         "user_message": "role=user, tool 없음, author_is_user 참",
         "observation": "role=user + tool 키",
         "assistant_turn": "role=assistant (thought/ops/action/final)",
-        "scope_start": "scopes.jsonl 사이드카 → replay_scopes",
-        "scope_end": "scopes.jsonl 사이드카 → replay_scopes",
+        "scope_start": "scopes.jsonl 사이드카 → replay_session",
+        "scope_end": "scopes.jsonl 사이드카 → replay_session",
         "agent_msg": "agents/<key>/conversation.jsonl → _replay_conversation",
     }
     # 영속(②)이지만 **의도적으로** resume(③)에 안 남는 것들 — 이유를 적는다.
@@ -1042,7 +1030,7 @@ class WebRenderer(Renderer):
                 if content:
                     # ``author`` + ``author_is_user`` (additive, see
                     # ``_add_user_message``): a USER author feeds the replayed
-                    # ``answers`` attribution and the team view's user lane.
+                    # ``answers`` attribution.
                     # The literal "🤝 agent" check covers records written
                     # before the ``author_is_user`` flag existed — legacy-data
                     # hygiene only, live code never compares that string.
@@ -1262,13 +1250,11 @@ class WebRenderer(Renderer):
         Order is the whole point. Replaying the two streams back-to-back (the
         pre-v7.28 behaviour) left every scope card either absent or empty: turns
         arrived before any card existed, so they all fell back to the main
-        timeline, and a resumed session showed NO skill/agent cards while the
-        swimlane still offered click-navigation to them.
+        timeline, and a resumed session showed NO skill/agent cards.
 
         Turn→scope association comes from the history record's ``task_id``
         (written by ``ContextManager._enrich_record``). Sessions recorded before
-        that field exists replay flat — the bars still come back, and the
-        frontend tells the user when a bar has no card to jump to."""
+        that field exists replay flat."""
         self.replay_from_history(ctx, scope_events=self._scope_replay_events())
 
     def _replay_assistant_op(self, action: str, action_input, *, turn: int = 0) -> None:
@@ -1724,7 +1710,7 @@ class WebRenderer(Renderer):
         reason: str = "",
     ) -> None:
         """Dedicated structured event for the frontend's inline conversation
-        line (the generic ``status`` event has no frontend listener). Raw
+        line. Raw
         figures go over the wire; the frontend formats the line. Transient —
         a compaction is a live timeline marker, not replayed on reconnect.
         """
@@ -2158,9 +2144,7 @@ class WebRenderer(Renderer):
 
     def prompt_scope_info(self, scope: str = _MAIN_SCOPE) -> dict[str, Any]:
         """드로어 머리의 스코프 사실 (v10.7.0): ``{kind, label, parent, ended,
-        convo_tokens, compactions}``. kind = main | agent(상주) | run | skill.
-        ``convo_tokens`` 는 그 스코프 컨텍스트의 대화 추정 토큰 — 살아 있으면 ctx,
-        끝났으면 종료 시 고정 섹션의 합(main 은 서버가 ctx 로 채운다)."""
+        compactions}``. kind = main | agent(상주) | run | skill."""
         if scope == _MAIN_SCOPE:
             return {"kind": "main", "label": "main", "parent": "", "ended": False}
         with self._lock:
@@ -2191,26 +2175,6 @@ class WebRenderer(Renderer):
         no captured prompt yet. Public read surface for the debug endpoint."""
         with self._lock:
             return self._prompt_snapshots.get(scope)
-
-    def dispatch_progress(
-        self,
-        label: str,
-        turn: int,
-        tool_name: str,
-        detail: str = "",
-        thought: str = "",
-    ) -> None:
-        self._emit(
-            "dispatch_progress",
-            {
-                "label": label,
-                "turn": turn,
-                "tool_name": tool_name,
-                "detail": detail,
-                "thought": thought,
-            },
-            persistent=False,
-        )
 
     # 생성 중 표시 (v9.4.0 ④, docs/chat-ui §2) — 본문·사고 **둘 다** 같은
     # 모양이다: 델타를 누적해 0.5s 스로틀로 tick 만 보낸다.
@@ -2295,8 +2259,6 @@ class WebRenderer(Renderer):
             "prompt",
             {
                 "prompt": prompt,
-                "multiline": multiline,
-                "continuation": continuation,
                 "context": context,
                 # Who/why: which delegate agent is asking + its
                 # reasoning, so the user can attribute the prompt.
@@ -2363,10 +2325,7 @@ class WebRenderer(Renderer):
                 "confirm",
                 {
                     "prompt": prompt,
-                    "options": [
-                        {"key": o.key, "label": o.label, "aliases": list(o.aliases)}
-                        for o in options
-                    ],
+                    "options": [{"key": o.key, "label": o.label} for o in options],
                     "default_key": default_key,
                     # The command to display + the dangerous-token ranges to
                     # highlight (None/[] for a non-command confirm like the

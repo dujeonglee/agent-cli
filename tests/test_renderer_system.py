@@ -430,7 +430,6 @@ class TestMinimalRendererContract:
         r.turn_sep(1)
         r.spinner_start("x")
         r.spinner_stop()
-        r.dispatch_progress("label", 1, "shell")
 
     def test_model_events_delegate_to_status(self):
         r = self._minimal()

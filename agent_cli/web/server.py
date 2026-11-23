@@ -1,6 +1,6 @@
 """FastAPI server backing ``agent-cli web``.
 
-Endpoints:
+Endpoints (not exhaustive — see the route decorators):
   - ``GET  /api/health`` — liveness probe (no auth)
   - ``GET  /api/stream`` — SSE event stream (auth via ``token`` query)
   - ``POST /api/input``  — submit chat message / ask answer / confirm reply
@@ -72,6 +72,12 @@ from agent_cli.web.directives import generate_directive_section
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+# ``no-cache`` (revalidate-required) rather than ``no-store`` so the
+# browser can still take a 304 fast path when nothing changed, but a
+# CSS/JS edit lands without forcing the operator to hard-refresh.
+# Editable installs serve files straight from the git checkout, so an
+# in-session iteration would otherwise be invisible until the operator
+# bypassed cache manually.
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 

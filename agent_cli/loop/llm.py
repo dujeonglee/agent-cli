@@ -1,4 +1,4 @@
-"""Agent loop: ReAct pattern with M1/M2 module integration."""
+"""`AgentLoop` 의 협력자 `LLMCaller` — 모델 호출 (docs/ARCHITECTURE.md §5.1)."""
 
 from __future__ import annotations
 
@@ -16,11 +16,6 @@ from agent_cli.constants import (
 from agent_cli.context.overflow import classify_overflow
 from agent_cli.context.render import request_bytes
 from agent_cli.loop.prompt import SystemPromptSvc
-
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import _RETRY, LoopConfig, LoopState
 from agent_cli.prompts.compaction import SUMMARY_HEADINGS, SUMMARY_IMAGES_LINE
 from agent_cli.prompts.session_state import COMPACTION_NOTICE_STEPS
@@ -42,9 +37,11 @@ from agent_cli.token_estimator import utf8_len
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
+# Max shrink-and-retry attempts per turn when the server rejects the
+# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
+# history via ``ContextManager.force_fit``; the bound stops a runaway
+# loop when the cache cannot shrink enough or the server keeps rejecting.
 _MAX_OVERFLOW_RETRIES = 5
-# 요약 프롬프트의 제목·IMAGES 항목은 경계 지침과 한 벌 (v10.123.0, prompts/compaction).
-_SUMMARY_IMAGES_LINE = SUMMARY_IMAGES_LINE
 # Compaction ratio: the per-call target is ``context_window × ratio − system −
 # session state − minimum output`` (default 1.0 — the window is the trigger)
 # and compaction runs the moment the cache EXCEEDS that target — there is no
@@ -191,7 +188,7 @@ class LLMCaller:
             return None
         if self._grammar_cache is None:
             from agent_cli.tools.registry import (
-                TOOL_SCHEMAS,
+                TOOLS,
                 allows_extra_keys,
                 effective_tool_names,
                 flat_param_schemas,
@@ -199,7 +196,7 @@ class LLMCaller:
 
             tools = []
             for name in effective_tool_names(self.cfg.tools_list, self.cfg.dialect):
-                schema = TOOL_SCHEMAS.get(name)
+                schema = TOOLS.get(name)
                 if schema is None:
                     continue
                 params = schema.parameters
@@ -408,20 +405,11 @@ class LLMCaller:
         )
         self._grammar_used = bool(grammar)
 
-        # Plugin-defined provider hints. The wire plugin decides them from
-        # the model's capabilities — e.g. ``json_mode``: ReAct requests it
-        # iff the model supports structured output, json_fc never does
-        # (markdown shape). This is the single wire ⨯ capability decision
-        # point, so the provider never combines the two itself.
+        # 방언이 정하는 provider 힌트 (지금 방언은 모두 빈 값).
         extra_call_kwargs = self.cfg.dialect.provider_call_kwargs(self.cfg.capabilities)
 
-        # Plugin-defined prefill: a string the provider sees as the start
-        # of an assistant turn. Forces the model to continue from there,
-        # producing the dialect from the very first generated token.
-        # ReAct returns "" (no prefill — its prior already produces ReAct
-        # shape). Envelope plugins return e.g. ``<tool_use id="r1" action="``
-        # so the model emits the tool name next. Empty string => behaviour
-        # is identical to the pre-plugin path.
+        # 방언이 정하는 prefill — provider 가 assistant 턴의 시작으로 보는 글
+        # (지금 방언은 모두 빈 문자열).
         prefill = self.cfg.dialect.prefill()
         call_messages = self.state.messages
         if prefill:
@@ -573,8 +561,6 @@ class LLMCaller:
             else:
                 render_stream_end()
 
-    # ── C1 PR-3: 턴 디스패치는 TurnDispatcher 소유 — 기존 호출면 위임.
-
     def _request_head(self) -> tuple[str, dict]:
         """본 호출과 경계 요약 호출이 **같이 쓰는** 요청 머리 (v10.123.0) —
         ``system`` 과 ``CallSettings`` 의 공통 필드(tools·샘플링·무진전 노브·막은
@@ -649,7 +635,7 @@ class LLMCaller:
             # 이미지 (v10.77.0, docs/vision/DESIGN.md §12.3): 요약기는 그림을 못
             # 받는다 — 그림에서 읽은 것 중 아직 글로 남지 않은 것을 모델의 글에서
             # 끌어내게 한다. 이미지가 없는 압축의 프롬프트는 종전과 바이트 같다.
-            + (_SUMMARY_IMAGES_LINE if _images.mentions_image(messages) else "")
+            + (SUMMARY_IMAGES_LINE if _images.mentions_image(messages) else "")
             + "\n"
             "Rules: use only information present in the transcript — do not "
             "invent or assume. Keep exact identifiers verbatim (paths, "
