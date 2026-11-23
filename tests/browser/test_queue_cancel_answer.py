@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from tests.browser.conftest import wait_held
 from tests.browser.test_input_queue_receipts import (
     _busy_page,
     _items,
@@ -45,7 +46,7 @@ def test_queue_left_before_the_answer_then_refused_reads_applied(stack, page):
     held: list = []
     page.route("**/api/queue/cancel", lambda route: held.append(route))
     _items(page).first.locator(".queue-cancel").click()
-    assert _wait(lambda: len(held) == 1)
+    assert wait_held(page, held, 1)
     _taken_and_echoed(stack, item)
     assert _wait(
         lambda: "Cancelling…" in _queue_text(page)
@@ -65,7 +66,7 @@ def test_answer_before_the_queue_left_then_refused_reads_applied(stack, page):
     held: list = []
     page.route("**/api/queue/cancel", lambda route: held.append(route))
     _items(page).first.locator(".queue-cancel").click()
-    assert _wait(lambda: len(held) == 1)
+    assert wait_held(page, held, 1)
     # 꺼냈다 — 그 대기열 이벤트가 화면에 닿기 전에 답이 먼저 온다(SSE 와 응답은 다른 연결이다). 꺼냄의 알림을
     # 잠시 막아 그 순서를 만든다.
     mi = stack.server.main_input
@@ -91,7 +92,7 @@ def test_accepted_cancel_reads_cancelled_only_after_the_answer(stack, page):
     held: list = []
     page.route("**/api/queue/cancel", lambda route: held.append(route))
     _items(page).first.locator(".queue-cancel").click()
-    assert _wait(lambda: len(held) == 1)
+    assert wait_held(page, held, 1)
     assert "Cancelled" not in _queue_text(page)  # 답 전 — 줄은 그대로, ✕ 는 잠김
     assert _items(page).first.locator(".queue-cancel").is_disabled()
     held[0].continue_()

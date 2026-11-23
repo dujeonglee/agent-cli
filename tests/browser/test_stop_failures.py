@@ -14,6 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.browser.conftest import wait_held
+
 NOTICES_JS = """() => {
   window.__notices = [];
   new MutationObserver(() => {
@@ -75,7 +77,7 @@ class TestMainStop:
         held: list = []
         page.route("**/api/stop", lambda route: held.append(route))
         page.click("#chat-stop")
-        assert _wait(lambda: len(held) == 1)
+        assert wait_held(page, held, 1)
         page.clock.run_for(25_000)
         assert page.inner_text("#chat-stop") == "Stopping…"
         assert _notices(page) == []
