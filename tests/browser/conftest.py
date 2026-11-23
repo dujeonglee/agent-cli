@@ -41,6 +41,21 @@ def page(browser):
     ctx.close()
 
 
+def wait_held(page, held: list, n: int, timeout: float = 8.0) -> bool:
+    """``page.route`` 의 처리기가 붙든 요청(``held``)이 ``n`` 개가 될 때까지 기다린다 — 찼으면 참. 읽기만 한다.
+
+    동기점은 브라우저가 실제로 낸 요청이다. route 처리기는 파이썬이 **Playwright 호출 안에 있을 때만** 돈다 —
+    ``time.sleep`` 으로만 기다리면, 가로챈 요청의 알림이 그 요청을 일으킨 호출(`press`·`click`)의 응답보다 늦게
+    닿았을 때 목록이 끝내 차지 않는다(느린 러너에서 난 실패). 그래서 기다리는 동안 Playwright 를 부른다.
+    ``page.expect_request`` 는 요청이 나간 것만 알려 준다 — 돌아온 순간 처리기는 아직 안 돌았을 수 있다."""
+    deadline = time.time() + timeout
+    while len(held) < n and time.time() < deadline:
+        page.wait_for_timeout(
+            20
+        )  # Playwright 를 돌린다 — 밀린 route 처리기가 여기서 돈다
+    return len(held) == n
+
+
 class WebStack:
     """실 uvicorn 위의 WebRenderer+WebServer — 브라우저가 붙는 대상.
 

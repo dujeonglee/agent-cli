@@ -11,6 +11,7 @@ import threading
 from types import SimpleNamespace
 
 from tests.browser import test_image_attach as _ia
+from tests.browser.conftest import wait_held
 
 _png_bytes, _wait = _ia._png_bytes, _ia._wait
 ws = _ia.ws  # 워크스페이스 = tmp 픽스처 (이미지 첨부 테스트의 것)
@@ -140,7 +141,7 @@ def test_no_response_times_out_keeps_text_and_frees_the_next_send(stack, page, w
     _attach(page)
     page.fill("#input", "anyone there?")
     page.press("#input", "Enter")
-    assert _wait(lambda: len(held) == 1)
+    assert wait_held(page, held, 1)
     assert (
         page.locator("#attach-strip .attach-msg").count() == 0
     )  # 상한 전엔 알림이 없다

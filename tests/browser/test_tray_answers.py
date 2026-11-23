@@ -13,6 +13,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.browser.conftest import wait_held
+
 CLOSED = "Not sent — already answered or closed"  # 409·떨어져 나간 항목의 알림
 AGT = "agt-0000aaaa"
 PEER = "agt-0000bbbb"
@@ -247,7 +249,7 @@ class TestAgentAnswer:
         page.route("**/api/agent/*/input", lambda route: held.append(route))
         page.fill(sel, "src/main.py")
         page.press(sel, "Enter")
-        assert _wait(lambda: len(held) == 1)
+        assert wait_held(page, held, 1)
         page.press(sel, "Enter")  # 보내는 중 — 받지 않는다
         item = f'#ask-tray .ask-item[data-qid="{qid}"]'
         assert _note(page, item) == "Still sending the previous answer"
@@ -330,7 +332,7 @@ class TestAgentAnswer:
         page.route("**/api/agent/*/input", hold_first)
         page.fill(sel1, "one")
         page.press(sel1, "Enter")
-        assert _wait(lambda: len(held) == 1)
+        assert wait_held(page, held, 1)
         page.fill(sel2, "two")
         page.press(sel2, "Enter")
         assert _wait(lambda: _item(page, q2).count() == 0)  # 받았다 — 명단이 닫았다
@@ -591,11 +593,11 @@ class TestConfirmStall:
         page.route("**/api/input", lambda route: held.append(route))
         stall = page.locator(".ask-main > .confirm-stall")
         page.click(".ask-main .confirm-btn >> nth=0")
-        assert _wait(lambda: len(held) == 1)
+        assert wait_held(page, held, 1)
         page.clock.run_for(3_100)
         assert _wait(lambda: stall.count() == 1)
         page.click(".ask-main .confirm-btn >> nth=0")  # 다시 누른다 — 경고는 지워진다
-        assert _wait(lambda: len(held) == 2)
+        assert wait_held(page, held, 2)
         assert stall.count() == 0
         page.clock.run_for(3_100)  # 다시 3초 뒤에만 선다
         assert _wait(lambda: stall.count() == 1)
@@ -618,7 +620,7 @@ class TestItemLeftWhileSending:
         page.route("**/api/agent/*/input", lambda route: held.append(route))
         page.fill(sel, "mine")
         page.press(sel, "Enter")
-        assert _wait(lambda: len(held) == 1)
+        assert wait_held(page, held, 1)
         assert (
             reg.answer_question(qid, "other", by="user:other") == ""
         )  # 명단이 항목을 닫는다
@@ -641,7 +643,7 @@ class TestItemLeftWhileSending:
         page.route("**/api/input", lambda route: held.append(route))
         page.fill(sel, "Python")
         page.press(sel, "Enter")
-        assert _wait(lambda: len(held) == 1)
+        assert wait_held(page, held, 1)
         r = requests.post(
             f"{stack.base}/api/input?token={stack.token}",
             json={"kind": "prompt", "content": "Rust"},
@@ -700,7 +702,7 @@ class TestKillClosesQuestions:
         page.route("**/api/agent/*/input", lambda route: held.append(route))
         page.fill(sel, "src/main.py")
         page.press(sel, "Enter")
-        assert _wait(lambda: len(held) == 1)
+        assert wait_held(page, held, 1)
         reg.kill(key)  # 답이 서버에 닿기 전에 ✕
         assert _wait(lambda: _item(page, qid).count() == 0)
         with page.expect_response(lambda r: "/input" in r.url) as info:
