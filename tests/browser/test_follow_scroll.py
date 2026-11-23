@@ -440,9 +440,9 @@ class TestTabFocus:
         page.goto(stack.url)
         assert _wait(lambda: _cards(page) >= 40 and _dist(page) < 2)
 
-    def test_tab_to_an_element_far_above_is_pulled_back(self, stack, page):
-        """[Tab 에서 바뀜] 따라가는 중 Tab 으로 맨 위 카드의 단추에 초점이 가면, 초점은 가는데 화면은 바닥으로
-        되돌아온다 — Tab 이 굴리는 키로 세어지지 않아서다."""
+    def test_tab_to_an_element_far_above_stays_there(self, stack, page):
+        """따라가는 중 Tab 으로 맨 위 카드의 단추에 초점이 가면 화면이 그 자리에 머문다(풀린다) — 새 카드가 와도.
+        Tab 이 굴리는 키가 아니던 동안에는 초점만 가고 화면은 바닥으로 되돌아왔다."""
         self._open_following(stack, page)
         page.evaluate(
             """() => {
@@ -454,6 +454,28 @@ class TestTabFocus:
         page.keyboard.press("Tab")
         focused = "document.activeElement.closest('#messages > .card') === document.querySelector('#messages > .card')"
         assert _wait(lambda: page.evaluate(focused))
+        assert _wait(lambda: page.evaluate(PINNED) == "0")
         _fill(stack, 1, start=40)
-        assert _wait(lambda: _cards(page) >= 41 and _dist(page) < 2)
-        assert page.evaluate(PINNED) == "1"
+        assert _wait(lambda: _cards(page) >= 41)
+        assert _dist(page) > 48 and page.evaluate(PINNED) == "0"
+        top = page.evaluate(
+            "document.activeElement.getBoundingClientRect().top"
+            " - document.getElementById('messages').getBoundingClientRect().top"
+        )
+        assert top >= 0  # 초점이 간 단추가 화면 안에 있다
+
+    def test_tab_between_elements_in_view_keeps_following(self, stack, page):
+        """Tab 이 화면 안의 요소로 가서 굴림이 없으면 따라가기 그대로 — 그 뒤 내용이 움직여도."""
+        self._open_following(stack, page)
+        page.evaluate(
+            """() => {
+              const all = document.querySelectorAll("#messages .card-copy");
+              all[all.length - 2].focus({ preventScroll: true });
+            }"""
+        )
+        page.keyboard.press("Tab")
+        last = "(() => { const all = document.querySelectorAll('#messages .card-copy'); return document.activeElement === all[all.length - 1]; })()"
+        assert _wait(lambda: page.evaluate(last))
+        assert _dist(page) < 2 and page.evaluate(PINNED) == "1"
+        page.evaluate(MOVE_CONTENT_WITH_NO_WRITE_BEFORE)
+        assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")

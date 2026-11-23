@@ -105,7 +105,7 @@ export function scheduleScroll() {
 }
 
 // 사람의 굴림인가 — 값 둘. ``held``: 타임라인 위에서 포인터를 누르고 있다(스크롤바 끌기·글자 끌어 고르기 —
-// 놓을 때까지). ``rolling``: 사람의 입력(휠·터치 밀기·굴리는 키)이 시작한 굴림이 진행 중이다 — 그 굴림의 첫 scroll
+// 놓을 때까지). ``rolling``: 사람의 입력(휠·터치 밀기·굴리는 키·Tab)이 시작한 굴림이 진행 중이다 — 그 굴림의 첫 scroll
 // 사건에 서고 `scrollend` 가 내린다(관성까지 덮는다). 입력만으로는 서지 않는다: 굴림을 일으키지 않는 입력(카드 안의
 // 따로 굴러가는 상자 위의 휠, 단추 위의 Space, 끝에서 더 가려는 키)이 "굴리는 중" 으로 남지 않게. 입력은 ``awaited``
 // 프레임 동안 그 첫 scroll 사건을 기다릴 뿐이다 — 실측: 휠·Tab 초점 이동은 같은 프레임, 부드럽게 굴리는 키는 다음
@@ -117,7 +117,8 @@ let rolling = false;
 let awaited = 0; // 사람의 입력 뒤 그 굴림의 첫 scroll 사건을 기다리는 남은 프레임 수
 let counting = false;
 const AWAIT_FRAMES = 3;
-const SCROLL_KEYS = ["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "];
+// 굴리는 키 — Tab(·Shift+Tab)은 초점을 옮겨 브라우저가 그 요소를 화면에 들이게 한다
+const SCROLL_KEYS = ["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " ", "Tab"];
 function countDown() {
   if (awaited > 0 && --awaited > 0) requestAnimationFrame(countDown);
   else counting = false;
