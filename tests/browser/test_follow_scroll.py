@@ -190,13 +190,39 @@ class TestContentMovesUnderAFollow:
         page.evaluate(MOVE_CONTENT_RIGHT_AFTER_THE_FOLLOW_WRITE, [above, below])
         assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
 
-    def test_a_row_above_with_growth_below_unpins(self, stack, page):
-        """[따라가기 수정에서 바뀜] 화면 위쪽에 줄이 끼는 것과 아래의 새 내용이 겹치면 따라가기가 풀린다 — 브라우저가
-        옮긴 scrollTop 의 scroll 사건이 사람의 굴림으로 판정되고, 그때 바닥까지 48px 넘게 남아 있어서다."""
+    def test_a_row_above_with_growth_below_keeps_following(self, stack, page):
+        """화면 위쪽에 줄이 끼는 것과 아래의 새 내용이 겹쳐도 따라간다 — 브라우저가 옮긴 scrollTop 은 사람의 굴림이
+        아니다. 종전엔 그 scroll 사건이 사람의 굴림으로 판정돼, 바닥까지 48px 넘게 남은 그 자리에서 풀렸다."""
         self._open_following(stack, page)
         page.evaluate(MOVE_CONTENT_RIGHT_AFTER_THE_FOLLOW_WRITE, [60, 2000])
-        assert _wait(lambda: page.evaluate(PINNED) == "0")
-        assert _dist(page) > 1900  # 그 자리에 멈춰 있다
+        assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
+
+    def test_following_writes_once_per_change_and_then_rests(self, stack, page):
+        """판정하지 않는 scroll 사건은 바닥으로 다시 쓰게 한다 — 그 쓰기가 낸 scroll 사건이 또 쓰기를 부르지는 않는다
+        (이미 바닥이면 쓰지 않는다). 내용이 한 번 움직인 뒤의 scrollTop 쓰기 수를 센다."""
+        self._open_following(stack, page)
+        page.evaluate(
+            """() => {
+              const d = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+              window.__writes = 0;
+              Object.defineProperty(document.getElementById("messages"), "scrollTop", {
+                get() { return d.get.call(this); },
+                set(v) { window.__writes++; d.set.call(this, v); },
+                configurable: true,
+              });
+            }"""
+        )
+        page.evaluate(MOVE_CONTENT_RIGHT_AFTER_THE_FOLLOW_WRITE, [60, 2000])
+        assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
+        settled = page.evaluate(
+            """() => new Promise((resolve) => {
+              const frames = (n, f) => (n ? requestAnimationFrame(() => frames(n - 1, f)) : f());
+              const before = window.__writes;
+              frames(10, () => resolve([before, window.__writes]));
+            })"""
+        )
+        assert settled[0] == settled[1], settled  # 열 프레임 동안 더 쓰지 않는다
+        assert settled[0] <= 4, settled  # 카드 하나 + 움직임 한 번에 쓰기 몇 번
 
 
 class TestNewCountInsideARunBlock:
