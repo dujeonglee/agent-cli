@@ -7,8 +7,6 @@
 
 각 테스트는 그 엇갈림을 조건 대기로 세운다(sleep 없음): 첫째 스레드가 뜬 뒤 붙들린 사이 둘째가 상태를 바꿔 새 값을
 내려 한다.
-
-``[한 걸음에서 바뀜]`` 표지가 붙은 테스트는 그 자리가 아직 묶이지 않은 지금 값이다 — 그 자리를 고치는 커밋에서 뒤집힌다.
 """
 
 from __future__ import annotations
@@ -22,40 +20,60 @@ from tests.test_agents_live import (
 )
 
 
-class Overlap:
-    """묶이지 않은 자리의 엇갈림 — 첫째 스레드를 "뜬 뒤" 에 붙들고, 둘째가 새 값을 다 낸 뒤 놓는다."""
+class Step:
+    """제품의 "한 걸음" 락 자리에 끼운다 — 누가 그 걸음 안에 있을 때 다른 스레드가 오면 ``knocked`` 를 세우고 기다린다."""
 
     def __init__(self):
+        self._lock = threading.Lock()
+        self.knocked = threading.Event()
+
+    def __enter__(self):
+        if not self._lock.acquire(blocking=False):
+            self.knocked.set()
+            self._lock.acquire()
+
+    def __exit__(self, *exc):
+        self._lock.release()
+
+
+class OneStep:
+    """묶인 자리의 엇갈림 — 첫째 스레드가 걸음 안에서 "뜬 뒤" 붙들린 사이, 둘째가 상태를 바꾸고 그 걸음의 문을
+    두드린다(기다린다). 그때 첫째를 놓는다: 첫째가 뜬 값을 내고 나가면 둘째가 새로 떠서 낸다."""
+
+    def __init__(self):
+        self.step = Step()
         self.first_read = threading.Event()
-        self.second_done = threading.Event()
 
     def hold_first(self) -> None:
-        """뜨는 함수 안에서 부른다 — 첫째 스레드면 붙든다."""
+        """뜨는 함수 안에서 부른다 — 첫째 스레드면 둘째가 문을 두드릴 때까지 붙든다."""
         if threading.current_thread().name == "first":
             self.first_read.set()
-            assert self.second_done.wait(10)
+            assert self.step.knocked.wait(10)
 
     def run(self, first, second) -> None:
-        t = threading.Thread(target=first, name="first")
-        t.start()
+        a = threading.Thread(target=first, name="first")
+        a.start()
         assert self.first_read.wait(10)
-        second()  # 상태를 바꾸고 새 값을 낸다
-        self.second_done.set()
-        t.join(10)
-        assert not t.is_alive()
+        b = threading.Thread(target=second, name="second")
+        b.start()
+        for t in (a, b):
+            t.join(10)
+            assert not t.is_alive()
 
 
-def test_an_older_roster_overwrites_a_newer_one(tmp_path, renderer, monkeypatch):  # noqa: F811
-    """[한 걸음에서 바뀜] 명단 — 먼저 뜬 명단이 나중에 나가, 기다림 표시가 선 것을 덮는다."""
+def test_the_roster_shown_last_is_the_newest(tmp_path, renderer, monkeypatch):  # noqa: F811
+    """명단 — 한 알림이 명단을 뜬 뒤 내기 전에 다른 스레드가 기다림 표시를 세워도, 마지막에 나간 명단이 지금의
+    명단이다. 종전엔 먼저 뜬 명단이 나중에 나가 표시가 선 것을 덮었다(다음 알림까지 방·보드가 옛 상태)."""
     reg = make_registry(tmp_path)
     key, _ = reg.spawn(name="aa")
     assert wait_until(lambda: reg.get(key).state == "idle")
-    ov, real = Overlap(), reg.roster_snapshot
+    ov, real = OneStep(), reg.roster_snapshot
+    reg._roster_step = ov.step
     monkeypatch.setattr(reg, "roster_snapshot", lambda: (real(), ov.hold_first())[0])
     try:
         ov.run(reg._notify_roster, lambda: reg.mark_waiting(f"agent:{key}"))
         shown = renderer.named("agent_roster")[-1][1]["roster"][0]
         assert real()[0]["waiting"] is True
-        assert shown["waiting"] is False
+        assert shown["waiting"] is True
     finally:
         reg.shutdown_all()
