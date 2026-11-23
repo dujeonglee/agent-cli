@@ -54,7 +54,7 @@ def test_attach_then_send_queues_the_image(stack, page, ws):
     page.fill("#input", "what is this?")
     page.press("#input", "Enter")
     assert _wait(lambda: stack.server.main_input.pending_count() == 1)
-    item = stack.server.main_input.wait_to_open(0)
+    item = stack.server.main_input.wait_to_open(0)["message"]
     assert item["text"] == "what is this?"
     assert len(item["images"]) == 1
     assert (item["images"][0]["width"], item["images"][0]["height"]) == (64, 32)

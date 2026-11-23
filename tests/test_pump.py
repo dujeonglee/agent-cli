@@ -154,20 +154,25 @@ class TestMailRun:
         # 메일 런의 글은 라우팅하지 않는다 (사람 명령이 아니다)
         assert not [c for c in surface.calls if c[0] == "route"]
 
-    def test_words_open_before_the_mail_that_came_first(self):
+    def test_the_mail_that_came_first_opens_and_the_words_wait_in_the_box(self):
+        """도착 순서 — 먼저 온 메일이 런을 연다(사람의 말을 앞세우지 않는다). 말은 줄에 남아 그 런의 첫 턴 경계가
+        읽는다(이 대역 런은 흡수하지 않으므로 다음 런을 연다)."""
         mi = MainInput()
         _mail(mi)
         mi.enqueue(None, "hi", nickname="dj")
         seen = []
 
         def run_main(req):
-            seen.append(not req.author_is_user)
-            if not req.author_is_user:
+            seen.append((req.author_is_user, req.query, (req.opening or {}).keys()))
+            if req.author_is_user:
                 mi.close()  # 세션이 닫힌다 — 그 런은 세션 종료로 끝난다(5e1)
                 return ToolResult(False, error="session ended", session_ended=True)
 
         make_pump(main_input=mi, run_main=run_main, policy=ForeverPolicy()).run()
-        assert seen == [False, True]
+        assert [(u, q, list(k)) for u, q, k in seen] == [
+            (False, "", ["mail"]),
+            (True, "hi", []),
+        ]
 
     def test_a_mail_that_does_not_wake_opens_no_run(self):
         mi = MainInput()

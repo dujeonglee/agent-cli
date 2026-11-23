@@ -53,7 +53,7 @@ from agent_cli.constants import (
 )
 from agent_cli.loop.kind import LoopKindError
 from agent_cli.main_input import intake_item
-from agent_cli.post.office import CLOSED, PostOffice, Take
+from agent_cli.post.office import CLOSED, PostOffice
 from agent_cli.post.request_book import RowError
 from agent_cli.session.store import AGENTS_DIR
 from agent_cli.session_slots import get_job_registry
@@ -2744,18 +2744,18 @@ class AgentRegistry:
             self._notify_roster()
 
     def _next_run_item(self, tm: AgentInstance) -> dict | None:
-        """다음 런을 열 항목 — 창구의 `next_run`(`Take.ARRIVAL`: 첫 **깨우는** 봉투 하나 — 나머지는 줄에 남아 그 런의
+        """다음 런을 열 항목 — 창구의 `next_run`(첫 **깨우는** 봉투 하나 — 나머지는 줄에 남아 그 런의
         첫 흡수가 도착 순서로 읽는다). 올 때까지 시한 없이 기다린다: 배달이 깨우고, 끝내기(`_stop_worker`)가 상자를
         닫아 깨운다. 닫혔으면 None.
 
         집는 순간 ``busy`` 다(P0-9b) — 그 사이 세션 판정의 `has_agent_work`(상태·쌓인 일)가 "활동 없음" 으로 보지
         않게 같은 락 구간에서(창구 조건변수는 이 레지스트리의 것 — 기다리는 동안 모든 깊이가 풀린다)."""
         with self._cv:
-            envs = self._post.next_run(f"agent:{tm.key}", Take.ARRIVAL, timeout=None)
-            if envs is CLOSED or not envs:
+            env = self._post.next_run(f"agent:{tm.key}", timeout=None)
+            if env is CLOSED or env is None:
                 return None
             tm.state = "busy"
-            return dict(envs[0].payload)
+            return dict(env.payload)
 
     def _stop_worker(self, tm: AgentInstance) -> None:
         """평생 정지 — ``stop_event`` 를 세우고(엔진·흡수가 본다) 그 상자를 닫는다(기다리는 워커가 깨어 나온다; 줄 선

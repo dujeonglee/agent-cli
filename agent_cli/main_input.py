@@ -20,7 +20,7 @@ from collections.abc import Callable
 from agent_cli import item_ids
 from agent_cli.constants import INPUT_IS_COMMAND
 from agent_cli.post.envelope import Envelope, is_human_words, words
-from agent_cli.post.office import CLOSED, PostOffice, Take
+from agent_cli.post.office import CLOSED, PostOffice
 
 __all__ = ["CLOSED", "MAIN", "MainInput", "human_addr", "intake_item"]
 
@@ -90,13 +90,14 @@ class MainInput:
     # ── 꺼내기 ───────────────────────────────────────
 
     def wait_to_open(self, timeout: float | None):
-        """펌프: 다음 런을 열 것 — 사람의 말 항목(꺼냄), 빈 묶음 ``()``(깨우는 메일이 있다 — 메일이 연 런, 메일은
-        꺼내지 않는다), `CLOSED`, 또는 None(``timeout``). 기다리는 동안 main 은 한가함(`idle`)이다."""
-        got = self.post.next_run(MAIN, Take.WORDS_FIRST, timeout=timeout)
-        if got is None or got is CLOSED or not got:
+        """펌프: 다음 런을 연 봉투 — 줄 선 첫 깨우는 것 하나(도착 순서)를 꺼내 턴 경계 흡수 항목의 모양으로
+        (`intake_item`: 사람의 말은 ``{"message": 항목}``, 메일은 ``{"mail": …}``), `CLOSED`, 또는 None(``timeout``).
+        기다리는 동안 main 은 한가함(`idle`)이다."""
+        got = self.post.next_run(MAIN, timeout=timeout)
+        if got is None or got is CLOSED:
             return got
         self._changed()
-        return self.item_of(got[0])
+        return intake_item(got)
 
     def take_first_command(self) -> dict | None:
         """맨 앞의 사람의 말이 명령이면(들어올 때의 판정) 꺼내 돌려준다, 아니면 None — main 이 제자리에서 기다리는

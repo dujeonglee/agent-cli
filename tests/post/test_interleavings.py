@@ -13,7 +13,6 @@ import threading
 import pytest
 
 from agent_cli.post import envelope as E
-from agent_cli.post.office import Take
 from tests.post.twin import Twin
 
 A = "agent:a"
@@ -241,7 +240,7 @@ class TestThreads:
         twin = Twin(ADDRS)
         o = twin.office
         o.deliver(REQ)
-        o.next_run(A, Take.ARRIVAL, timeout=0)
+        o.next_run(A, timeout=0)
         ready = threading.Event()
         seen = []
 
@@ -285,7 +284,7 @@ class TestThreads:
             return o.remove_queued(A, {"r-1": reply} if "r-1" in queued else {})
 
         def take():
-            return o.next_run(A, Take.ARRIVAL, timeout=0)
+            return o.next_run(A, timeout=0)
 
         first, second = (take, remove) if taker_first else (remove, take)
         _in_thread(first)
@@ -296,7 +295,7 @@ class TestThreads:
     def test_take_reply_waiter_and_a_dying_agent(self):
         o = Twin(ADDRS).office
         o.deliver(REQ)
-        o.next_run(A, Take.ARRIVAL, timeout=0)
+        o.next_run(A, timeout=0)
         ready = threading.Event()
         got = []
 
@@ -324,7 +323,7 @@ class TestThreads:
     def test_quiet_reply_from_another_thread_does_not_wake(self):
         o = Twin(ADDRS).office
         o.deliver(REQ)
-        o.next_run(A, Take.ARRIVAL, timeout=0)
+        o.next_run(A, timeout=0)
         quiet = E.reply("n-2", A, "main", "stopped", re="r-1", wakes=False)
         _in_thread(
             lambda: o.end_run(

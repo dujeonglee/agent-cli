@@ -1,29 +1,27 @@
-"""런을 열 봉투를 꺼내는 규칙 — main(사람의 말 먼저, 메일 런은 꺼내지 않음)과 에이전트(첫 깨우는 봉투 하나)를 같은 표로 고정한다. 표의 값이 정본이다 — 꺼내는 함수가 바뀌어도 같은 표를 지나야 한다.
+"""런을 열 봉투를 꺼내는 규칙 — main 과 에이전트가 같다: 줄 선 첫 **깨우는** 봉투 하나, 도착 순서로. 표의 값이
+정본이다 — 꺼내는 함수가 바뀌어도 같은 표를 지나야 한다.
 
-결과는 한 모양으로 적는다: ``("took", ids)`` 꺼낸 봉투 · ``("mail_run",)`` 깨우는 메일이 있어 메일이 연 런(꺼내지
-않음) · ``("nothing",)`` 열 것이 없다 · ``("closed",)`` 닫혔다. 그리고 꺼낸 뒤의 상자(줄·든 것)와 한가함 표시."""
+결과는 한 모양으로 적는다: ``("took", id)`` 꺼낸 봉투 · ``("nothing",)`` 열 것이 없다 · ``("closed",)`` 닫혔다. 그리고
+꺼낸 뒤의 상자(줄·든 것)와 한가함 표시. 든 것: 줄 있는 봉투는 런이 든다, main 앞 사람의 말(줄 없음)은 들지 않는다."""
 
 from __future__ import annotations
 
 import pytest
 
 from agent_cli.post import envelope as E
-from agent_cli.post.office import CLOSED, PostOffice, Take
+from agent_cli.post.office import CLOSED, PostOffice
 
 A = "agent:a"
 
 
 def _open(po: PostOffice, addr: str) -> tuple:
     """그 주소의 다음 런을 열 것 — 기다리지 않는다."""
-    take = Take.WORDS_FIRST if addr == "main" else Take.ARRIVAL
-    got = po.next_run(addr, take, timeout=0)
+    got = po.next_run(addr, timeout=0)
     if got is None:
         return ("nothing",)
     if got is CLOSED:
         return ("closed",)
-    if got == ():
-        return ("mail_run",)
-    return ("took", [e.id for e in got])
+    return ("took", got.id)
 
 
 def _state(po: PostOffice, addr: str) -> tuple:
@@ -47,23 +45,24 @@ S = lambda i: E.reply(
 #: (이름, 넣는 봉투, 닫기, 기대 결과, 기대 (줄, 든 것), 기대 한가함)
 MAIN_TABLE = [
     ("empty", [], False, ("nothing",), ([], []), True),
-    ("words_first_one", [W(1), W(2)], False, ("took", ["u-1"]), (["u-2"], []), False),
-    ("words_before_mail", [N(1), W(2)], False, ("took", ["u-2"]), (["n-1"], []), False),
+    ("words_one_at_a_time", [W(1), W(2)], False, ("took", "u-1"), (["u-2"], []), False),
     (
-        "waking_mail_opens_without_taking",
-        [N(1)],
+        "mail_before_words",
+        [N(1), W(2)],
         False,
-        ("mail_run",),
-        (["n-1"], []),
+        ("took", "n-1"),
+        (["u-2"], ["n-1"]),
         False,
     ),
+    ("words_before_mail", [W(1), N(2)], False, ("took", "u-1"), (["n-2"], []), False),
+    ("waking_mail_opens", [N(1)], False, ("took", "n-1"), ([], ["n-1"]), False),
     ("quiet_mail_opens_nothing", [Q(1)], False, ("nothing",), (["n-1"], []), True),
     (
         "quiet_then_waking",
         [Q(1), N(2)],
         False,
-        ("mail_run",),
-        (["n-1", "n-2"], []),
+        ("took", "n-2"),
+        (["n-1"], ["n-2"]),
         False,
     ),
     (
@@ -80,16 +79,16 @@ MAIN_TABLE = [
 
 AGENT_TABLE = [
     ("empty", [], ("nothing",), ([], [])),
-    ("one_request", [R(1)], ("took", ["r-1"]), ([], ["r-1"])),
+    ("one_request", [R(1)], ("took", "r-1"), ([], ["r-1"])),
     (
         "human_words_one_at_a_time",
         [H(1), H(2), R(3)],
-        ("took", ["u-1"]),
+        ("took", "u-1"),
         (["u-2", "r-3"], ["u-1"]),
     ),
-    ("first_waking_after_quiet", [S(1), R(2)], ("took", ["r-2"]), (["n-1"], ["r-2"])),
+    ("first_waking_after_quiet", [S(1), R(2)], ("took", "r-2"), (["n-1"], ["r-2"])),
     ("quiet_only", [S(1)], ("nothing",), (["n-1"], [])),
-    ("request_then_words", [R(1), H(2)], ("took", ["r-1"]), (["u-2"], ["r-1"])),
+    ("request_then_words", [R(1), H(2)], ("took", "r-1"), (["u-2"], ["r-1"])),
 ]
 
 

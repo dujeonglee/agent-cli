@@ -2,7 +2,7 @@
 
 액터는 주소 하나의 주인이다: 런을 열 것을 기다리고(`take`), 열고(`open`), 돌리고(`run_start`), 끝을 판정한다(`ended`).
 main(`pump.MainActor`)과 에이전트 워커(`subagent.resident_loop.AgentActor`)가 다른 것은 그 메서드들뿐이다 —
-꺼내는 법(창구의 `Take`), 수명(세션 내내 / 과제 하나), 표면·명령·런 끝 정리.
+꺼낸 것으로 시작을 짓는 법, 수명(세션 내내 / 과제 하나), 표면·명령·런 끝 정리.
 
 루프는 예외를 잡지 않는다 — 런의 예외 정책은 구현의 것이다(main 은 표면의 `run_failed`, 에이전트는 종류의
 `crashed`). ``KeyboardInterrupt`` 는 run 의 호출자가 받는다.

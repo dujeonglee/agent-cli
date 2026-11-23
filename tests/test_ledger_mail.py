@@ -18,6 +18,7 @@ import pytest
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop.core import mail_item
+from agent_cli.main_input import intake_item
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.runtime import MainLoop
 from agent_cli.subagent.agents_live import AgentRegistry
@@ -39,7 +40,7 @@ def _no_render(monkeypatch):
     monkeypatch.setattr(d, "render_step", lambda *a, **k: None)
 
 
-def _loop(tmp_path, *, query="", items=(), mail=()):
+def _loop(tmp_path, *, query="", items=(), mail=(), opening=None):
     reg = AgentRegistry(tmp_path / "reg")
     for m in mail:
         to_main(reg, dict(m))
@@ -49,6 +50,7 @@ def _loop(tmp_path, *, query="", items=(), mail=()):
         query=query,
         query_request_id="u-1" if query else "",
         query_author="dj" if query else None,
+        opening=opening,
         provider=MagicMock(),
         capabilities=ModelCapabilities(
             context_window=32768, max_output_tokens=4096, supports_thinking=False
@@ -118,22 +120,28 @@ class TestWhichMailBecomesAnItem:
         )
 
 
-class TestWakeRunHasNoStarter:
-    def test_a_mail_run_has_no_starter_message(self):
+class TestTheMailThatOpensARun:
+    def test_a_mail_run_has_no_starter_message_and_carries_its_mail(self):
         import threading
 
-        wake = MainLoop.start(None, threading.Event())
+        opened = {"mail": dict(JOB)}
+        wake = MainLoop.start(opened, threading.Event())
         assert wake.query == "" and wake.author_is_user is False
+        assert wake.opening == opened
         user = MainLoop.start(
-            {"id": "u-3", "text": "hi", "nickname": "dj"}, threading.Event()
+            {"message": {"id": "u-3", "text": "hi", "nickname": "dj"}},
+            threading.Event(),
         )
         assert (user.query, user.author, user.request_id) == ("hi", "dj", "u-3")
+        assert user.opening is None
 
     def test_first_input_is_the_mail_and_it_is_an_open_item(self, tmp_path):
-        loop, _reg, ctx = _loop(tmp_path, mail=[JOB])
+        """런을 연 메일은 시작(`_setup`)에서 들어간다 — 첫 턴 경계를 기다리지 않는다. 열리자마자 멈춰도 기록에 남는다."""
+        reg = AgentRegistry(tmp_path / "opener")
+        to_main(reg, dict(JOB))
+        opened = intake_item(reg._post.next_run("main", timeout=0))
+        loop, _reg, ctx = _loop(tmp_path, opening=opened)
         loop._setup()
-        assert [m for m in ctx.get_raw_messages() if m.get("role") == "user"] == []
-        loop._intake()
         users = [m for m in ctx.get_raw_messages() if m.get("role") == "user"]
         assert len(users) == 1 and users[0]["tool"] == "job"
         assert "New agent mail" not in str(ctx.get_raw_messages())
@@ -148,11 +156,13 @@ class TestWakeRunHasNoStarter:
         assert '[n-1] (mail) "🧵 job #1 finished rc=0 after 3m00s"' in tail
         assert 'then `complete`, listing in `answers` the ids it covers ("n-1")' in tail
 
-    def test_nothing_delivered_means_no_llm_call(self, tmp_path):
-        loop, _reg, _ctx = _loop(tmp_path)  # 메일 없음 — 다른 런이 이미 가져갔다
-        loop._call_llm = MagicMock(side_effect=AssertionError("LLM called"))
-        res = loop.run()
-        assert res.success and res.output == ""
+    def test_mail_that_arrives_later_is_read_at_the_turn_boundary(self, tmp_path):
+        loop, _reg, ctx = _loop(tmp_path, mail=[JOB])
+        loop._setup()
+        assert [m for m in ctx.get_raw_messages() if m.get("role") == "user"] == []
+        loop._intake()
+        users = [m for m in ctx.get_raw_messages() if m.get("role") == "user"]
+        assert len(users) == 1 and users[0]["tool"] == "job"
 
 
 class TestClosingAMailItem:

@@ -99,6 +99,14 @@
     {}
    ],
    [
+    "note_request",
+    [
+     "n-154",
+     2
+    ],
+    {}
+   ],
+   [
     "open_items",
     [
      {
@@ -106,16 +114,18 @@
        "left": 8,
        "total": 8
       },
-      "items": []
+      "items": [
+       {
+        "closer": "complete",
+        "head": "🧵 job #1 finished rc=0 after 3m00s",
+        "hidx": null,
+        "id": "n-154",
+        "source": "mail",
+        "turns": 0,
+        "who": "mail"
+       }
+      ]
      }
-    ],
-    {}
-   ],
-   [
-    "note_request",
-    [
-     "n-154",
-     2
     ],
     {}
    ],

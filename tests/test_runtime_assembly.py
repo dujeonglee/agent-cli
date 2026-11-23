@@ -729,7 +729,12 @@ class _ItemsPump:
             item = None if wake else {"id": qid, "text": text, "nickname": None}
             if item is not None:
                 self.deps.surface.echo(item)
-            start = self.deps.main.start(item, threading.Event())
+            opened = (
+                {"mail": {"kind": "job", "output": text, "ledger": "none"}}
+                if wake
+                else {"message": item}
+            )
+            start = self.deps.main.start(opened, threading.Event())
             if not wake and self.deps.surface.route(text, start, item=item):
                 continue
             res = self.deps.main.run(start)

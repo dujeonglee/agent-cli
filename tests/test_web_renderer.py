@@ -1999,7 +1999,7 @@ class TestWorkerLoopIntegration:
         item = server.main_input.wait_to_open(None)
         if item is CLOSED:
             return False
-        assert item["text"] == message
+        assert item["message"]["text"] == message
         renderer.worker_busy()
         return True
 

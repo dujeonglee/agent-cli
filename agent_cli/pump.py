@@ -202,16 +202,17 @@ class MainActor:
         self.deps.surface.idle()
 
     def take(self, timeout: float | None):
-        """사람의 말과 메일이 같은 상자·같은 조건변수 — 판정과 대기가 한 락이라 그 사이 온 것을 놓치지 않는다. 사람의 말
-        항목, 빈 묶음(메일이 연 런 — 메일은 꺼내지 않았다, 그 첫 턴 경계가 흡수한다), `CLOSED`, 또는 None(시한 —
-        한가함은 그대로: 끄면 그 사이 온 메일이 "바쁨" 으로 보인다)."""
+        """사람의 말과 메일이 같은 상자·같은 조건변수 — 판정과 대기가 한 락이라 그 사이 온 것을 놓치지 않는다. 런을 연
+        봉투 하나(도착 순서 — ``{"message": 항목}`` 또는 ``{"mail": …}``), `CLOSED`, 또는 None(시한 — 한가함은 그대로:
+        끄면 그 사이 온 메일이 "바쁨" 으로 보인다)."""
         return self.deps.main_input.wait_to_open(timeout=timeout)
 
     def open(self, got):
-        """그 차례의 시작 — 사람의 말이면 말풍선을 내고, 명령(들어올 때의 표시)이면 그 자리에서 라우팅하고 None(런을
-        열지 않는다). 실행이 받지 않은 명령은 사람의 말로 런을 연다."""
+        """그 차례의 시작 — 사람의 말이 열었으면 말풍선을 내고, 명령(들어올 때의 표시)이면 그 자리에서 라우팅하고
+        None(런을 열지 않는다). 실행이 받지 않은 명령은 사람의 말로 런을 연다. 메일이 열었으면 그 메일이 런의 첫
+        입력이다(`MainLoop.start`)."""
         d = self.deps
-        item = got if got else None
+        item = got.get("message")  # 사람의 말이 열었을 때만
         d.surface.busy()
         if item is not None:
             d.surface.echo(item)
@@ -225,7 +226,7 @@ class MainActor:
         if d.agent_registry is not None:
             d.agent_registry.main_stop_wakes = True
         self._bind_stop(stop_event)
-        start = d.main.start(item, stop_event)
+        start = d.main.start(got, stop_event)
         if item is None or not item.get("command"):
             return start
         # 명령의 라우팅도 런과 같은 보호 안 — 그 예외도 `run_failed` 로 간다(web 은 알리고 계속)

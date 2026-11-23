@@ -140,6 +140,7 @@ class AgentLoop:
         # main 의 스타터 id/드레인과 같은 회계(장부 `state.ledger`)에 올린다 —
         # 유형별 일관성: 사용자 요청은 어디로 오든 `complete` 과 짝이다.
         self.user_requests = list(start.user_requests)
+        self._opening = start.opening
         self.run_authors: list[str] = []
         self.provider = binding.provider  # 엔드포인트 객체는 세션 수명 — 모델만 바뀐다
         self.ctx = ctx
@@ -469,7 +470,6 @@ class AgentLoop:
             # 반환값을 버려 docs/REFERENCE.md 의 `on_session_start → inject_system_section`
             # 예시가 동작하지 않았다(내장 스냅샷 훅의 안내가 모델에 안 닿았다).
             self._apply_system_sections(self._fire_hook("OnSessionStart"))
-            starterless = not self.query
             while self._should_continue():
                 if self._interrupted:
                     return self._on_interrupt()
@@ -477,18 +477,10 @@ class AgentLoop:
                 # messages + this turn's action/observation) carry it.
                 if self.ctx:
                     self.ctx.set_turn(self.turn + 1)
-                seen = len(self.messages)
                 self._intake()
                 # 턴 경계 (장부 P4) — 지난 턴의 관찰과 방금 흡수한 메일·요청이 다
                 # 기록된 뒤. 메일·빚은 루프 밖에서도 바뀌므로 턴마다 다시 보낸다.
                 show_open_items(self._config, self._state)
-                if starterless and self.turn == 0 and len(self.messages) == seen:
-                    # 시작 메시지도 첫 경계에 읽을 것도 없는 런 — 모델에게 줄 입력이 없으니 LLM 을 부르지 않는다.
-                    # 닿는 길: main 의 메일 런 — 메일 런은
-                    # 깨우는 메일이 줄 서 있을 때 열리지만(꺼내지 않음) 그 메일이 사라진 요청자의 요청뿐이었으면 첫
-                    # 경계 전에 상자에서 빠진다(`PostOffice.forget_requests_of`). main 상자를 꺼내는 다른 곳(턴 경계
-                    # 흡수·`@agent` 명령의 답)은 모두 main 의 스레드라 끼어들 수 없다.
-                    return ToolResult(True, output="")
                 self.turn += 1
                 self._begin_turn()
                 result = self._execute_turn()
@@ -644,10 +636,12 @@ class AgentLoop:
             ledger.add_request(
                 starter_rid, self.query_author or "", self.query, turn=self.turn
             )
-        if not self.query:
-            # 시작 메시지 없는 런 = 메일이 연 런 (v10.55.0, `MainLoop.start`):
-            # 첫 입력은 첫 턴 경계가 배달하는 메일 관찰이다.
+        if self._opening is not None:
+            # 메일이 연 런 — 시작 메시지가 없다. 런을 연 봉투를 턴 경계의 흡수와 같은 길로 넣는다
+            self._absorb([self._opening])
             return
+        if not self.query and not self.query_images:
+            return  # 넣을 시작 메시지가 없다
         self._add_user_message(
             self.query,
             self.query_author,
@@ -764,8 +758,12 @@ class AgentLoop:
         **어떻게 넣을지**는 여기다 — 큐 항목은 명령 라우팅 또는 조종 메시지(`_inject_message`),
         레지스트리 회신은 빚·장부·레코드(`_inject_mail`), 받은편지함 항목은 사람 요청 또는
         관찰(`_inject_item`). 종전엔 포트 유무로 세 메서드가 각자 판정했다."""
+        self._absorb(self._config.kind.intake())
+
+    def _absorb(self, items: list[dict]) -> None:
+        """흡수 항목들을 넣는다 — 턴 경계(`_intake`)와 메일이 연 런의 시작(`_setup`)이 같은 길."""
         merged_authors = False
-        for it in self._config.kind.intake():
+        for it in items:
             if "message" in it:
                 self._inject_message(it["message"])
             elif "mail" in it:

@@ -99,6 +99,7 @@ def _split(
     query_request_id: str = "",
     user_requests: list | None = None,
     query_images: list[dict] | None = None,
+    opening: dict | None = None,
     **attrs,
 ) -> tuple[LoopKind, Start]:
     unknown = set(attrs) - _KIND_ATTRS
@@ -132,6 +133,7 @@ def _split(
         author_is_user=query_author_is_user,
         request_id=query_request_id,
         user_requests=list(user_requests or []),
+        opening=opening,
     )
     return kind, start
 

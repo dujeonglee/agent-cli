@@ -14,8 +14,8 @@ class TestMainInput:
         q = MainInput()
         q.enqueue("c1", "first", nickname="bob", images=[{"path": "a.png"}])
         q.enqueue(None, "second")
-        a = q.wait_to_open(1)
-        b = q.wait_to_open(1)
+        a = q.wait_to_open(1)["message"]
+        b = q.wait_to_open(1)["message"]
         assert a == {
             "id": a["id"],
             "conn_id": "c1",
@@ -48,7 +48,7 @@ class TestMainInput:
         q.enqueue("c1", "plain words")
         q.enqueue("c1", "/stop agt-3")
         assert q.take_first_command() is None  # 맨 앞이 말이다 — 꺼내지 않는다
-        assert q.wait_to_open(0)["text"] == "plain words"
+        assert q.wait_to_open(0)["message"]["text"] == "plain words"
         got = q.take_first_command()
         assert got["text"] == "/stop agt-3" and got["command"] is True
         assert q.pending_count() == 0
@@ -87,7 +87,7 @@ class TestMainInput:
         q.enqueue(None, "x")
         assert [i["text"] for i in q.snapshot()] == ["x"]
         assert q.pending_count() == 1
-        assert q.wait_to_open(0)["text"] == "x"
+        assert q.wait_to_open(0)["message"]["text"] == "x"
 
     def test_cancel_owner_only(self):
         q = MainInput()
@@ -115,4 +115,6 @@ class TestMainInput:
         q.post.deliver(post_envelope.notice("n-1", "job", "main", "done"))
         q.enqueue(None, "hi")
         assert [i["text"] for i in q.snapshot()] == ["hi"] and q.pending_count() == 1
-        assert q.wait_to_open(0)["text"] == "hi" and q.pending_count() == 0
+        assert "mail" in q.wait_to_open(0)  # 먼저 온 메일이 연다 — 말은 줄에 남는다
+        assert q.pending_count() == 1
+        assert q.wait_to_open(0)["message"]["text"] == "hi" and q.pending_count() == 0

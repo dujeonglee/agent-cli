@@ -26,22 +26,21 @@ class Postbox:
             raise BoxError(f"{env.id}: already in this box")
         self._queued.append(env)
 
-    def take_next(self) -> tuple[Envelope, ...]:
+    def take_next(self) -> Envelope | None:
         """런 하나를 열 봉투 — 첫 **깨우는** 봉투 하나. 나머지는(깨우지 않는 것도) 줄에 남는다 — 그 런의 첫 흡수가
-        도착 순서로 읽는다. 없으면 빈 튜플."""
+        도착 순서로 읽는다. 없으면 None. 줄 없는 사람의 말(main 앞의 말)은 상자에서 빼기만 한다(런이 들지 않는다) —
+        런 끝에 닫을 줄이 없고, 명령이면 런도 열리지 않는다."""
         first = next((i for i, e in enumerate(self._queued) if e.wakes), None)
         if first is None:
-            return ()
-        return self._move([first])
+            return None
+        env = self._queued[first]
+        if is_human_words(env) and env.closes_by is None:
+            return self._queued.pop(first)
+        return self._move([first])[0]
 
     def take_all(self) -> tuple[Envelope, ...]:
         """줄 선 것 전부 — 깨우지 않는 것도, 도착 순서로(턴 경계의 흡수)."""
         return self._move(range(len(self._queued)))
-
-    def take_first_words(self) -> Envelope | None:
-        """줄 선 첫 사람의 말 하나를 상자에서 뺀다(런이 들지 않는다). 없으면 None."""
-        i = next((i for i, e in enumerate(self._queued) if is_human_words(e)), None)
-        return None if i is None else self._queued.pop(i)
 
     def remove(self, env_id: str) -> Envelope | None:
         """줄 선 봉투 하나를 id 로 뺀다. 없으면 None."""

@@ -1670,7 +1670,7 @@ class TestInputEndpoint:
         assert len(pending) == 1
         assert pending[0]["text"] == "hello" and pending[0]["conn_id"] == cid
         # 펌프가 런을 열 것으로 꺼내면 그 항목이다(text + nickname).
-        item = server.main_input.wait_to_open(0)
+        item = server.main_input.wait_to_open(0)["message"]
         assert item["text"] == "hello"
 
     def test_prompt_response_goes_to_renderer_input_queue(self, server_and_client):
@@ -2012,7 +2012,7 @@ class TestMessageQueue:
                 if m is CLOSED:
                     msgs.append("done")
                     break
-                msgs.append(m["text"])
+                msgs.append(m["message"]["text"])
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
@@ -2041,8 +2041,8 @@ class TestMessageQueue:
         srv = WebServer(WebRenderer())
         srv.enqueue("a", "first")
         srv.enqueue("b", "second")
-        assert srv.main_input.wait_to_open(0)["text"] == "first"
-        assert srv.main_input.wait_to_open(0)["text"] == "second"
+        assert srv.main_input.wait_to_open(0)["message"]["text"] == "first"
+        assert srv.main_input.wait_to_open(0)["message"]["text"] == "second"
         assert srv.main_input.wait_to_open(0) is None  # empty → non-blocking None
 
     def test_cancel_only_by_owner_and_pending(self):
@@ -3714,7 +3714,7 @@ class TestChatWithImages:
             json={"kind": "chat", "content": "what is this?", "images": [full]},
         )
         assert r.status_code == 200, r.text
-        item = server.main_input.wait_to_open(0)
+        item = server.main_input.wait_to_open(0)["message"]
         assert item["text"] == "what is this?"
         assert len(item["images"]) == 1
         ref = item["images"][0]
@@ -3730,7 +3730,10 @@ class TestChatWithImages:
             json={"kind": "chat", "content": "", "images": [str(tmp_path / "a.png")]},
         )
         assert r.status_code == 200
-        assert server.main_input.wait_to_open(0)["images"][0]["mime"] == "image/png"
+        assert (
+            server.main_input.wait_to_open(0)["message"]["images"][0]["mime"]
+            == "image/png"
+        )
 
     def test_bad_images_are_400_and_nothing_is_queued(
         self, server_and_client, tmp_path
@@ -3759,7 +3762,7 @@ class TestChatWithImages:
             "/api/input?token=testtoken", json={"kind": "chat", "content": "hi"}
         )
         assert r.status_code == 200
-        assert server.main_input.wait_to_open(0)["images"] == []
+        assert server.main_input.wait_to_open(0)["message"]["images"] == []
 
 
 class TestImageSupportEndpoint:

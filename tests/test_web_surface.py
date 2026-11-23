@@ -138,7 +138,7 @@ class TestWebServerQueueContract:
         s = WebServer(MagicMock(), token="t")
         assert s.main_input.wait_to_open(0.01) is None
         s.enqueue("c", "hi")
-        assert s.main_input.wait_to_open(None)["text"] == "hi"
+        assert s.main_input.wait_to_open(None)["message"]["text"] == "hi"
 
 
 class TestEchoImages:

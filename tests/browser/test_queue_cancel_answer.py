@@ -32,7 +32,7 @@ def _my_line(stack, page, text="please do X"):
 
 def _taken_and_echoed(stack, item):
     """워커가 그 말을 꺼냈다 — 대기열에서 빠지고 그 말의 말풍선이 선다(펌프가 연 차례와 같다)."""
-    taken = stack.server.main_input.wait_to_open(0)
+    taken = stack.server.main_input.wait_to_open(0)["message"]
     assert taken["id"] == item["id"]
     stack.server.broadcast_queue()
     nick = str(item.get("nickname"))
@@ -71,7 +71,7 @@ def test_answer_before_the_queue_left_then_refused_reads_applied(stack, page):
     # 잠시 막아 그 순서를 만든다.
     mi = stack.server.main_input
     notify, mi.on_change = mi.on_change, None
-    taken = mi.wait_to_open(0)
+    taken = mi.wait_to_open(0)["message"]
     mi.on_change = notify
     assert taken["id"] == item["id"]
     with page.expect_response(lambda r: "queue/cancel" in r.url) as info:

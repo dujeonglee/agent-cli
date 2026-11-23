@@ -89,7 +89,7 @@ class TestTaking:
         box.put(_r(1, wakes=False))
         box.put(_r(2))
         box.put(_r(3))
-        assert [e.id for e in box.take_next()] == ["n-2"]
+        assert box.take_next().id == "n-2"
         assert [e.id for e in box.queued()] == [
             "n-1",
             "n-3",
@@ -99,16 +99,16 @@ class TestTaking:
         box = Postbox()
         for e in (_h(1), _h(2), _r(3), _h(4)):
             box.put(e)
-        assert [e.id for e in box.take_next()] == ["u-1"]
-        assert [e.id for e in box.take_next()] == ["u-2"]
-        assert [e.id for e in box.take_next()] == ["n-3"]
-        assert [e.id for e in box.take_next()] == ["u-4"]
-        assert box.take_next() == ()
+        assert box.take_next().id == "u-1"
+        assert box.take_next().id == "u-2"
+        assert box.take_next().id == "n-3"
+        assert box.take_next().id == "u-4"
+        assert box.take_next() is None
 
     def test_only_quiet_envelopes_open_nothing(self):
         box = Postbox()
         box.put(_r(1, wakes=False))
-        assert box.take_next() == () and box.count(waking_only=True, words=True) == 0
+        assert box.take_next() is None and box.count(waking_only=True, words=True) == 0
 
     def test_take_all_keeps_arrival_order(self):
         a = Postbox()
