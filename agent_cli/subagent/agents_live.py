@@ -1016,7 +1016,7 @@ class AgentRegistry:
         stopped: bool = False,
         **meta,
     ) -> int:
-        """런 끝의 **유일한** 정리 (v10.77.0) — 상주 단건·사람 배치·main 펌프가
+        """런 끝의 **유일한** 정리 (v10.77.0) — 에이전트의 런과 main 펌프가
         모두 여기로 온다. 처리한 빚 수를 돌려준다. `wait` 는 런을 끝내지 않는다(5c-1) — 여기 오지 않는다.
 
         - ``stopped`` (정지로 끊김): 남은 빚을 버린다. 사람·모델의 정지(■·✕)는 런의 정리가
@@ -1697,7 +1697,7 @@ class AgentRegistry:
             }
             self._record(tm, absorbed)
             if is_human_addr(author):
-                # 빚은 아니지만 `reply` 거부 사유가 이걸 본다 (사람 배치와 동일)
+                # 빚은 아니지만 `reply` 거부 사유가 이걸 본다
                 uid = iid
                 self.note_owes(me, author, text, id=uid)
                 out.append(

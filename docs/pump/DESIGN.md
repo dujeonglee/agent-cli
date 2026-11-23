@@ -17,8 +17,7 @@ v10.130.8 부터는 서버가 큐를 내놓고(``WebServer.queue``) 펌프의 �
 
 **v10.147.0 — 입력 큐와 메일 깨우기가 없어졌다.** 사람의 말(웹 채팅·argv 질의·제자리 대기 중 터미널 줄·예약 발화·
 StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_cli/post`)의 ``"main"`` 상자에 봉투로
-선다 — 메일과 같은 상자, 같은 조건변수. 펌프는 `MainInput.wait_to_open` 하나로 "사람의 말 먼저 하나, 없으면 깨우는
-메일(메일 런), 닫힘" 을 기다린다. 판정과 대기가 한 락 구간이라, 메일이 한가한 펌프를 깨우려고 큐에 넣던 합성 깨우기
+선다 — 메일과 같은 상자, 같은 조건변수. 펌프는 `MainInput.wait_to_open` 하나로 "런을 열 봉투 하나, 닫힘" 을 기다린다(여는 규칙은 아래 5c-2 문단). 판정과 대기가 한 락 구간이라, 메일이 한가한 펌프를 깨우려고 큐에 넣던 합성 깨우기
 항목과 그것을 다루던 `MailWaker`(무장·`mark_idle` 재확인·`on_run_end`·skip)가 필요 없어 지웠다. main 이 한가한가
 (CLI 메일 대기 줄의 ``busy``)는 창구가 든다(`PostOffice.idle`). 웹 서버는 `server.main_input` 을 내놓고, 레지스트리는
 그 창구를 받는다(`build_agent_registry(post=…)`). 아래 §3 의 그림과 §3.4 의 깨우기 이야기는 그 전의 기록이다 — 지금의
@@ -27,7 +26,7 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 **v10.148.0 — 런은 상자가 연다, 표면은 `Start` 를 받는다.** 펌프 고유의 요청 타입(`RunRequest`)과 깨우기 문장·작성자
 (`WAKE_TEXT`·`WAKE_AUTHOR`)가 없어졌다. 펌프는 꺼낸 사람의 말(또는 깨우는 메일)을 `MainLoop.start(item, stop_event)`
 에 넘겨 엔진의 `Start` 를 짓는다 — 사람의 말이면 그 말이 시작(``author_is_user=True``, 작성자는 별명, 없으면 argv
-질의), 메일이면 빈 시작(``author_is_user=False`` — 첫 입력은 첫 턴 경계가 배달하는 메일). 표면은 그 `Start` 를
+질의), 메일이면 시작 메시지가 없다(``author_is_user=False`` — 그 메일이 `Start.opening` 으로 가 첫 입력이 된다, 아래 5c-2 문단). 표면은 그 `Start` 를
 받는다: `echo(item)`(사람의 말로 연 때만), `route(text, start, item=)`(턴 경계·제자리 대기의 라우팅은 ``start`` 없음; ``item`` 은 그 글을 실어 온 사람의 말 항목 — 거기 딸린 이미지는 그 말이 가는 곳으로 간다, v10.149.3),
 `run_starting(start)`, `run_ended(result, start)`. "명령인가" 는 실행과 뗀 판정 하나(`surface.is_command` —
 `command_table.command_kind` 위에 웹은 `/help`·`/compact`·`/sh`, CLI 는 `/sh` 제외)이고, 제자리 대기는 첫 말이
@@ -41,10 +40,22 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 `wait_to_open`(창구)·`start_run`·`OPEN_MAIL` 은 없다. 에이전트의 평생 정지는 상자를 닫는 것이다(`_stop_worker` —
 정지 세우기 → 닫기); 기다리는 워커는 닫힘으로 깨어 나오고, 같은 세션에서 되살리면 상자를 다시 연다(`reopen`).
 
+**5c-2 — 여는 규칙이 하나다.** 위 문단의 `take` 인자와 `Take` 두 갈래는 없다. `PostOffice.next_run(addr, timeout)` 은
+main 에게도 에이전트에게도 같은 것을 한다: **줄 선 첫 깨우는 봉투 하나를 꺼낸다 — 사람의 말이든 메일이든 도착 순서로.**
+나머지는 줄에 남아 그 런의 첫 턴 경계가 도착 순서로 읽는다(첫 모델 호출 전이다). 그래서
+- main 은 사람의 말을 앞세우지 않는다. 메일이 먼저 와 있으면 메일이 열고, 그 뒤에 쓴 말은 같은 런의 첫 턴 경계가
+  읽는다. 턴 경계도 도착 순서다(`absorb` 에 사람 먼저가 없다).
+- 메일이 연 런은 그 메일을 **꺼낸다**: `wait_to_open` 이 턴 경계 흡수 항목의 모양(``{"message": …}``·``{"mail": …}``)으로
+  돌려주고, `MainLoop.start` 가 메일을 `Start.opening` 에 실어, 엔진이 시작(`_setup`)에서 턴 경계의 흡수와 같은 길로
+  넣는다. 열리자마자 멈춰도 그 메일은 기록에 남는다(다시 열리지 않는다). 엔진의 "읽을 것 없는 런" 갈래는 없다.
+- 에이전트는 이어진 사람의 말을 묶지 않는다. 첫 말이 열고 나머지는 첫 턴 경계가 읽는다(메시지가 따로다).
+- 명령보다 먼저 온 메일이 있으면 그 메일이 런을 열고 명령은 그 런의 첫 턴 경계에서 실행된다.
+- 남은 차이: main 앞 사람의 말은 줄 없는 봉투다(꺼내기 전에 취소·명령으로 빠질 수 있다) — 꺼낼 때 런이 들지 않는다.
+
 **v10.151.0 — 런을 여는 루프가 하나다.** `actor.run_actor` 가 기다림(`take`) → 열기(`open` — None 이면 런을 열지 않은
 차례) → 런(`run_start`) → 끝 판정(`ended` — 참이면 액터의 수명 끝)을 되풀이한다. 구현은 둘이다: main 의 `MainActor`
 (옛 `SessionPump` — 정책·표면·명령 라우팅·런 끝 정리를 들고, 수명은 세션)와 에이전트 워커의 `AgentActor`
-(`subagent/resident_loop.py` — 꺼내기는 레지스트리의 `_next_run_items`, run 에이전트는 `wait` 로 끝나지 않은 런 뒤
+(`subagent/resident_loop.py` — 꺼내기는 레지스트리의 `_next_run_item`, run 에이전트는 `wait` 로 끝나지 않은 런 뒤
 내려온다). 루프는 예외를 잡지 않는다 — main 의 런 예외는 표면의 `run_failed`, 에이전트의 것은 종류의 `crashed`.
 아래의 `SessionPump` 는 그 전의 이름이다.
 
@@ -98,7 +109,7 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
   (사람의 말:    │  surface.idle()                                │
    run argv,     │  got = main_input.wait_to_open(poll)           │
    web HTTP,     │  CLOSED → return · None(timeout) → continue    │
-   예약 / 메일)  │  wake = got == () (메일은 꺼내지 않는다)       │
+   예약 / 메일)  │  got = 런을 연 봉투 하나(말 또는 메일)         │
                  │  surface.busy() · surface.echo(item, wake)     │
                  │  registry.set_current_run_authors(...)         │
                  │  stop = Event(); surface.bind_stop(stop)       │
