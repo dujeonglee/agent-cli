@@ -48,13 +48,12 @@ class SystemPromptSvc:
         self.system = "\n\n".join(t for _, t in self.sections)
 
     def apply_hook_sections(self, hook_ctx) -> None:
-        """Apply dynamic sections from hook context — **merged by title**
-        (v10.36.0): a section a hook re-injects every ``PreLLMCall`` replaces
-        the previous one of the same title (idempotent across turns), while a
-        section injected once at ``OnSessionStart`` stays for the session.
-        Before, every apply dropped all earlier ``Hook: `` sections, so a
-        session-start section would have vanished at the first LLM call even
-        once the loop started applying it. 섹션 이름(``Hook: …``)이 경계를
+        """Apply one hook firing to the prompt — **by title**: a section the
+        firing injects replaces the one of the same title (a section re-injected
+        every ``PreLLMCall`` does not pile up), a title the firing removes is
+        taken out, every other ``Hook: `` section stays. So a section a hook put
+        in stays until a hook takes it out, for this run of the loop (each run
+        builds its prompt anew). 섹션 이름(``Hook: …``)이 경계를
         들고 있으므로 본문에 표식을 넣지 않는다 — 종전의 ``<!-- HOOK_SECTIONS -->``
         는 옛 문자열과 바이트를 맞추려던 것인데 모델에게 그대로 나갔다(v10.75.1)."""
         if not hook_ctx or not (hook_ctx.system_sections or hook_ctx.removed_sections):

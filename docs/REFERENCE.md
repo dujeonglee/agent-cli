@@ -1132,8 +1132,9 @@ def pre_llm_call(ctx):
 
     # Context 조작
     ctx.inject_message("system", "remember this")
+    # 훅이 넣은 섹션은 훅이 뺄 때까지, 그 작업 구간 동안 프롬프트에 있다
     ctx.inject_system_section("Memory", "facts...")   # 제목별 병합 — 같은 제목은 교체, 다른 제목은 유지
-    ctx.remove_system_section("Memory")                # (OnSessionStart 에서 넣은 섹션도 프롬프트에 반영)
+    ctx.remove_system_section("Memory")                # 앞선 발화(OnSessionStart·앞 턴)가 넣은 섹션도 뺀다
 
     # 도구 제어 (PreToolUse only)
     ctx.block("reason")
