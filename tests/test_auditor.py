@@ -550,15 +550,12 @@ class TestWebKnob:
 
     def test_in_flight_reaches_status_file_and_the_chip(self, tmp_path):
         from agent_cli.instance_file import read_status_file
-        from agent_cli.knobs import KNOB_BY_NAME, web_state
 
         ctx = _ctx(tmp_path)
         auditor = SessionAuditor(_FakeJobs(), ctx, enabled=True)
         renderer, server, _client = self._app(tmp_path, auditor)
-        # web 부트의 배선: 진행 수가 바뀌면 상태 한 장을 다시 계산해 싣는다 (v10.45.0)
-        renderer.knob_state = lambda name: web_state(
-            KNOB_BY_NAME[name], server.knob_session()
-        )
+        # web 부트의 배선: 진행 수가 바뀌면 노브 상태를 다시 떠서 낸다 (v10.45.0)
+        renderer.knobs_changed = server.broadcast_knobs
         auditor.jobs.in_flight = 1
         renderer.note_harness(1)
         assert read_status_file(tmp_path)["auditing"] is True
@@ -571,7 +568,7 @@ class TestWebKnob:
 
     def test_without_the_wiring_status_still_updates(self, tmp_path):
         renderer, _server, _client = self._app(tmp_path, None)
-        renderer.note_harness(1)  # knob_state 없음 — status.json 만
+        renderer.note_harness(1)  # knobs_changed 없음 — status.json 만
         from agent_cli.instance_file import read_status_file
 
         assert read_status_file(tmp_path)["auditing"] is True

@@ -60,6 +60,7 @@ from starlette.background import BackgroundTask
 
 from agent_cli import images as _images
 from agent_cli.command_table import web_input_is_command
+from agent_cli.knobs import web_states
 from agent_cli.main_input import MainInput, human_addr
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
@@ -263,9 +264,9 @@ class WebServer:
         # Items: ``{id, conn_id, nickname, text, images}``.
         #: 미배달 메일의 대기열 줄 공급자 — web 부트가 꽂는다 (v10.51.0)
         self.mail_source = None
-        self._queue_step = (
-            threading.Lock()
-        )  # 대기열을 뜨고 내는 한 걸음 (`broadcast_queue`)
+        # 뜨고 내는 한 걸음들 — 대기열(`broadcast_queue`)과 노브 상태(`broadcast_knobs`)
+        self._queue_step = threading.Lock()
+        self._knobs_step = threading.Lock()
         self.main_input = MainInput(
             on_change=self.broadcast_queue, is_command=web_input_is_command
         )
@@ -381,6 +382,14 @@ class WebServer:
         이미 꺼낸 말이 입력창 위에 남는다."""
         with self._queue_step:
             self.renderer.queue_state(self.queue_snapshot())
+
+    def broadcast_knobs(self) -> None:
+        """세션 노브 전부의 지금 상태를 스티키 ``knob:<name>`` 으로 낸다 — 뜨고(`knobs.web_states`) 내는 것이 한
+        걸음이다(``_knobs_step``). 부르는 곳: 부트, `/api/knobs/{name}` 이 값을 바꾼 뒤, 감사 진행 수가 바뀔 때
+        (`WebRenderer.note_harness` — 하니스 스레드). 묶지 않으면 먼저 뜬 상태가 나중에 나가, 방금 바꾼 값이 칩과
+        status.json 의 ``knobs`` 에서 옛 값으로 되돌아간다."""
+        with self._knobs_step:
+            self.renderer.broadcast_knobs(web_states(self.knob_session()))
 
     def shutdown(self) -> None:
         """펌프를 깨워 끝나게 한다 — main 상자를 닫는다(줄 선 사람의 말은 런을 열지 않는다 — 끄는 중이다). 멱등."""
@@ -977,7 +986,7 @@ def create_app(server: WebServer) -> FastAPI:
         """``{value}`` → 표의 `parse` → 소유자의 `set` → sticky ``knob:<name>`` 으로
         다른 뷰어 동기화. 다음 LLM 호출(또는 다음 확인·런)부터 실린다. 잘못된
         값·거부(모델 미등록 등)는 ``{ok: false, error}`` 로 — 아무것도 바꾸지 않는다."""
-        from agent_cli.knobs import KNOB_BY_NAME, web_state, web_states
+        from agent_cli.knobs import KNOB_BY_NAME, web_state
 
         knob = KNOB_BY_NAME.get(name)
         if knob is None:
@@ -992,7 +1001,7 @@ def create_app(server: WebServer) -> FastAPI:
         state = web_state(knob, session)
         # 한 노브가 다른 노브의 상태를 바꾼다 — 모델은 사고·문법의 잠김을, 묶음
         # 멤버는 묶음 배지를. 전부 다시 계산해 sticky 를 맞춘다 (열 장, 싸다).
-        server.renderer.broadcast_knobs(web_states(session))
+        server.broadcast_knobs()
         return {"ok": True, **state}
 
     @app.post("/api/directives/generate")

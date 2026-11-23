@@ -2518,13 +2518,6 @@ def mcp_remove(name: str = typer.Argument(..., help="server name")):
     raise typer.Exit(code=0 if McpWizard().remove(name) else 1)
 
 
-def _knob_state(name: str, server) -> dict | None:
-    from agent_cli.knobs import KNOB_BY_NAME, web_state
-
-    knob = KNOB_BY_NAME.get(name)
-    return web_state(knob, server.knob_session()) if knob else None
-
-
 @app.command()
 def endpoints():
     """List the saved model servers (name, provider, host; the default is marked).
@@ -3251,13 +3244,11 @@ def web(
         server.agent_registry = registry
         server.mcp_manager = mcp_manager  # 🔌 칩 (읽기 전용, v9.2.0)
         server.auditor = owners.auditor  # 🔎 칩(`/api/knobs/auditor`)이 켜고 끈다
-        # 감사 진행 수가 바뀌면 렌더러가 🔎 상태 한 장을 다시 받아 싣는다 (v10.45.0)
-        renderer.knob_state = lambda name: _knob_state(name, server)
+        # 감사 진행 수가 바뀌면 렌더러가 노브 상태를 다시 내게 한다 (v10.45.0)
+        renderer.knobs_changed = server.broadcast_knobs
         # 노브 전부의 초기 sticky — 칩·status.json(문법)이 첫 요청 전에도 사실을 본다.
         # 📐 sticky 는 부트 초기값이 이미 나갔으니 적용 뒤 다시 낸다.
-        from agent_cli.knobs import web_states
-
-        renderer.broadcast_knobs(web_states(server.knob_session()))
+        server.broadcast_knobs()
         surface = WebSurface(
             renderer=renderer,
             server=server,
