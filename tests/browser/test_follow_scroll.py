@@ -289,10 +289,11 @@ class TestWhatCountsAsThePersonScrolling:
     def test_a_scroll_key_unpins_but_not_while_typing(self, stack, page):
         self._open_following(stack, page)
         page.locator("#input").click()
-        page.keyboard.press("PageUp")  # 입력창 안 — 타임라인을 굴리는 키가 아니다
-        _fill(stack, 1, start=40)
-        assert _wait(lambda: _cards(page) >= 41 and _dist(page) < 2)
-        assert page.evaluate(PINNED) == "1"
+        page.keyboard.press(
+            "PageUp"
+        )  # 입력창 안 — 타임라인을 굴리는 키가 아니다(굴림을 시작하지 않는다)
+        page.evaluate(MOVE_CONTENT_RIGHT_AFTER_THE_FOLLOW_WRITE, [60, 2000])
+        assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
 
         page.locator("#messages").click(
             position={"x": 5, "y": 5}
@@ -316,7 +317,35 @@ class TestWhatCountsAsThePersonScrolling:
         page.mouse.up()
 
     def test_a_position_written_by_a_program_does_not_unpin(self, stack, page):
+        """따라가는 중이면 그 scroll 사건이 바닥으로 다시 쓰게 한다 — 다른 내용이 오기를 기다리지 않는다: 사건이
+        판정되는 프레임과 그다음 프레임(쓰기) 안에 바닥이다."""
         self._open_following(stack, page)
-        page.evaluate("document.getElementById('messages').scrollTop -= 900")
-        assert _wait(lambda: _dist(page) < 2)  # 따라가는 중이라 바닥으로 다시 간다
+        frames = page.evaluate(
+            """() => new Promise((resolve) => {
+              const m = document.getElementById("messages");
+              // 열 때 예약된 따라가기가 다 지나간 뒤에 옮긴다 — 그것이 대신 되돌려 주면 이 길을 보지 못한다
+              const rest = (k, f) => (k ? requestAnimationFrame(() => rest(k - 1, f)) : f());
+              rest(20, () => {
+              m.scrollTop -= 900;
+              let n = 0;
+              const step = () => {
+                n++;
+                const back = m.scrollHeight - m.scrollTop - m.clientHeight < 2;
+                if (back || n >= 30) resolve(back ? n : -1);
+                else requestAnimationFrame(step);
+              };
+              requestAnimationFrame(step);
+              });
+            })"""
+        )
+        assert 0 < frames <= 3, frames
         assert page.evaluate(PINNED) == "1"
+
+    def test_a_roll_ends_and_later_moves_are_not_the_persons(self, stack, page):
+        """사람의 굴림은 끝난다(`scrollend`) — 바닥 근처에서 휠을 굴려 다시 붙은 뒤, 내용이 움직여 바뀐 위치는 사람의
+        것이 아니다. 굴림이 끝나지 않은 것으로 남으면 그 위치가 사람의 굴림으로 판정돼 풀린다."""
+        self._open_following(stack, page)
+        _wheel(page, -20)  # 48px 안 — 다시 붙는다
+        assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
+        page.evaluate(MOVE_CONTENT_RIGHT_AFTER_THE_FOLLOW_WRITE, [60, 2000])
+        assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
