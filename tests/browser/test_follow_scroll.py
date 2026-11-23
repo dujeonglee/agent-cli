@@ -349,3 +349,83 @@ class TestWhatCountsAsThePersonScrolling:
         assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
         page.evaluate(MOVE_CONTENT_RIGHT_AFTER_THE_FOLLOW_WRITE, [60, 2000])
         assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
+
+
+# 사람의 입력 뒤 굴림이 따라오지 않은 경우를 본다: 여섯 프레임을 쉰 뒤(입력을 기다리던 것이 지나가게), 앞선 따라가기
+# 쓰기 없이 곧바로 브라우저가 위치를 옮기게 한다 — 화면 위쪽에 60px, 아래에 2,000px 을 한 프레임에.
+MOVE_CONTENT_WITH_NO_WRITE_BEFORE = """() => new Promise((resolve) => {
+  const m = document.getElementById("messages");
+  const block = (h) => {
+    const d = document.createElement("div");
+    d.className = "card";
+    d.style.cssText = "flex: 0 0 auto; height:" + h + "px; min-height:" + h + "px;";
+    return d;
+  };
+  const frames = (n, f) => (n ? requestAnimationFrame(() => frames(n - 1, f)) : f());
+  frames(6, () => {
+    m.insertBefore(block(60), m.firstChild);
+    m.appendChild(block(2000));
+    frames(3, resolve);
+  });
+})"""
+
+
+class TestAnInputThatScrollsNothing:
+    """[따라가기 수정에서 바뀜 — 굴림 없는 입력] 사람의 입력이 타임라인을 굴리지 않았는데도 "굴리는 중" 으로 남는다 —
+    그 뒤 브라우저가 옮긴 위치가 사람의 굴림으로 판정돼 풀린다."""
+
+    def _open_following(self, stack, page):
+        stack.emit_ready()
+        _fill(stack, 40)
+        page.goto(stack.url)
+        assert _wait(lambda: _cards(page) >= 40 and _dist(page) < 2)
+
+    def _content_moves(self, page):
+        page.evaluate(MOVE_CONTENT_WITH_NO_WRITE_BEFORE)
+
+    def test_no_input_is_the_control(self, stack, page):
+        self._open_following(stack, page)
+        self._content_moves(page)
+        assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
+
+    def test_a_wheel_over_an_inner_scroller(self, stack, page):
+        """카드 안의 따로 굴러가는 상자(코드 블록의 모양) 위에서 휠 — `wheel` 은 타임라인까지 올라오지만 타임라인은
+        움직이지 않는다."""
+        self._open_following(stack, page)
+        page.evaluate(
+            """() => {
+              const box = document.createElement("pre");
+              box.id = "inner";
+              box.style.cssText = "height:80px; overflow:auto;";
+              box.textContent = Array(60).fill("line").join("\\n");
+              document.getElementById("messages").lastElementChild.appendChild(box);
+            }"""
+        )
+        assert _wait(lambda: _dist(page) < 2)
+        r = page.locator("#inner").bounding_box()
+        page.mouse.move(r["x"] + 20, r["y"] + 40)
+        page.mouse.wheel(0, 40)
+        assert _wait(
+            lambda: page.evaluate("document.getElementById('inner').scrollTop") == 40
+        )
+        self._content_moves(page)
+        assert _wait(lambda: page.evaluate(PINNED) == "0")
+
+    def test_a_scroll_key_on_a_focused_button(self, stack, page):
+        self._open_following(stack, page)
+        page.evaluate(
+            """() => {
+              const all = document.querySelectorAll("#messages .card-copy");
+              all[all.length - 1].focus({ preventScroll: true });
+            }"""
+        )
+        page.keyboard.press("ArrowDown")
+        self._content_moves(page)
+        assert _wait(lambda: page.evaluate(PINNED) == "0")
+
+    def test_end_at_the_bottom(self, stack, page):
+        self._open_following(stack, page)
+        page.locator("#messages").click(position={"x": 5, "y": 5})
+        page.keyboard.press("End")
+        self._content_moves(page)
+        assert _wait(lambda: page.evaluate(PINNED) == "0")
