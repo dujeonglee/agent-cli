@@ -721,7 +721,8 @@ run 은 터미널 줄 — 대기 중 친 `/`·`@` 명령은 그 자리에서 라
 - 도구: `skill.allowed_tools ∩ 호출자 도구` (공통이 없으면 거절, 스킬에 제한이 없으면 호출자 범위)
 - 역할: 호출자의 역할
 - 깊이: 호출자 +1 — 스킬→스킬 재귀도 깊이가 막는다
-- 결과가 없으면 `Skill returned no result`, 예외는 `run_skill(<name>) failed: …`
+- 채운 글이 비면(인자 없이 부른 `$ARGUMENTS` 만의 스킬) 돌지 않고 거절한다 — `Skill "<name>" cannot run: …`
+- 모델이 빈 결과로 끝내면 `Skill returned no result`, 예외는 `run_skill(<name>) failed: …`
 
 ### 6.4 Hashline 시스템 (`tools/read_file.py`)
 
