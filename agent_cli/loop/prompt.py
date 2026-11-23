@@ -23,13 +23,14 @@ class SystemPromptSvc:
 
     def rebuild(self) -> None:
         """(Re)build the static sections from scratch and derive ``system``.
-        Run once at setup, and again when DIRECTIVE.md is edited via the
-        Prompt Inspector. Hook sections are re-folded by the next
-        ``apply_hook_sections``."""
+        Run once at setup, and again when DIRECTIVE.md is edited. The ``Hook: ``
+        sections stay — a hook put them there and only a hook takes them out
+        (``apply_hook_sections``)."""
         session_dir = str(self.ctx.session_dir) if self.ctx else ""
         # 종류에 따라 다른 입력은 종류가 말한다 (v10.88.0 `PromptProfile`): 역할, 상주 안내,
         # `ask` 차단 여부. 글은 그대로 — 같은 입력이 같은 절을 만든다.
         profile = self.cfg.kind.prompt_profile()
+        hook_sections = [s for s in self.sections if s[0].startswith("Hook: ")]
         self.sections = build_system_prompt_sections(
             capabilities=self.cfg.capabilities,
             active_tools=self.cfg.tools_list,
@@ -43,19 +44,19 @@ class SystemPromptSvc:
             peer_agents_section=profile.peer_section,
             nonblocking_ask=not profile.ask_blocking,
         )
+        self.sections += hook_sections
         self.system = "\n\n".join(t for _, t in self.sections)
 
     def apply_hook_sections(self, hook_ctx) -> None:
-        """Apply dynamic sections from hook context — **merged by title**
-        (v10.36.0): a section a hook re-injects every ``PreLLMCall`` replaces
-        the previous one of the same title (idempotent across turns), while a
-        section injected once at ``OnSessionStart`` stays for the session.
-        Before, every apply dropped all earlier ``Hook: `` sections, so a
-        session-start section would have vanished at the first LLM call even
-        once the loop started applying it. 섹션 이름(``Hook: …``)이 경계를
+        """Apply one hook firing to the prompt — **by title**: a section the
+        firing injects replaces the one of the same title (a section re-injected
+        every ``PreLLMCall`` does not pile up), a title the firing removes is
+        taken out, every other ``Hook: `` section stays. So a section a hook put
+        in stays until a hook takes it out, for this run of the loop (each run
+        builds its prompt anew). 섹션 이름(``Hook: …``)이 경계를
         들고 있으므로 본문에 표식을 넣지 않는다 — 종전의 ``<!-- HOOK_SECTIONS -->``
         는 옛 문자열과 바이트를 맞추려던 것인데 모델에게 그대로 나갔다(v10.75.1)."""
-        if not hook_ctx or not hook_ctx.system_sections:
+        if not hook_ctx or not (hook_ctx.system_sections or hook_ctx.removed_sections):
             return
         # Callers that set ``system`` directly (tests, embedders) without
         # going through rebuild get a single seeded section so the
@@ -70,6 +71,8 @@ class SystemPromptSvc:
         }
         for title, content in hook_ctx.system_sections.items():
             merged[title] = f"## {title}\n{content}"
+        for title in hook_ctx.removed_sections:
+            merged.pop(title, None)
         hook_sections = [(f"Hook: {title}", text) for title, text in merged.items()]
         self.sections = static + hook_sections
         self.system = "\n\n".join(t for _, t in self.sections)
