@@ -429,3 +429,31 @@ class TestAnInputThatScrollsNothing:
         page.keyboard.press("End")
         self._content_moves(page)
         assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
+
+
+class TestTabFocus:
+    """Tab(·Shift+Tab)으로 초점을 옮기면 브라우저가 그 요소를 화면에 들인다 — 사람이 옮긴 것이다."""
+
+    def _open_following(self, stack, page):
+        stack.emit_ready()
+        _fill(stack, 40)
+        page.goto(stack.url)
+        assert _wait(lambda: _cards(page) >= 40 and _dist(page) < 2)
+
+    def test_tab_to_an_element_far_above_is_pulled_back(self, stack, page):
+        """[Tab 에서 바뀜] 따라가는 중 Tab 으로 맨 위 카드의 단추에 초점이 가면, 초점은 가는데 화면은 바닥으로
+        되돌아온다 — Tab 이 굴리는 키로 세어지지 않아서다."""
+        self._open_following(stack, page)
+        page.evaluate(
+            """() => {
+              const m = document.getElementById("messages");
+              m.setAttribute("tabindex", "-1");
+              m.focus({ preventScroll: true });
+            }"""
+        )
+        page.keyboard.press("Tab")
+        focused = "document.activeElement.closest('#messages > .card') === document.querySelector('#messages > .card')"
+        assert _wait(lambda: page.evaluate(focused))
+        _fill(stack, 1, start=40)
+        assert _wait(lambda: _cards(page) >= 41 and _dist(page) < 2)
+        assert page.evaluate(PINNED) == "1"
