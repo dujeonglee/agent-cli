@@ -145,3 +145,107 @@ class TestFollowScroll:
         time.sleep(0.4)
         d = _dist(page)
         assert 100 < d < 140, f"멀리 있는데 움직였다: {d}"
+
+
+# ── 사람이 굴리지 않았는데 위치가 바뀔 때 ────────────────────
+
+PINNED = "document.getElementById('messages').dataset.pinned"
+
+# 프레임 순서를 페이지 안에서 세운다(시간에 기대지 않는다):
+#   프레임 N   : 루트에 카드 하나 → 제품이 따라가기를 예약한다(다음 프레임의 rAF)
+#   프레임 N+1 : 제품이 바닥으로 쓴 **뒤**(같은 프레임, 뒤에 등록한 rAF) 내용을 바꾼다
+#   프레임 N+2 : 그 scroll 사건이 판정된다
+# ``above`` px 을 화면 위쪽에 끼우면 브라우저의 스크롤 앵커링이 보던 줄을 붙잡으려고 scrollTop 을 옮긴다 —
+# 런 도중 흡수된 요청이 블록 머리에 줄로 서는 것과 같다. ``below`` px 은 그 사이 아래에 붙은 새 내용이다.
+MOVE_CONTENT_RIGHT_AFTER_THE_FOLLOW_WRITE = """([above, below]) => new Promise((resolve) => {
+  const m = document.getElementById("messages");
+  const block = (h) => {
+    const d = document.createElement("div");
+    d.className = "card";
+    d.style.cssText = "flex: 0 0 auto; height:" + h + "px; min-height:" + h + "px;";
+    return d;
+  };
+  requestAnimationFrame(() => {
+    m.appendChild(block(30));
+    Promise.resolve().then(() => requestAnimationFrame(() => {
+      if (above) m.insertBefore(block(above), m.firstChild);
+      if (below) m.appendChild(block(below));
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }));
+  });
+})"""
+
+
+def _wheel(page, dy):
+    """타임라인 위에서 진짜 휠 입력 — 음수는 위로."""
+    box = page.locator("#messages").bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.wheel(0, dy)
+
+
+class TestContentMovesUnderAFollow:
+    def _open_following(self, stack, page):
+        stack.emit_ready()
+        _fill(stack, 40)
+        page.goto(stack.url)
+        assert _wait(lambda: _cards(page) >= 40 and _dist(page) < 2)
+        assert page.evaluate(PINNED) == "1"
+
+    @pytest.mark.parametrize("above,below", [(0, 2000), (60, 0)])
+    def test_growth_below_or_a_row_above_keeps_following(
+        self, stack, page, above, below
+    ):
+        self._open_following(stack, page)
+        page.evaluate(MOVE_CONTENT_RIGHT_AFTER_THE_FOLLOW_WRITE, [above, below])
+        assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
+
+    def test_a_row_above_with_growth_below_unpins(self, stack, page):
+        """[따라가기 수정에서 바뀜] 화면 위쪽에 줄이 끼는 것과 아래의 새 내용이 겹치면 따라가기가 풀린다 — 브라우저가
+        옮긴 scrollTop 의 scroll 사건이 사람의 굴림으로 판정되고, 그때 바닥까지 48px 넘게 남아 있어서다."""
+        self._open_following(stack, page)
+        page.evaluate(MOVE_CONTENT_RIGHT_AFTER_THE_FOLLOW_WRITE, [60, 2000])
+        assert _wait(lambda: page.evaluate(PINNED) == "0")
+        assert _dist(page) > 1900  # 그 자리에 멈춰 있다
+
+
+class TestNewCountInsideARunBlock:
+    AGT = "agt-rev"
+    OTHER = "agt-doc"
+
+    def _run_block(self, stack, key, cards):
+        """그 에이전트 채널에 런 블록 하나를 열고 몸통에 카드를 붙인다 — 스코프는 열어 둔다."""
+        stack.renderer.begin_scope(
+            task_id=f"{key}#r-1",
+            kind="run",
+            label="task",
+            agent=key,
+            parent="",
+            ctx_dir=f"agents/{key}",
+        )
+        for n in range(cards):
+            stack.renderer.observation(f"step {n}", n, "shell")
+
+    def test_cards_arriving_inside_the_block_are_not_counted(self, stack, page):
+        """[따라가기 수정에서 바뀜] 위로 올려 읽는 동안 런 블록 몸통에 붙은 카드는 "↓ n new" 에 세지 않는다 —
+        `#messages` 의 직계 자식만 세기 때문이다."""
+        stack.emit_ready()
+        stack.renderer.agent_roster(
+            [
+                {"key": k, "name": k, "profile": "reviewer", "state": "busy"}
+                for k in (self.AGT, self.OTHER)
+            ]
+        )
+        self._run_block(stack, self.AGT, 60)
+        page.goto(stack.url)
+        chip = page.locator(f'.ov-ch[data-key="{self.AGT}"]')
+        assert _wait(lambda: chip.count() > 0)
+        chip.click()
+        body = page.locator(f'.card-run[data-task-id="{self.AGT}#r-1"] .run-body')
+        assert _wait(lambda: body.locator("> .card").count() == 60 and _dist(page) < 2)
+
+        _wheel(page, -400)
+        assert _wait(lambda: page.evaluate(PINNED) == "0")
+        for n in range(3):
+            stack.renderer.observation(f"late {n}", 100 + n, "shell")
+        assert _wait(lambda: body.locator("> .card").count() == 63)
+        assert page.locator("#jump-new").is_hidden()
