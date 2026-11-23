@@ -84,11 +84,11 @@ class PostOffice:
 
     # ── 런 ───────────────────────────────────────────
 
-    def absorb(self, addr: str, *, human_first: bool = False) -> tuple[Envelope, ...]:
-        """턴 경계 — 줄 선 것 전부를 지금 런으로(``human_first`` 면 사람의 말 먼저). 그 줄은 picked."""
+    def absorb(self, addr: str) -> tuple[Envelope, ...]:
+        """턴 경계 — 줄 선 것 전부를 도착 순서로 지금 런으로. 그 줄은 picked."""
         with self.cv:
             box = self._box(addr)
-            envs = box.take_all_human_first() if human_first else box.take_all()
+            envs = box.take_all()
             self._picked(envs)
             return envs
 

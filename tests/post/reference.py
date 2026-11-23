@@ -136,13 +136,9 @@ class Model:
         self._pick_all(took)
         return took
 
-    def absorb(self, addr, human_first=False):
+    def absorb(self, addr):
         q = self._q(addr)
-        took = (
-            ([e for e in q if _human(e)] + [e for e in q if not _human(e)])
-            if human_first
-            else list(q)
-        )
+        took = list(q)
         self.queued[addr] = []
         self._t(addr).extend(took)
         self._pick_all(took)

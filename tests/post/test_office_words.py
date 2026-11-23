@@ -45,18 +45,14 @@ class TestTakeAndSplit:
         assert [e.id for e in po.words("main")] == ["u-2", "u-4"]
         assert [e.id for e in po.mail("main")] == ["n-1", "n-3"]
 
-    def test_absorb_human_first_takes_words_then_mail_and_holds_only_the_mail(self):
+    def test_absorb_takes_words_and_mail_in_arrival_order(self):
         po = PostOffice()
         for env in (_words(1), _mail(2), _words(3)):
             po.deliver(env)
-        assert [e.id for e in po.absorb("main", human_first=True)] == [
-            "u-1",
-            "u-3",
-            "n-2",
-        ]
+        assert [e.id for e in po.absorb("main")] == ["u-1", "n-2", "u-3"]
         assert po.queued("main") == ()
         # 런이 든다(런이 끝나면 비운다) — 줄은 메일의 것만, 사람의 말은 줄이 없다
-        assert [e.id for e in po.taken("main")] == ["u-1", "u-3", "n-2"]
+        assert [e.id for e in po.taken("main")] == ["u-1", "n-2", "u-3"]
         po.check_consistency()
 
     def test_withdraw(self):

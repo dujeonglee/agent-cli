@@ -391,7 +391,7 @@ def _failures(ctx) -> list[dict]:
 
 def _main_ports(q: MainInput):
     return make_ports(
-        inbox=lambda: [intake_item(e) for e in q.post.absorb("main", human_first=True)],
+        inbox=lambda: [intake_item(e) for e in q.post.absorb("main")],
         enqueue_user_message=lambda text, nickname: q.enqueue(
             None, text, nickname=nickname
         ),

@@ -519,7 +519,7 @@ AgentLoop.run()
     ├─ OnSessionStart 훅 → 주입된 시스템 섹션 반영
     ├─ while _should_continue():                        ← stop_event 가 서면 _interrupted
     │    ├─ _interrupted → _on_interrupt()
-    │    ├─ _intake()            ← 종류의 intake(): main 상자(사람의 말 먼저, 메일 뒤)·받은편지함 항목을 흡수
+    │    ├─ _intake()            ← 종류의 intake(): main 상자·받은편지함 항목을 도착 순서로 흡수
     │    ├─ show_open_items()    ← 장부를 화면에 (main 런만)
     │    └─ _execute_turn()
     │         ├─ 지시사항·메모리 변경 반영, PreLLMCall 훅

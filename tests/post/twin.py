@@ -82,7 +82,7 @@ class Twin:
         elif op == "next_run":
             o.next_run(args["addr"], Take.ARRIVAL, timeout=0)
         elif op == "absorb":
-            o.absorb(args["addr"], human_first=args.get("human_first", False))
+            o.absorb(args["addr"])
         elif op == "pay":
             o.pay(args["debtor"], args["rid"], args["reply"], run_id=args["run_id"])
         elif op == "complete":

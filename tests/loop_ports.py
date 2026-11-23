@@ -37,7 +37,7 @@ def make_ports(**overrides: Any) -> LoopPorts:
     base.update(overrides)
     reg = base["agent_registry"]
     if base["owner"] == "main" and callable(getattr(type(reg), "absorb_main", None)):
-        # 프로덕션 main 처럼: 턴 경계가 main 상자를 흡수한다(`absorb_main` — 사람의 말 먼저, 메일 뒤). 테스트가 따로
+        # 프로덕션 main 처럼: 턴 경계가 main 상자를 흡수한다(`absorb_main` — 도착 순서). 테스트가 따로
         # 주는 사람의 말(``inbox``)은 그 앞에 선다.
         words = inbox
         inbox = lambda: (words() if words else []) + reg.absorb_main()

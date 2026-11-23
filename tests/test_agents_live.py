@@ -1890,7 +1890,7 @@ class TestRunMessagePump:
                 threading.Thread(target=later, daemon=True).start()
                 arrived.set()
             else:
-                q.post.absorb("main", human_first=True)  # 메일 런의 턴 경계 배달을 흉내
+                q.post.absorb("main")  # 메일 런의 턴 경계 배달을 흉내
 
         q.enqueue(None, "spawn and go")
         self._pump(q, reg, run_one)
@@ -1906,7 +1906,7 @@ class TestRunMessagePump:
 
         def run_one(text, *, wake):
             calls.append((text, wake))
-            q.post.absorb("main", human_first=True)
+            q.post.absorb("main")
 
         self._pump(q, reg, run_one)
         assert calls == [("", True)]

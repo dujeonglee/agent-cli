@@ -38,12 +38,6 @@ class Postbox:
         """줄 선 것 전부 — 깨우지 않는 것도, 도착 순서로(턴 경계의 흡수)."""
         return self._move(range(len(self._queued)))
 
-    def take_all_human_first(self) -> tuple[Envelope, ...]:
-        """줄 선 것 전부 — 사람의 말 먼저, 나머지는 도착 순서(main 의 주입: 사람 먼저, 메일 뒤)."""
-        order = [i for i, e in enumerate(self._queued) if is_human_words(e)]
-        order += [i for i, e in enumerate(self._queued) if not is_human_words(e)]
-        return self._move(order)
-
     def take_first_words(self) -> Envelope | None:
         """줄 선 첫 사람의 말 하나를 상자에서 뺀다(런이 들지 않는다). 없으면 None."""
         i = next((i for i, e in enumerate(self._queued) if is_human_words(e)), None)

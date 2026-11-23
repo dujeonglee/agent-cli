@@ -808,7 +808,7 @@ class MainLoop(LoopKind):
             ),
             hook_runner=_hook_runner_port(),
             peer_roster=None,
-            # 턴 경계의 흡수는 main 상자 하나(사람의 말 먼저, 메일 뒤 — `AgentRegistry.absorb_main`)
+            # 턴 경계의 흡수는 main 상자 하나(도착 순서 — `AgentRegistry.absorb_main`)
             mailbox=Mailbox(
                 agent_registry,
                 "main",
@@ -836,7 +836,7 @@ class MainLoop(LoopKind):
         return WAIT_NEXT_MAIN
 
     def intake(self) -> list[dict]:
-        """main 상자의 줄 선 것 전부 — 사람의 말 먼저(라우팅은 엔진), 메일 뒤 (``mailbox.take``)."""
+        """main 상자의 줄 선 것 전부 — 도착 순서(사람의 말의 라우팅은 엔진, ``mailbox.take``)."""
         mailbox = self.ports.mailbox
         return list(mailbox.take() or []) if mailbox.has_inbox else []
 

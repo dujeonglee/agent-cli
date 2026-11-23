@@ -32,7 +32,7 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 `run_starting(start)`, `run_ended(result, start)`. "명령인가" 는 실행과 뗀 판정 하나(`surface.is_command` —
 `command_table.command_kind` 위에 웹은 `/help`·`/compact`·`/sh`, CLI 는 `/sh` 제외)이고, 제자리 대기는 첫 말이
 명령일 때만 꺼내 라우팅한다(명령이 아닌 말은 꺼내지 않는다). 턴 경계는 main 상자를 한 번에 흡수한다
-(`AgentRegistry.absorb_main` — 사람의 말 먼저, 메일 뒤, 루프 포트 `Mailbox(take=…)`); 루프 포트의
+(`AgentRegistry.absorb_main` — 도착 순서, 루프 포트 `Mailbox(take=…)`); 루프 포트의
 `dequeue_user_message` 는 없다.
 
 **v10.150.0 — 런을 열 봉투를 꺼내는 창구 함수가 하나다.** `PostOffice.next_run(addr, take, timeout)` 이 main

@@ -46,7 +46,6 @@ def _notifies(office, call) -> int:
 NOTHING_CHANGES = {
     "next_run": lambda o: o.next_run(A, Take.ARRIVAL, timeout=0),
     "absorb": lambda o: o.absorb(A),
-    "absorb_human_first": lambda o: o.absorb(A, human_first=True),
     "take": lambda o: o.take(A),
     "take_reply": lambda o: o.take_reply(A, "r-9"),
     "complete": lambda o: o.complete(A, ["u-9"], run_id="u-1"),

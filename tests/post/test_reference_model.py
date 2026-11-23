@@ -66,7 +66,7 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
         elif k == 4:
             ops.append(("next_run", {"addr": addr}))
         elif k == 5:
-            ops.append(("absorb", {"addr": addr, "human_first": rnd.random() < 0.5}))
+            ops.append(("absorb", {"addr": addr}))
         elif k == 6 and rnd.random() < 0.5:
             ops.append(
                 ("pay", {"aim": rnd.random(), "fresh": [nid("n")], "run_id": run})

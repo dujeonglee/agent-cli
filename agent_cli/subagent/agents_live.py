@@ -2042,9 +2042,9 @@ class AgentRegistry:
         return handler
 
     def absorb_main(self) -> list[dict]:
-        """main 의 턴 경계 — 상자의 줄 선 것 전부를 지금 런의 흡수 항목으로(사람의 말 먼저, 메일 뒤, `intake_item`).
+        """main 의 턴 경계 — 상자의 줄 선 것 전부를 지금 런의 흡수 항목으로(도착 순서, `intake_item`).
         무엇이든 꺼냈으면 대기열을 다시 그린다."""
-        out = [intake_item(e) for e in self._post.absorb("main", human_first=True)]
+        out = [intake_item(e) for e in self._post.absorb("main")]
         if out:
             self._pending_changed()
         return out
