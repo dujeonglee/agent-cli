@@ -371,8 +371,8 @@ MOVE_CONTENT_WITH_NO_WRITE_BEFORE = """() => new Promise((resolve) => {
 
 
 class TestAnInputThatScrollsNothing:
-    """[따라가기 수정에서 바뀜 — 굴림 없는 입력] 사람의 입력이 타임라인을 굴리지 않았는데도 "굴리는 중" 으로 남는다 —
-    그 뒤 브라우저가 옮긴 위치가 사람의 굴림으로 판정돼 풀린다."""
+    """사람의 입력이 타임라인을 굴리지 않았으면 "굴리는 중" 이 아니다 — 그 뒤 브라우저가 옮긴 위치는 사람의 굴림으로
+    판정되지 않는다. 입력은 그 굴림의 첫 scroll 사건을 몇 프레임 기다릴 뿐이다(굴림이 오지 않으면 사라진다)."""
 
     def _open_following(self, stack, page):
         stack.emit_ready()
@@ -409,7 +409,7 @@ class TestAnInputThatScrollsNothing:
             lambda: page.evaluate("document.getElementById('inner').scrollTop") == 40
         )
         self._content_moves(page)
-        assert _wait(lambda: page.evaluate(PINNED) == "0")
+        assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
 
     def test_a_scroll_key_on_a_focused_button(self, stack, page):
         self._open_following(stack, page)
@@ -421,11 +421,11 @@ class TestAnInputThatScrollsNothing:
         )
         page.keyboard.press("ArrowDown")
         self._content_moves(page)
-        assert _wait(lambda: page.evaluate(PINNED) == "0")
+        assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")
 
     def test_end_at_the_bottom(self, stack, page):
         self._open_following(stack, page)
         page.locator("#messages").click(position={"x": 5, "y": 5})
         page.keyboard.press("End")
         self._content_moves(page)
-        assert _wait(lambda: page.evaluate(PINNED) == "0")
+        assert _wait(lambda: _dist(page) < 2 and page.evaluate(PINNED) == "1")

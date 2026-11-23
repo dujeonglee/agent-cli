@@ -105,24 +105,40 @@ export function scheduleScroll() {
 }
 
 // 사람의 굴림인가 — 값 둘. ``held``: 타임라인 위에서 포인터를 누르고 있다(스크롤바 끌기·글자 끌어 고르기 —
-// 놓을 때까지). ``rolling``: 휠·터치 밀기·굴리는 키가 시작한 굴림이 아직 끝나지 않았다(`scrollend` 가 내린다 —
-// 관성까지 덮는다). 클릭은 포인터를 놓은 뒤에 처리되므로 단추가 부른 스크롤(점프·"↓ n new"·채널 전환)은 어느
-// 쪽도 아니다. `scrollend` 가 없는 브라우저에서는 ``rolling`` 이 내려가지 않는다 — 첫 굴림 뒤로는 모든 scroll
-// 사건을 사람의 것으로 본다(종전과 같은 판정).
+// 놓을 때까지). ``rolling``: 사람의 입력(휠·터치 밀기·굴리는 키)이 시작한 굴림이 진행 중이다 — 그 굴림의 첫 scroll
+// 사건에 서고 `scrollend` 가 내린다(관성까지 덮는다). 입력만으로는 서지 않는다: 굴림을 일으키지 않는 입력(카드 안의
+// 따로 굴러가는 상자 위의 휠, 단추 위의 Space, 끝에서 더 가려는 키)이 "굴리는 중" 으로 남지 않게. 입력은 ``awaited``
+// 프레임 동안 그 첫 scroll 사건을 기다릴 뿐이다 — 실측: 휠·Tab 초점 이동은 같은 프레임, 부드럽게 굴리는 키는 다음
+// 프레임에 온다. 클릭은 포인터를 놓은 뒤에 처리되므로 단추가 부른 스크롤(점프·"↓ n new"·채널 전환)은 어느 쪽도
+// 아니다. `scrollend` 가 없는 브라우저에서는 ``rolling`` 이 내려가지 않는다 — 첫 굴림 뒤로는 모든 scroll 사건을
+// 사람의 것으로 본다(종전과 같은 판정).
 let held = false;
 let rolling = false;
+let awaited = 0; // 사람의 입력 뒤 그 굴림의 첫 scroll 사건을 기다리는 남은 프레임 수
+let counting = false;
+const AWAIT_FRAMES = 3;
 const SCROLL_KEYS = ["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "];
+function countDown() {
+  if (awaited > 0 && --awaited > 0) requestAnimationFrame(countDown);
+  else counting = false;
+}
+function personActed() {
+  awaited = AWAIT_FRAMES;
+  if (counting) return;
+  counting = true;
+  requestAnimationFrame(countDown);
+}
 $messages.addEventListener("pointerdown", function () { held = true; });
 ["pointerup", "pointercancel"].forEach(function (t) {
   document.addEventListener(t, function () { held = false; });
 });
 ["wheel", "touchmove"].forEach(function (t) {
-  $messages.addEventListener(t, function () { rolling = true; }, { passive: true });
+  $messages.addEventListener(t, personActed, { passive: true });
 });
 document.addEventListener("keydown", function (e) {
   // 글 쓰는 자리에서는 그 키가 타임라인을 굴리지 않는다
   const typing = e.target.closest && e.target.closest("textarea, input, [contenteditable]");
-  if (SCROLL_KEYS.indexOf(e.key) >= 0 && !typing) rolling = true;
+  if (SCROLL_KEYS.indexOf(e.key) >= 0 && !typing) personActed();
 });
 $messages.addEventListener("scrollend", function () { rolling = false; });
 
@@ -130,6 +146,10 @@ $messages.addEventListener("scrollend", function () { rolling = false; });
 // 굴림이 멎은 뒤(80ms) 붙인다 — 굴리는 손에서 낚아채지 않는다.
 let _settle = null;
 $messages.addEventListener("scroll", function () {
+  if (awaited) {
+    awaited = 0; // 기다리던 굴림이 왔다
+    rolling = true;
+  }
   if (!held && !rolling) {
     if (pinned) scheduleScroll(); // 사람이 굴린 것이 아니다 — 따라가는 중이면 바닥으로
     return;
