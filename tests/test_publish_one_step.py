@@ -7,6 +7,8 @@
 
 각 테스트는 그 엇갈림을 조건 대기로 세운다(sleep 없음): 첫째 스레드가 뜬 뒤 붙들린 사이 둘째가 상태를 바꿔 새 값을
 내려 한다.
+
+``[한 걸음에서 바뀜]`` 표지가 붙은 테스트는 그 자리가 아직 묶이지 않은 지금 값이다 — 그 자리를 고치는 커밋에서 뒤집힌다.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from __future__ import annotations
 import threading
 from types import SimpleNamespace
 
+import agent_cli.render.web as web_mod
 import agent_cli.web.server as server_mod
 from agent_cli.context.manager import ContextManager
 from agent_cli.instance_file import read_status_file
@@ -28,6 +31,29 @@ from tests.test_agents_live import (
     renderer,  # noqa: F401
     wait_until,
 )
+
+
+class Overlap:
+    """묶이지 않은 자리의 엇갈림 — 첫째 스레드를 "뜬 뒤" 에 붙들고, 둘째가 새 값을 다 낸 뒤 놓는다."""
+
+    def __init__(self):
+        self.first_read = threading.Event()
+        self.second_done = threading.Event()
+
+    def hold_first(self) -> None:
+        """뜨는 함수 안에서 부른다 — 첫째 스레드면 붙든다."""
+        if threading.current_thread().name == "first":
+            self.first_read.set()
+            assert self.second_done.wait(10)
+
+    def run(self, first, second) -> None:
+        t = threading.Thread(target=first, name="first")
+        t.start()
+        assert self.first_read.wait(10)
+        second()  # 상태를 바꾸고 새 값을 낸다
+        self.second_done.set()
+        t.join(10)
+        assert not t.is_alive()
 
 
 class Step:
@@ -159,3 +185,19 @@ def test_the_knob_states_shown_last_are_the_newest(tmp_path, monkeypatch):
     assert web_state(auditor, server.knob_session())["value"] is True
     assert r.hub.sticky_payload("knob:auditor")["value"] is True
     assert read_status_file(tmp_path)["knobs"]["auditor"] is True
+
+
+def test_an_older_status_file_overwrites_a_newer_one(tmp_path, monkeypatch):
+    """[한 걸음에서 바뀜] status.json — 먼저 스티키를 읽은 발행이 나중에 써서, 파일이 스티키보다 낡는다."""
+    r = WebRenderer(session_dir=str(tmp_path))
+    r.agent_roster([{"key": "a", "name": "aa", "state": "busy", "waiting": False}])
+    ov, real = Overlap(), web_mod.write_status_file
+    monkeypatch.setattr(
+        web_mod,
+        "write_status_file",
+        lambda d, **kw: (ov.hold_first(), real(d, **kw))[1],
+    )
+    newer = [{"key": "a", "name": "aa", "state": "busy", "waiting": True}]
+    ov.run(r.worker_idle, lambda: r.agent_roster(newer))
+    assert r.hub.sticky_payload("agent_roster")["roster"][0]["waiting"] is True
+    assert read_status_file(tmp_path)["agents"]["waiting"] == 0
