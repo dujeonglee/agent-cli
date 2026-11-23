@@ -44,8 +44,12 @@ def _cards(page):
     return page.locator("#messages > .card").count()
 
 
-def _scroll_to(page, top):
-    page.evaluate(f"document.getElementById('messages').scrollTop = {top}")
+def _wheel(page, dy):
+    """타임라인 위에서 진짜 휠 입력 — 음수는 위로. 따라가기는 사람이 굴렸을 때만 풀리고 붙는다: ``scrollTop`` 을
+    대입하는 것은 프로그램이 쓴 위치라 사람의 굴림을 흉내 내지 못한다."""
+    box = page.locator("#messages").bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.wheel(0, dy)
 
 
 class TestFollowScroll:
@@ -77,7 +81,7 @@ class TestFollowScroll:
         page.goto(stack.url)
         assert _wait(lambda: _cards(page) >= 40 and _dist(page) < 2)
 
-        _scroll_to(page, 300)
+        _wheel(page, -2000)
         # 규칙 3 판정은 scroll 이벤트(다음 렌더 단계)에서 — 그때까지 기다린다
         assert _wait(
             lambda: page.locator("#messages").get_attribute("data-pinned") == "0"
@@ -114,17 +118,14 @@ class TestFollowScroll:
         page.goto(stack.url)
         assert _wait(lambda: _cards(page) >= 40 and _dist(page) < 2)
 
-        _scroll_to(page, 0)
+        _wheel(page, -2000)
         assert _wait(lambda: _dist(page) > 48)
         assert page.evaluate(
             "document.getElementById('messages').scrollHeight"
         ) > page.evaluate("document.getElementById('messages').clientHeight")
 
         # 바닥에서 20px 위 — "근처". 이벤트 없이도 80ms 뒤 바닥에 붙는다.
-        page.evaluate(
-            "() => { const m = document.getElementById('messages');"
-            " m.scrollTop = m.scrollHeight - m.clientHeight - 20; }"
-        )
+        _wheel(page, _dist(page) - 20)
         assert _wait(lambda: _dist(page) < 2), f"근처인데 안 붙는다: {_dist(page)}"
         assert page.locator("#jump-new").is_hidden()
 
@@ -138,10 +139,7 @@ class TestFollowScroll:
         _fill(stack, 40)
         page.goto(stack.url)
         assert _wait(lambda: _cards(page) >= 40 and _dist(page) < 2)
-        page.evaluate(
-            "() => { const m = document.getElementById('messages');"
-            " m.scrollTop = m.scrollHeight - m.clientHeight - 120; }"
-        )
+        _wheel(page, -120)
         time.sleep(0.4)
         d = _dist(page)
         assert 100 < d < 140, f"멀리 있는데 움직였다: {d}"
@@ -174,13 +172,6 @@ MOVE_CONTENT_RIGHT_AFTER_THE_FOLLOW_WRITE = """([above, below]) => new Promise((
     }));
   });
 })"""
-
-
-def _wheel(page, dy):
-    """타임라인 위에서 진짜 휠 입력 — 음수는 위로."""
-    box = page.locator("#messages").bounding_box()
-    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-    page.mouse.wheel(0, dy)
 
 
 class TestContentMovesUnderAFollow:
