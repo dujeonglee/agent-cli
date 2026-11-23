@@ -152,6 +152,7 @@ class WebRenderer(Renderer):
     ) -> None:
         super().__init__()
         self._lock = threading.Lock()
+        self._status_step = threading.Lock()  # status.json 을 읽고 쓰는 한 걸음
         # Session dir for the live ``status.json`` sidecar (busy/awaiting/viewers)
         # a front controller (the board) reads instead of polling /api/health.
         # Resolved once (cwd is the workspace at startup) so later cwd changes
@@ -1899,53 +1900,54 @@ class WebRenderer(Renderer):
     def _publish_status(self) -> None:
         """Write the live ``{busy, awaiting_input, viewers}`` to ``status.json``
         so the board reads a file instead of polling ``GET /api/health``. No-op
-        unless a session dir was given. Snapshots under the locks, then writes
-        OUTSIDE them (never hold a lock across disk I/O). Callers must NOT hold
-        ``self._lock`` (this re-acquires it).
+        unless a session dir was given. Callers must NOT hold ``self._lock``
+        (this re-acquires it).
 
-        세 출처를 각자의 락 아래 한 번씩 뜬다 (v10.115.0): 렌더러의 busy·auditing,
-        허브의 스티키 사본 한 벌, 허브의 뷰어 수. 이 파일은 "마지막 쓰기가 최신"
-        인 거울이라(전이마다 다시 쓴다) 세 값 사이의 원자성은 필요 없다."""
+        읽고(렌더러의 busy·auditing, 허브의 스티키 사본 한 벌, 허브의 뷰어 수 — 각자의 락 아래 한 번씩) 쓰는 것이
+        한 걸음이다(``_status_step``). 스티키가 바뀔 때마다 여러 스레드가 부른다 — 묶지 않으면 먼저 읽은 발행이
+        나중에 써서 파일이 스티키보다 낡는다(방은 맞는데 보드가 옛 상태를 본다). 디스크 쓰기는 이 걸음의 락 안에서
+        한다; 렌더러의 ``_lock`` 과 허브의 락은 읽는 동안만 쥐고 쓰기 전에 놓는다."""
         if self._status_dir is None:
             return
-        with self._lock:
-            busy = self._worker_busy
-            auditing = self._auditing
-        sticky = dict(self.hub.sticky_items())
-        viewers = self.hub.viewer_count()
-        awaiting = "input_required" in sticky
-        roster_p = sticky.get("agent_roster")
-        roster = roster_p.get("roster") if roster_p is not None else None
-        grammar_p = sticky.get("knob:grammar")
-        grammar = bool(grammar_p.get("active")) if grammar_p is not None else None
-        # v10.46.0 — 노브 현재 값 전부 (소유자 있는 것만; sticky 가 곧 최신값)
-        knobs = {
-            p["name"]: p["value"]
-            for key, p in sticky.items()
-            if key.startswith("knob:") and p.get("available")
-        }
-        open_items = self._open_items_summary_from(sticky.get("open_items"))
-        stuck = self._stuck_summary_from(sticky.get("stuck"))
-        jobs = self._jobs_summary_from(sticky.get("jobs"))
-        # main 이 제자리에서 기다리는 중 — 받아들여진 `wait` 의 대기 줄(`wait_in_place`)과 함께 서고 내린다
-        waiting = "waiting_in_place" in sticky
-        try:
-            write_status_file(
-                self._status_dir,
-                busy=busy,
-                awaiting_input=awaiting,
-                viewers=viewers,
-                agents=self._agents_summary_from(roster),
-                grammar=grammar,
-                auditing=auditing,
-                knobs=knobs or None,
-                open_items=open_items,
-                stuck=stuck,
-                jobs=jobs,
-                waiting=waiting,
-            )
-        except OSError:
-            pass  # best-effort: a status write must never break the session
+        with self._status_step:
+            with self._lock:
+                busy = self._worker_busy
+                auditing = self._auditing
+            sticky = dict(self.hub.sticky_items())
+            viewers = self.hub.viewer_count()
+            awaiting = "input_required" in sticky
+            roster_p = sticky.get("agent_roster")
+            roster = roster_p.get("roster") if roster_p is not None else None
+            grammar_p = sticky.get("knob:grammar")
+            grammar = bool(grammar_p.get("active")) if grammar_p is not None else None
+            # v10.46.0 — 노브 현재 값 전부 (소유자 있는 것만; sticky 가 곧 최신값)
+            knobs = {
+                p["name"]: p["value"]
+                for key, p in sticky.items()
+                if key.startswith("knob:") and p.get("available")
+            }
+            open_items = self._open_items_summary_from(sticky.get("open_items"))
+            stuck = self._stuck_summary_from(sticky.get("stuck"))
+            jobs = self._jobs_summary_from(sticky.get("jobs"))
+            # main 이 제자리에서 기다리는 중 — 받아들여진 `wait` 의 대기 줄(`wait_in_place`)과 함께 서고 내린다
+            waiting = "waiting_in_place" in sticky
+            try:
+                write_status_file(
+                    self._status_dir,
+                    busy=busy,
+                    awaiting_input=awaiting,
+                    viewers=viewers,
+                    agents=self._agents_summary_from(roster),
+                    grammar=grammar,
+                    auditing=auditing,
+                    knobs=knobs or None,
+                    open_items=open_items,
+                    stuck=stuck,
+                    jobs=jobs,
+                    waiting=waiting,
+                )
+            except OSError:
+                pass  # best-effort: a status write must never break the session
 
     def note_system_prompt(
         self,
