@@ -11,6 +11,9 @@ import { $messages } from "./dom.js";
 //      붙이고 pinned — 이후 새 내용·스트리밍·창 크기 변화에 바닥을 따라간다.
 //   3. 그보다 멀어지면 unpinned — 보던 줄이 움직이지 않고, 그 사이 도착한
 //      카드 수가 "↓ 새 메시지 n" 버튼에 쌓인다. 누르면 규칙 2.
+// 규칙 2·3 의 주어는 **사람**이다: 사람이 타임라인을 굴렸을 때만 붙고 풀린다. 사람의 입력 없이 바뀐
+// 위치 — 브라우저가 옮긴 것(위쪽에 줄이 끼면 스크롤 앵커링, 아래가 빠지면 잘림)과 프로그램이 쓴 것 — 은 판정하지
+// 않는다: 따라가는 중이면 바닥으로 다시 간다.
 // 종전(~v9.25)은 근처에서 플래그만 바꿔 **다음 이벤트가 와야** 따라갔고,
 // 로드 뒤 늦게 자란 내용은 바닥을 놓쳤다(사용자 보고: "기본이 맨 아래여야").
 let pinned = true;
@@ -30,7 +33,6 @@ export function revealAtBottom() {
 if (typeof requestAnimationFrame === "function") setTimeout(revealAtBottom, 2000);
 const SCROLL_BOTTOM_THRESHOLD = 48; // px — 메시지 두 줄쯤 (시안에서 확인)
 let _unseen = 0; // 위치 고정 중 도착한 카드 수
-let _programmaticTop = -1; // 우리가 쓴 scrollTop — 그 이벤트는 판정에서 제외
 
 function isAtBottom() {
   const dist =
@@ -38,21 +40,11 @@ function isAtBottom() {
   return dist <= SCROLL_BOTTOM_THRESHOLD;
 }
 
-// 프로그램 스크롤은 규칙 2·3 판정에서 제외 — scroll 이벤트는 다음 렌더
-// 단계에서, rAF 콜백보다 먼저 온다.
-// 값을 기억해 두고, 그 값에 도착한 scroll 이벤트만 우리 것으로 본다 —
-// 불리언 플래그는 같은 프레임에 끼어든 사용자 굴림까지 삼켰다(실브라우저
-// 테스트에서 로드 직후 굴림이 무시됨). 위치가 안 바뀌면 이벤트가 없으니
-// rAF 에서 지운다.
 export function setScrollTop(v) {
   const max = Math.max(0, $messages.scrollHeight - $messages.clientHeight);
   v = Math.min(v, max);
   if (Math.abs($messages.scrollTop - v) < 1) return; // 이미 거기 — 쓰기 없음
-  _programmaticTop = v;
   $messages.scrollTop = v;
-  requestAnimationFrame(function () {
-    _programmaticTop = -1;
-  });
 }
 
 function scrollToBottom() {
@@ -112,12 +104,55 @@ export function scheduleScroll() {
   });
 }
 
-// 규칙 2·3 — 사용자가 굴릴 때마다 바닥과의 거리로 판정. 근처에 들어오면
+// 사람의 굴림인가 — 값 둘. ``held``: 타임라인 위에서 포인터를 누르고 있다(스크롤바 끌기·글자 끌어 고르기 —
+// 놓을 때까지). ``rolling``: 사람의 입력(휠·터치 밀기·굴리는 키·Tab)이 시작한 굴림이 진행 중이다 — 그 굴림의 첫 scroll
+// 사건에 서고 `scrollend` 가 내린다(관성까지 덮는다). 입력만으로는 서지 않는다: 굴림을 일으키지 않는 입력(카드 안의
+// 따로 굴러가는 상자 위의 휠, 단추 위의 Space, 끝에서 더 가려는 키)이 "굴리는 중" 으로 남지 않게. 입력은 ``awaited``
+// 프레임 동안 그 첫 scroll 사건을 기다릴 뿐이다 — 실측: 휠·Tab 초점 이동은 같은 프레임, 부드럽게 굴리는 키는 다음
+// 프레임에 온다. 클릭은 포인터를 놓은 뒤에 처리되므로 단추가 부른 스크롤(점프·"↓ n new"·채널 전환)은 어느 쪽도
+// 아니다. `scrollend` 가 없는 브라우저에서는 ``rolling`` 이 내려가지 않는다 — 첫 굴림 뒤로는 모든 scroll 사건을
+// 사람의 것으로 본다(종전과 같은 판정).
+let held = false;
+let rolling = false;
+let awaited = 0; // 사람의 입력 뒤 그 굴림의 첫 scroll 사건을 기다리는 남은 프레임 수
+let counting = false;
+const AWAIT_FRAMES = 3;
+// 굴리는 키 — Tab(·Shift+Tab)은 초점을 옮겨 브라우저가 그 요소를 화면에 들이게 한다
+const SCROLL_KEYS = ["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " ", "Tab"];
+function countDown() {
+  if (awaited > 0 && --awaited > 0) requestAnimationFrame(countDown);
+  else counting = false;
+}
+function personActed() {
+  awaited = AWAIT_FRAMES;
+  if (counting) return;
+  counting = true;
+  requestAnimationFrame(countDown);
+}
+$messages.addEventListener("pointerdown", function () { held = true; });
+["pointerup", "pointercancel"].forEach(function (t) {
+  document.addEventListener(t, function () { held = false; });
+});
+["wheel", "touchmove"].forEach(function (t) {
+  $messages.addEventListener(t, personActed, { passive: true });
+});
+document.addEventListener("keydown", function (e) {
+  // 글 쓰는 자리에서는 그 키가 타임라인을 굴리지 않는다
+  const typing = e.target.closest && e.target.closest("textarea, input, [contenteditable]");
+  if (SCROLL_KEYS.indexOf(e.key) >= 0 && !typing) personActed();
+});
+$messages.addEventListener("scrollend", function () { rolling = false; });
+
+// 규칙 2·3 — 사람이 굴릴 때마다 바닥과의 거리로 판정. 근처에 들어오면
 // 굴림이 멎은 뒤(80ms) 붙인다 — 굴리는 손에서 낚아채지 않는다.
 let _settle = null;
 $messages.addEventListener("scroll", function () {
-  if (_programmaticTop >= 0 && Math.abs($messages.scrollTop - _programmaticTop) < 1) {
-    _programmaticTop = -1; // 쓰기 하나 = 이벤트 하나 — 여기서 소비
+  if (awaited) {
+    awaited = 0; // 기다리던 굴림이 왔다
+    rolling = true;
+  }
+  if (!held && !rolling) {
+    if (pinned) scheduleScroll(); // 사람이 굴린 것이 아니다 — 따라가는 중이면 바닥으로
     return;
   }
   if (isAtBottom()) {
@@ -131,22 +166,27 @@ $messages.addEventListener("scroll", function () {
   }
 });
 
-// 규칙 1·3 — 카드가 붙을 때: 고정이면 따라가고(늦은 추가까지), 아니면
-// 보이는 카드만 센다(채널 필터가 `hidden` 으로 감춘 것은 제외 — 필터는
-// 추가와 같은 동기 구간에서 끝나고 이 콜백은 그 뒤 마이크로태스크다).
+// 규칙 1·3 — 내용이 붙을 때: 고정이면 따라가고(늦은 추가까지), 아니면 **보고 있는 채널에 새로 붙은, 보이는
+// 카드**를 센다 — 루트에 붙든 런 블록·스코프 카드 안에 붙든(에이전트 채널의 카드는 블록 몸통 안에 붙는다).
+// 채널 필터가 감춘 것은 `offsetParent` 가 없다(필터는 추가와 같은 동기 구간에서 끝나고 이 콜백은 그 뒤
+// 마이크로태스크다).
 new MutationObserver(function (records) {
   let added = 0;
+  let cards = 0;
   for (const rec of records)
-    for (const n of rec.addedNodes)
-      if (n.nodeType === 1 && !n.hidden) added++;
+    for (const n of rec.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      added++;
+      if (n.classList.contains("card") && n.offsetParent !== null) cards++;
+    }
   if (loading) return; // 재생 중엔 숨겨져 있다 — snapshot_end 가 한 번에 내린다
   if (pinned) {
     if (added) scheduleScroll();
-  } else if (added) {
-    _unseen += added;
+  } else if (cards) {
+    _unseen += cards;
     renderJump();
   }
-}).observe($messages, { childList: true });
+}).observe($messages, { childList: true, subtree: true });
 // 규칙 1·2 끝부분 — 창 크기·늦은 레이아웃(폰트·이미지)에도 바닥 유지.
 new ResizeObserver(function () {
   if (pinned) scheduleScroll();
