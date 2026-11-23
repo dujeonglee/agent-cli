@@ -549,32 +549,22 @@ class AgentRegistry:
                     addr=f"agent:{tm.key}",
                     active=self.state_is_active(tm.state),
                     dead=tm.state == "dead",
-                    queued=heads(self._queued(tm)),
                     taken=heads(self._taken(tm)),
                 )
                 for tm in list(self._agents.values())
             )
-            rows = self._post.rows()
+            rows = [r for r in self._post.rows() if r.kind == "r"]
             return WakeFacts(
                 agents=agents,
-                owing=tuple(
-                    (r.dst, r.src)
-                    for r in rows
-                    if r.kind == "r" and r.state == "picked"
-                ),
-                awaited=frozenset(
-                    (r.src, r.rid)
-                    for r in rows
-                    if r.kind == "r" and r.state != "closed"
-                ),
+                owing=tuple((r.dst, r.src) for r in rows if r.state == "picked"),
+                queued=tuple((r.dst, r.src) for r in rows if r.state == "queued"),
+                awaited=frozenset((r.src, r.rid) for r in rows if r.state != "closed"),
                 waiting=self._post.waiting_addresses(),
                 # 받는 쪽이 죽었으면 빼다 — 회신을 보낼 이가 없다(그 죽음은 따로 메일로 온다)
                 replies=tuple(
                     (r.src, {"id": r.rid, "from": r.dst, "text": r.text})
                     for r in rows
-                    if r.kind == "r"
-                    and r.state != "closed"
-                    and self._agent_alive(r.dst)
+                    if r.state != "closed" and self._agent_alive(r.dst)
                 ),
             )
 
@@ -582,8 +572,9 @@ class AgentRegistry:
         self, addr: str, step_marks: dict[str, int]
     ) -> tuple[list[str], bool, bool]:
         """`wait` 중간 깨우기 알림의 에이전트 줄 (v10.79.0, docs/wait/DESIGN.md §6.3)
-        — ``(줄 목록, 에이전트 줄이 있는가, 사람 질문에 막힌 줄이 있는가)``. 빚진 쪽이 main 이면 그 줄은
-        ``main · owes you a reply`` 뿐이다 — 에이전트가 아니라 걸음 수·일감이 없다.
+        — ``(줄 목록, 에이전트 줄이 있는가, 사람 질문에 막힌 줄이 있는가)``. 받는 쪽이 main 이면 그 줄은
+        ``main · owes you a reply``(집었다)나 ``main · has your request queued``(아직 줄 서 있다)뿐이다 — 에이전트가
+        아니라 걸음 수·일감이 없다.
 
         작업·monitor 와 달리 에이전트는 로그 파일이 없다. 레지스트리가 **이미 아는
         것**만으로 그린다 — 상태·지금 처리 중인 요청자·받은편지함 미러·회신 빚과
@@ -624,7 +615,12 @@ class AgentRegistry:
         facts = self.wake_facts()  # 관계와 잠든 채무자를 같은 사본에서
         for kind, me in agent_relations(facts, addr):
             if not me.startswith("agent:"):
-                main_lines.append(f"{me} · owes you a reply")
+                what = (
+                    "has your request queued"
+                    if kind == "queued"
+                    else "owes you a reply"
+                )
+                main_lines.append(f"{me} · {what}")
                 continue
             key = me.split(":", 1)[1]
             tm = self._agents.get(key)
@@ -1064,7 +1060,6 @@ class AgentRegistry:
 
         기준을 함께 적는다: 작업별 로그 크기(P(a) "+N lines since your wait")와
         에이전트별 `last_ordinal`("N steps since your wait")."""
-        self.cancel_checkin(owner)  # 이미 걸린 것이 있으면 푼다
         if not ids:
             return None
         step = self._checkin_step(owner, ids)
@@ -1098,8 +1093,8 @@ class AgentRegistry:
         return interval
 
     def cancel_checkin(self, owner: str) -> None:
-        """이 소유자에게 걸린 체크인 타이머를 푼다 — 제자리 대기가 깰 때(`TurnDispatcher._wait_in_place` 의 ``finally``),
-        새로 걸기 전(`arm_checkin`), 주인이 사라질 때(`drop_mailbox`·kill·`shutdown_all`). 걸린 것이 없으면 no-op."""
+        """이 소유자에게 걸린 체크인 타이머를 푼다 — 제자리 대기가 깰 때(`TurnDispatcher._op_wait` 의 ``finally``),
+        주인이 사라질 때(`drop_mailbox`·kill·`shutdown_all`). 걸린 것이 없으면 no-op."""
         with self._cv:
             ck = self._checkin_armed.pop(owner, None)
         if ck is not None and ck.timer is not None:

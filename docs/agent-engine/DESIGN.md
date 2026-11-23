@@ -97,6 +97,14 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
   쪽의 종류가 정한다(`LoopKind.wait_refused_next`): main 은 요청을 먼저 보내라, 상주는 `complete` 로 런을 끝내면
   다음 메시지가 새 런을 연다, run 에이전트·하니스 작업은 일을 잇거나 끝내라).
   종전엔 회신을 먼저 읽은 main 의 `wait` 가 아직 내려오지 않은 run 을 근거로 런을 끝냈다(CI 실측).
+- **줄 선 내 요청의 받는 쪽은 "queued" 다 — main 도, 기다리는 중이어도 (5c-2 C).** 관계 "queued" 는 장부의 줄 선 r 줄
+  (`WakeFacts.queued` — `(받는 쪽, 요청자)`)에서 읽는다: 그 봉투가 받는 쪽을 깨우므로 받는 쪽이 일하든 제자리에서
+  기다리든 깨울 것이다. 종전엔 명단의 받은편지함 사본(`AgentFact.queued`)에서 읽어, 명단에 없는 main 앞에 줄 선 요청이
+  어느 칸에도 들지 않았다 — 에이전트가 main 에게 회신 기대 `message` 를 보내고 main 이 집기 전에 `wait` 하면
+  "nothing would wake you … no agent owes you a reply" 로 거절됐다(main 이 긴 모델 호출 안이거나 제자리에서 기다리는
+  동안). 이제 `waiting — will wake on: main has your request queued` 로 받아들여지고, main 이 집으면 "main owes you a
+  reply" 가 된다(체크인 대상 id 는 둘 다 `main`). 집힌 줄(`owing`)·잠든 채무자·고리 거절은 그대로다 — 줄 선 요청만
+  든 채 기다리는 쪽은 잠든 채무자가 아니다.
 - **실패한 런의 폴백 (v10.143.0).** 턴 상한·provider 오류로 끝난 런은 산출물이 비어 있다 — 폴백 회신의 머리에 엔진의
   사유 한 줄이 선다: `(the run ended with an error: Max turns (40) reached)`(사유가 없으면 — 엔진 예외는 사유가 산출물에
   있다 — `(the run ended with an error)`). 요청자가 main 이면 관찰 레코드(`agent_mail.build_reply_record`)가, 에이전트면

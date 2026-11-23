@@ -24,7 +24,7 @@
 
 - **깨울 것이 있을 때만** 받는다(`wake.wake_items(owner)`): 이 소유자의
   돌고 있는 백그라운드 작업·살아 있는 모니터, 세션의 일하는 중인 상주 에이전트·
-  예약. 없으면 거부 관찰("nothing would wake you — keep working or call
+  예약, 그리고 내 요청을 아직 집지 않은 받는 쪽(main 포함 — "has your request queued", 5c-2 C). 없으면 거부 관찰("nothing would wake you — keep working or call
   `complete`") 을 남기고 런을 잇는다. 막혔을 때 wait 로 도피하는 길은 없다.
 - 열린 항목(`u-…`·`n-…`·기다리는 회신)은 **같은 런의 장부에 그대로** 있다 — 넘길 다음 런이 없다
   (종전의 `ctx.park_requests`·`take_parked_requests` 는 v10.163.0 에 지웠다).
@@ -293,6 +293,7 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
 | 회신을 빚진 채 스스로 잠듦 | `agent:m (coder) · owes you a reply · itself waiting on job #3` — 기다리는 것은 이름만(v10.166.0, `wake.wake_name`): 에이전트는 키(`agt-5`), main 은 `main`, 작업 `job #3`, 모니터 `monitor m-2`, 예약 `a schedule`. 종전엔 `wait` 수락 문장의 줄 그대로였다(`job #3 (\`pytest -x tests/\`)`·`agent:agt-5 working on your request` — 뒤의 "your" 는 읽는 쪽이 아니라 그 채무자의 시점이었다) |
 | 사람 질문에 막힘 | `agent:n (reviewer) · owes you a reply · itself waiting on job #1 · blocked on question q-3 to the user, unanswered for 9m` |
 | main 이 회신을 빚짐(기다리는 쪽이 에이전트) | `main · owes you a reply` — 에이전트가 아니라 걸음 수·일감·kill 안내가 없다 |
+| main 이 내 요청을 아직 집지 않음 | `main · has your request queued` — main 이 일하는 중이거나 기다리는 중이다. 그 봉투가 main 을 깨운다 |
 
 "내 요청을 처리 중"·"대기열" 은 그 런·받은편지함이 내 요청 중 아직 회신이 가지 않은 것을 들고 있을 때만이다
 (v10.143.0) — 회신한 뒤 마무리 중인 런·통지로 도는 런·대기열의 통지는 줄도 깨울 근거도 아니다(docs/agent-engine/DESIGN.md §2.2). 한 에이전트는 한 줄이다(v10.146.6) — 내 요청을 들고 일하는 쪽은 그 요청을 빚진 쪽이기도 하지만 "working" 하나로, 그다음
@@ -312,8 +313,8 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
   run·하니스 작업이 같은 길이다. 대상 id 집합·단계·이번 간격·기준(작업별 로그 크기, 에이전트별 `last_ordinal`)을
   `_Checkin` 하나에 들고 `threading.Timer` 를 띄운다. 상태는 `{owner: _Checkin}`(걸린 것)과 `{owner: (ids, step)}`(직전에
   발화한 것) 둘 — 배증이 치르는 유일한 값이다.
-- **푸는 곳**: 같은 제자리 대기의 ``finally``(`mailbox.cancel_checkin()` — 깨면 어떤 이유로든), 새로 걸기 직전
-  (`arm_checkin` 이 먼저 푼다), 정리(주인이 죽거나 세션이 끝남 — `drop_mailbox`·kill·`shutdown_all`). 런의 시작·끝에는 풀 것이 없다 —
+- **푸는 곳**: 같은 제자리 대기의 ``finally``(`mailbox.cancel_checkin()` — 깨면 어떤 이유로든),
+  정리(주인이 죽거나 세션이 끝남 — `drop_mailbox`·kill·`shutdown_all`). 런의 시작·끝에는 풀 것이 없다 —
   `wait` 는 런을 끝내지 않는다(5c-1). 종전의 런 시작 해제(`_note_run_started`)·런 끝 해제(`run_ended`)는 v10.164.0 에
   지웠다.
 - **발화**: `fire_checkin(owner)` 가 `wake.wait_checkin` 으로 본문을 만들어 main 이면 메일함
