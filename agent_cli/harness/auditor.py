@@ -1,10 +1,10 @@
-"""`SessionAuditor` — main 의 사용자 런마다 감사 작업 하나 (v10.42.0, 4판).
+"""`SessionAuditor` — 사람의 요청을 든 main 의 런마다 감사 작업 하나 (v10.42.0, 4판).
 
 하니스가 하는 일은 둘뿐이다: 런의 history 구간(``seq a..b``)을 재고, 그 구간을
 적은 요청으로 하니스 작업 ``auditor`` 를 돌린다(`HarnessJobs.run`). 판정은
 모델의 일이고(프로파일 `agents/harness/auditor.md`), 결과 전달은 작업 실행기의
 일이다(`complete` 결과 → main 상자 → 한가한 펌프가 그것으로 런을 연다). 감사
-회신으로 깨어난 런(메일이 연 런 — 사람의 요청이 아니다)은 감사하지 않는다 — 고리 상한은 코드다.
+회신으로 깨어난 런은 사람의 요청(``u-``)을 들지 않아 감사하지 않는다 — 고리 상한은 코드다.
 """
 
 from __future__ import annotations
@@ -34,17 +34,17 @@ class SessionAuditor:
     def in_flight(self) -> int:
         return self.jobs.in_flight if self.jobs is not None else 0
 
-    def run_ended(self, start, *, ok: bool) -> str:
-        """main 의 런이 끝났다. 사용자 런이고 `complete` 로 끝났으면 그 런의
-        구간을 감사 작업으로 돌린다. 커서는 **모든** 런이 앞당긴다 — 실패한
-        런·메일 런의 레코드가 다음 감사 구간에 섞이지 않게.
+    def run_ended(self, result) -> str:
+        """main 의 런이 끝났다. 성공했고 사람의 요청(``u-``)을 하나라도 들었으면 그 런의
+        구간을 감사 작업으로 돌린다 — 무엇이 그 런을 열었는지는 보지 않는다. 커서는 **모든**
+        런이 앞당긴다 — 실패한 런·사람의 요청이 없는 런의 레코드가 다음 감사 구간에 섞이지 않게.
 
         돌려주는 값: 띄운 요청 본문(빈 문자열 = 안 띄웠다)."""
         a, b = self._cursor + 1, self.ctx.next_ordinal  # seq 는 1 기준 줄 번호
         self._cursor = b
         if not self.active or b < a:
             return ""
-        if not ok or not start.author_is_user:
+        if not result.success or not result.human_requests:
             return ""
         text = AUDIT_REQUEST.format(
             a=a,

@@ -25,8 +25,8 @@ main 의 **사용자 런**이 `complete` 로 끝날 때마다 하니스(`harness
 ```
 main 세션                                          하니스 작업 auditor (일회성, <세션>/harness/auditor/<a>-<b>/)
   사용자 런 끝 (complete → history 에 final 한 줄)
-    펌프: main_run_ended → SessionAuditor.run_ended(req, ok)
-      사용자 런이고 ok 이고 enabled 일 때만 ─▶ HarnessJobs.run("auditor", "a-b", AUDIT_REQUEST):
+    펌프: main_run_ended → SessionAuditor.run_ended(result)
+      사람의 요청을 들었고 ok 이고 enabled 일 때만 ─▶ HarnessJobs.run("auditor", "a-b", AUDIT_REQUEST):
       "Audit … seq a..b of session <sid>"            history(sessions:<sid>, loc LIKE '<sid>/history.jsonl:%', seq BETWEEN a AND b)
                                                      read_file / code_index (현재 워크스페이스)
                                                      complete(result = "AUDIT run seq a..b: pass | findings …")
@@ -94,7 +94,7 @@ main 의 `complete` 결과는 v10.77 부터 `Checked:`(돌려 보고 본 것)·`
 - 1·2판은 모델이 `message` 를 고르게 했다(전달 2/10). 3판은 회신 빚으로 강제했다(전달 9/9 — 그러나 `complete` 거절·독촉·폴백·이중 회신이라는 기계가 따라왔고, native_fc 의 빈 턴 레코드 버그도 거기서 드러났다). 4판은 전달을 모델에서 **완전히 뺀다**: 감사 런의 `complete` 결과가 곧 보고이고 하니스가 그걸 메일함에 넣는다. 2차 실측의 "이 모델은 `complete` 가 곧 보고" 라는 습관이 그대로 전달 수단이 된다.
 - 런이 턴 소진·오류·크래시로 `complete` 없이 끝나면 하니스가 "auditor did not complete: <사유>" / "auditor crashed: …" 를 대신 배달한다 — 판정문은 아니지만 "결론을 못 냈다" 는 사실이 전달된다.
 - 회신 → main 메일함 → `MailWaker` 가 유휴 main 을 깨움 → 🤝 런에서 관찰 `── auditor ──` 로 들어가고 **main 채널에 카드**로 그려진다. 사용자는 이걸 본다. pass 도 같은 길(§7 A 해소) — 비용은 사용자 런마다 main 의 짧은 깨우기 런 하나.
-- 고리: `run_ended` 는 `req.wake` 또는 `not req.author_is_user` 면 돌리지 않는다. 사용자 런 1 : 감사 1 : 되먹임 ≤ 1.
+- 고리: `run_ended` 는 그 런이 사람의 요청(`u-`)을 하나도 들지 않았으면(결과의 `human_requests` 가 빔) 돌리지 않는다 — 무엇이 런을 열었는지는 보지 않는다(메일이 연 런이 도중에 사람의 말을 받았으면 감사한다). 감사 회신으로 깨어난 런은 사람의 요청이 없다. 사용자 런 1 : 감사 1 : 되먹임 ≤ 1.
 
 ### 3.6 비용·상한
 

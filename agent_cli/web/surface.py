@@ -81,7 +81,7 @@ class WebSurface:
         if not binding_sees_images(self._binding):
             self._renderer.status("error", NO_VISION_NOTICE)
 
-    def run_ended(self, result, start) -> None:
+    def run_ended(self, result) -> None:
         pass  # 화면이 결과다
 
     def run_failed(self, exc: Exception) -> bool:

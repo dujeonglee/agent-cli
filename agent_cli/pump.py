@@ -133,7 +133,7 @@ class PumpSurface(Protocol):
         """명령을 처리하고 True — 런을 열지 않는다. 들어올 때 명령으로 표시된 말(`MainInput` 항목의 ``command``)만
         온다. 거짓이면 실행이 받지 않았다(문과 실행 사이에 같은 이름의 경로가 생겼다 — `looks_like_slash_command` 의
         규칙 2) — 부르는 쪽은 그 말을 사람의 말로 다룬다. ``start`` 는 펌프가 이 차례를 열 때의 시작(`Start`)이고, 턴
-        경계·제자리 대기의 라우팅은 None 이다(run 은 argv 질의였던 명령만 결과 파일·종료 코드에 쓴다). ``item`` 은 그
+        경계·제자리 대기의 라우팅은 None 이다. ``item`` 은 그
         글을 실어 온 사람의 말 항목(``{text, nickname, images, …}``, 없으면 None — 터미널 줄) — 그 말에 딸린 것(이미지)은
         그 말이 가는 곳으로 간다 (v10.149.3)."""
 
@@ -141,9 +141,9 @@ class PumpSurface(Protocol):
         """런을 열기 직전 — 런 바로 앞, 같은 try 안이라 예외는 ``run_failed`` 로 간다. web 은 못 보는 모델에 이미지가
         온 것을 알리고, run 은 할 일이 없다(부트에서 막았다, ``_require_vision``)."""
 
-    def run_ended(self, result: Any, start: Any) -> None:
-        """런이 끝났다(ToolResult) — run 은 ``--result-file``. ``start`` 로 그 런이 무엇이었는지(argv 질의 = 작성자
-        없는 사람의 요청 / 메일 런 = 사람의 요청이 아님 / 예약 = 그 이름) 안다."""
+    def run_ended(self, result: Any) -> None:
+        """런이 끝났다(ToolResult) — run 은 ``--result-file``. 그 런이 무엇이었는지는 결과가 든 사람의 요청 번호
+        (``human_requests``)가 말한다: argv 질의의 번호가 있으면 그 답, 비었으면 깨우기 런."""
 
     def run_failed(self, exc: Exception) -> bool:
         """런이 예외로 죽었다. True = 삼키고 계속(web), False = 전파(run)."""
@@ -319,10 +319,8 @@ class MainActor:
                 )
                 if d.auditor is not None:
                     # 감사 커서는 모든 런이 앞당긴다 — 예외 런의 레코드가 다음 감사 구간에 섞이지 않게
-                    d.auditor.run_ended(
-                        start, ok=bool(getattr(result, "success", False))
-                    )
-                d.surface.run_ended(result, start)
+                    d.auditor.run_ended(result)
+                d.surface.run_ended(result)
             except Exception as exc:
                 if not d.surface.run_failed(exc):
                     raise

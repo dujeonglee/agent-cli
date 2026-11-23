@@ -320,7 +320,7 @@ class Surface:
         if self.before_run is not None:
             self.before_run(start)
 
-    def run_ended(self, result, start):
+    def run_ended(self, result):
         self.results.append(result)
         self._note(
             "run_ended",

@@ -454,7 +454,12 @@ class AgentLoop:
         self._prompt.sections = v
 
     def run(self):
-        """Main entry point. Returns ToolResult."""
+        """Main entry point. Returns ToolResult — 어떻게 끝났든 그 작업 구간이 든 사람의 요청 번호를 싣는다."""
+        result = self._run()
+        result.human_requests = self._state.ledger.human_request_ids()
+        return result
+
+    def _run(self):
         if self.graceful_interrupt:
             self._install_signal_handler()
         try:

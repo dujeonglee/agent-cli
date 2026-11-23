@@ -724,14 +724,18 @@ class _ItemsPump:
         import threading
 
         for text, wake in self.items:
-            item = None if wake else {"text": text, "nickname": None}
+            # 사람의 말은 argv 질의다 — `run` 이 main 앞에 넣고 표면에 적은 그 번호
+            qid = self.deps.surface.query_id
+            item = None if wake else {"id": qid, "text": text, "nickname": None}
             if item is not None:
                 self.deps.surface.echo(item)
             start = self.deps.main.start(item, threading.Event())
-            if not wake and self.deps.surface.route(text, start):
+            if not wake and self.deps.surface.route(text, start, item=item):
                 continue
             res = self.deps.main.run(start)
-            self.deps.surface.run_ended(res, start)
+            # 엔진 대역(`run_loop` 모의)은 칸을 싣지 않는다 — 엔진이 싣는 값을 여기서
+            res.human_requests = () if wake else (qid,)
+            self.deps.surface.run_ended(res)
             self.after_item(res)
 
     def after_item(self, res):
