@@ -39,8 +39,10 @@ class HookContext:
         self.skill_result = skill_result
         self._mcp_manager = mcp_manager
 
-        # Dynamic system prompt sections (injected by hooks)
+        # Dynamic system prompt sections (injected by hooks), and the titles
+        # this firing asked to take out of the prompt.
         self._system_sections: dict[str, str] = {}
+        self._removed_sections: set[str] = set()
 
         # PreToolUse control
         self._blocked = False
@@ -62,15 +64,23 @@ class HookContext:
     def inject_system_section(self, title: str, content: str) -> None:
         """Add or replace a dynamic section in the system prompt."""
         self._system_sections[title] = content
+        self._removed_sections.discard(title)
 
     def remove_system_section(self, title: str) -> None:
-        """Remove a dynamic section from the system prompt."""
+        """Remove a dynamic section from the system prompt — one this firing
+        injected, or one an earlier firing left in the prompt."""
         self._system_sections.pop(title, None)
+        self._removed_sections.add(title)
 
     @property
     def system_sections(self) -> dict[str, str]:
         """Dynamic system prompt sections added by hooks."""
         return dict(self._system_sections)
+
+    @property
+    def removed_sections(self) -> frozenset[str]:
+        """Titles this firing took out (and did not inject again)."""
+        return frozenset(self._removed_sections)
 
     # ── PreToolUse control ───────────────────────────
 

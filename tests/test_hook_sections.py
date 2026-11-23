@@ -39,6 +39,43 @@ def pre_llm_call(ctx):
         ctx.remove_system_section("SessStart")
 """
 
+#: 1번째 호출 앞에 넣고, 2번째에 빼고, 3번째에 다시 넣는다
+REMOVE_THEN_INJECT = """
+EVENTS = ["PreLLMCall"]
+N = {"n": 0}
+def pre_llm_call(ctx):
+    N["n"] += 1
+    if N["n"] in (1, 3):
+        ctx.inject_system_section("Note", "v%d" % N["n"])
+    if N["n"] == 2:
+        ctx.remove_system_section("Note")
+"""
+
+#: 2번째 호출 앞의 한 발화 안에서 빼고 다시 넣는다
+REMOVE_AND_INJECT_TOGETHER = """
+EVENTS = ["PreLLMCall"]
+N = {"n": 0}
+def pre_llm_call(ctx):
+    N["n"] += 1
+    if N["n"] == 1:
+        ctx.inject_system_section("Note", "first")
+    if N["n"] == 2:
+        ctx.remove_system_section("Note")
+        ctx.inject_system_section("Note", "second")
+"""
+
+#: 러너가 사는 동안 맨 처음 `PreLLMCall` 에만 넣는다 — 다음 작업 구간에는 넣지 않는다
+FIRST_CALL_ONLY = """
+EVENTS = ["OnSessionStart", "PreLLMCall"]
+N = {"n": 0}
+def on_session_start(ctx):
+    ctx.inject_system_section("SessStart", "from-session-start")
+def pre_llm_call(ctx):
+    N["n"] += 1
+    if N["n"] == 1:
+        ctx.inject_system_section("OnlyFirstCallEver", "x")
+"""
+
 #: 세션 시작에 하나, 호출마다 하나
 EVERY_CALL = """
 EVENTS = ["OnSessionStart", "PreLLMCall"]
@@ -102,13 +139,41 @@ def web_renderer():
 
 
 class TestRemove:
-    def test_remove_cancels_only_what_the_same_firing_injected(self, tmp_path):
+    def test_remove_takes_out_what_an_earlier_firing_put_in(self, tmp_path):
         p = Provider()
         _run(tmp_path, p, _hooks(tmp_path, REMOVING))
         assert p.has("SameFiring") == [False, False, False]
-        # 앞선 발화가 넣은 섹션은 `remove` 뒤에도 프롬프트에 남는다 (지금 동작)
-        assert p.has("TurnOne") == [True, True, True]
-        assert p.has("SessStart") == [True, True, True]
+        # 2번째 호출 앞의 발화가 뺐다 — 세션 시작이 넣은 것도, 앞 턴이 넣은 것도 빠진다
+        assert p.has("TurnOne") == [True, False, False]
+        assert p.has("SessStart") == [True, False, False]
+
+    def test_a_removed_title_comes_back_when_a_later_firing_injects_it(self, tmp_path):
+        """ "뺐다" 는 그 발화의 일이다 — 다음 발화가 같은 제목을 넣으면 다시 들어온다."""
+        p = Provider()
+        _run(tmp_path, p, _hooks(tmp_path, REMOVE_THEN_INJECT))
+        assert p.has("Note") == [True, False, True]
+        assert all(s.count("## Note\n") <= 1 for s in p.systems)
+
+    def test_remove_then_inject_in_one_firing_keeps_the_section(self, tmp_path):
+        p = Provider()
+        _run(tmp_path, p, _hooks(tmp_path, REMOVE_AND_INJECT_TOGETHER))
+        assert p.has("Note") == [True, True, True]
+        assert "## Note\nsecond" in p.systems[1]
+        assert "## Note\nfirst" not in p.systems[1]
+
+
+class TestWorkSegment:
+    def test_the_next_segment_starts_from_what_its_own_hooks_inject(self, tmp_path):
+        """작업 구간마다 프롬프트를 새로 만든다 — 앞 구간의 훅 섹션은 넘어오지 않고,
+        `OnSessionStart` 가 다시 넣는 섹션은 한 번만 있다."""
+        runner = _hooks(tmp_path, FIRST_CALL_ONLY)
+        first, second = Provider(), Provider()
+        _run(tmp_path, first, runner)
+        _run(tmp_path, second, runner)
+        assert first.has("OnlyFirstCallEver") == [True, True, True]
+        assert second.has("OnlyFirstCallEver") == [False, False, False]
+        assert second.has("SessStart") == [True, True, True]
+        assert all(s.count("## SessStart\n") == 1 for s in second.systems)
 
 
 class TestRebuild:

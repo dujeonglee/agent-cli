@@ -57,7 +57,7 @@ class SystemPromptSvc:
         once the loop started applying it. 섹션 이름(``Hook: …``)이 경계를
         들고 있으므로 본문에 표식을 넣지 않는다 — 종전의 ``<!-- HOOK_SECTIONS -->``
         는 옛 문자열과 바이트를 맞추려던 것인데 모델에게 그대로 나갔다(v10.75.1)."""
-        if not hook_ctx or not hook_ctx.system_sections:
+        if not hook_ctx or not (hook_ctx.system_sections or hook_ctx.removed_sections):
             return
         # Callers that set ``system`` directly (tests, embedders) without
         # going through rebuild get a single seeded section so the
@@ -72,6 +72,8 @@ class SystemPromptSvc:
         }
         for title, content in hook_ctx.system_sections.items():
             merged[title] = f"## {title}\n{content}"
+        for title in hook_ctx.removed_sections:
+            merged.pop(title, None)
         hook_sections = [(f"Hook: {title}", text) for title, text in merged.items()]
         self.sections = static + hook_sections
         self.system = "\n\n".join(t for _, t in self.sections)

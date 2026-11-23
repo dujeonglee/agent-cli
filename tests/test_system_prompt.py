@@ -23,7 +23,6 @@ would be churn for no behavior change.
 """
 
 from pathlib import Path
-from typing import ClassVar
 
 import pytest
 
@@ -1257,6 +1256,16 @@ class TestRecencySectionOrder:
                 assert pos < exec_pos
 
 
+def _firing(sections: dict):
+    """훅 발화 하나의 컨텍스트 — 그 발화가 넣은 섹션들."""
+    from agent_cli.hooks.context import HookContext
+
+    ctx = HookContext(event="PreLLMCall")
+    for title, content in sections.items():
+        ctx.inject_system_section(title, content)
+    return ctx
+
+
 class TestSystemSectionsSingleSource:
     """The loop's ``_system_sections`` is the single source of truth and
     ``self.system`` is always derived by joining it — the Prompt Inspector
@@ -1286,10 +1295,7 @@ class TestSystemSectionsSingleSource:
     def test_hook_sections_keep_invariant_without_marker(self):
         loop = self._loop()
 
-        class Ctx:
-            system_sections: ClassVar[dict] = {"Sprint Goals": "Ship the inspector."}
-
-        loop._apply_system_sections(Ctx())
+        loop._apply_system_sections(_firing({"Sprint Goals": "Ship the inspector."}))
         assert loop.system == "\n\n".join(t for _, t in loop._system_sections)
         assert "<!--" not in loop.system  # v10.75.1: 표식 없이 섹션 이름이 경계
         assert "## Sprint Goals\nShip the inspector." in loop.system
@@ -1302,20 +1308,11 @@ class TestSystemSectionsSingleSource:
         PreLLMCall 섹션에 밀려 사라지지 않게). 종전엔 적용마다 앞 섹션을 전부 버렸다."""
         loop = self._loop()
 
-        class A:
-            system_sections: ClassVar[dict] = {"One": "1"}
-
-        class B:
-            system_sections: ClassVar[dict] = {"Two": "2"}
-
-        class A2:
-            system_sections: ClassVar[dict] = {"One": "1b"}
-
-        loop._apply_system_sections(A())
-        loop._apply_system_sections(B())
+        loop._apply_system_sections(_firing({"One": "1"}))
+        loop._apply_system_sections(_firing({"Two": "2"}))
         names = [n for n, _ in loop._system_sections]
         assert "Hook: One" in names and "Hook: Two" in names
-        loop._apply_system_sections(A2())
+        loop._apply_system_sections(_firing({"One": "1b"}))
         assert loop.system.count("## One") == 1 and "## One\n1b" in loop.system
         assert "<!--" not in loop.system
 
