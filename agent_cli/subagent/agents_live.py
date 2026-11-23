@@ -1744,15 +1744,15 @@ class AgentRegistry:
         self._notify_roster()
         return out
 
-    def _close_run(self, tm: AgentInstance, handled: int) -> None:
-        """런 끝 — 두 처리 경로(단건·사람 배치)의 공통 마무리.
+    def _close_run(self, tm: AgentInstance) -> None:
+        """런 끝의 마무리.
 
         ``handled`` 증가와 처리 중 표시 해제(v9.24.5)를 **한 번의 저장**에
         싣는다. 해제를 따로 저장하면 회신이 나간 뒤 다음 항목을 꺼내기까지
         디스크 쓰기가 한 번 더 끼어, 그 사이 idle 로 보이는 창이 넓어진다."""
         with self._cv:
-            # 흡수분(v9.25.0)까지 이 런이 처리했다 — 시작 항목 수보다 클 수 있다
-            tm.handled += handled + tm.absorbed_in_run
+            # 런을 연 항목 하나와 턴 경계의 흡수분(v9.25.0)까지 이 런이 처리했다
+            tm.handled += 1 + tm.absorbed_in_run
             tm.absorbed_in_run = 0
             # 든 것과 이 런에서 닫힌 줄은 런 끝 정리(`run_ended` → `end_run(done|stopped)`)가 이미 비웠다
         self._save_state()  # ``handled`` 를 싣는다 — 증가 뒤에
@@ -2743,19 +2743,19 @@ class AgentRegistry:
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()
 
-    def _next_run_items(self, tm: AgentInstance) -> list[dict]:
-        """다음 런을 열 항목 — 창구의 `next_run`(`Take.ARRIVAL`: 첫 **깨우는** 봉투, 사람의 말이면 이어진 사람의
-        말까지 묶음 — 깨우지 않는 봉투는 줄에 남아 그 런의 첫 흡수가 읽는다). 올 때까지 시한 없이 기다린다: 배달이
-        깨우고, 끝내기(`_stop_worker`)가 상자를 닫아 깨운다. 닫혔으면 빈 목록.
+    def _next_run_item(self, tm: AgentInstance) -> dict | None:
+        """다음 런을 열 항목 — 창구의 `next_run`(`Take.ARRIVAL`: 첫 **깨우는** 봉투 하나 — 나머지는 줄에 남아 그 런의
+        첫 흡수가 도착 순서로 읽는다). 올 때까지 시한 없이 기다린다: 배달이 깨우고, 끝내기(`_stop_worker`)가 상자를
+        닫아 깨운다. 닫혔으면 None.
 
         집는 순간 ``busy`` 다(P0-9b) — 그 사이 세션 판정의 `has_agent_work`(상태·쌓인 일)가 "활동 없음" 으로 보지
         않게 같은 락 구간에서(창구 조건변수는 이 레지스트리의 것 — 기다리는 동안 모든 깊이가 풀린다)."""
         with self._cv:
             envs = self._post.next_run(f"agent:{tm.key}", Take.ARRIVAL, timeout=None)
             if envs is CLOSED or not envs:
-                return []
+                return None
             tm.state = "busy"
-            return [dict(e.payload) for e in envs]
+            return dict(envs[0].payload)
 
     def _stop_worker(self, tm: AgentInstance) -> None:
         """평생 정지 — ``stop_event`` 를 세우고(엔진·흡수가 본다) 그 상자를 닫는다(기다리는 워커가 깨어 나온다; 줄 선

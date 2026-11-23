@@ -804,7 +804,7 @@ class TestRepliesAndNoticesAreNotItems:
                 "kind": "notice",
             },
         ):
-            start = kind.start([item])
+            start = kind.start(item)
             assert start.user_requests == [] and start.request_id == ""
         reg.shutdown_all()
 

@@ -106,7 +106,6 @@
     {
      "caller_task": null,
      "item": "r-1",
-     "items": null,
      "key": "agt-A",
      "message": "TASK-K2 compute",
      "profile": "bb",
@@ -171,7 +170,6 @@
     {
      "caller_task": null,
      "item": "r-2",
-     "items": null,
      "key": "agt-B",
      "message": "TASK-K1 ask bb",
      "profile": "aa",
@@ -275,7 +273,6 @@
     {
      "caller_task": null,
      "item": "n-1",
-     "items": null,
      "key": "agt-B",
      "message": "K2 done",
      "profile": "aa",
@@ -307,7 +304,6 @@
     {
      "caller_task": null,
      "item": "r-3",
-     "items": null,
      "key": "agt-B",
      "message": "TASK-K3 are you there",
      "profile": "aa",

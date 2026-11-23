@@ -27,18 +27,12 @@ class Postbox:
         self._queued.append(env)
 
     def take_next(self) -> tuple[Envelope, ...]:
-        """런 하나를 열 봉투 — 첫 **깨우는** 봉투, 그것이 사람의 말이면 바로 뒤이은 사람의 말까지 한 묶음.
-        깨우지 않는 봉투는 줄에 남는다(그 런의 첫 흡수가 읽는다). 없으면 빈 튜플."""
+        """런 하나를 열 봉투 — 첫 **깨우는** 봉투 하나. 나머지는(깨우지 않는 것도) 줄에 남는다 — 그 런의 첫 흡수가
+        도착 순서로 읽는다. 없으면 빈 튜플."""
         first = next((i for i, e in enumerate(self._queued) if e.wakes), None)
         if first is None:
             return ()
-        picked = [first]
-        if is_human_words(self._queued[first]):
-            for i in range(first + 1, len(self._queued)):
-                if not is_human_words(self._queued[i]) or not self._queued[i].wakes:
-                    break
-                picked.append(i)
-        return self._move(picked)
+        return self._move([first])
 
     def take_all(self) -> tuple[Envelope, ...]:
         """줄 선 것 전부 — 깨우지 않는 것도, 도착 순서로(턴 경계의 흡수)."""

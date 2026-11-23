@@ -58,7 +58,6 @@
     {
      "caller_task": null,
      "item": "r-1",
-     "items": null,
      "key": "agt-A",
      "message": "TASK-D build it",
      "profile": "helper",
@@ -125,7 +124,6 @@
     {
      "caller_task": null,
      "item": "n-1",
-     "items": null,
      "key": "agt-A",
      "message": "TASK-D fyi: the build passed",
      "profile": "helper",

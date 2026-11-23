@@ -109,11 +109,11 @@ class TestEndingAWorker:
         # 끝낸 뒤 상자에 요청이 선다 — 끝내기가 기다림보다 먼저 온 경우와 같다
         reg._post.deliver(E.request("r-90", "main", f"agent:{key}", "late"))
         got: list = []
-        t = threading.Thread(target=lambda: got.append(reg._next_run_items(tm)))
+        t = threading.Thread(target=lambda: got.append(reg._next_run_item(tm)))
         t.start()
         t.join(5)
         assert not t.is_alive(), "끝난 에이전트의 꺼내기가 기다렸다"
-        assert got == [[]] and calls == []
+        assert got == [None] and calls == []
 
     def test_shutdown_ends_every_waiting_worker(self, tmp_path):
         calls, runner = _counting_runner()

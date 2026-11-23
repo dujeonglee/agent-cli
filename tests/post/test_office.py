@@ -66,11 +66,14 @@ class TestRuns:
         assert [e.id for e in envs] == ["r-2"]
         assert [e.id for e in office.taken(A)] == ["r-1", "r-2"]
 
-    def test_next_run_returns_a_tuple_of_people(self, office):
+    def test_next_run_takes_one_person_s_words_at_a_time(self, office):
+        """이어진 사람의 말도 하나씩 연다 — 나머지는 줄에 남아 그 런의 첫 흡수가 읽는다."""
         office.deliver(E.human("u-1", "user:dj", A, "a"))
         office.deliver(E.human("u-2", "user:dj", A, "b"))
         envs = office.next_run(A, Take.ARRIVAL, timeout=0)
-        assert [e.id for e in envs] == ["u-1", "u-2"]
+        assert [e.id for e in envs] == ["u-1"]
+        assert [e.id for e in office.queued(A)] == ["u-2"]
+        assert [e.id for e in office.absorb(A)] == ["u-2"]
         assert office.next_run(A, Take.ARRIVAL, timeout=0) is None  # 열 것이 없다
 
     def test_pay_closes_and_delivers(self, office):

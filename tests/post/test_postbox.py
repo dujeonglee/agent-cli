@@ -97,11 +97,12 @@ class TestTaking:
             "n-3",
         ]  # 깨우지 않는 것은 줄에 남는다
 
-    def test_take_next_batches_the_humans_that_follow(self):
+    def test_take_next_takes_one_envelope_even_when_people_follow(self):
         box = Postbox()
         for e in (_h(1), _h(2), _r(3), _h(4)):
             box.put(e)
-        assert [e.id for e in box.take_next()] == ["u-1", "u-2"]
+        assert [e.id for e in box.take_next()] == ["u-1"]
+        assert [e.id for e in box.take_next()] == ["u-2"]
         assert [e.id for e in box.take_next()] == ["n-3"]
         assert [e.id for e in box.take_next()] == ["u-4"]
         assert box.take_next() == ()

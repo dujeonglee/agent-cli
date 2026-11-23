@@ -10,7 +10,7 @@ spawner 의 깊이 +1" 을 다시 읽어 흔들렸다), 스택은 호출자의 �
 ctx 는 워커 스레드에서 `open()` 으로 한 번 만든다 —
 `create_subagent_ctx` 의 `note_scope_ctx` 가 그 스레드의 스코프(에이전트 키)에 등록되게.
 
-런의 단계: ⑫ `start(items)` 가 받은편지함 항목(단건 또는 사람-직접 묶음)을 시작 메시지·
+런의 단계: ⑫ `start(item)` 이 런을 연 받은편지함 항목 하나를 시작 메시지·
 회계(`user_requests`·`request_id`)로 바꾸고, ⑭ 스코프는 작업 카드(`begin_agent_work`/
 `end_agent_work`), ⑰ `finish` 가 회신 계약·빚·`run_ended`·`_close_run` 후처리까지 한 벌로 한다(v10.89.0). 런마다 거둘 것은 없다
 (상주는 잡·모니터를 런 너머로 가진다) — 에이전트가 죽을 때 워커가 `release_owner` 로 거둔다.
@@ -78,7 +78,8 @@ class ResidentLoop(LoopKind):
             peer_roster=self.peer_roster,
             agent_registry=registry,
         )
-        self._items: list[dict] = []
+        #: 지금 런을 연 항목(`start`)
+        self._item: dict = {}
         #: 지금 런의 정지(■ — `AgentRegistry.stop_run`)와 그 런이 기록을 시작한 서수(멈췄을 때 회신에 실을
         #: 마지막 호출·생각을 읽는다). 런마다 `start` 가 새로 세운다.
         self._run_stop: agent_stop.LinkedStop | None = None
@@ -191,13 +192,12 @@ class ResidentLoop(LoopKind):
             record_restart(ctx)
 
     # ── ⑫ 시작 — 받은편지함 항목 → 시작 메시지 + 회계 ──
-    def start(self, items: list[dict]) -> Start:
-        """단건이면 그 항목, 사람-직접 묶음(2건+)이면 전부 ``user:*`` 라 한 질의로 합친다 —
-        항목마다 회계 id 가 올라 꼬리의 `## Open Requests` 와 `answers` 강제가 그 일을 한다."""
+    def start(self, item: dict) -> Start:
+        """런을 연 항목 하나 → 시작 메시지. 사람이 직접 쓴 것이면 그 id 가 회계에 올라 꼬리의 `## Open Requests` 와
+        `answers` 강제가 그 일을 한다. 줄 선 나머지는(이어진 사람의 말도) 첫 턴 경계가 도착 순서로 넣는다."""
         reg, tm = self.registry, self.tm
-        self._items = list(items)
+        self._item = item
         me = self.owner
-        first = items[0]
         # 이 런의 정지 — ■ 는 이것만, ✕·세션 종료는 평생 정지로 (`agent_stop.LinkedStop`)
         self._run_stop = agent_stop.LinkedStop(tm.stop_event)
         tm.run_stop = self._run_stop
@@ -205,64 +205,40 @@ class ResidentLoop(LoopKind):
             self._run_stop.set()  # ■ 가 꺼낸 뒤·시작 전에 왔다 — 이 런이 그 런이다
         self._run_from = tm.ctx.next_ordinal if tm.ctx is not None else 0
         tm.state = "busy"
-        # 화자 attribution — 회신/질문 라우팅 기준(D8); 묶음은 첫 발신자. 이 런의 이름은
-        # 첫 항목의 id — 거는 질문의 asked_in (§3.2).
-        tm.current_author = first.get("author", "main")
-        tm.current_item = first["id"]
-        if len(items) == 1:
-            item = first
-            author = item.get("author", "main")
-            human = is_human_addr(author)
-            expects = item.get("expects_reply", True)
-            if expects:
-                # 요청 항목은 빚이다 (v9.21.0 — `complete` 는 국소, 배달은 `reply`/`message` 뿐).
-                reg.note_owes(
-                    me,
-                    author,
-                    item["text"],
-                    answers=item.get("answers") or [],
-                    hop=item.get("hop", 0),
-                    id=item["id"],
-                )
-            reg._notify_roster()
-            return Start(
-                query=reg._model_text(item),
-                images=list(item.get("images") or []),
-                author_is_user=human,
-                # 시작 항목의 장부 id — 그 레코드가 열려 있는 동안 핀된다
-                request_id=item["id"] if human or expects else "",
-                user_requests=(
-                    [
-                        {
-                            "id": item["id"],
-                            "author": author,
-                            "text": reg._model_text(item, bare=True),
-                        }
-                    ]
-                    if human
-                    else []
-                ),
-                stop_event=self._run_stop,
+        # 화자 attribution — 회신/질문 라우팅 기준(D8). 이 런의 이름은 연 항목의 id — 거는 질문의 asked_in (§3.2).
+        tm.current_author = item.get("author", "main")
+        tm.current_item = item["id"]
+        author = item.get("author", "main")
+        human = is_human_addr(author)
+        expects = item.get("expects_reply", True)
+        if expects:
+            # 요청 항목은 빚이다 (v9.21.0 — `complete` 는 국소, 배달은 `reply`/`message` 뿐).
+            reg.note_owes(
+                me,
+                author,
+                item["text"],
+                answers=item.get("answers") or [],
+                hop=item.get("hop", 0),
+                id=item["id"],
             )
-        for it in items:  # 전부 user:* — 빚은 아니지만 `reply` 거부 사유가 이걸 본다
-            reg.note_owes(me, it.get("author", ""), it["text"], id=it["id"])
         reg._notify_roster()
-        user_requests = [
-            {
-                "id": it["id"],
-                "author": it.get("author", ""),
-                "text": reg._model_text(it, bare=True),
-            }
-            for it in items
-        ]
         return Start(
-            query="\n\n".join(reg._model_text(it) for it in items),
-            # 배치의 이미지는 항목 순서대로 한 레코드에 (v10.61.0)
-            images=[r for it in items for r in (it.get("images") or [])],
-            author_is_user=True,
-            # 한 레코드에 여럿이 합쳐진다 — 첫 요청 id 로 찍는다(핀)
-            request_id=user_requests[0]["id"],
-            user_requests=user_requests,
+            query=reg._model_text(item),
+            images=list(item.get("images") or []),
+            author_is_user=human,
+            # 시작 항목의 장부 id — 그 레코드가 열려 있는 동안 핀된다
+            request_id=item["id"] if human or expects else "",
+            user_requests=(
+                [
+                    {
+                        "id": item["id"],
+                        "author": author,
+                        "text": reg._model_text(item, bare=True),
+                    }
+                ]
+                if human
+                else []
+            ),
             stop_event=self._run_stop,
         )
 
@@ -270,21 +246,15 @@ class ResidentLoop(LoopKind):
     def open_scope(self, start: Start):
         from agent_cli.render import get_renderer
 
-        items = self._items
-        first = items[0]
+        first = self._item
         renderer = get_renderer()
         renderer.begin_agent_work(
             key=self.tm.key,
             item=first["id"],
             profile=self.disp,
-            message=(
-                first["text"]
-                if len(items) == 1
-                else "\n".join(self.registry._model_text(it) for it in items)
-            ),
+            message=first["text"],
             # 요청 발신 시각 — scope_start 의 `nav_ts`(읽는 화면은 지금 없다)
             req_ts=first.get("ts"),
-            items=[it["id"] for it in items] if len(items) > 1 else None,
             # run 의 과제 런: 부른 자리에 한 줄 카드 (docs/agent-engine/DESIGN.md §2.5)
             caller_task=(
                 self.tm.caller_task
@@ -305,7 +275,7 @@ class ResidentLoop(LoopKind):
         run_stop = self._run_stop
         renderer.end_agent_work(
             key=self.tm.key,
-            item=self._items[0]["id"],
+            item=self._item["id"],
             success=success,
             duration_s=duration,
             error="" if success else output[:200],
@@ -313,17 +283,16 @@ class ResidentLoop(LoopKind):
             stopped=bool(run_stop is not None and run_stop.is_set() and not success),
         )
 
-    # ── ⑰ 결과 — 회신 계약·빚·run_ended (v10.89.0: 단건·사람 묶음 한 벌) ──
+    # ── ⑰ 결과 — 회신 계약·빚·run_ended ──
     def finish(self, result, secs: float, released: str) -> tuple[Any, float]:
-        """런 끝의 후처리 — 종전 `_handle_request`·`_handle_human_batch` 두 벌.
+        """런 끝의 후처리.
 
         - `complete` 는 국소다: 산출물은 자동으로 아무에게도 가지 않는다. 요청 항목이면 이
           런은 요청자에게 회신을 **빚졌고**, 갚았으면 끝; 안 갚았으면 `run_ended` →
           `end_run` 이 런 요약을 라벨 붙여 폴백 배달한다(독촉 3회를 지나고도 안 보낸 경우).
           중단된 런은 빚을 버린다(`wait` 는 런을 끝내지 않는다 — 깬 뒤 같은 런이 갚는다, 5c-1).
         - out 레코드(대화창의 발신 줄)는 **실제 발신** 둘뿐: 하니스 폴백(라벨 붙음)과 사람
-          발신(창이 곧 배달 — 묶음은 전부 사람이고 `reply_debts` 가 사람 주소를 빼므로
-          단건과 같은 판정으로 떨어진다).
+          발신(창이 곧 배달 — `reply_debts` 가 사람 주소를 뺀다).
         - ``handled``/``state`` 는 **정리 뒤**(`_close_run`) — idle 은 '이 런의 일이 다
           끝났다' 여야 한다(v9.22.4, Linux CI 레이스).
         - 세션 종료로 끝난 런(``session_ended`` — 5e1)은 아무것도 하지 않는다: 회신·폴백·우편 정리·처리 수 없이
@@ -334,10 +303,10 @@ class ResidentLoop(LoopKind):
 
         from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
-        reg, tm, items = self.registry, self.tm, self._items
+        reg, tm = self.registry, self.tm
         me = self.owner
-        iid = items[0]["id"]
-        author = items[0].get("author", "main")
+        iid = self._item["id"]
+        author = self._item.get("author", "main")
         success = bool(result.success)
         output = (
             result.output
@@ -387,7 +356,7 @@ class ResidentLoop(LoopKind):
             # 실패한 런의 사유(턴 상한·provider 오류) — 산출물이 비어 회신 머리 한 줄에만 남는다
             **({"error": str(result.error)} if not success and result.error else {}),
         )
-        reg._close_run(tm, len(items))
+        reg._close_run(tm)
         if tm.stop_cause == agent_stop.STOPPED and not tm.stop_event.is_set():
             if stopped:
                 # ■ — 에이전트는 남는다: 한 줄 알린다(대기 요청은 다음 차례)
@@ -444,11 +413,11 @@ class AgentActor:
     def take(self, timeout):
         if self.tm.stop_event.is_set():
             return CLOSED  # 평생 정지 — 정지가 선 뒤 상자가 닫히기 전에 와도 새 런을 열지 않는다
-        items = self.registry._next_run_items(self.tm)
-        return items if items else CLOSED
+        item = self.registry._next_run_item(self.tm)
+        return item if item is not None else CLOSED
 
-    def open(self, items: list[dict]) -> Start:
-        return self.kind.start(items)
+    def open(self, item: dict) -> Start:
+        return self.kind.start(item)
 
     def run_start(self, start: Start) -> RunEnd:
         """종류가 런을 돌리고 그 끝 정리(`ResidentLoop.finish` — 빚 정리·`_close_run`)까지 한다: 런 카드를 닫기
