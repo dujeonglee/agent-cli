@@ -112,7 +112,7 @@ class TestRemove:
 
 
 class TestRebuild:
-    def test_a_directive_edit_drops_the_session_start_section(
+    def test_a_directive_edit_keeps_the_session_start_section(
         self, tmp_path, web_renderer
     ):
         # 첫 호출 도중 지침이 저장됐다 — `POST /api/directives` 가 세우는 바로 그 표시
@@ -121,5 +121,7 @@ class TestRebuild:
         )
         _run(tmp_path, p, _hooks(tmp_path, EVERY_CALL))
         assert p.has("EveryCall") == [True, True, True]
-        # 다시 만든 프롬프트에서 세션 시작 섹션이 사라진다 (지금 동작)
-        assert p.has("SessStart") == [True, False, False]
+        # 다시 만든 프롬프트에도 훅 섹션은 그대로다 — 훅이 빼지 않았다
+        assert p.has("SessStart") == [True, True, True]
+        assert all(s.count("## SessStart\n") == 1 for s in p.systems)
+        assert all(s.count("## EveryCall\n") == 1 for s in p.systems)
