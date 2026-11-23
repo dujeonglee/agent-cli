@@ -840,6 +840,7 @@ def try_dispatch_agent_or_skill(
     max_depth: int,
     ctx,
     session,
+    mcp_manager,
     graceful_interrupt: bool = True,
     stop_event=None,
     agent_registry=None,
@@ -893,6 +894,7 @@ def try_dispatch_agent_or_skill(
             max_depth=max_depth,
             ctx=ctx,
             session=session,
+            mcp_manager=mcp_manager,
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
             agent_registry=agent_registry,
@@ -931,6 +933,7 @@ def try_dispatch_agent_or_skill(
             max_depth=max_depth,
             ctx=ctx,
             session=session,
+            mcp_manager=mcp_manager,
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
             images=images,
@@ -990,6 +993,7 @@ def _command_dispatch(spec, owners, output, *, graceful_interrupt: bool):
             max_depth=spec.max_depth,
             ctx=spec.ctx,
             session=spec.session,
+            mcp_manager=spec.mcp_manager,
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
             agent_registry=owners.agent_registry,
@@ -1018,6 +1022,8 @@ def _dispatch_agent(
     stop_event=None,
     agent_registry=None,
     images=(),
+    *,
+    mcp_manager,
 ):
     """Dispatch @agent-name query → ``(answer, success)``.
 
@@ -1056,6 +1062,7 @@ def _dispatch_agent(
         binding=binding,
         ctx=ctx,
         session=session,
+        mcp_manager=mcp_manager,
         max_turns=max_turns,
         max_depth=max_depth,
         hooks_config=_parent_hooks,
@@ -1133,6 +1140,8 @@ def _dispatch_skill(
     graceful_interrupt: bool = False,
     stop_event=None,
     images=(),
+    *,
+    mcp_manager,
 ):
     """Dispatch a /skill-name command → ``(answer, success)``.
 
@@ -1179,6 +1188,7 @@ def _dispatch_skill(
             binding=binding,
             ctx=ctx,
             session=session,
+            mcp_manager=mcp_manager,
             max_turns=max_turns,
             max_depth=max_depth,
             hooks_config=_load_hooks() or None,

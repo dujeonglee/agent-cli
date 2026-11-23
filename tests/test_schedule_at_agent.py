@@ -75,7 +75,13 @@ def test_scheduled_at_agent_goes_as_user_scheduler_name(tmp_path, renderer):  # 
         "0 0 1 1 *", f"@{key} look at the logs", label="nightly", source="user"
     )
     spec = SimpleNamespace(
-        binding=None, max_turns=0, verbose=False, max_depth=2, ctx=None, session=None
+        binding=None,
+        max_turns=0,
+        verbose=False,
+        max_depth=2,
+        ctx=None,
+        session=None,
+        mcp_manager=None,
     )
     surface = WebSurface(
         renderer=MagicMock(),

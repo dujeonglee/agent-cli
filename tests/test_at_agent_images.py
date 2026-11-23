@@ -33,7 +33,13 @@ REF = ImageRef("a.png", "image/png", 10, 10, 1, "").to_dict()
 
 def _spec():
     return SimpleNamespace(
-        binding=None, max_turns=0, verbose=False, max_depth=2, ctx=None, session=None
+        binding=None,
+        max_turns=0,
+        verbose=False,
+        max_depth=2,
+        ctx=None,
+        session=None,
+        mcp_manager=None,
     )
 
 
@@ -222,6 +228,7 @@ def test_one_shot_run_agent_task_carries_the_images(tmp_path, monkeypatch):
             max_depth=2,
             ctx=ContextManager(session_dir=tmp_path / "ctx"),
             session=None,
+            mcp_manager=None,
             agent_registry=reg,
             images=[REF],
         )
@@ -261,7 +268,7 @@ def test_skill_run_starts_with_the_images(monkeypatch):
     monkeypatch.setattr("agent_cli.skills.load_skills", lambda: {"look": skill})
     from agent_cli.main import _dispatch_skill
 
-    _dispatch_skill("/look now", None, images=[REF])
+    _dispatch_skill("/look now", None, images=[REF], mcp_manager=None)
     assert made["images"] == [REF] and made["arguments"] == "now"
 
 

@@ -281,6 +281,7 @@ class TestAtAgent:
             make_binding(provider=object(), capabilities=CAPS),
             ctx=ctx,
             agent_registry=reg,
+            mcp_manager=None,
         )
         assert ok and answer == "hello"  # 폴백 라벨은 답이 아니다
         assert not reg.arrived_for(
@@ -295,7 +296,9 @@ class TestAtAgent:
         from agent_cli.subagent.agent_modes import NO_REGISTRY
 
         answer, ok = _dispatch_agent(
-            "@general look", make_binding(provider=object(), capabilities=CAPS)
+            "@general look",
+            make_binding(provider=object(), capabilities=CAPS),
+            mcp_manager=None,
         )
         assert not ok and answer == NO_REGISTRY
 

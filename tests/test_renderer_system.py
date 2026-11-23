@@ -351,6 +351,7 @@ class TestDispatchAgent:
                 base_url="http://127.0.0.1:8000/v1",
             ),
             agent_registry=agent_registry_slot,
+            mcp_manager=None,
         )
         assert result is _AGENT_NOT_FOUND
 
@@ -367,6 +368,7 @@ class TestDispatchAgent:
             "openai",
             "http://127.0.0.1:8000/v1",
             "",
+            mcp_manager=None,
         )
         assert result is _AGENT_NOT_FOUND
 

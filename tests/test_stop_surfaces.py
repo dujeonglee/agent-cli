@@ -162,6 +162,7 @@ def _dispatch(text, reg):
         max_depth=2,
         ctx=None,
         session=None,
+        mcp_manager=None,
         agent_registry=reg,
     )
     return handled, out.said

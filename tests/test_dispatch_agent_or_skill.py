@@ -89,6 +89,7 @@ def base_state(tmp_path):
         "max_depth": 2,
         "ctx": ContextManager(session_dir=tmp_path),
         "session": None,
+        "mcp_manager": None,
     }
 
 
@@ -695,5 +696,6 @@ class TestLooksLikeSlashCommand:
             max_depth=2,
             ctx=None,
             session=None,
+            mcp_manager=None,
         )
         assert handled is False
