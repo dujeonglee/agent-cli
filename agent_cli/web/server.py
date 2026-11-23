@@ -263,6 +263,9 @@ class WebServer:
         # Items: ``{id, conn_id, nickname, text, images}``.
         #: 미배달 메일의 대기열 줄 공급자 — web 부트가 꽂는다 (v10.51.0)
         self.mail_source = None
+        self._queue_step = (
+            threading.Lock()
+        )  # 대기열을 뜨고 내는 한 걸음 (`broadcast_queue`)
         self.main_input = MainInput(
             on_change=self.broadcast_queue, is_command=web_input_is_command
         )
@@ -373,8 +376,11 @@ class WebServer:
 
     def broadcast_queue(self) -> None:
         """Push the live queue state to all clients — 창구의 락을 놓은 뒤에 불린다(``queue_state`` 는 렌더러 락을
-        잡는다; `MainInput` 도 레지스트리도 대기열 변경 알림을 락 밖에서 부른다)."""
-        self.renderer.queue_state(self.queue_snapshot())
+        잡는다; `MainInput` 도 레지스트리도 대기열 변경 알림을 락 밖에서 부른다). 대기열을 뜨고 내는 것이 한 걸음이다
+        (``_queue_step``): 입력을 넣는 스레드·펌프·에이전트 워커가 부르므로, 묶지 않으면 먼저 뜬 대기열이 나중에 나가
+        이미 꺼낸 말이 입력창 위에 남는다."""
+        with self._queue_step:
+            self.renderer.queue_state(self.queue_snapshot())
 
     def shutdown(self) -> None:
         """펌프를 깨워 끝나게 한다 — main 상자를 닫는다(줄 선 사람의 말은 런을 열지 않는다 — 끄는 중이다). 멱등."""

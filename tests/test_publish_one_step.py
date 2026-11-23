@@ -7,8 +7,6 @@
 
 각 테스트는 그 엇갈림을 조건 대기로 세운다(sleep 없음): 첫째 스레드가 뜬 뒤 붙들린 사이 둘째가 상태를 바꿔 새 값을
 내려 한다.
-
-``[한 걸음에서 바뀜]`` 표지가 붙은 테스트는 그 자리가 아직 묶이지 않은 지금 값이다 — 그 자리를 고치는 커밋에서 뒤집힌다.
 """
 
 from __future__ import annotations
@@ -22,29 +20,6 @@ from tests.test_agents_live import (
     renderer,  # noqa: F401
     wait_until,
 )
-
-
-class Overlap:
-    """묶이지 않은 자리의 엇갈림 — 첫째 스레드를 "뜬 뒤" 에 붙들고, 둘째가 새 값을 다 낸 뒤 놓는다."""
-
-    def __init__(self):
-        self.first_read = threading.Event()
-        self.second_done = threading.Event()
-
-    def hold_first(self) -> None:
-        """뜨는 함수 안에서 부른다 — 첫째 스레드면 붙든다."""
-        if threading.current_thread().name == "first":
-            self.first_read.set()
-            assert self.second_done.wait(10)
-
-    def run(self, first, second) -> None:
-        t = threading.Thread(target=first, name="first")
-        t.start()
-        assert self.first_read.wait(10)
-        second()  # 상태를 바꾸고 새 값을 낸다
-        self.second_done.set()
-        t.join(10)
-        assert not t.is_alive()
 
 
 class Step:
@@ -106,13 +81,15 @@ def test_the_roster_shown_last_is_the_newest(tmp_path, renderer, monkeypatch):  
         reg.shutdown_all()
 
 
-def test_an_older_queue_overwrites_a_newer_one(monkeypatch):
-    """[한 걸음에서 바뀜] 대기열 — 먼저 뜬 대기열이 나중에 나가, 이미 꺼낸 말이 입력창 위에 남는다."""
+def test_the_queue_shown_last_is_the_newest(monkeypatch):
+    """대기열 — 한 알림이 대기열을 뜬 뒤 내기 전에 펌프가 그 말을 꺼내도, 마지막에 나간 대기열이 지금의 것이다.
+    종전엔 이미 꺼낸 말이 입력창 위에 남았다."""
     r = WebRenderer()
     server = WebServer(r, token="t")
     server.enqueue("c1", "hi")
-    ov, real = Overlap(), server.queue_snapshot
+    ov, real = OneStep(), server.queue_snapshot
+    server._queue_step = ov.step
     monkeypatch.setattr(server, "queue_snapshot", lambda: (real(), ov.hold_first())[0])
     ov.run(server.broadcast_queue, lambda: server.main_input.wait_to_open(0))
     assert real() == []
-    assert [i["text"] for i in r.hub.sticky_payload("queue")["pending"]] == ["hi"]
+    assert r.hub.sticky_payload("queue")["pending"] == []
