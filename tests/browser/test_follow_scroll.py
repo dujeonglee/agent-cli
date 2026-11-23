@@ -242,9 +242,9 @@ class TestNewCountInsideARunBlock:
         for n in range(cards):
             stack.renderer.observation(f"step {n}", n, "shell")
 
-    def test_cards_arriving_inside_the_block_are_not_counted(self, stack, page):
-        """[따라가기 수정에서 바뀜] 위로 올려 읽는 동안 런 블록 몸통에 붙은 카드는 "↓ n new" 에 세지 않는다 —
-        `#messages` 의 직계 자식만 세기 때문이다."""
+    def test_cards_arriving_inside_the_block_are_counted(self, stack, page):
+        """위로 올려 읽는 동안 보고 있는 채널에 붙은 카드를 센다 — 런 블록 몸통 안에 붙어도. 다른 채널의 블록에 붙은
+        것은 세지 않는다. 종전엔 `#messages` 의 직계 자식만 세어, 에이전트 채널에서는 단추가 뜨지 않았다."""
         stack.emit_ready()
         stack.renderer.agent_roster(
             [
@@ -265,4 +265,12 @@ class TestNewCountInsideARunBlock:
         for n in range(3):
             stack.renderer.observation(f"late {n}", 100 + n, "shell")
         assert _wait(lambda: body.locator("> .card").count() == 63)
-        assert page.locator("#jump-new").is_hidden()
+        jump = page.locator("#jump-new")
+        assert _wait(lambda: jump.is_visible() and jump.inner_text() == "↓ 3 new")
+        # 다른 채널의 블록에 붙는 카드 — 지금 화면에 없다
+        self._run_block(stack, self.OTHER, 2)
+        other = page.locator(f'.card-run[data-task-id="{self.OTHER}#r-1"] .run-body')
+        assert _wait(lambda: other.locator("> .card").count() == 2)
+        assert jump.inner_text() == "↓ 3 new"
+        jump.click()
+        assert _wait(lambda: _dist(page) < 2 and jump.is_hidden())

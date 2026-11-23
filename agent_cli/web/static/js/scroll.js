@@ -145,22 +145,27 @@ $messages.addEventListener("scroll", function () {
   }
 });
 
-// 규칙 1·3 — 카드가 붙을 때: 고정이면 따라가고(늦은 추가까지), 아니면
-// 보이는 카드만 센다(채널 필터가 `hidden` 으로 감춘 것은 제외 — 필터는
-// 추가와 같은 동기 구간에서 끝나고 이 콜백은 그 뒤 마이크로태스크다).
+// 규칙 1·3 — 내용이 붙을 때: 고정이면 따라가고(늦은 추가까지), 아니면 **보고 있는 채널에 새로 붙은, 보이는
+// 카드**를 센다 — 루트에 붙든 런 블록·스코프 카드 안에 붙든(에이전트 채널의 카드는 블록 몸통 안에 붙는다).
+// 채널 필터가 감춘 것은 `offsetParent` 가 없다(필터는 추가와 같은 동기 구간에서 끝나고 이 콜백은 그 뒤
+// 마이크로태스크다).
 new MutationObserver(function (records) {
   let added = 0;
+  let cards = 0;
   for (const rec of records)
-    for (const n of rec.addedNodes)
-      if (n.nodeType === 1 && !n.hidden) added++;
+    for (const n of rec.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      added++;
+      if (n.classList.contains("card") && n.offsetParent !== null) cards++;
+    }
   if (loading) return; // 재생 중엔 숨겨져 있다 — snapshot_end 가 한 번에 내린다
   if (pinned) {
     if (added) scheduleScroll();
-  } else if (added) {
-    _unseen += added;
+  } else if (cards) {
+    _unseen += cards;
     renderJump();
   }
-}).observe($messages, { childList: true });
+}).observe($messages, { childList: true, subtree: true });
 // 규칙 1·2 끝부분 — 창 크기·늦은 레이아웃(폰트·이미지)에도 바닥 유지.
 new ResizeObserver(function () {
   if (pinned) scheduleScroll();
