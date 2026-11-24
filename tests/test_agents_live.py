@@ -797,7 +797,7 @@ class TestWaitAndScope:
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        assert "(undelivered" not in reg.format_status()
+        assert "unread mail queued" not in reg.format_status()
         reg.deliver(
             "main",
             mail={"kind": "job", "success": True, "output": "job #1 finished"},
@@ -805,7 +805,10 @@ class TestWaitAndScope:
             author="job",
             expects_reply=False,
         )
-        assert reg.format_status().splitlines()[-1] == "(undelivered replies: 1)"
+        # 묻는 쪽과 상관없이 main 의 상자다. 1 이어도 낱말은 같다
+        assert reg.format_status().splitlines()[-1] == (
+            "(main has 1 unread mail queued — replies, requests or notices)"
+        )
         reg.shutdown_all()
 
     def test_state_vocabulary_contract(self):

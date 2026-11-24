@@ -2182,7 +2182,9 @@ class AgentRegistry:
             lines.append(line)
         undelivered = len(self._post.mail("main"))
         if undelivered:
-            lines.append(f"(undelivered replies: {undelivered})")
+            lines.append(
+                f"(main has {undelivered} unread mail queued — replies, requests or notices)"
+            )
         # 폴링 차단 넛지: 묻는 쪽(``viewer``)이 회신을 기다릴 때만 — 그 회신은 메일로 와서 깨우므로
         # `wait` 로 턴을 마치는 게 올바른 대기다(v10.65.0). 기다리는 회신이 없으면 "회신이 깨운다" 가 사실이 아니라
         # 붙이지 않는다(사람의 `@agents` 처럼 묻는 쪽이 없어도).
