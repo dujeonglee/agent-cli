@@ -1018,7 +1018,7 @@ class AgentRegistry:
         **meta,
     ) -> int:
         """런 끝의 **유일한** 정리 (v10.77.0) — 에이전트의 런과 main 펌프가
-        모두 여기로 온다. 처리한 빚 수를 돌려준다. `wait` 는 런을 끝내지 않는다(5c-1) — 여기 오지 않는다.
+        모두 여기로 온다. 처리한 빚 수를 돌려준다. 받아들여진 `wait` 는 런을 끝내지 않는다(5c-1) — 여기 오지 않는다.
 
         - ``stopped`` (정지로 끊김): 남은 빚을 버린다. 사람·모델의 정지(■·✕)는 런의 정리가
           먼저 빚진 상대 모두에게 회신했다(`answer_debts_as_stopped` — 여기 남는 것은 사람 주소의
@@ -2184,8 +2184,8 @@ class AgentRegistry:
         if undelivered:
             lines.append(f"(undelivered replies: {undelivered})")
         # 폴링 차단 넛지: 묻는 쪽(``viewer``)이 회신을 기다릴 때만 — 그 회신은 메일로 와서 깨우므로
-        # `wait` 로 턴을 마치는 게 올바른 대기다(v10.65.0). 기다리는 회신이 없으면 `wait` 는 거절되니 붙이지
-        # 않는다(사람의 `@agents` 처럼 묻는 쪽이 없어도).
+        # `wait` 로 턴을 마치는 게 올바른 대기다(v10.65.0). 기다리는 회신이 없으면 "회신이 깨운다" 가 사실이 아니라
+        # 붙이지 않는다(사람의 `@agents` 처럼 묻는 쪽이 없어도).
         if viewer and self.awaited_replies(viewer):
             lines.append(STATUS_WAIT_NUDGE)
         return "\n".join(lines)

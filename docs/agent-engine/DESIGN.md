@@ -93,9 +93,8 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
 - **갚은 요청의 런은 깨울 근거가 아니다 (v10.143.0, 사용자 결정).** 요청자 X 의 `wait` 가 깨울 근거를 셀 때, 에이전트의
   진행 중 런과 받은편지함은 X 의 요청 중 아직 회신이 가지 않은 것을 들고 있을 때만 근거다(v10.146.0 부터 `wake._holds_unpaid_request_from`
   — 항목 가운데 X 의 기다리는 회신(장부의 열린 r 줄)에 든 것; 빚으로 적히기 전 틈 포함). 이미 회신했거나 통지로 도는 런,
-  대기열의 통지는 X 에게 돌아올 것이 없다 — 남은 근거가 없으면 `wait` 는 거절된다("nothing would wake you: …" — v10.146.7 부터 뒤따르는 다음 걸음은 부른
-  쪽의 종류가 정한다(`LoopKind.wait_refused_next`): main 은 요청을 먼저 보내라, 상주는 `complete` 로 런을 끝내면
-  다음 메시지가 새 런을 연다, run 에이전트·하니스 작업은 일을 잇거나 끝내라).
+  대기열의 통지는 X 에게 돌아올 것이 없다 — 남은 근거가 없으면 X 가 갚지 않은 회신이 있을 때 `wait` 는 거절되고
+  (그 번호를 말한다), 없으면 받아들여져 X 의 작업 구간이 끝난다(5d — `docs/wait/DESIGN.md`).
   종전엔 회신을 먼저 읽은 main 의 `wait` 가 아직 내려오지 않은 run 을 근거로 런을 끝냈다(CI 실측).
 - **줄 선 내 요청의 받는 쪽은 "queued" 다 — main 도, 기다리는 중이어도 (5c-2 C).** 관계 "queued" 는 장부의 줄 선 r 줄
   (`WakeFacts.queued` — `(받는 쪽, 요청자)`)에서 읽는다: 그 봉투가 받는 쪽을 깨우므로 받는 쪽이 일하든 제자리에서

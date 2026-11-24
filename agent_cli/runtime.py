@@ -30,7 +30,6 @@ from typing import Any
 
 from agent_cli.constants import RESTART_NOTICE, schedule_addr
 from agent_cli.loop.kind import (
-    WAIT_NEXT_MAIN,
     LoopKind,
     PromptProfile,
     Start,
@@ -830,10 +829,6 @@ class MainLoop(LoopKind):
     def session_ended(self) -> bool:
         """main 상자가 닫혔는가(`MainInput.closed`) — 세션이 끝나는 중이다(5e1)."""
         return bool(self._session_closed is not None and self._session_closed())
-
-    def wait_refused_next(self) -> str:
-        """main 은 요청을 보내야 회신이 온다 — 깨울 것이 없으면 그 길을 말한다."""
-        return WAIT_NEXT_MAIN
 
     def intake(self) -> list[dict]:
         """main 상자의 줄 선 것 전부 — 도착 순서(사람의 말의 라우팅은 엔진, ``mailbox.take``)."""

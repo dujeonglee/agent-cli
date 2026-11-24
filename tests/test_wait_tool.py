@@ -420,7 +420,7 @@ class TestWaitStaysInTheRun:
             in accepted[0]
         )
 
-    def test_nothing_pending_is_refused_and_the_run_goes_on(self, tmp_path):
+    def test_nothing_pending_ends_the_run_without_pre_wait(self, tmp_path):
         set_job_registry(None)
         runner, hook_log = _recording_hooks(tmp_path)
         loop = make_loop(
@@ -438,14 +438,15 @@ class TestWaitStaysInTheRun:
             dialect=get_dialect("json_fc"),
         )
         res = loop.run()
-        assert res.success and res.output == "ok"
-        assert not hook_log.exists()  # 거절된 `wait` 에서는 `PreWait` 가 불리지 않는다
+        # 깨울 것도 빚도 없다 — 받아들여 빈 결과의 성공으로 끝난다(5d). 기다리지 않으므로 `PreWait` 는 불리지 않는다
+        assert (res.success, res.output) == (True, "")
+        assert not hook_log.exists()
         obs = [
             m["content"]
             for m in loop.messages
-            if m["role"] == "user" and "wait refused" in str(m.get("content"))
+            if m["role"] == "user" and "nothing to wait for" in str(m.get("content"))
         ]
-        assert obs and "nothing would wake you" in obs[0]
+        assert len(obs) == 1
 
     def test_agent_activity_counts_only_for_its_requester(self, tmp_path):
         """세션 전체 `has_agent_work` 로 보면 상주 에이전트 자신이 busy 라 늘 참이다

@@ -1,14 +1,28 @@
 """`wait` 가 모델에게 말하는 문장 — 한 곳 (5b).
 
-거절(이미 도착·서로 기다림)과 기다림이 깨진 까닭을 짓는 함수들이다. 판정은 하지 않는다 — 부르는 쪽
-(`dispatch._op_wait`)이 판정한 사실을 받아 글로만 바꾼다. `constants` 의 낱말 말고는 기대는 것이 없어, 문장만
-다른 비교 트리를 만들 때 이 파일 하나를 바꾸면 된다. 깨울 것이 없을 때의 거절과 그 끝맺음(`WAIT_NOTHING_PENDING`·
-`WAIT_NEXT_*`)은 아직 `loop/kind.py` 에 있다 — 5d 에서 끝맺음을 하나로 줄일 때 이리 옮긴다.
+거절(이미 도착·서로 기다림·갚지 않은 회신)과 기다릴 것 없는 끝, 기다림이 깨진 까닭을 짓는 함수들이다. 판정은 하지
+않는다 — 부르는 쪽(`dispatch._op_wait`)이 판정한 사실을 받아 글로만 바꾼다. `constants` 의 낱말 말고는 기대는 것이
+없어, 문장만 다른 비교 트리를 만들 때 이 파일 하나를 바꾸면 된다.
 """
 
 from __future__ import annotations
 
 from agent_cli.constants import ARRIVAL_NOTICE, ARRIVAL_USER, SCHEDULE_ADDR_PREFIX
+
+#: 깨울 것도 갚지 않은 회신도 없는 `wait` — 받아들이고 작업 구간을 끝낸다(5d). 기록에 남아 다음 작업 구간의 모델이 읽는다.
+#: 누구에게나 한 문장이다
+NOTHING_TO_WAIT_FOR = (
+    "nothing to wait for: no job or monitor of yours is running, no agent owes you "
+    "a reply, and you owe none. This run has ended."
+)
+
+
+def owed_refusal(owed_ids: list[str]) -> str:
+    """깨울 것이 없는데 갚지 않은 회신이 있다 — 그 id 를 말한다(되묻기의 ``[r-…]`` 와 같은 번호)."""
+    return (
+        "nothing would wake you, and you still owe a `reply` "
+        f"[{', '.join(owed_ids)}]. Reply first, or keep working."
+    )
 
 
 def mutual_wait_refusal(parked: list[str], owed_ids: list[str]) -> str:

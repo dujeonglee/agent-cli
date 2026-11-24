@@ -587,7 +587,7 @@ class _ConsoleSurface:
         if not result.success:
             return  # 파일은 안 쓰고, 사슬 상태도 그대로
         _write_result_file(self._result_file, result.output)
-        # `wait` 는 런을 끝내지 않는다(5c-1) — 기다림 뒤의 답은 같은 런의 결과다. 작업을 남긴 채 끝난 런만 사슬을 잇는다.
+        # 받아들여진 `wait` 는 런을 끝내지 않는다(5c-1) — 기다림 뒤의 답은 같은 런의 결과다. 작업을 남긴 채 끝난 런만 사슬을 잇는다.
         self._continuing = self._used_jobs()
 
     def _used_jobs(self) -> bool:
