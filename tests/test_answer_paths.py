@@ -12,6 +12,7 @@ import io
 import json
 import select
 import threading
+from types import SimpleNamespace
 
 import pytest
 from rich.console import Console
@@ -24,8 +25,10 @@ from agent_cli.command_table import command_kind
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop.dispatch import ASK_REFUSED_NOBODY_CAN_ANSWER
 from agent_cli.main_input import MainInput
+from agent_cli.pump import QuietPolicy
 from agent_cli.render.base import interactive_lock
 from agent_cli.render.minimal import MinimalRenderer
+from agent_cli.runtime import session_has_live_work, session_is_busy
 from tests.oracle.driver import Provider, Session, call, closing_ids, until
 from tests.pump_support import FakeSurface, make_pump
 from tests.test_agent_questions import _run_scripted, spawn_idle
@@ -232,8 +235,15 @@ class TestAnswerCommand:
         assert _dispatch("/questions", reg).lines == [("no open questions", True)]
 
 
-def test_plain_words_on_the_web_go_to_main_and_the_question_stays_open(tmp_path):
+def test_plain_words_on_the_web_go_to_main_and_the_question_stays_open(
+    tmp_path, monkeypatch
+):
     """열린 에이전트 질문이 있어도 웹 채팅 칸의 보통의 말은 main 의 요청이다 — 질문의 답이 되지 않는다."""
+    monkeypatch.chdir(
+        tmp_path
+    )  # 세션 조립이 작업 폴더에 무엇을 만들든 저장소 밖에서 — 오라클 드라이버와 같다
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("AGENT_CLI_SNAPSHOT", "0")
     read: list[str] = []
 
     def main_reads(messages):
@@ -409,3 +419,67 @@ def test_only_run_wires_the_idle_read():
     assert src.count("wire_session(") == 2
     assert src.count("on_idle_input=") == 1
     assert "on_idle_input=lambda t: read_terminal_line(main_input, t)" in src
+
+
+# ── 열린 사람 질문은 세션의 할 일 ───────────────────────────
+
+
+class TestOpenQuestionsKeepTheSession:
+    """답이 올 수 있는 세션만 질문이 열린다(①) — 그래서 열린 질문은 조건 없이 할 일이다. `run` 은 그것만 남으면 끝나지
+    않고 대기 알림을 한 번 찍는다."""
+
+    def _policy(self, qs, work, seen):
+        reg = SimpleNamespace(
+            has_agent_work=lambda: work[0], open_human_questions=lambda: list(qs)
+        )
+        return QuietPolicy(
+            main_input=MainInput(), agent_registry=reg, on_wait=seen.append
+        )
+
+    def test_the_wait_notice_comes_once_per_wait(self):
+        qs, work, seen = [], [False], []
+        policy = self._policy(qs, work, seen)
+        steps = []
+
+        def judge():
+            steps.append((policy.should_stop(), list(seen)))
+
+        judge()  # 질문 없음
+        qs.append("q-3")
+        judge()  # 질문만 남음 — 한 번
+        judge()  # 같은 대기
+        qs.append("q-5")
+        judge()  # 같은 대기 중 질문이 늘었다 — 다시 찍지 않는다
+        work[0] = True
+        judge()  # 답이 와 묻는 쪽이 일한다
+        work[0] = False
+        judge()  # 다시 질문만 — 새 대기
+        qs.clear()
+        judge()  # 질문이 다 닫혔다
+        assert steps == [
+            (True, []),
+            (False, ["questions"]),
+            (False, ["questions"]),
+            (False, ["questions"]),
+            (False, ["questions"]),
+            (False, ["questions", "questions"]),
+            (True, ["questions", "questions"]),
+        ]
+
+    def test_the_wait_notice_names_every_open_question(self, reg):
+        key = spawn_idle(reg)
+        q1 = _open_question(reg, key, "first?")
+        q2 = _open_question(reg, key, "second?")
+        assert M._questions_wait_notice(reg) == (
+            f"❓ Waiting for your answer to {q1}, {q2} — type /answer <q-N> <text>, "
+            "or press Ctrl-C to quit."
+        )
+
+    def test_an_open_question_is_live_work_and_a_killed_askers_is_not(self, reg):
+        key = spawn_idle(reg)
+        _open_question(reg, key)
+        assert session_has_live_work(post=reg._post, agent_registry=reg)
+        assert not session_is_busy(post=reg._post, agent_registry=reg)
+        assert reg.kill(key) == ""
+        assert reg.open_human_questions() == []
+        assert not session_has_live_work(post=reg._post, agent_registry=reg)

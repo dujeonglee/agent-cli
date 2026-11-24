@@ -48,7 +48,8 @@ TABLE = {
     "agent_backlog": (False, True),
     "agent_quiet": (True, False),
     "dead_backlog": (True, False),
-    "human_question": (True, True),
+    # [6c] run 도 센다 — 종전 run 은 답할 길이 없어 세지 않았다
+    "human_question": (False, True),
     "monitor": (False, True),
     "job": (False, True),
     "schedule": (False, True),

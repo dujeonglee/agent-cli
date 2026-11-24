@@ -1834,6 +1834,9 @@ class TestRunMessagePump:
         def has_agent_work(self):
             return self.busy
 
+        def open_human_questions(self):
+            return []
+
         def set_current_run_authors(self, authors):
             pass
 

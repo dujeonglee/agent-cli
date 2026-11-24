@@ -694,6 +694,15 @@ def close_session(
     )
 
 
+def session_is_busy(*, post, agent_registry=None) -> bool:
+    """세션이 일하는 중인가 — main 상자에 깨우는 봉투(사람의 말·깨우는 메일)가 있거나 에이전트 몫이 있다
+    (`AgentRegistry.has_agent_work`). 기다림(질문·모니터·감사·작업·예약)이 아니다. `session_has_live_work` 의 앞
+    두 항이고, `run` 의 대기 알림(`pump.QuietPolicy`)이 "일이 아니라 기다림인가" 를 이것으로 가른다."""
+    if post.arrived("main", waking_only=True, words=True):
+        return True
+    return agent_registry is not None and agent_registry.has_agent_work()
+
+
 def session_has_live_work(
     *,
     post,
@@ -706,20 +715,21 @@ def session_has_live_work(
     """세션이 아직 할 일을 들고 있는가 — **판정 하나** (v10.32.1, 5b-1 에서 에이전트·main 상자 항까지).
 
     `run` 의 끝(`pump.QuietPolicy.should_stop`)과 `web` 의 한가함 정리(`main.web_instance_is_active`)가 같은 항을
-    이 함수로 본다. 호스트마다 다른 것은 호스트 항뿐이다(웹: 접속한 뷰어·바쁜 main 워커·열린 사람 질문 —
-    사람의 답은 웹에서만 온다, `run` 이 세면 끝나지 않는다).
+    이 함수로 본다. 호스트마다 다른 것은 호스트 항뿐이다(웹: 접속한 뷰어·바쁜 main 워커).
 
     - main 상자에 깨우는 봉투 — 사람의 말과 깨우는 메일(``post`` 는 main 의 입력 큐와 레지스트리가 쓰는 창구).
       깨우지 않는 메일("Stop everything" 의 정지 회신)은 일이 아니다 — 남아 있어도 끝나고, 세션이 끝나면 버려진다.
     - 에이전트 몫(`AgentRegistry.has_agent_work` — 일하는 중이거나 할 일이 쌓였다). 레지스트리는 웹 부트스트랩이
       늦게 채워 None 일 수 있다.
+    - 사람에게 물은 열린 질문(6c) — 답이 올 수 없는 세션에서는 `ask` 가 거절되어 질문이 열리지 않으므로, 열린 질문은
+      곧 답이 올 수 있는 질문이다. 묻는 쪽이 영구히 끝나면 질문이 닫힌다(`AgentRegistry._purge_questions_for`).
     - 살아 있는 모니터·진행 중인 하니스 작업(감사 — 결과를 main 메일함에 넣어야 끝난다, v10.42.0)·돌고 있는
       백그라운드 작업(v10.47.0)·켜진 예약. 종전엔 이 항이 붙을 때마다 두 곳에 한 줄씩 넣어야 했고, 초판 모니터는
       web 쪽을 빠뜨려 뷰어 없는 인스턴스가 살아 있는 모니터를 데리고 자기를 거뒀다.
     """
-    if post.arrived("main", waking_only=True, words=True):
+    if session_is_busy(post=post, agent_registry=agent_registry):
         return True
-    if agent_registry is not None and agent_registry.has_agent_work():
+    if agent_registry is not None and agent_registry.open_human_questions():
         return True
     if monitors is not None and monitors.has_active_work():
         return True

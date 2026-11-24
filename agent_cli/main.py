@@ -2153,6 +2153,8 @@ def run(
                     if kind == "monitors"
                     else _HARNESS_WAIT_NOTICE
                     if kind == "harness"
+                    else _questions_wait_notice(owners.agent_registry)
+                    if kind == "questions"
                     else _schedule_wait_notice(stores.schedules)
                 )
                 + "[/]"
@@ -2244,8 +2246,8 @@ def web_instance_is_active(
     ∨ 열린 사람 질문 ∨ main 앞 깨우는 봉투(사람의 말·깨우는 메일) ∨ **살아 있는 모니터**
     ∨ **켜진 예약** (v10.12.0 — 예약이 있으면 "유지" 처럼 꺼지지 않는다).
     ``agent_registry`` 는 web() 의 worker 부트스트랩이 늦게 채우는 nonlocal
-    이라 None 허용. 세션 판정은 run 과 같은 하나(`runtime.session_has_live_work`), 웹만의 항은 접속한 뷰어·바쁜
-    main 워커·열린 사람 질문이다.
+    이라 None 허용. 세션 판정은 run 과 같은 하나(`runtime.session_has_live_work` — 열린 사람 질문도 거기 있다, 6c),
+    웹만의 항은 접속한 뷰어·바쁜 main 워커다.
 
     ``monitors`` (v9.11.0): 설계 초판은 "web 은 무한 대기라 수명 문제는 run
     에만 해당"이라고 봤는데 **틀렸다** — board 가 띄운 인스턴스는 뷰어가 없으면
@@ -2257,10 +2259,6 @@ def web_instance_is_active(
     return bool(
         renderer.hub.has_live_connections()
         or renderer.worker_is_busy()
-        # 사람에게 물은 질문은 답이 올 때까지 열려 있고 상한도 없다 — 답은 웹에서만 온다(`answer_question`).
-        # 세지 않으면 질문을 든 세션을 한가함 정리가 걷는다 — 재시작은 질문을 되살리지 않는다(5c-0).
-        # run 은 답할 길이 없어 세지 않는다 — 세면 끝나지 않는다.
-        or bool(agent_registry is not None and agent_registry.open_human_questions())
         or session_has_live_work(
             post=server.main_input.post,
             agent_registry=agent_registry,
@@ -2339,6 +2337,12 @@ def _previous_monitors_notice(session_dir) -> str:
 
 
 _HARNESS_WAIT_NOTICE = "🔎 Waiting for the audit to finish — its result goes to main, and the process exits when that run ends"
+
+
+def _questions_wait_notice(registry) -> str:
+    """`run` 이 열린 사람 질문 때문에 끝나지 않고 기다릴 때의 한 줄(6c) — 번호·답하는 법·끝내는 법."""
+    ids = ", ".join(q.id for q in registry.open_human_questions())
+    return f"❓ Waiting for your answer to {ids} — type /answer <q-N> <text>, or press Ctrl-C to quit."
 
 
 def _auditor_boot_line(auditor) -> str:

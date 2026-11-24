@@ -209,17 +209,18 @@ def _policy(on: set[str], announced: list):
     ids=lambda on: "+".join(sorted(on)) or "nothing",
 )
 def test_run_stops_only_when_every_term_is_quiet(on):
-    """run: 어느 항이든 켜져 있으면 끝나지 않는다 — 열린 사람 질문만은 run 의 항이 아니다(답할 길이 웹뿐이라 세면
-    끝나지 않는다, 5b-1). 에이전트·main 상자가 조용할 때 남은 하니스 쪽 항은 종류 하나를 한 번 알린다 — 작업 >
-    모니터 > 감사 > 예약 순."""
+    """run: 어느 항이든 켜져 있으면 끝나지 않는다 — 열린 사람 질문도 run 의 항이다(6c — 종전엔 답할 길이 웹뿐이라
+    세지 않았다). 에이전트·main 상자가 조용할 때 남은 기다림은 종류 하나를 한 번 알린다 — 작업 > 모니터 > 감사 >
+    질문 > 예약 순."""
     announced: list = []
     policy = _policy(on, announced)
-    live = on - {"question"}
-    assert policy.should_stop() is (not live)
+    assert policy.should_stop() is (not on)
     policy.should_stop()  # 같은 종류는 다시 알리지 않는다
-    harness_side = [t for t in ("jobs", "monitors", "harness", "schedules") if t in on]
-    if live and not ({"agents", "queue"} & on):
-        assert announced == [harness_side[0]]
+    waits = [
+        t for t in ("jobs", "monitors", "harness", "question", "schedules") if t in on
+    ]
+    if on and not ({"agents", "queue"} & on):
+        assert announced == [waits[0].replace("question", "questions")]
     else:
         assert announced == []
 

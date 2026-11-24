@@ -78,11 +78,11 @@ class QuietPolicy:
         self._announced: str | None = None  # 지금 알린 대기의 종류
 
     def should_stop(self) -> bool:
-        from agent_cli.runtime import session_has_live_work
+        from agent_cli.runtime import session_has_live_work, session_is_busy
 
         post = self.main_input.post
-        # main 상자·에이전트에 일이 있으면 기다림이 아니다 — 알리지 않는다(같은 판정의 앞 두 항만)
-        if session_has_live_work(post=post, agent_registry=self.agent_registry):
+        # main 상자·에이전트에 일이 있으면 기다림이 아니다 — 알리지 않는다(같은 판정의 앞 두 항)
+        if session_is_busy(post=post, agent_registry=self.agent_registry):
             self._announced = None
             return False
         if not session_has_live_work(
@@ -102,6 +102,11 @@ class QuietPolicy:
             kind = "monitors"
         elif self.harness is not None and self.harness.in_flight:
             kind = "harness"
+        elif (
+            self.agent_registry is not None
+            and self.agent_registry.open_human_questions()
+        ):
+            kind = "questions"
         else:
             kind = "schedules"
         if self._announced != kind:

@@ -383,7 +383,9 @@ class TestLifetime:
         waits = []
         policy = QuietPolicy(
             main_input=MainInput(),
-            agent_registry=SimpleNamespace(has_agent_work=lambda: False),
+            agent_registry=SimpleNamespace(
+                has_agent_work=lambda: False, open_human_questions=list
+            ),
             jobs=reg,
             on_wait=waits.append,
         )

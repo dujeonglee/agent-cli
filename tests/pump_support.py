@@ -64,6 +64,9 @@ class FakeRegistry:
     def has_agent_work(self):
         return False
 
+    def open_human_questions(self):
+        return []
+
     def set_current_run_authors(self, authors):
         self.authors.append(list(authors))
 
