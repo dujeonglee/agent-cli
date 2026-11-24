@@ -2167,6 +2167,8 @@ def run(
             on_mail_notice=_agent_mail_notice,
             # 대기 중에 친 명령(`/stop` 등)은 그 자리에서 라우팅한다
             on_wait_input=_terminal_steer_input(main_input, surface),
+            # 한가한 동안에도 친 줄을 읽는다 — main 이 결과를 낸 뒤에도 `/answer`·새 말을 받는다(6c)
+            on_idle_input=lambda t: read_terminal_line(main_input, t),
         )
 
         agent_registry = owners.agent_registry
@@ -2418,7 +2420,8 @@ def read_terminal_line(main_input, timeout: float) -> bool | None:
     읽지 않는 때: 표준입력이 터미널이 아니다("친 줄을 읽을 수 있나" 의 판정은 여기 하나 — 파이프·하니스) · 프롬프트
     (`ask`·확인 대화)가 표준입력을 쥐고 있다 — 그 읽기와 같은 잠금(`interactive_lock`, `Renderer._guarded_read`)을 못
     잡으면 그 줄은 프롬프트의 것이다 · 표준입력을 고를 수 없다. 넣은 줄은 들어오는 문(`MainInput.enqueue`)이 명령인가를
-    판정한다 — 명령이 아닌 말은 언제나 main 의 요청이다(열린 질문의 답으로 짐작하지 않는다)."""
+    판정한다 — 명령이 아닌 말은 언제나 main 의 요청이다(열린 질문의 답으로 짐작하지 않는다). 부르는 자리는 둘이다:
+    main 의 제자리 대기(`_terminal_steer_input`)와 `run` 이 한가한 동안(`pump.MainActor.take`)."""
     if not sys.stdin.isatty() or not interactive_lock.acquire(blocking=False):
         return None
     try:

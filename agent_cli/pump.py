@@ -161,6 +161,9 @@ class PumpDeps:
     #: 세션 감사자 (v10.42.0, `runtime.SessionAuditor`) — main 의 사용자 런이
     #: 끝날 때마다 그 런의 history 구간을 감사 요청으로 보낸다. None = 꺼짐.
     auditor: Any = None
+    #: 한가한 동안 터미널에서 친 한 줄을 main 앞에 넣는 법 ``(timeout) -> bool | None`` — run 만(6c,
+    #: `main.read_terminal_line`, 읽지 않았으면 None). 넣은 줄은 이 차례의 `take` 가 꺼낸다(명령이면 `open` 이 라우팅).
+    read_terminal: Callable[[float], bool | None] | None = None
 
 
 class MainActor:
@@ -203,7 +206,11 @@ class MainActor:
     def take(self, timeout: float | None):
         """사람의 말과 메일이 같은 상자·같은 조건변수 — 판정과 대기가 한 락이라 그 사이 온 것을 놓치지 않는다. 런을 연
         봉투 하나(도착 순서 — ``{"message": 항목}`` 또는 ``{"mail": …}``), `CLOSED`, 또는 None(시한 — 한가함은 그대로:
-        끄면 그 사이 온 메일이 "바쁨" 으로 보인다)."""
+        끄면 그 사이 온 메일이 "바쁨" 으로 보인다). 터미널을 읽는 표면(run)이면 시한의 반은 터미널, 반은 상자다 —
+        읽지 않았으면(터미널 아님·프롬프트가 쥠) 다 상자다."""
+        read = self.deps.read_terminal
+        if read is not None and timeout is not None and read(timeout / 2) is not None:
+            timeout = timeout / 2
         return self.deps.main_input.wait_to_open(timeout=timeout)
 
     def open(self, got):

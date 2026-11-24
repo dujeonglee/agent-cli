@@ -601,6 +601,7 @@ def wire_session(
     policy,
     on_mail_notice=None,
     on_wait_input=None,
+    on_idle_input=None,
 ) -> WiredSession:
     """메일 복원·자동 스폰(`wire_agent_mail`) → `MainLoop` → `MainActor` → 예약 스레드.
     **소비자를 다 세운 뒤에 생산자를 켠다** 가 이 함수 하나에서 보장된다 — 도중에
@@ -655,6 +656,7 @@ def wire_session(
             surface=surface,
             auditor=owners.auditor,
             policy=policy,
+            read_terminal=on_idle_input,
         )
     )
     # 첫 정산이 꺼져 있던 동안 지난 발화를 질문으로 남긴다. 펌프가 돌기 전에 발화한

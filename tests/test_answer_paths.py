@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import inspect
 import io
 import json
 import select
@@ -26,6 +27,7 @@ from agent_cli.main_input import MainInput
 from agent_cli.render.base import interactive_lock
 from agent_cli.render.minimal import MinimalRenderer
 from tests.oracle.driver import Provider, Session, call, closing_ids, until
+from tests.pump_support import FakeSurface, make_pump
 from tests.test_agent_questions import _run_scripted, spawn_idle
 from tests.test_agents_live import _RecordingRunner, make_registry, wait_until
 
@@ -347,3 +349,63 @@ class TestReadTerminalLine:
         monkeypatch.setattr(M.sys, "stdin", io.StringIO("hello\n"))
         assert M.read_terminal_line(q, 0) is None
         assert q.snapshot() == []
+
+
+# ── `run` 이 한가한 동안의 터미널 읽기 ─────────────────────────
+
+
+class TestIdleTerminalRead:
+    """main 이 결과를 낸 뒤에도 `run` 은 친 줄을 읽는다 — 보통의 말은 main 의 새 요청, `/answer` 는 명령."""
+
+    def _actor(self, q, surface=None, read=None):
+        return make_pump(
+            main_input=q,
+            run_main=lambda start: None,
+            surface=surface,
+            read_terminal=read
+            if read is not None
+            else (lambda t: M.read_terminal_line(q, t)),
+        )
+
+    def test_plain_words_open_main_work_and_the_question_stays_open(
+        self, reg, monkeypatch
+    ):
+        key = spawn_idle(reg)
+        qid = _open_question(reg, key)
+        q, _, _ = _steer(monkeypatch, "use src/util\n")
+        got = self._actor(q).take(0.5)
+        assert got["message"]["text"] == "use src/util"
+        assert not got["message"].get("command")
+        assert [x.id for x in reg.open_human_questions()] == [qid]
+
+    def test_a_typed_answer_is_routed_as_a_command(self, monkeypatch):
+        q, _, _ = _steer(monkeypatch, "/answer q-3 use src/util\n")
+        surface = FakeSurface(routed={"/answer q-3 use src/util"})
+        actor = self._actor(q, surface=surface)
+        got = actor.take(0.5)
+        assert got["message"]["command"] is True
+        assert actor.open(got) is None  # 런을 열지 않는다
+        assert ("route", "/answer q-3 use src/util") in surface.calls
+
+    def test_when_nothing_is_read_the_whole_wait_goes_to_the_box(self, monkeypatch):
+        q = MainInput()
+        waited: list = []
+        monkeypatch.setattr(q, "wait_to_open", lambda timeout: waited.append(timeout))
+        self._actor(q, read=lambda t: None).take(0.5)
+        assert waited == [0.5]
+
+    def test_after_reading_the_rest_of_the_wait_goes_to_the_box(self, monkeypatch):
+        q = MainInput()
+        waited: list = []
+        monkeypatch.setattr(q, "wait_to_open", lambda timeout: waited.append(timeout))
+        self._actor(q, read=lambda t: False).take(0.5)
+        assert waited == [0.25]
+
+
+def test_only_run_wires_the_idle_read():
+    """조립: 한가한 동안 읽기를 거는 곳은 run 의 `wire_session` 하나다 — 웹(두 번째 `wire_session`)은 걸지 않는다(조립
+    함수는 호스트를 모른다). `run`·`web` 은 typer 데코레이터에 싸여 있어 모듈 원문으로 센다."""
+    src = inspect.getsource(M)
+    assert src.count("wire_session(") == 2
+    assert src.count("on_idle_input=") == 1
+    assert "on_idle_input=lambda t: read_terminal_line(main_input, t)" in src
