@@ -242,6 +242,27 @@ class TestScenes:
         assert s.audited == 1
         assert s.file is None and s.surface.exit_code == 1
 
+    def test_query_segment_that_ends_on_nothing_to_wait_for_is_an_empty_answer(
+        self, tmp_path
+    ):
+        """질의 구간이 답하지 않고 빚도 깨울 것도 없는 `wait` 로 끝났다(5d) — 빈 결과의 성공이고 질의 번호를 들었다.
+        감사는 돌고, 결과 파일은 없고, 종료 0(빈 답). 판정은 "든 번호" 하나 — 끝 모양을 보지 않는다."""
+        s = Session(tmp_path)
+        script = Script(call("wait"), call("complete", result="four"))
+        result = s.segment(script)
+        assert (result.success, result.output) == (True, "")
+        assert result.human_requests == (QUERY,) and script.calls == 1
+        assert s.audited == 1
+        assert s.file is None and s.surface.exit_code == 0
+
+    def test_mail_segment_that_ends_on_nothing_to_wait_for_is_not_judged(
+        self, tmp_path
+    ):
+        s = Session(tmp_path)
+        result = s.segment(Script(call("wait")), opener="mail")
+        assert (result.success, result.output, result.human_requests) == (True, "", ())
+        assert s.audited == 0 and s.file is None and s.surface.exit_code == 1
+
     def test_a_stopped_segment_still_says_what_it_held(self, tmp_path):
         """어떻게 끝났든 칸은 실린다 — 정지로 끝난 작업 구간."""
         stop = threading.Event()
