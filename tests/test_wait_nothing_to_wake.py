@@ -205,5 +205,6 @@ class TestRunAgent:
 
 def test_wait_description_ends_with_what_happens_when_nothing_wakes():
     assert WaitTool.description.endswith(
-        "Refused when nothing will wake you: then keep working, or call `complete`."
+        "When nothing will wake you: refused while you still owe a `reply`; with nothing "
+        "owed, the run ends."
     )
