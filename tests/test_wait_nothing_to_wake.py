@@ -243,6 +243,22 @@ class TestJudgment:
         assert _wait_observations(loop) == [owed("r-7", "r-9"), NOTHING_TO_WAIT_FOR]
         assert (result.success, result.output) == (True, "")
 
+    def test_an_open_notice_is_not_owed(self, reg):
+        """통지 항목(n-)은 닫지 않은 것에 들지 않는다 — 답을 빚진 것이 아니다(작업 구간 끝으로 닫힌다)."""
+        mail = [{"mail": {"kind": "job", "success": True, "output": "job #1 finished"}}]
+
+        def take() -> list:
+            items = list(mail)
+            mail.clear()
+            return items
+
+        p = _provider(WAIT, {"action": "complete", "result": "unused"})
+        loop, result = _run(make_ports(inbox=take, agent_registry=reg), p, rid="")
+        # 그 통지는 장부에 열린 채다 — 그래도 끝난다
+        assert [str(r["id"])[:2] for r in loop._state.ledger.requests] == ["n-"]
+        assert _wait_observations(loop) == [NOTHING_TO_WAIT_FOR]
+        assert (result.success, result.output) == (True, "")
+
     def test_a_harness_job_with_nothing_owed(self, reg):
         """하니스 작업도 같은 규칙이다(결정 5) — 빈 결과로 끝난다."""
         p = _provider(WAIT, {"action": "complete", "result": "done"})

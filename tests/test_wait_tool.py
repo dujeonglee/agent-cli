@@ -420,6 +420,27 @@ class TestWaitStaysInTheRun:
             in accepted[0]
         )
 
+    def test_nothing_pending_and_nothing_open_ends_without_pre_wait(self, tmp_path):
+        """깨울 것도 닫지 않은 것도 없다 — 받아들여 끝난다(5d). 기다리지 않으므로 `PreWait` 는 불리지 않는다."""
+        set_job_registry(None)
+        runner, hook_log = _recording_hooks(tmp_path)
+        loop = make_loop(
+            ports=make_ports(inbox=queue_inbox(lambda: None), hook_runner=runner),
+            query="Q",
+            query_request_id="",
+            provider=_provider(
+                {"action": "wait"}, {"action": "complete", "result": "unused"}
+            ),
+            capabilities=ModelCapabilities(
+                context_window=32768, max_output_tokens=4096, supports_thinking=False
+            ),
+            model="m",
+            dialect=get_dialect("json_fc"),
+        )
+        res = loop.run()
+        assert (res.success, res.output) == (True, "")
+        assert not hook_log.exists()
+
     def test_nothing_pending_with_the_request_open_is_refused(self, tmp_path):
         set_job_registry(None)
         runner, hook_log = _recording_hooks(tmp_path)
