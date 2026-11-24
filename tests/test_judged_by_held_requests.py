@@ -259,7 +259,10 @@ class TestScenes:
         self, tmp_path
     ):
         s = Session(tmp_path)
-        result = s.segment(Script(call("wait")), opener="mail")
+        # 둘째 줄은 쓰이지 않는다 — 대본은 마지막 줄을 되풀이하므로 거절로 되돌아가면 `wait` 되풀이 대신 이 줄로 끝난다
+        result = s.segment(
+            Script(call("wait"), call("complete", result="x")), opener="mail"
+        )
         assert (result.success, result.output, result.human_requests) == (True, "", ())
         assert s.audited == 0 and s.file is None and s.surface.exit_code == 1
 

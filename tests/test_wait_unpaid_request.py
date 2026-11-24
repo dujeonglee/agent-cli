@@ -230,6 +230,9 @@ class TestMainSeesIt:
                     call("agent", mode="run", task="TASK-W find callers"),
                     main_wait_after_reply,
                     call("wait"),
+                    # 쓰이지 않는다 — 그 `wait` 가 구간을 끝낸다. 대본은 마지막 줄을 되풀이하므로, 판정이 거절로
+                    # 되돌아가면 이 줄로 끝나 아래 단언이 갈린다(`wait` 되풀이로 멈추지 않는다)
+                    complete_all("main finished"),
                 ],
                 "TASK-W": [agent_reply, agent_linger],
             }
