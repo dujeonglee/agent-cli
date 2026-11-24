@@ -57,7 +57,7 @@ class WebSurface:
         self._stop = event
         self._server.set_stop_handle(event)
 
-    def route(self, text: str, start=None, *, item: dict | None = None) -> bool:
+    def route(self, text: str, *, item: dict | None = None) -> bool:
         from agent_cli.command_table import IMAGES_NOT_TAKEN, command_takes_images
         from agent_cli.web.slash import WebDispatchOutput, handle_slash_command
 

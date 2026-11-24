@@ -90,7 +90,7 @@ class TestThreeWays:
     def test_pump_opened_turn(self, live):
         item = _item(f"@{live.key} look at this")
         start = MainLoop.start({"message": item}, threading.Event())
-        assert live.surface.route(start.query, start, item=item) is True
+        assert live.surface.route(start.query, item=item) is True
         assert wait_until(lambda: live.seen)
         assert live.seen[-1] == ("[user]: look at this", [REF])
 

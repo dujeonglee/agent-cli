@@ -27,7 +27,7 @@ StaleGuard Hint)은 `MainInput`(`agent_cli/main_input.py`)으로 창구(`agent_c
 (`WAKE_TEXT`·`WAKE_AUTHOR`)가 없어졌다. 펌프는 꺼낸 사람의 말(또는 깨우는 메일)을 `MainLoop.start(item, stop_event)`
 에 넘겨 엔진의 `Start` 를 짓는다 — 사람의 말이면 그 말이 시작(``author_is_user=True``, 작성자는 별명, 없으면 argv
 질의), 메일이면 시작 메시지가 없다(``author_is_user=False`` — 그 메일이 `Start.opening` 으로 가 첫 입력이 된다, 아래 5c-2 문단). 표면은 그 `Start` 를
-받는다: `echo(item)`(사람의 말로 연 때만), `route(text, start, item=)`(턴 경계·제자리 대기의 라우팅은 ``start`` 없음; ``item`` 은 그 글을 실어 온 사람의 말 항목 — 거기 딸린 이미지는 그 말이 가는 곳으로 간다, v10.149.3),
+받는다: `echo(item)`(사람의 말로 연 때만), `route(text, item=)`(``item`` 은 그 글을 실어 온 사람의 말 항목 — argv 질의였는가는 그 번호로 안다 — 거기 딸린 이미지는 그 말이 가는 곳으로 간다, v10.149.3),
 `run_starting(start)`, `run_ended(result, start)`. "명령인가" 는 실행과 뗀 판정 하나(`surface.is_command` —
 `command_table.command_kind` 위에 웹은 `/help`·`/compact`·`/sh`, CLI 는 `/sh` 제외)이고, 제자리 대기는 첫 말이
 명령일 때만 꺼내 라우팅한다(명령이 아닌 말은 꺼내지 않는다). 턴 경계는 main 상자를 한 번에 흡수한다

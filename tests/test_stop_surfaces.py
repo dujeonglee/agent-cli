@@ -446,7 +446,7 @@ class TestCommandsTypedDuringTheWait:
             def echo(self, item):
                 routed.append(("echo", item["text"]))
 
-            def route(self, text, start=None, *, item=None):
+            def route(self, text, *, item=None):
                 routed.append(text)
                 if text in declines:
                     paths.add(text)  # 실행 직전에 같은 이름의 경로가 생겼다

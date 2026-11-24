@@ -129,11 +129,10 @@ class PumpSurface(Protocol):
     def bind_stop(self, event: threading.Event | None) -> None:
         """이 런의 중단 핸들을 표면에 건다(None = 해제)."""
 
-    def route(self, text: str, start: Any = None, *, item: dict | None = None) -> bool:
+    def route(self, text: str, *, item: dict | None = None) -> bool:
         """명령을 처리하고 True — 런을 열지 않는다. 들어올 때 명령으로 표시된 말(`MainInput` 항목의 ``command``)만
         온다. 거짓이면 실행이 받지 않았다(문과 실행 사이에 같은 이름의 경로가 생겼다 — `looks_like_slash_command` 의
-        규칙 2) — 부르는 쪽은 그 말을 사람의 말로 다룬다. ``start`` 는 펌프가 이 차례를 열 때의 시작(`Start`)이고, 턴
-        경계·제자리 대기의 라우팅은 None 이다. ``item`` 은 그
+        규칙 2) — 부르는 쪽은 그 말을 사람의 말로 다룬다. ``item`` 은 그
         글을 실어 온 사람의 말 항목(``{text, nickname, images, …}``, 없으면 None — 터미널 줄) — 그 말에 딸린 것(이미지)은
         그 말이 가는 곳으로 간다 (v10.149.3)."""
 
@@ -231,7 +230,7 @@ class MainActor:
             return start
         # 명령의 라우팅도 런과 같은 보호 안 — 그 예외도 `run_failed` 로 간다(web 은 알리고 계속)
         try:
-            routed = d.surface.route(start.query, start, item=item)
+            routed = d.surface.route(start.query, item=item)
         except Exception as exc:
             try:
                 if not d.surface.run_failed(exc):

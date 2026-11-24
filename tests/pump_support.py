@@ -37,7 +37,7 @@ class FakeSurface:
         self.calls.append(("bind_stop", event is not None))
         self.stop_events.append(event)
 
-    def route(self, text, start=None, *, item=None):
+    def route(self, text, *, item=None):
         self.calls.append(("route", text))
         if text in self.fail_on_route:
             raise RuntimeError(f"route failed: {text}")

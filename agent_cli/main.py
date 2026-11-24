@@ -534,7 +534,7 @@ class _ConsoleSurface:
         """지금 런의 stop Event(한가하면 None) — Ctrl+C 처리기가 본다. 읽기만 한다."""
         return self._stop
 
-    def route(self, text: str, start=None, *, item: dict | None = None) -> bool:
+    def route(self, text: str, *, item: dict | None = None) -> bool:
         if text.startswith("/sh"):
             return False
         # argv 질의였던 명령만 판정·결과 파일이 된다 — 그 말의 번호로 안다

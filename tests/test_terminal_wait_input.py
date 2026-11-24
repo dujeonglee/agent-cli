@@ -32,7 +32,7 @@ def _setup(monkeypatch, *, tty: bool, typed: str = "", door=_default_door):
         def echo(self, item):  # run 의 표면은 말풍선이 없다
             pass
 
-        def route(self, text, start=None, *, item=None):
+        def route(self, text, *, item=None):
             routed.append(text)
             return True
 

@@ -735,7 +735,7 @@ class _ItemsPump:
                 else {"message": item}
             )
             start = self.deps.main.start(opened, threading.Event())
-            if not wake and self.deps.surface.route(text, start, item=item):
+            if not wake and self.deps.surface.route(text, item=item):
                 continue
             res = self.deps.main.run(start)
             # 엔진 대역(`run_loop` 모의)은 칸을 싣지 않는다 — 엔진이 싣는 값을 여기서
