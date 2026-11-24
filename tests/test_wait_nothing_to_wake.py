@@ -47,6 +47,10 @@ NOTHING_TO_WAIT_FOR = (
 )
 
 
+#: 사람의 요청이 남은 거절의 끝 — 기다리는 방법(회신만 남은 거절에는 없다)
+HEAR = " To hear from an agent, send it a request with `message` first."
+
+
 def _ids(ids) -> str:
     return ", ".join(f"[{i}]" for i in ids)
 
@@ -63,7 +67,7 @@ def unanswered(*ids: str) -> str:
     """답하지 않은 사람의 요청만."""
     return (
         f"Observation: wait refused — nothing would wake you, and {_ids(ids)} is still "
-        "unanswered. Answer it with `complete`, or keep working."
+        "unanswered. Answer it with `complete`, or keep working." + HEAR
     )
 
 
@@ -71,7 +75,7 @@ def owed_and_unanswered(replies: list[str], requests: list[str]) -> str:
     return (
         "Observation: wait refused — nothing would wake you, and you still owe a "
         f"`reply` {_ids(replies)} and an answer to {_ids(requests)}. Settle those "
-        "first, or keep working."
+        "first, or keep working." + HEAR
     )
 
 

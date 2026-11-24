@@ -139,7 +139,8 @@ def test_only_a_command_queued_and_nothing_to_wake(reg):
     obs = _wait_observation(loop)
     assert obs == (
         "Observation: wait refused — nothing would wake you, and [u-1] is still "
-        "unanswered. Answer it with `complete`, or keep working."
+        "unanswered. Answer it with `complete`, or keep working. To hear from an "
+        "agent, send it a request with `message` first."
     )
 
 

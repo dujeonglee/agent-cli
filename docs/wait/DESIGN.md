@@ -29,8 +29,11 @@
   답하지 않은 사람의 요청(`u-`, `ledger.unanswered_human_request_ids` — `complete` 의 `answers` 로 닫는 것). 통지
   항목(`n-`)은 세지 않는다(답을 빚진 것이 아니다 — 작업 구간 끝으로 닫힌다). 있으면 그 번호를 말하는 거부 관찰을
   남기고 런을 잇는다("nothing would wake you, and you still owe a `reply` [r-2]. Reply first, or keep working." ·
-  "nothing would wake you, and [u-1] is still unanswered. Answer it with `complete`, or keep working." · 둘 다면 "… you
-  still owe a `reply` [r-2] and an answer to [u-1]. Settle those first, or keep working."; 번호가 여럿이면 `[r-2], [r-5]`).
+  "nothing would wake you, and [u-1] is still unanswered. Answer it with `complete`, or keep working. To hear from an
+  agent, send it a request with `message` first." · 둘 다면 "… you still owe a `reply` [r-2] and an answer to [u-1].
+  Settle those first, or keep working. To hear from an agent, send it a request with `message` first."; 번호가 여럿이면
+  `[r-2], [r-5]`). 사람의 요청이 남은 두 글의 끝 문장은 기다리는 방법이다 — 할 일 없이 기다리는 main 이 에이전트에게
+  요청을 보내 그 회신을 기다리게 한다(GLM 끝말잇기에서 이 문장이 없으면 main 이 `wait` 를 되풀이했다).
   없으면 받는다: 관찰 한 줄("nothing to wait for: … This run has ended.")을 기록하고 빈 결과의 성공으로 작업 구간을
   끝낸다(`complete` 로 끝난 것과 같은 끝 — 새 끝 종류가 없다; run 에이전트는 내려온다). 화면에는 `Run ended — nothing to
   wait for.` 한 줄. 다음 봉투가 새 작업 구간을 연다. 그래서 사람의 요청을 든 작업 구간은 `complete` 로 답하기 전에는
