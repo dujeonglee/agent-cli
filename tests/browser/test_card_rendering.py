@@ -719,6 +719,26 @@ class TestGeneratingIndicator:
         assert _wait(lambda: err2.count() == 1)
         assert "Action loop unresolved" in err2.inner_text()
 
+    def test_a_run_that_ended_without_failing_is_a_neutral_line(self, stack, page):
+        """기다릴 것 없이 끝난 런(5d)의 끝 줄 — 같은 길(`turn_error`)이지만 오류 카드가 아니라 중립 줄이고, 다시
+        접속해도 같은 모양이다."""
+        stack.emit_ready()
+        _open_timeline(page, stack)
+        stack.renderer.error("Run ended — nothing to wait for.", turn=2, failed=False)
+        line = page.locator(
+            "#messages .card-sys", has_text="Run ended — nothing to wait for."
+        )
+        assert _wait(lambda: line.count() == 1)
+        assert page.locator("#messages .card-error").count() == 0
+        assert line.locator(".sys-icon").inner_text() == "●"
+
+        page.reload()  # 재접속 replay 에 실려 같은 모양으로
+        line2 = page.locator(
+            "#messages .card-sys", has_text="Run ended — nothing to wait for."
+        )
+        assert _wait(lambda: line2.count() == 1)
+        assert page.locator("#messages .card-error").count() == 0
+
 
 class TestDisplayOnlyNote:
     """표시 전용 주석(``note_next``) — 화면에만 붙는 배지 (v9.8.0).

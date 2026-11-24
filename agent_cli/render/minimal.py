@@ -492,8 +492,8 @@ class MinimalRenderer(Renderer):
             self._p(f"  [{_MUTED}]↳ answers {body}[/]")
         self._p("")
 
-    def error(self, content: str, turn: int) -> None:
-        self._p(f"  ✗ {content}", highlight=False)
+    def error(self, content: str, turn: int, *, failed: bool = True) -> None:
+        self._p(f"  {'✗' if failed else '●'} {content}", highlight=False)
 
     def open_items(self, snapshot: dict) -> None:
         """열린 항목 한 줄 ``open: u-2 n-1 r-1`` (v10.119.0, docs/ledger/DESIGN.md

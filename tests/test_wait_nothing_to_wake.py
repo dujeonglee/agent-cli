@@ -17,6 +17,7 @@ from agent_cli.dialects import get as get_dialect
 from agent_cli.loop.kind import PrivateLoop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.render import get_renderer, set_renderer
 from agent_cli.session_slots import (
     set_agent_registry,
     set_job_registry,
@@ -86,6 +87,28 @@ def reg(tmp_path):
     r.shutdown_all()
 
 
+class _EndLines:
+    """렌더러 대역 — 런이 끝난 까닭 줄(`error`)만 적고 나머지는 조용히 받는다."""
+
+    def __init__(self) -> None:
+        self.lines: list[tuple[str, bool]] = []
+
+    def error(self, content, turn, *, failed=True):
+        self.lines.append((content, failed))
+
+    def __getattr__(self, name):
+        return lambda *a, **k: None
+
+
+@pytest.fixture
+def end_lines():
+    r = _EndLines()
+    prev = get_renderer()
+    set_renderer(r)
+    yield r.lines
+    set_renderer(prev)
+
+
 def _provider(*replies: dict):
     p = MagicMock()
     p.call.side_effect = [LLMResponse(content=json.dumps(r)) for r in replies]
@@ -146,7 +169,7 @@ class TestJudgment:
         )
         assert (result.success, result.output) == (True, "ok")
 
-    def test_an_unanswered_persons_request_refuses(self, reg):
+    def test_an_unanswered_persons_request_refuses(self, reg, end_lines):
         """main 이 사람의 요청(u-1)에 답하기 전에 깨울 것 없이 `wait` — 닫지 않은 것이 있어 거절한다(그 번호를 말한다).
         `complete` 로 답하면 끝난다."""
         p = _provider(WAIT, {"action": "complete", "result": "ok", "answers": ["u-1"]})
@@ -156,9 +179,10 @@ class TestJudgment:
         assert _wait_observations(loop) == [unanswered("u-1")]
         assert (result.success, result.output) == (True, "ok")
         assert p.call.call_count == 2
+        assert end_lines == []  # 거절은 끝이 아니다
         assert reg._post.is_waiting("main") is False
 
-    def test_nothing_open_ends_the_run(self, reg):
+    def test_nothing_open_ends_the_run(self, reg, end_lines):
         """사람의 요청도 빚도 없다(메일·통지로 연 구간처럼) — 받아들여 빈 결과의 성공으로 끝난다(모델 호출 1)."""
         p = _provider(WAIT, {"action": "complete", "result": "ok"})
         loop, result = _run(
@@ -168,6 +192,8 @@ class TestJudgment:
         assert (result.success, result.output) == (True, "")
         assert p.call.call_count == 1
         assert reg._post.is_waiting("main") is False
+        # 화면의 끝 줄 하나 — 실패가 아닌 끝(중립 줄)
+        assert end_lines == [("Run ended — nothing to wait for.", False)]
 
     def test_an_unpaid_reply_is_a_debt(self, reg):
         """main 이 에이전트에게 회신을 빚졌고(r-7) 그 에이전트는 한가하다 — 깨울 것도 고리도 없다. 사람의 요청(u-1)도

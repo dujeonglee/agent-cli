@@ -247,8 +247,13 @@ es.addEventListener("stream_stall", function (e) {
 // "error" event type (which drives the connection dot via ``es.onerror``
 // above). Listening for ``error`` here would also latch the dot red on a
 // healthy stream and try to ``JSON.parse`` data-less transport errors.
+// 실패가 아닌 끝(``failed: false`` — 기다릴 것 없이 끝난 런, 5d)은 오류 카드가 아니라 중립 줄이다.
 es.addEventListener("turn_error", function (e) {
   const d = JSON.parse(e.data);
+  if (d.failed === false) {
+    finishCard(sysLine("●", d.content), d);
+    return;
+  }
   renderError(d);
 });
 

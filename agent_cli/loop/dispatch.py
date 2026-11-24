@@ -21,6 +21,7 @@ from agent_cli.loop.state import _CONTINUE, _NOT_HANDLED, LoopConfig, LoopState
 from agent_cli.loop.tool_bridge import ToolBridge, _normalize_input
 from agent_cli.loop.wait_sentences import (
     NOTHING_TO_WAIT_FOR,
+    RUN_ENDED_NOTHING_TO_WAIT_FOR,
     USER,
     arrived_refusal,
     mutual_wait_refusal,
@@ -1176,6 +1177,10 @@ class TurnDispatcher:
                     success=True,
                     turn=self.state.turn,
                 )
+                if self.cfg.kind.renders():
+                    render_run_ended(
+                        RUN_ENDED_NOTHING_TO_WAIT_FOR, self.state.turn, failed=False
+                    )
                 return ToolResult(True, output="")
             why = (
                 mutual_wait_refusal(parked, mailbox.debts_to(parked))

@@ -1417,7 +1417,7 @@ class WebRenderer(Renderer):
         self._emit("assistant_turn", payload, persistent=True)
         self._pending_thoughts.pop(threading.get_ident(), None)
 
-    def error(self, content: str, turn: int) -> None:
+    def error(self, content: str, turn: int, *, failed: bool = True) -> None:
         # Event name is ``turn_error``, NOT ``error``: the browser's
         # ``EventSource`` dispatches a server-sent ``event: error`` message
         # under the SAME "error" type as a transport-level failure, so naming
@@ -1426,7 +1426,11 @@ class WebRenderer(Renderer):
         # name keeps application errors and transport errors separate. This
         # event is live-only (never written to history / replayed on resume),
         # so the name is free to change without touching old sessions.
-        self._emit("turn_error", {"turn": turn, "content": content}, persistent=True)
+        # 실패가 아닌 끝(``failed`` 거짓)만 값을 싣는다 — 실패한 끝의 payload 는 종전 그대로
+        payload = {"turn": turn, "content": content}
+        if not failed:
+            payload["failed"] = False
+        self._emit("turn_error", payload, persistent=True)
 
     def recovery(
         self,

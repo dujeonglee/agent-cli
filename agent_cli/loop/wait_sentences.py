@@ -17,6 +17,10 @@ NOTHING_TO_WAIT_FOR = (
 )
 
 
+#: 그 끝의 화면 한 줄(사람이 본다 — 모델 입력이 아니다)
+RUN_ENDED_NOTHING_TO_WAIT_FOR = "Run ended — nothing to wait for."
+
+
 def open_items_refusal(reply_ids: list[str], request_ids: list[str]) -> str:
     """깨울 것이 없는데 닫지 않은 것이 있다 — 갚지 않은 회신(``reply_ids``, `r-`)과 답하지 않은 사람의 요청(``request_ids``,
     `u-`)의 번호를 말한다(되묻기와 같은 번호). 번호가 여럿이면 하나씩 대괄호로 쉼표로 잇는다 — ``[r-2], [r-5]``."""

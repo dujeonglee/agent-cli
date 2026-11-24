@@ -592,8 +592,9 @@ class Renderer(ABC):
         """
 
     @abstractmethod
-    def error(self, content: str, turn: int) -> None:
-        """Error message."""
+    def error(self, content: str, turn: int, *, failed: bool = True) -> None:
+        """오류 한 줄, 또는 런이 끝난 까닭 한 줄(`render_run_ended`) — ``failed`` 가 참(기본)이면 오류로, 거짓이면
+        중립 줄로 그린다(기다릴 것 없이 끝난 런, 5d)."""
 
     def recovery(
         self,

@@ -9,6 +9,7 @@ import agent_cli.render.minimal as minimal_mod
 from agent_cli.render import (
     get_renderer,
     load_renderer_by_name,
+    render_run_ended,
     set_renderer,
 )
 from agent_cli.render.base import ConfirmOption
@@ -469,3 +470,23 @@ def test_the_terminal_does_not_draw_the_restart_line():
         key="agt-1", direction="out", author="agt-1", text="hello", to="user:dj"
     )
     assert "hello" in buf.getvalue()
+
+
+class TestRunEndedLine:
+    """런이 끝난 까닭 한 줄(`render_run_ended`) — 실패한 끝(기본)은 종전 그대로 ``✗``, 기다릴 것 없이 끝난 런(5d,
+    ``failed=False``)은 ``●``."""
+
+    def test_failed_by_default_and_neutral_when_not(self):
+        buf = io.StringIO()
+        r = MinimalRenderer(Console(file=buf, width=100, color_system=None))
+        prev = get_renderer()
+        set_renderer(r)
+        try:
+            render_run_ended("Max turns (3) reached.")
+            render_run_ended("Run ended — nothing to wait for.", 2, failed=False)
+        finally:
+            set_renderer(prev)
+        assert buf.getvalue().splitlines() == [
+            "  ✗ Max turns (3) reached.",
+            "  ● Run ended — nothing to wait for.",
+        ]
