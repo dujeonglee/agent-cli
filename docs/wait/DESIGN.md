@@ -25,12 +25,17 @@
 - **깨울 것이 있을 때만** 받는다(`wake.wake_items(owner)`): 이 소유자의
   돌고 있는 백그라운드 작업·살아 있는 모니터, 세션의 일하는 중인 상주 에이전트·
   예약, 그리고 내 요청을 아직 집지 않은 받는 쪽(main 포함 — "has your request queued", 5c-2 C).
-- **깨울 것이 없으면 물음은 하나다 — 갚지 않은 회신(`r-`)이 있나 (5d).** 있으면 그 번호를 말하는 거부 관찰
-  ("nothing would wake you, and you still owe a `reply` [r-2]. Reply first, or keep working.")을 남기고 런을 잇는다. 없으면
-  받는다: 관찰 한 줄("nothing to wait for: … This run has ended.")을 기록하고 빈 결과의 성공으로 작업 구간을 끝낸다
-  (`complete` 로 끝난 것과 같은 끝 — 새 끝 종류가 없다; run 에이전트는 내려온다). 다음 봉투가 새 작업 구간을 연다.
-  사람의 요청(`u-`)은 빚이 아니다. 누가 부르든(main·상주·run·하니스 작업) 같은 규칙·같은 글이다 — 종전(v10.146.7~)엔
-  빚이 있든 없든 거절했고, 끝맺음을 종류가 정했다(`LoopKind.wait_refused_next`, 5d 에 지움).
+- **깨울 것이 없으면 물음은 하나다 — 닫지 않은 것이 있나 (5d).** 닫지 않은 것 = 갚지 않은 회신(`r-`, `ledger.debts`)과
+  답하지 않은 사람의 요청(`u-`, `ledger.unanswered_human_request_ids` — `complete` 의 `answers` 로 닫는 것). 통지
+  항목(`n-`)은 세지 않는다(답을 빚진 것이 아니다 — 작업 구간 끝으로 닫힌다). 있으면 그 번호를 말하는 거부 관찰을
+  남기고 런을 잇는다("nothing would wake you, and you still owe a `reply` [r-2]. Reply first, or keep working." ·
+  "nothing would wake you, and [u-1] is still unanswered. Answer it with `complete`, or keep working." · 둘 다면 "… you
+  still owe a `reply` [r-2] and an answer to [u-1]. Settle those first, or keep working."; 번호가 여럿이면 `[r-2], [r-5]`).
+  없으면 받는다: 관찰 한 줄("nothing to wait for: … This run has ended.")을 기록하고 빈 결과의 성공으로 작업 구간을
+  끝낸다(`complete` 로 끝난 것과 같은 끝 — 새 끝 종류가 없다; run 에이전트는 내려온다). 화면에는 `Run ended — nothing to
+  wait for.` 한 줄. 다음 봉투가 새 작업 구간을 연다. 그래서 사람의 요청을 든 작업 구간은 `complete` 로 답하기 전에는
+  `wait` 로 끝나지 않는다. 누가 부르든(main·상주·run·하니스 작업) 같은 규칙·같은 글이다 — 종전(v10.146.7~)엔 닫지 않은
+  것이 있든 없든 거절했고, 끝맺음을 종류가 정했다(`LoopKind.wait_refused_next`, 5d 에 지움).
 - 열린 항목(`u-…`·`n-…`·기다리는 회신)은 **같은 런의 장부에 그대로** 있다 — 넘길 다음 런이 없다
   (종전의 `ctx.park_requests`·`take_parked_requests` 는 v10.163.0 에 지웠다).
 - 깰 때마다 **새 구간**(`TurnDispatcher._begin_segment`): 턴 한도·되묻기 예산·반복 감지기·제자리 고리를 새로

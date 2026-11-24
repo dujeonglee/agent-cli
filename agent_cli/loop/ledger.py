@@ -133,6 +133,14 @@ class Ledger:
             rid for rid in self._opened if item_ids.prefix_of(rid) == item_ids.USER
         )
 
+    def unanswered_human_request_ids(self) -> list[str]:
+        """아직 답하지 않은 사람의 요청 번호(``u-``) — 도착 순서. 메일 항목(``n-``)은 빼고 읽기만 한다."""
+        return [
+            str(r.get("id"))
+            for r in self.requests
+            if item_ids.prefix_of(str(r.get("id"))) == item_ids.USER
+        ]
+
     def open_requests(self) -> tuple[dict, ...]:
         """`complete` 의 ``answers`` 로 닫을 열린 요청 ``({"id", "author", "text"}, …)`` — 도착 순서의 사본.
         읽기만 한다."""

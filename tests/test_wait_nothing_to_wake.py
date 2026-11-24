@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -45,10 +46,31 @@ NOTHING_TO_WAIT_FOR = (
 )
 
 
+def _ids(ids) -> str:
+    return ", ".join(f"[{i}]" for i in ids)
+
+
 def owed(*ids: str) -> str:
+    """갚지 않은 회신만."""
     return (
         "Observation: wait refused — nothing would wake you, and you still owe a "
-        f"`reply` [{', '.join(ids)}]. Reply first, or keep working."
+        f"`reply` {_ids(ids)}. Reply first, or keep working."
+    )
+
+
+def unanswered(*ids: str) -> str:
+    """답하지 않은 사람의 요청만."""
+    return (
+        f"Observation: wait refused — nothing would wake you, and {_ids(ids)} is still "
+        "unanswered. Answer it with `complete`, or keep working."
+    )
+
+
+def owed_and_unanswered(replies: list[str], requests: list[str]) -> str:
+    return (
+        "Observation: wait refused — nothing would wake you, and you still owe a "
+        f"`reply` {_ids(replies)} and an answer to {_ids(requests)}. Settle those "
+        "first, or keep working."
     )
 
 
@@ -124,21 +146,32 @@ class TestJudgment:
         )
         assert (result.success, result.output) == (True, "ok")
 
-    def test_a_persons_request_is_not_a_debt(self, reg):
-        """main 이 사람의 요청(u-1)만 연 채 `wait` — 빚이 없다. 받아들여 빈 결과의 성공으로 끝난다(모델 호출 1).
-        그 작업 구간은 u-1 을 들었다(감사·`run` 의 판정이 읽는 값)."""
+    def test_an_unanswered_persons_request_refuses(self, reg):
+        """main 이 사람의 요청(u-1)에 답하기 전에 깨울 것 없이 `wait` — 닫지 않은 것이 있어 거절한다(그 번호를 말한다).
+        `complete` 로 답하면 끝난다."""
         p = _provider(WAIT, {"action": "complete", "result": "ok", "answers": ["u-1"]})
         loop, result = _run(
             make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg), p
         )
+        assert _wait_observations(loop) == [unanswered("u-1")]
+        assert (result.success, result.output) == (True, "ok")
+        assert p.call.call_count == 2
+        assert reg._post.is_waiting("main") is False
+
+    def test_nothing_open_ends_the_run(self, reg):
+        """사람의 요청도 빚도 없다(메일·통지로 연 구간처럼) — 받아들여 빈 결과의 성공으로 끝난다(모델 호출 1)."""
+        p = _provider(WAIT, {"action": "complete", "result": "ok"})
+        loop, result = _run(
+            make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg), p, rid=""
+        )
         assert _wait_observations(loop) == [NOTHING_TO_WAIT_FOR]
         assert (result.success, result.output) == (True, "")
-        assert result.human_requests == ("u-1",)
         assert p.call.call_count == 1
         assert reg._post.is_waiting("main") is False
 
     def test_an_unpaid_reply_is_a_debt(self, reg):
-        """main 이 에이전트에게 회신을 빚졌고(r-7) 그 에이전트는 한가하다 — 깨울 것도 고리도 없다."""
+        """main 이 에이전트에게 회신을 빚졌고(r-7) 그 에이전트는 한가하다 — 깨울 것도 고리도 없다. 사람의 요청(u-1)도
+        열려 있어 둘 다 말한다."""
         key, _ = reg.spawn()
         assert wait_until(lambda: reg.get(key).state == "idle")
         reg.note_owes("main", f"agent:{key}", "which file?", id="r-7")
@@ -155,8 +188,8 @@ class TestJudgment:
             ),
             p,
         )
-        # 거절이 그 빚을 가리키고, 회신한 뒤 끝낸다
-        assert _wait_observations(loop) == [owed("r-7")]
+        # 거절이 그 둘을 가리키고, 회신·답한 뒤 끝낸다
+        assert _wait_observations(loop) == [owed_and_unanswered(["r-7"], ["u-1"])]
         assert (result.success, result.output) == (True, "ok")
         assert p.call.call_count == 3
 
@@ -178,8 +211,9 @@ class TestJudgment:
                 questions=reg.question_port(None),
             ),
             p,
+            rid="",
         )
-        # 갚은 뒤의 `wait` 는 받아들여져 끝난다
+        # 번호마다 대괄호 — 갚은 뒤의 `wait` 는 닫지 않은 것이 없어 받아들여져 끝난다
         assert _wait_observations(loop) == [owed("r-7", "r-9"), NOTHING_TO_WAIT_FOR]
         assert (result.success, result.output) == (True, "")
 
@@ -217,6 +251,12 @@ class TestPersonInAnAgentWindow:
         reg.shutdown_all()
 
 
+def _u(messages) -> str:
+    """꼬리의 `## Open Items` 에서 닫을 사람의 요청 번호."""
+    text = "\n".join(str(m.get("content") or "") for m in messages[-2:])
+    return re.findall(r"\[(u-\d+)\]", text)[-1]
+
+
 def _window_history(tmp_path, renderer, script: list) -> tuple[str, list[str]]:  # noqa: F811
     """진짜 상주 워커 — 사람이 그 창에 쓴 말(u-)로 연 구간 하나를 대본으로 돌리고 (history 글, 발신 줄)을 돌려준다."""
     p = Provider({"TASK-W": script})
@@ -250,12 +290,16 @@ def _window_history(tmp_path, renderer, script: list) -> tuple[str, list[str]]: 
 
 class TestPersonsWordsInAnAgentWindow:
     def test_wait_with_the_persons_request_open(self, tmp_path, renderer):  # noqa: F811
-        """사람이 창에서 연 구간(u-)이 그 말에 답하기 전에 `wait` — 지금 값: 빚(r-)이 없어 끝난다, 발신 줄 없음."""
+        """사람이 창에서 연 구간(u-)이 그 말에 답하기 전에 `wait` — main 과 같은 규칙: 그 u- 가 열려 있어 거절한다.
+        `complete` 로 답하면 그 사람에게 발신 줄이 선다."""
         text, out = _window_history(
-            tmp_path, renderer, [call("wait"), call("complete", result="ok")]
+            tmp_path,
+            renderer,
+            [call("wait"), lambda m: call("complete", result="ok", answers=[_u(m)])],
         )
-        assert text.endswith(NOTHING_TO_WAIT_FOR)
-        assert out == []
+        (rid,) = re.findall(r"\[(u-\d+)\] is still unanswered", text)
+        assert unanswered(rid) in text
+        assert out == ["ok"]
 
 
 class TestRunAgent:
@@ -278,6 +322,6 @@ class TestRunAgent:
 
 def test_wait_description_ends_with_what_happens_when_nothing_wakes():
     assert WaitTool.description.endswith(
-        "When nothing will wake you: refused while you still owe a `reply`; with nothing "
-        "owed, the run ends."
+        "When nothing will wake you: refused while a `reply` you owe or a person's "
+        "request is still open; with nothing owed, the run ends."
     )

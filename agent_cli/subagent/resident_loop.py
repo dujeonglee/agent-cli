@@ -424,7 +424,7 @@ class AgentActor:
     def ended(self, start: Start, end: RunEnd) -> bool:
         """run 에이전트는 런이 끝나면 내려온다 — `complete`·정지·턴 상한·오류 어느 끝이든(사용자 결정 2026-11-15:
         회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도 남으면 런 끝 폴백이 런 요약으로
-        회신한다). 받아들여진 `wait` 는 런을 끝내지 않는다(5c-1); 빚도 깨울 것도 없는 `wait` 는 끝내고, 그 끝에도
+        회신한다). 받아들여진 `wait` 는 런을 끝내지 않는다(5c-1); 닫지 않은 것도 깨울 것도 없는 `wait` 는 끝내고, 그 끝에도
         내려온다(5d). 런 중간의 `reply` 는 끝이 아니다. 세션 종료(``session_end``)는 과제의 끝이 아니다 — 내려옴(`OnAgentEnd` 훅)도 없이 워커를 끝낸다(5e1 결정 E)."""
         if end.outcome == "session_end":
             return True

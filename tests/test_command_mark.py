@@ -127,19 +127,20 @@ def _loop(reg, provider):
 
 def _wait_observation(loop) -> str:
     users = [str(m.get("content")) for m in loop.messages if m["role"] == "user"]
-    marks = ("Observation: wait", "Observation: nothing to wait for", "waiting")
-    return next(c for c in users if any(m in c for m in marks))
+    return next(c for c in users if "Observation: wait" in c or "waiting" in c)
 
 
 def test_only_a_command_queued_and_nothing_to_wake(reg):
-    """장면 D — 깨울 것이 없다. 명령은 도착분이 아니다 — 깨울 것도 빚도 없어 작업 구간이 끝난다(종전: "the user wrote to
-    you …", 5b-3 뒤 "nothing would wake you" 거절, 5d 뒤 받아들임)."""
+    """장면 D — 깨울 것이 없다. 명령은 도착분이 아니다 — 깨울 것이 없다는 거절이고, 닫지 않은 것은 질의(u-1)뿐이다
+    (종전: "the user wrote to you …"; 5d: 명령은 닫지 않은 것에 들지 않는다)."""
     loop = _loop(reg, _provider_that_types_a_command_then_waits(reg))
     res = loop.run()
-    assert (res.success, res.output) == (True, "")
+    assert res.success
     obs = _wait_observation(loop)
-    assert obs.startswith("Observation: nothing to wait for:")
-    assert "the user wrote to you" not in obs
+    assert obs == (
+        "Observation: wait refused — nothing would wake you, and [u-1] is still "
+        "unanswered. Answer it with `complete`, or keep working."
+    )
 
 
 def test_only_a_command_queued_while_a_job_runs(reg, jobs):

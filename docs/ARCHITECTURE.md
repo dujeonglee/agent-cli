@@ -676,7 +676,7 @@ fork 모드 서브에이전트는 부모 history.jsonl 을 복사해 이어 쓴�
 | `reply` | `tools/virtual.py` | 가상 · 지연 설명 · `questions` |
 | `agent` | `tools/agent_tool.py` | 지연 설명 — 모드 run·spawn·status·resume·kill, 실행은 `subagent/agent_modes.py::tool_agent`(run 은 `subagent/run_agent.py`) |
 | `run_skill` | `tools/virtual.py` | 가상 · `skills` — 실행은 `loop/skill_invoke.py` |
-| `wait` | `tools/virtual.py` | 가상 · `wake` · 강제 탑재 — 깨울 것이 있으면 제자리에서 기다린다. 없으면 갚지 않은 회신이 있을 때 거절, 없을 때 작업 구간을 끝낸다 |
+| `wait` | `tools/virtual.py` | 가상 · `wake` · 강제 탑재 — 깨울 것이 있으면 제자리에서 기다린다. 없으면 닫지 않은 것(`r-`·`u-`)이 있을 때 거절, 없을 때 작업 구간을 끝낸다 |
 | `tool_help` | `tools/tool_help.py` | `deferred` — 지연 도구가 남은 루프에만 |
 | `complete` | `tools/virtual.py` | 가상 · 항상 포함(`_ALWAYS_INCLUDE`) |
 
@@ -701,7 +701,7 @@ op 에 준 `tools`·`model` 이 프로파일 값보다 우선한다(`subagent/ru
 run 은 레지스트리의 에이전트다(값 `ends_after_task`, docs/agent-engine/DESIGN.md). `agent` 의 모든 모드가 `tool_agent`
 (`subagent/agent_modes.py`)의 모드 표로 가고, run 은 `subagent/run_agent.py` 가 거부 판정(`subagent/delegation_checks.py`) →
 `AgentRegistry.spawn(ends_after_task=True)` → 과제 요청(`request`, 요청자 = 부른 루프의 주소) 순으로 띄우고 **바로 돌아온다**.
-결과는 그 에이전트의 회신이다 — 명시 `reply`, 없으면 런 끝 폴백(라벨 붙은 런 요약). 런이 `complete` 로 끝나면 워커가 내려온다(dead, 채널은 회색) — 받아들여진 `wait` 는 그 자리에서 기다렸다 깨어 계속하고(빚도 깨울 것도 없는 `wait` 는 런을 끝내 내려온다), 런 중간의 `reply` 는 끝이 아니다.
+결과는 그 에이전트의 회신이다 — 명시 `reply`, 없으면 런 끝 폴백(라벨 붙은 런 요약). 런이 `complete` 로 끝나면 워커가 내려온다(dead, 채널은 회색) — 받아들여진 `wait` 는 그 자리에서 기다렸다 깨어 계속하고(닫지 않은 것도 깨울 것도 없는 `wait` 는 런을 끝내 내려온다), 런 중간의 `reply` 는 끝이 아니다.
 깊이·순환은 호출자(`loop.kind.Caller`)의 것으로 센다 — 에이전트가 띄운 에이전트는 한 단계 깊다(`AgentInstance.caller_runtime`).
 정지(docs/agent-engine/DESIGN.md §2.3): 에이전트마다 런의 정지(■ — `AgentRegistry.stop_run`, `ResidentLoop.start` 가 런마다
 `agent_stop.LinkedStop` 을 세운다)와 평생 정지(✕ — `kill`, 세션 종료)가 따로다. 부른 런의 정지에는 묶이지 않는다(방 ■·Ctrl+C 한 번은 main 만).

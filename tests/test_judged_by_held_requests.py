@@ -242,18 +242,16 @@ class TestScenes:
         assert s.audited == 1
         assert s.file is None and s.surface.exit_code == 1
 
-    def test_query_segment_that_ends_on_nothing_to_wait_for_is_an_empty_answer(
-        self, tmp_path
-    ):
-        """질의 구간이 답하지 않고 빚도 깨울 것도 없는 `wait` 로 끝났다(5d) — 빈 결과의 성공이고 질의 번호를 들었다.
-        감사는 돌고, 결과 파일은 없고, 종료 0(빈 답). 판정은 "든 번호" 하나 — 끝 모양을 보지 않는다."""
+    def test_query_segment_cannot_end_on_wait_before_it_answers(self, tmp_path):
+        """질의(u-1)가 열린 구간의 깨울 것 없는 `wait` 는 거절이다(5d) — 질의 구간이 답 없이 `wait` 로 끝나는 길이
+        없다. 거절 뒤 답하면 결과 파일·종료 0·감사 그대로."""
         s = Session(tmp_path)
-        script = Script(call("wait"), call("complete", result="four"))
+        script = Script(call("wait"), call("complete", result="four", answers=[QUERY]))
         result = s.segment(script)
-        assert (result.success, result.output) == (True, "")
-        assert result.human_requests == (QUERY,) and script.calls == 1
+        assert (result.success, result.output) == (True, "four")
+        assert result.human_requests == (QUERY,) and script.calls == 2
         assert s.audited == 1
-        assert s.file is None and s.surface.exit_code == 0
+        assert s.file == "four" and s.surface.exit_code == 0
 
     def test_mail_segment_that_ends_on_nothing_to_wait_for_is_not_judged(
         self, tmp_path

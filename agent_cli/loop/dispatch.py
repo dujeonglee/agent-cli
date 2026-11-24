@@ -24,7 +24,7 @@ from agent_cli.loop.wait_sentences import (
     USER,
     arrived_refusal,
     mutual_wait_refusal,
-    owed_refusal,
+    open_items_refusal,
     wait_interrupted,
 )
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
@@ -1118,10 +1118,11 @@ class TurnDispatcher:
         모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다) **그 자리에서** 깨울 것이 올 때까지 막는다
         (`_wait_in_place`). 깨면 같은 런이 잇는다 — 다음 턴 경계의 흡수(`kind.intake`)가 깨운 것을 넣고, 장부는
         그대로다(같은 런). main·상주·run 에이전트·하니스 작업, 기다리는 것이 회신·작업·모니터 무엇이든 같다.
-        없으면 두 물음 중 하나다(5d): 갚지 않은 회신(`ledger.debts` — `r-`)이 있으면 그 번호를 말하는 거절 관찰을 남기고
-        런을 잇는다. 없으면 받아들인다 — 관찰 한 줄을 기록하고 빈 결과의 성공으로 작업 구간을 끝낸다(`complete` 로 끝난
-        것과 같은 끝 — 새 끝 종류가 없다). 사람의 요청(`u-`)은 빚이 아니다. 이미 도착한 깨우는 봉투가 있으면 먼저
-        거부한다(v10.66.2): 다음 관찰에 그것이 온다고 말해 준다.
+        없으면 물음은 하나다(5d) — 닫지 않은 것이 있나: 갚지 않은 회신(`ledger.debts` — `r-`)과 답하지 않은 사람의
+        요청(`ledger.unanswered_human_request_ids` — `u-`, `complete` 의 `answers` 로 닫는 것). 있으면 그 번호를 말하는
+        거절 관찰을 남기고 런을 잇는다. 없으면 받아들인다 — 관찰 한 줄을 기록하고 빈 결과의 성공으로 작업 구간을 끝낸다
+        (`complete` 로 끝난 것과 같은 끝 — 새 끝 종류가 없다). 통지 항목(`n-`)은 세지 않는다(작업 구간 끝으로 닫힌다).
+        이미 도착한 깨우는 봉투가 있으면 먼저 거부한다(v10.66.2): 다음 관찰에 그것이 온다고 말해 준다.
 
         v10.84.0 (docs/wait/DESIGN.md §7): 깨울 길이 없는 루프(스킬 — 호출자의 턴 안 인라인, `ports.wakeable`
         이 거짓)는 첫 판정에서 거부한다."""
@@ -1160,9 +1161,11 @@ class TurnDispatcher:
         on = mailbox.accept_wait()
         if on is None:
             parked = mailbox.parked_debtors()
-            owed = [str(d.get("id")) for d in self.state.ledger.debts()]
-            if not parked and not owed:
-                # 깨울 것도 갚을 회신도 없다 — 받는다. 이 작업 구간은 여기서 끝난다(결과 글도 되묻기도 없이)
+            ledger = self.state.ledger
+            owed = [str(d.get("id")) for d in ledger.debts()]
+            unanswered = ledger.unanswered_human_request_ids()
+            if not parked and not owed and not unanswered:
+                # 깨울 것도 닫지 않은 것도 없다 — 받는다. 이 작업 구간은 여기서 끝난다(결과 글도 되묻기도 없이)
                 _append_observation(
                     self.state.messages,
                     self.ctx,
@@ -1177,7 +1180,7 @@ class TurnDispatcher:
             why = (
                 mutual_wait_refusal(parked, mailbox.debts_to(parked))
                 if parked
-                else owed_refusal(owed)
+                else open_items_refusal(owed, unanswered)
             )
             _append_observation(
                 self.state.messages,
