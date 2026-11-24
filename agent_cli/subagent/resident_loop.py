@@ -318,7 +318,8 @@ class ResidentLoop(LoopKind):
             self._answer_stopped_run()
         # 🤝 창의 out 줄 — 하니스 폴백은 도구 호출 없는 유일한 발신이라(v9.23.0) 웹이 ⚠ 줄로 그린다: 갚지 못한 빚마다
         # 한 줄, 그 빚의 id 와 상대로(`end_run` 이 보내는 폴백과 한 줄씩 맞는다). 사람이 창에서 연 구간은 창이 곧
-        # 배달이다 — 그 사람에게 결과 한 줄(폴백이 아니다).
+        # 배달이다 — 그 사람에게 결과 한 줄(폴백이 아니다). 결과가 빈 글이면(기다릴 것 없는 `wait` 로 끝났다 — 5d) 그
+        # 사람에게 한 말이 없다: 줄을 내지 않는다.
         line = {
             "key": tm.key,
             "direction": "out",
@@ -333,7 +334,7 @@ class ResidentLoop(LoopKind):
             reg._record(
                 tm, {**line, "text": text, "item": d.id, "to": d.to, "fallback": True}
             )
-        if human:
+        if human and result.output != "":
             reg._record(
                 tm,
                 {**line, "text": output, "item": iid, "to": author, "fallback": False},

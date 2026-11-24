@@ -161,8 +161,8 @@ class TestJudgment:
 
 class TestPersonInAnAgentWindow:
     def test_the_run_result_is_the_line_back_to_that_person(self, tmp_path, renderer):  # noqa: F811
-        """사람이 창에서 연 상주 구간 — 그 결과 글이 그 사람에게 가는 발신 줄이다. 결과가 빈 글이어도 줄이 선다
-        (지금 값: 빈 발신 줄)."""
+        """사람이 창에서 연 상주 구간 — 그 결과 글이 그 사람에게 가는 발신 줄이다. 결과가 빈 글이면(기다릴 것 없는
+        `wait` 의 끝) 그 사람에게 한 말이 없어 줄을 내지 않는다(종전: 빈 발신 줄)."""
         outputs = iter(["hello", ""])
         reg = make_registry(
             tmp_path,
@@ -181,7 +181,7 @@ class TestPersonInAnAgentWindow:
             for name, kw in renderer.calls
             if name == "agent_message" and kw.get("direction") == "out"
         ]
-        assert out == ["hello", ""]
+        assert out == ["hello"]
         reg.shutdown_all()
 
 
