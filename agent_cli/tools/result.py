@@ -19,3 +19,6 @@ class ToolResult:
     images: list[dict] = field(default_factory=list)
     #: 런이 세션 종료로 끝났다 (5e1) — 일하던 작업 구간이 main 상자가 닫혀 멈췄다. 답이 아니다(받을 이가 없다).
     session_ended: bool = False
+    #: 그 작업 구간이 든 사람의 요청 번호(``u-``) — 연 것이든 도중에 받은 것이든, 닫았든 아니든. 감사와 `run` 의
+    #: 결과 파일이 이것으로 판정한다(`AgentLoop.run` 이 장부에서 싣는다).
+    human_requests: tuple[str, ...] = ()

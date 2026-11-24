@@ -6,6 +6,6 @@
 
 - `jobs.py`   — `HarnessJobs`: 프로파일 로드(`agents/harness/`), 런 디렉토리
   (`<session>/harness/<job>/<label>/`), 스레드 실행, 결과를 main 메일함에 배달.
-- `auditor.py` — `SessionAuditor`: main 의 사용자 런이 끝날 때마다 그 런의 history
+- `auditor.py` — `SessionAuditor`: 사람의 요청을 든 main 의 런이 끝날 때마다 그 런의 history
   구간을 감사 작업으로 돌린다.
 """

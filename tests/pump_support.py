@@ -48,7 +48,7 @@ class FakeSurface:
         if self.fail_on_start:
             raise RuntimeError("run_starting failed")
 
-    def run_ended(self, result, start):
+    def run_ended(self, result):
         self.calls.append(("run_ended", result))
 
     def run_failed(self, exc):

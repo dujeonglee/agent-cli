@@ -23,7 +23,6 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.harness.auditor import SessionAuditor, build_auditor
 from agent_cli.harness.jobs import HarnessJobs, load_harness_profile
 from agent_cli.knobs import KNOB_BY_NAME, KnobSession
-from agent_cli.loop.kind import Start
 from agent_cli.subagent.profiles import available_profiles, load_profile
 from agent_cli.tools.registry import extract_file_paths
 from agent_cli.tools.result import ToolResult
@@ -39,14 +38,9 @@ def _ctx(tmp_path):
 OLD_MAIL_RUN_AUTHOR = "🤝 agent"
 
 
-def _req(*, wake: bool = False, author=None) -> Start:
-    """감사자가 받는 런의 시작 — ``wake`` 는 메일이 연 런(사람의 요청이 아니다)."""
-    return Start(
-        query="" if wake else "q",
-        author=None if wake else author,
-        author_is_user=not wake,
-        stop_event=threading.Event(),
-    )
+def _res(*, wake: bool = False, ok: bool = True) -> ToolResult:
+    """감사자가 받는 런의 결과 — ``wake`` 는 사람의 요청을 하나도 들지 않은 런(통지에 깨어난 것)."""
+    return ToolResult(ok, human_requests=() if wake else ("u-1",))
 
 
 def _complete(ctx, result="done"):
@@ -168,7 +162,7 @@ class TestRunEnded:
         ctx.set_turn(1)
         ctx.add({"role": "user", "content": "do it"})  # seq 2
         _complete(ctx)  # seq 3
-        text = h.run_ended(_req(), ok=True)
+        text = h.run_ended(_res())
         assert "seq 2..3" in text and "seq BETWEEN 2 AND 3" in text
         assert f'`sessions` "{ctx.session_dir.name}"' in text
         assert str(ctx.history_path) in text
@@ -179,11 +173,11 @@ class TestRunEnded:
         h, jobs = self._handle(ctx)
         ctx.add({"role": "user", "content": "one"})
         _complete(ctx)
-        assert "seq 1..2" in h.run_ended(_req(), ok=True)
+        assert "seq 1..2" in h.run_ended(_res())
         ctx.add({"role": "user", "content": "two"})
         ctx.add({"role": "user", "tool": "shell", "success": True, "content": "x"})
         _complete(ctx)
-        assert "seq 3..5" in h.run_ended(_req(), ok=True)
+        assert "seq 3..5" in h.run_ended(_res())
         assert [label for _, label, _ in jobs.runs] == ["1-2", "3-5"]
 
     def test_wake_run_is_not_audited_but_still_moves_the_cursor(self, tmp_path):
@@ -193,26 +187,26 @@ class TestRunEnded:
         h, jobs = self._handle(ctx)
         ctx.add({"role": "user", "content": "wake", "author": OLD_MAIL_RUN_AUTHOR})
         _complete(ctx)
-        assert h.run_ended(_req(wake=True), ok=True) == ""
+        assert h.run_ended(_res(wake=True)) == ""
         assert jobs.runs == []
         ctx.add({"role": "user", "content": "next"})
         _complete(ctx)
-        assert "seq 3..4" in h.run_ended(_req(), ok=True)
+        assert "seq 3..4" in h.run_ended(_res())
 
     def test_failed_run_has_no_final_to_audit(self, tmp_path):
         ctx = _ctx(tmp_path)
         h, jobs = self._handle(ctx)
         ctx.add({"role": "user", "content": "q"})
-        assert h.run_ended(_req(), ok=False) == ""  # 턴 소진·중단
+        assert h.run_ended(_res(ok=False)) == ""  # 턴 소진·중단
         assert jobs.runs == []
         ctx.add({"role": "user", "content": "q2"})
         _complete(ctx)
-        assert "seq 2..3" in h.run_ended(_req(), ok=True)
+        assert "seq 2..3" in h.run_ended(_res())
 
     def test_empty_run_sends_nothing(self, tmp_path):
         ctx = _ctx(tmp_path)
         h, jobs = self._handle(ctx)
-        assert h.run_ended(_req(), ok=True) == ""  # 레코드가 없다
+        assert h.run_ended(_res()) == ""  # 레코드가 없다
         assert jobs.runs == []
 
     def test_disabled_knob_skips_but_keeps_the_cursor_moving(self, tmp_path):
@@ -223,11 +217,11 @@ class TestRunEnded:
         assert not h.active and not h.enabled and h.in_flight == 0
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
-        assert h.run_ended(_req(), ok=True) == "" and jobs.runs == []
+        assert h.run_ended(_res()) == "" and jobs.runs == []
         h.enabled = True
         ctx.add({"role": "user", "content": "q2"})
         _complete(ctx)
-        assert "seq 3..4" in h.run_ended(_req(), ok=True)
+        assert "seq 3..4" in h.run_ended(_res())
 
     def test_no_session_handle_and_stopped_jobs_send_nothing(self, tmp_path):
         ctx = _ctx(tmp_path)
@@ -235,21 +229,21 @@ class TestRunEnded:
         assert not h.active and h.in_flight == 0 and h.jobs is None
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
-        assert h.run_ended(_req(), ok=True) == ""
+        assert h.run_ended(_res()) == ""
         h.stop()  # jobs 없음 — no-op
         h2, jobs = self._handle(ctx)
         h2.stop()
         assert jobs.stopped and not h2.active
         ctx.add({"role": "user", "content": "q2"})
         _complete(ctx)
-        assert h2.run_ended(_req(), ok=True) == "" and jobs.runs == []
+        assert h2.run_ended(_res()) == "" and jobs.runs == []
 
     def test_job_start_error_reports_nothing_sent(self, tmp_path):
         ctx = _ctx(tmp_path)
         h, _jobs = self._handle(ctx, jobs=_FakeJobs(error="no profile"))
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
-        assert h.run_ended(_req(), ok=True) == ""
+        assert h.run_ended(_res()) == ""
 
 
 class TestLiveDelivery:
@@ -275,7 +269,7 @@ class TestLiveDelivery:
         reg, ctx, auditor = self._live(tmp_path, make_runner("AUDIT pass"))
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
-        text = auditor.run_ended(_req(), ok=True)
+        text = auditor.run_ended(_res())
         assert text
         assert wait_until(
             lambda: reg.arrived_for("main", waking_only=False, words=False)
@@ -298,7 +292,7 @@ class TestLiveDelivery:
         reg, ctx, auditor = self._live(tmp_path, runner)
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
-        assert auditor.run_ended(_req(), ok=True)
+        assert auditor.run_ended(_res())
         assert wait_until(
             lambda: reg.arrived_for("main", waking_only=False, words=False)
         )
@@ -311,7 +305,7 @@ class TestLiveDelivery:
         reg, ctx, auditor = self._live(tmp_path, make_runner("x", block=gate))
         ctx.add({"role": "user", "content": "q"})
         _complete(ctx)
-        assert auditor.run_ended(_req(), ok=True)
+        assert auditor.run_ended(_res())
         assert auditor.in_flight == 1 and not reg.arrived_for(
             "main", waking_only=False, words=False
         )
@@ -351,19 +345,16 @@ class TestPumpWiring:
         from agent_cli.main_input import MainInput
         from tests.pump_support import make_pump, run_pump_in_thread
 
-        calls: list[tuple[bool, bool]] = []
-        spy = SimpleNamespace(
-            run_ended=lambda req, *, ok: calls.append((req.author_is_user, ok))
-        )
+        calls: list[ToolResult] = []
+        spy = SimpleNamespace(run_ended=calls.append)
+        answer = ToolResult(True, "x", human_requests=("u-1",))
         q = MainInput()
         q.enqueue(None, "hi")
         done = run_pump_in_thread(
-            make_pump(
-                main_input=q, run_main=lambda r: ToolResult(True, "x"), auditor=spy
-            )
+            make_pump(main_input=q, run_main=lambda r: answer, auditor=spy)
         )
         assert done.wait(2.0)
-        assert calls == [(True, True)]
+        assert calls == [answer] and calls[0] is answer  # 그 런의 결과 그대로
 
     def test_pump_without_an_auditor_is_unchanged(self):
         from agent_cli.main_input import MainInput

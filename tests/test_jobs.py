@@ -448,41 +448,41 @@ class TestResultFileContinuation:
         from agent_cli.main import _ConsoleSurface
 
         out = tmp_path / "RESULT.txt"
-        return _ConsoleSurface(
+        surface = _ConsoleSurface(
             result_file=str(out), dispatch=lambda *a: False, jobs=reg
-        ), out
-
-    def _req(self, *, query: bool):
-        from agent_cli.loop.kind import Start
-
-        # argv 질의 = 작성자 없는 사람의 요청, 메일 런 = 사람의 요청이 아님
-        return Start(
-            query="t" if query else "",
-            author_is_user=query,
-            stop_event=__import__("threading").Event(),
         )
+        surface.query_id = self.QUERY_ID
+        return surface, out
 
-    def _ok(self, text):
-        return SimpleNamespace(success=True, output=text)
+    #: `run` 표면이 든 argv 질의의 번호
+    QUERY_ID = "u-1"
+
+    def _ok(self, text, *, query: bool):
+        """성공한 작업 구간의 결과 — ``query`` 면 argv 질의의 번호를 들었고, 아니면 사람의 요청이 없는 깨우기 런."""
+        return SimpleNamespace(
+            success=True,
+            output=text,
+            human_requests=(self.QUERY_ID,) if query else (),
+        )
 
     def test_query_without_jobs_keeps_the_old_rule(self, reg, tmp_path):
         surface, out = self._surface(tmp_path, reg)
-        surface.run_ended(self._ok("answer"), self._req(query=True))
-        surface.run_ended(self._ok("wake chatter"), self._req(query=False))
+        surface.run_ended(self._ok("answer", query=True))
+        surface.run_ended(self._ok("wake chatter", query=False))
         assert out.read_text() == "answer"
 
     def test_query_that_leaves_a_job_takes_the_wake_answer(self, reg, tmp_path):
         surface, out = self._surface(tmp_path, reg)
         surface.busy()
         job = reg.start("sleep 60", owner="main")
-        surface.run_ended(self._ok("still waiting on job #1"), self._req(query=True))
+        surface.run_ended(self._ok("still waiting on job #1", query=True))
         assert out.read_text() == "still waiting on job #1"
         reg.kill(job)  # 작업이 끝났다(통지 → 깨우기 런)
         surface.busy()
-        surface.run_ended(self._ok("14 passed in 150s"), self._req(query=False))
+        surface.run_ended(self._ok("14 passed in 150s", query=False))
         assert out.read_text() == "14 passed in 150s"
         surface.busy()
-        surface.run_ended(self._ok("later chatter"), self._req(query=False))
+        surface.run_ended(self._ok("later chatter", query=False))
         assert out.read_text() == "14 passed in 150s"  # 사슬이 닫혔다
 
     def test_chain_follows_jobs_started_by_wake_runs(self, reg, tmp_path):
@@ -493,24 +493,24 @@ class TestResultFileContinuation:
         surface.busy()
         quick = reg.start("true", owner="main")
         assert _wait(lambda: not quick.running)  # 질의 런이 끝나기 전에 이미 끝났다
-        surface.run_ended(self._ok("waiting for job #1"), self._req(query=True))
+        surface.run_ended(self._ok("waiting for job #1", query=True))
         surface.busy()  # 깨우기 런 #1 — 여기서 진짜 스위트를 띄운다
         full = reg.start("sleep 60", owner="main")
-        surface.run_ended(self._ok("waiting for job #2"), self._req(query=False))
+        surface.run_ended(self._ok("waiting for job #2", query=False))
         assert out.read_text() == "waiting for job #2"
         reg.kill(full)
         surface.busy()  # 깨우기 런 #2 — 작업 없음 → 답이고 사슬이 닫힌다
-        surface.run_ended(self._ok("14 passed"), self._req(query=False))
+        surface.run_ended(self._ok("14 passed", query=False))
         assert out.read_text() == "14 passed"
         surface.busy()
-        surface.run_ended(self._ok("chatter"), self._req(query=False))
+        surface.run_ended(self._ok("chatter", query=False))
         assert out.read_text() == "14 passed"
 
     def test_failed_runs_never_write(self, reg, tmp_path):
         surface, out = self._surface(tmp_path, reg)
         reg.start("sleep 60", owner="main")
         surface.run_ended(
-            SimpleNamespace(success=False, output="x"), self._req(query=True)
+            SimpleNamespace(success=False, output="x", human_requests=(self.QUERY_ID,))
         )
         assert not out.exists()
 

@@ -90,7 +90,7 @@ class TestRunOutcome:
 
     def test_no_result_file(self, parts):
         surface, renderer, *_ = parts
-        surface.run_ended(MagicMock(success=True, output="x"), MagicMock())
+        surface.run_ended(MagicMock(success=True, output="x"))
         renderer.error.assert_not_called()
 
 

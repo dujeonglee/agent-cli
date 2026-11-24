@@ -484,12 +484,6 @@ class DispatchOutput:
         """``@agt-<key>``/``@<profile>-spawn`` 의 결과/에러 (기본: 무시)."""
 
 
-def _is_query(start) -> bool:
-    """run 의 argv 질의로 연 런인가 — 작성자가 없는 사람의 요청(예약은 이름이 있고, 메일 런은 사람의 요청이 아니다).
-    ``--result-file`` 은 이 런의 답만 받는다(v10.34.1)."""
-    return start.author is None and start.author_is_user
-
-
 class _ConsoleSurface:
     """``agent-cli run`` 의 펌프 표면 (``pump.PumpSurface``, v10.33.0).
 
@@ -510,6 +504,9 @@ class _ConsoleSurface:
     def __init__(self, *, result_file: str, dispatch, jobs=None):
         self._result_file = result_file
         self._jobs = jobs
+        #: argv 질의의 번호(``u-N``) — `run` 이 질의를 main 앞에 넣고 적는다. 결과 파일·종료 코드는 이 번호를 든
+        #: 작업 구간의 답이다(무엇이 그 작업 구간을 열었는지는 보지 않는다).
+        self.query_id = ""
         #: argv 질의 런이 백그라운드 작업을 썼다 (v10.47.0/10.47.1) — 그 작업의
         #: 통지로 깨어난 런들의 답이 질의의 나머지 답이므로 파일에 (덮어)쓴다.
         #: 사슬은 깨우기 런이 작업을 새로 띄우지도, 돌리고 있지도 않을 때 닫힌다.
@@ -540,8 +537,10 @@ class _ConsoleSurface:
     def route(self, text: str, start=None, *, item: dict | None = None) -> bool:
         if text.startswith("/sh"):
             return False
-        # 펌프가 연 차례(``start``)의 argv 질의만 판정·결과 파일이 된다 — 턴 경계·제자리 대기의 라우팅은 ``None``
-        self._routing_query = start is not None and _is_query(start)
+        # argv 질의였던 명령만 판정·결과 파일이 된다 — 그 말의 번호로 안다
+        self._routing_query = (
+            bool(self.query_id) and (item or {}).get("id") == self.query_id
+        )
         try:
             handled = self._dispatch(text, self._stop, item)
         finally:
@@ -563,10 +562,11 @@ class _ConsoleSurface:
         if ok:
             _write_result_file(self._result_file, answer)
 
-    def run_ended(self, result, start) -> None:
+    def run_ended(self, result) -> None:
         # 런이 끝난 자리에서 바로 쓴다 — 펌프는 살아 있는 모니터가 있으면 그
         # deadline(기본 2h)까지 돌므로, 펌프 뒤에 쓰면 `complete` 한 답이
-        # 파일로는 안 나온다(v10.31.2). **argv 질의 런의 답만** 쓴다(v10.34.1):
+        # 파일로는 안 나온다(v10.31.2). **argv 질의의 번호를 든 런의 답만** 쓴다(v10.34.1 —
+        # 무엇이 그 런을 열었는지가 아니라 결과가 든 번호 ``human_requests`` 로 안다):
         # 깨우기 런(에이전트 회신·모니터 보고/만료 통지)과 예약 런의 답은 그
         # 통지에 대한 반응이지 사용자 질의의 답이 아니다 — 모니터 만료에 깨어난
         # 런의 "No new action required" 가 진짜 답을 덮어쓴 실측(v10.34.0 스모크).
@@ -578,8 +578,10 @@ class _ConsoleSurface:
         # 남고 진짜 요약은 깨우기 런에 있었다). 그래서 그 뒤 첫 깨우기 런의
         # 답까지 쓴다(덮어씀). 작업 없이 끝난 질의는 종전 규칙 그대로.
         # 종료 코드(v10.124.0)도 같은 분기 — 실패 런도 사슬 안이면 판정에 든다.
-        mail_run = not start.author_is_user
-        if not (_is_query(start) or mail_run and self._continuing):
+        holds_query = bool(self.query_id) and self.query_id in result.human_requests
+        # 깨우기 런 = 사람의 요청을 하나도 들지 않은 런(통지에 깨어났다)
+        wake_run = not result.human_requests
+        if not (holds_query or wake_run and self._continuing):
             return
         self.exit_code = 0 if result.success else 1
         if not result.success:
@@ -2148,7 +2150,7 @@ def run(
                 highlight=False,
                 soft_wrap=True,
             )
-        main_input.enqueue(None, query, images=query_images)
+        surface.query_id = main_input.enqueue(None, query, images=query_images)["id"]
         warn_stuck = True
         prev_term = sigterm.install_unwind()
         prev_int = _install_ctrl_c(surface, agent_registry)

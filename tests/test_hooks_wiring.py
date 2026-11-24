@@ -251,5 +251,5 @@ class TestSessionStartSectionsReachThePrompt:
 
         from agent_cli.loop.core import AgentLoop
 
-        src = inspect.getsource(AgentLoop.run)
+        src = inspect.getsource(AgentLoop._run)
         assert '_apply_system_sections(self._fire_hook("OnSessionStart"))' in src

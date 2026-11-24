@@ -952,14 +952,9 @@ class TestAuditCoversTheWaitedRun:
 
         jobs = _Jobs()
         auditor = SessionAuditor(jobs, s["ctx"], enabled=True)
-        s["run"]()
-        start = Start(
-            query="MAIN go",
-            author_is_user=True,
-            request_id="u-0",
-            stop_event=threading.Event(),
-        )
-        assert auditor.run_ended(start, ok=True)
+        result = s["run"]()
+        assert result.human_requests == ("u-0",)
+        assert auditor.run_ended(result)
         a, b = (int(x) for x in jobs.runs[0].split("-"))
         lines = s["ctx"].history_path.read_text(encoding="utf-8").splitlines()
         seq = next(i + 1 for i, ln in enumerate(lines) if "M-REPLY-TEXT" in ln)

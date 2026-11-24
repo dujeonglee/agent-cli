@@ -16,7 +16,6 @@ from agent_cli.loop.kind import Start
 from agent_cli.main_input import MainInput
 from agent_cli.post import envelope as post_envelope
 from agent_cli.pump import ForeverPolicy, QuietPolicy
-from agent_cli.runtime import MainLoop
 from agent_cli.tools.result import ToolResult
 from tests.pump_support import (
     FakeRegistry,
@@ -25,10 +24,14 @@ from tests.pump_support import (
     run_pump_in_thread,
 )
 
+#: `run` 표면이 든 argv 질의의 번호 — 결과 파일·종료 코드는 이 번호를 든 작업 구간의 답이다
+QUERY_ID = "u-1"
 
-def _opened(item: dict) -> Start:
-    """펌프가 그 사람의 말로 연 차례의 시작 — 표면의 `route` 가 argv 질의였는지를 읽는다."""
-    return MainLoop.start({"nickname": None, **item}, threading.Event())
+
+def _held(result, *ids: str):
+    """그 작업 구간이 든 사람의 요청 번호를 실은 결과 — 엔진(`AgentLoop.run`)이 싣는 칸. 번호가 없으면 깨우기 런."""
+    result.human_requests = tuple(ids)
+    return result
 
 
 #: 들어오는 문의 판정 대역 — ``/`` 로 시작하면 명령(제품은 `command_table` 의 두 함수)
@@ -342,6 +345,7 @@ class TestConsoleSurface:
             return text.startswith(("/", "@"))
 
         s = _ConsoleSurface(result_file=str(out), dispatch=dispatch or _dispatch)
+        s.query_id = QUERY_ID
         return s, out, calls
 
     def test_sh_is_not_routed_but_commands_are_with_the_bound_stop(self, tmp_path):
@@ -371,15 +375,15 @@ class TestConsoleSurface:
 
     def test_run_ended_writes_only_a_successful_query_run(self, tmp_path):
         s, out, _ = self._surface(tmp_path)
-        s.run_ended(ToolResult(False, error="boom"), self._req())
+        s.run_ended(_held(ToolResult(False, error="boom"), QUERY_ID))
         assert not out.exists()
-        s.run_ended(ToolResult(True, output="later"), self._req(wake=True))
+        s.run_ended(_held(ToolResult(True, output="later")))
         assert not out.exists(), "깨우기 런의 답은 결과 파일이 아니다"
-        s.run_ended(ToolResult(True, output="sched"), self._req(author="⏰ nightly"))
+        s.run_ended(_held(ToolResult(True, output="sched"), "u-9"))
         assert not out.exists(), "예약 런의 답도 아니다"
-        s.run_ended(ToolResult(True, output="ans"), self._req())
+        s.run_ended(_held(ToolResult(True, output="ans"), QUERY_ID))
         assert out.read_text(encoding="utf-8") == "ans"
-        s.run_ended(ToolResult(True, output="again"), self._req(wake=True))
+        s.run_ended(_held(ToolResult(True, output="again")))
         assert out.read_text(encoding="utf-8") == "ans"
 
     def test_routed_skill_answer_lands_in_the_file(self, tmp_path):
@@ -397,9 +401,12 @@ class TestConsoleSurface:
             return True
 
         s, out, _ = self._surface(tmp_path, dispatch=dispatch)
-        assert s.route("/review fail", _opened({"text": "/review fail"})) is True
+        assert (
+            s.route("/review fail", item={"id": QUERY_ID, "text": "/review fail"})
+            is True
+        )
         assert not out.exists() and s.exit_code == 1
-        s.route("/review", _opened({"text": "/review"}))
+        s.route("/review", item={"id": QUERY_ID, "text": "/review"})
         assert out.read_text(encoding="utf-8") == "looks good"
         assert s.exit_code == 0
 
@@ -422,7 +429,7 @@ class TestConsoleSurface:
 
         s, out, _ = self._surface(tmp_path, dispatch=dispatch)
         for code, written in ((1, False), (0, False), (0, True)):
-            s.route("@a t", _opened({"text": "@a t"}))
+            s.route("@a t", item={"id": QUERY_ID, "text": "@a t"})
             assert s.exit_code == code and out.exists() is written
         assert out.read_text(encoding="utf-8") == "the answer"
 
@@ -434,9 +441,11 @@ class TestConsoleExitCode:
         from agent_cli.main import _ConsoleSurface
 
         out = tmp_path / "r.txt"
-        return _ConsoleSurface(
+        s = _ConsoleSurface(
             result_file=str(out), dispatch=dispatch or (lambda t, e: False)
-        ), out
+        )
+        s.query_id = QUERY_ID
+        return s, out
 
     _req = TestConsoleSurface._req
 
@@ -452,31 +461,31 @@ class TestConsoleExitCode:
 
     def test_query_run_success_and_failure(self, tmp_path):
         s, _ = self._surface(tmp_path)
-        s.run_ended(self._res(False, "max turns"), self._req())
+        s.run_ended(_held(self._res(False, "max turns"), QUERY_ID))
         assert s.exit_code == 1
         s, _ = self._surface(tmp_path)
-        s.run_ended(self._res(True, "ans"), self._req())
+        s.run_ended(_held(self._res(True, "ans"), QUERY_ID))
         assert s.exit_code == 0
 
     def test_empty_successful_answer_is_0_without_a_file(self, tmp_path):
         """README 의 "실패/무답" 구별이 이제 실제로 된다 — 빈 답 성공은 0, 파일 없음."""
         s, out = self._surface(tmp_path)
-        s.run_ended(self._res(True, ""), self._req())
+        s.run_ended(_held(self._res(True, ""), QUERY_ID))
         assert s.exit_code == 0 and not out.exists()
 
     def test_runs_outside_the_chain_do_not_change_the_verdict(self, tmp_path):
         s, _ = self._surface(tmp_path)
-        s.run_ended(self._res(False, "boom"), self._req())
-        s.run_ended(self._res(True, "rescued"), self._req(wake=True))
+        s.run_ended(_held(self._res(False, "boom"), QUERY_ID))
+        s.run_ended(_held(self._res(True, "rescued")))
         assert s.exit_code == 1, (
             "닫힌 사슬 뒤의 깨우기가 실패를 성공으로 바꾸면 안 된다"
         )
-        s.run_ended(self._res(True, "sched"), self._req(author="⏰ nightly"))
+        s.run_ended(_held(self._res(True, "sched"), "u-9"))
         assert s.exit_code == 1, "예약 런도 판정 밖"
         s, _ = self._surface(tmp_path)
-        s.run_ended(self._res(True, "ans"), self._req())
-        s.run_ended(self._res(False, "sched boom"), self._req(author="⏰ nightly"))
-        s.run_ended(self._res(False, "wake boom"), self._req(wake=True))
+        s.run_ended(_held(self._res(True, "ans"), QUERY_ID))
+        s.run_ended(_held(self._res(False, "sched boom"), "u-9"))
+        s.run_ended(_held(self._res(False, "wake boom")))
         assert s.exit_code == 0
 
     def test_only_the_argv_query_route_decides(self, tmp_path):
@@ -493,13 +502,15 @@ class TestConsoleExitCode:
             return True
 
         s, out = self._surface(tmp_path, dispatch=dispatch)
-        s.route("/bad", _opened({"text": "/bad", "nickname": None}))
+        s.route("/bad", item={"id": QUERY_ID, "text": "/bad"})
         assert s.exit_code == 1
         s.route("/ok")  # 런 도중 주입(echo 없이) — 질의의 답이 아니다
         assert s.exit_code == 1 and not out.exists()
-        s.route("/ok", _opened({"text": "/ok", "nickname": "⏰ nightly"}))  # 예약 발화
+        s.route(
+            "/ok", item={"id": "u-9", "text": "/ok", "nickname": "⏰ nightly"}
+        )  # 예약 발화
         assert s.exit_code == 1 and not out.exists()
-        s.route("/ok", _opened({"text": "/ok", "nickname": None}))
+        s.route("/ok", item={"id": QUERY_ID, "text": "/ok"})
         assert s.exit_code == 0 and out.read_text(encoding="utf-8") == "done"
 
     def test_plain_query_route_does_not_leak_the_query_flag_into_the_run(
@@ -516,7 +527,7 @@ class TestConsoleExitCode:
             return True
 
         s, out = self._surface(tmp_path, dispatch=dispatch)
-        assert s.route("plain", _opened({"text": "plain", "nickname": None})) is False
+        assert s.route("plain", item={"id": QUERY_ID, "text": "plain"}) is False
         s.route("/x")  # 그 런 도중 주입
         assert s.exit_code == 1 and not out.exists()
 
