@@ -791,6 +791,23 @@ class TestWaitAndScope:
         assert "unknown" in reg.format_status("agt-nope")
         reg.shutdown_all()
 
+    def test_format_status_counts_mail_queued_for_main(self, tmp_path, renderer):
+        """status 끝 줄 — main 상자에 줄 선(아직 꺼내지 않은) 봉투 중 사람의 말이 아닌 것의 수. 회신만이 아니다:
+        통지·작업 보고도 센다. 없으면 줄이 없다."""
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        assert "(undelivered" not in reg.format_status()
+        reg.deliver(
+            "main",
+            mail={"kind": "job", "success": True, "output": "job #1 finished"},
+            text="job #1 finished",
+            author="job",
+            expects_reply=False,
+        )
+        assert reg.format_status().splitlines()[-1] == "(undelivered replies: 1)"
+        reg.shutdown_all()
+
     def test_state_vocabulary_contract(self):
         """★재발 방지 (v7.11.1): worker 의 실제 상태 어휘와 "작업 중"
         판정의 정합. 표시/넛지/reap 코드가 존재하지 않는 "working" 을
