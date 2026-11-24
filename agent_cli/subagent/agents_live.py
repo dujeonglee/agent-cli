@@ -398,6 +398,7 @@ class AgentRegistry:
         self._agents: dict[str, AgentInstance] = {}
         self._post = post if post is not None else PostOffice()
         self._cv = self._post.cv
+        self._roster_step = threading.Lock()  # 명단을 뜨고 내는 한 걸음
         # private 주소(run:·harness:)의 메일함(v10.84.0)도 우편의 상자다 — 그 루프가 턴 경계와 `wait` 에서 읽는다.
         # UI·영속 밖(프로세스 수명 — 저장 파일은 에이전트와 main 의 상자만 쓴다).
         # 회신 도착 알림(CLI 대기 줄) — 부트스트랩(`wire_agent_mail`) 주입. main 이 한가한가는 창구가 안다(`idle`).
@@ -492,11 +493,13 @@ class AgentRegistry:
         return out
 
     def _notify_roster(self) -> None:
-        """P4: 상태 변화를 대화 창 목록에 반영 — web sticky, CLI no-op."""
+        """P4: 상태 변화를 대화 창 목록에 반영 — web sticky, CLI no-op. 명단을 뜨고 내는 것이 한 걸음이다
+        (``_roster_step``): 여러 스레드가 부르므로, 묶지 않으면 먼저 뜬 명단이 나중에 나가 새 명단을 덮는다."""
         from agent_cli.render import get_renderer
 
         try:
-            get_renderer().agent_roster(self.roster_snapshot())
+            with self._roster_step:
+                get_renderer().agent_roster(self.roster_snapshot())
         except Exception:
             pass  # 표시용 — 실행 경로를 막지 않는다
 

@@ -602,8 +602,8 @@ class TestExitPathConvergence:
             "server.agent_registry =",
             "server.mcp_manager =",
             "server.auditor =",
-            "renderer.knob_state =",
-            "renderer.broadcast_knobs(",
+            "renderer.knobs_changed =",
+            "server.broadcast_knobs()",
         ]
         at = [body.index(h) for h in handles]
         assert all(body.count(h) == 1 for h in handles)

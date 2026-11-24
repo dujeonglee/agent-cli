@@ -97,12 +97,8 @@ class WebStack:
         self.server.agent_registry = AgentRegistry(pathlib.Path(self._ctxdir))
         self.auditor = SimpleNamespace(enabled=False, in_flight=0)
         self.server.auditor = self.auditor
-        # 실 부트(main.py web)와 같은 배선 — 감사 진행 수가 바뀌면 🔎 상태 한 장을 다시 싣는다
-        from agent_cli.knobs import KNOB_BY_NAME, web_state
-
-        self.renderer.knob_state = lambda name: web_state(
-            KNOB_BY_NAME[name], self.server.knob_session()
-        )
+        # 실 부트(main.py web)와 같은 배선 — 감사 진행 수가 바뀌면 노브 상태를 다시 낸다
+        self.renderer.knobs_changed = self.server.broadcast_knobs
         app = create_app(self.server)
         # 포트 0 = OS 임시 할당 — 병렬/반복 실행 충돌 없음.
         self._config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")

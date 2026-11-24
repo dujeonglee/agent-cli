@@ -265,6 +265,7 @@ class JobRegistry:
         #: 변화 관찰자 (v10.121.0) — 띄움·끝남마다 `view()` 를 받는다. web 이 렌더러의
         #: 스티키 ``jobs`` 로 꽂는다(status.json·방 칩·늦은 접속 재생이 한 경로).
         self.on_change: Callable[[dict], None] | None = None
+        self._view_step = threading.Lock()  # 작업 목록을 뜨고 내는 한 걸음 (`_changed`)
         self.closed = False
         self._inflight = 0
 
@@ -397,11 +398,14 @@ class JobRegistry:
         }
 
     def _changed(self) -> None:
+        """관찰자에게 지금의 작업 목록을 낸다 — 뜨고(`view`) 내는 것이 한 걸음이다(``_view_step``): 작업을 띄우는
+        스레드와 끝난 작업을 거두는 스레드가 부르므로, 묶지 않으면 먼저 뜬 목록이 나중에 나가 끝난 작업이 남는다."""
         fn = self.on_change
         if fn is None:
             return
         try:
-            fn(self.view())
+            with self._view_step:
+                fn(self.view())
         except Exception:  # 화면 갱신이 작업 관리를 깨면 안 된다
             pass
 
