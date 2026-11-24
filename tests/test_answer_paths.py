@@ -18,14 +18,16 @@ from rich.console import Console
 import agent_cli.loop.dispatch as dispatch_mod
 import agent_cli.main as M
 import agent_cli.render as render_mod
+from agent_cli.agent_icon import agent_display_name
 from agent_cli.command_table import command_kind
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop.dispatch import ASK_REFUSED_NOBODY_CAN_ANSWER
 from agent_cli.main_input import MainInput
 from agent_cli.render.base import interactive_lock
 from agent_cli.render.minimal import MinimalRenderer
+from tests.oracle.driver import Provider, Session, call, closing_ids, until
 from tests.test_agent_questions import _run_scripted, spawn_idle
-from tests.test_agents_live import make_registry
+from tests.test_agents_live import _RecordingRunner, make_registry, wait_until
 
 
 class _Tty(io.StringIO):
@@ -45,6 +47,14 @@ class _Output(M.DispatchOutput):
 
     def skill_not_found(self, name):
         self.skills_not_found.append(name)
+
+
+@pytest.fixture(autouse=True)
+def _keep_renderer():
+    """오라클 세션은 전역 렌더러를 자기 기록 렌더러로 갈아 끼운다 — 다음 테스트로 새지 않게 되돌린다."""
+    before = render_mod.get_renderer()
+    yield
+    render_mod.set_renderer(before)
 
 
 @pytest.fixture
@@ -156,30 +166,109 @@ def _must_not_prompt(questions):
 
 
 class TestAnswerCommand:
-    def test_answer_is_read_as_a_skill_name(self):
-        assert command_kind("/answer q-3 use src/util") == "skill"
-        assert command_kind("/questions") == "skill"
+    """`/answer <q-N> <글>` 은 그 번호의 질문에만 답한다 — 웹 트레이와 같은 함수. 번호가 없으면 아무것도 닫지 않는다."""
 
-    def test_answer_does_not_reach_the_question(self, reg):
+    def test_the_commands_are_commands(self):
+        assert command_kind("/answer q-3 use src/util") == "question"
+        assert command_kind("/questions") == "question"
+
+    def test_answer_closes_that_question_and_the_asker_gets_the_answer(self, tmp_path):
+        runner = _RecordingRunner()
+        reg = make_registry(tmp_path, runner=runner)
+        try:
+            key = spawn_idle(reg)
+            qid = _open_question(reg, key)
+            out = _dispatch(f"/answer {qid} use src/util", reg)
+            assert out.lines == [(f"answered {qid}", True)]
+            assert reg.open_human_questions() == []
+            assert wait_until(lambda: runner.seen)
+            assert f"from the user re [{qid}]" in runner.seen[0]
+            assert "Answer: use src/util" in runner.seen[0]
+        finally:
+            reg.shutdown_all()
+
+    def test_the_web_author_is_a_person_too(self, reg):
         key = spawn_idle(reg)
         qid = _open_question(reg, key)
-        out = _dispatch(f"/answer {qid} use src/util", reg)
-        assert out.skills_not_found == ["answer"]
+        out = _dispatch(f"/answer {qid} yes", reg, author="user:dj")
+        assert out.lines == [(f"answered {qid}", True)]
+
+    @pytest.mark.parametrize(
+        "typed", ["/answer", "/answer yes", "/answer use src/util"]
+    )
+    def test_without_a_number_nothing_is_closed_even_with_one_question_open(
+        self, reg, typed
+    ):
+        """질문이 하나뿐이어도 번호 없는 답을 그 질문에 붙이지 않는다(사용자 결정). 인자가 모자라면 사용법만 말하고,
+        첫 낱말이 번호가 아니면 없는 번호라고 말한다 — 어느 쪽도 그 하나뿐인 질문을 닫지 않는다."""
+        key = spawn_idle(reg)
+        qid = _open_question(reg, key)
+        out = _dispatch(typed, reg)
+        assert [ok for _, ok in out.lines] == [False]
         assert [q.id for q in reg.open_human_questions()] == [qid]
+        assert reg._post.queued(f"agent:{key}") == ()
+
+    def test_a_wrong_number_closes_nothing(self, reg):
+        key = spawn_idle(reg)
+        qid = _open_question(reg, key)
+        out = _dispatch("/answer q-999 use src/util", reg)
+        assert out.lines == [
+            ('/answer: unknown or already-answered question "q-999"', False)
+        ]
+        assert [q.id for q in reg.open_human_questions()] == [qid]
+
+    def test_questions_lists_them_like_the_question_line(self, reg):
+        key = spawn_idle(reg)
+        qid = _open_question(reg, key)
+        ((text, ok),) = _dispatch("/questions", reg).lines
+        assert ok and text.splitlines() == [
+            "Open questions:",
+            f"{qid}  {agent_display_name(key)} ({key})  which directory should I use?",
+        ]
+
+    def test_no_open_questions(self, reg):
+        assert _dispatch("/questions", reg).lines == [("no open questions", True)]
+
+
+def test_plain_words_on_the_web_go_to_main_and_the_question_stays_open(tmp_path):
+    """열린 에이전트 질문이 있어도 웹 채팅 칸의 보통의 말은 main 의 요청이다 — 질문의 답이 되지 않는다."""
+    read: list[str] = []
+
+    def main_reads(messages):
+        read.append(str(messages[-1].get("content") or ""))
+        return call("complete", result="ok", answers=closing_ids(messages))
+
+    s = Session(tmp_path, Provider({"MAIN": [main_reads]}), path="web")
+    key = spawn_idle(s.reg)
+    qid = _open_question(s.reg, key)
+    s.say("use src/util", nickname="dj")
+    t = s.pump_in_thread()
+    try:
+        until(lambda: read, "main read the words")
+    finally:
+        s.close()
+        t.join(20)
+    assert "use src/util" in read[0] and qid not in read[0]
+    assert [q.id for q in s.reg.open_human_questions()] == [qid]
+    assert s.reg.backlog_of(key) == 0  # 묻는 쪽에게 간 것이 없다
 
 
 # ── 터미널의 질문 줄 ─────────────────────────────────────────
 
 
-def test_the_terminal_question_line_has_no_number(reg, monkeypatch):
+def test_the_terminal_question_line_carries_its_number_and_how_to_answer(
+    reg, monkeypatch
+):
     buf = io.StringIO()
     r = MinimalRenderer(Console(file=buf, width=200))
     monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
     key = spawn_idle(reg)
     qid = _open_question(reg, key)
-    out = buf.getvalue()
-    assert "which directory should I use?" in out
-    assert qid not in out and "/answer" not in out
+    lines = [ln for ln in buf.getvalue().splitlines() if ln.strip()]
+    i = next(n for n, ln in enumerate(lines) if ln.startswith("❓"))
+    assert lines[i].endswith(f"→ user] {qid}")
+    assert lines[i + 1] == "which directory should I use?"
+    assert lines[i + 2] == f"  answer with: /answer {qid} <text>"
 
 
 # ── 터미널 읽기와 프롬프트의 잠금 ───────────────────────────

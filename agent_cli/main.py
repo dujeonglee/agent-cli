@@ -15,8 +15,10 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
+from agent_cli.agent_icon import agent_display_name
 from agent_cli.command_table import (
     IMAGES_NOT_TAKEN,
+    command_kind,
     command_takes_images,
     looks_like_slash_command,
     run_input_is_command,
@@ -914,6 +916,9 @@ def try_dispatch_agent_or_skill(
     if message.split(maxsplit=1)[:1] == ["/stop"]:
         _dispatch_stop(message, output, agent_registry)
         return True
+    if command_kind(message) == "question":
+        _dispatch_question(message, output, agent_registry, author)
+        return True
 
     if message.startswith("/") and looks_like_slash_command(message):
         parts = message.split(maxsplit=1)
@@ -975,6 +980,42 @@ def _dispatch_stop(message: str, output: DispatchOutput, agent_registry) -> None
     error = agent_registry.stop_run(key)
     if error:
         output.agent_dispatch_result(f"/stop: {error}", False)
+
+
+ANSWER_USAGE = "usage: /answer <q-N> <text>"
+NO_OPEN_QUESTIONS = "no open questions"
+
+
+def _dispatch_question(
+    message: str, output: DispatchOutput, agent_registry, author: str
+) -> None:
+    """``/questions`` — 열린 질문 목록, ``/answer <q-N> <글>`` — **그 번호의** 질문에 답한다(6c). 답은 웹 트레이와 같은
+    함수(`AgentRegistry.answer_question`)로 간다 — 길은 하나, 입구가 둘이다. 번호가 없으면 사용법만 말한다: 질문이
+    하나뿐이어도 짐작해 붙이지 않는다(답은 번호를 적은 명령이나 트레이로만 — 사용자 결정). 목록은 트레이와 같은
+    출처(명단 행의 ``open_questions``)를 읽고, 묻는 쪽은 질문 줄과 같은 이름으로 적는다."""
+    if agent_registry is None:
+        output.agent_dispatch_result("(no agent registry in this mode)", False)
+        return
+    parts = message.split(maxsplit=2)
+    if parts[0] == "/questions":
+        lines = [
+            f"{q['id']}  {agent_display_name(row['key'], row['profile'], row['name'])}"
+            f" ({row['key']})  {q['text']}"
+            for row in agent_registry.roster_snapshot()
+            for q in row["open_questions"]
+        ]
+        if not lines:
+            output.agent_dispatch_result(NO_OPEN_QUESTIONS, True)
+            return
+        output.agent_dispatch_result("\n".join(["Open questions:", *lines]), True)
+        return
+    if len(parts) < 3:
+        output.agent_dispatch_result(ANSWER_USAGE, False)
+        return
+    error = agent_registry.answer_question(parts[1], parts[2], by=author)
+    output.agent_dispatch_result(
+        f"/answer: {error}" if error else f"answered {parts[1]}", not error
+    )
 
 
 def _command_dispatch(spec, owners, output, *, graceful_interrupt: bool):

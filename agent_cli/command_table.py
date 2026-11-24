@@ -42,6 +42,8 @@ COMMANDS: tuple[Command, ...] = (
         "Stop an agent's run (all: every working agent)",
         frozenset({WEB, RUN}),
     ),
+    Command("/questions", "List open questions to you", frozenset({WEB, RUN})),
+    Command("/answer <q-N> <text>", "Answer an open question", frozenset({WEB, RUN})),
     Command("@agents", "List available agents", frozenset({WEB, RUN})),
     Command("@<agent> <task>", "Delegate a task to an agent", frozenset({WEB, RUN})),
     Command(
@@ -119,6 +121,8 @@ def command_kind(message: str) -> str | None:
     head = message.split(maxsplit=1)
     if head and head[0] == "/stop":
         return "stop"
+    if head and head[0] in ("/questions", "/answer"):
+        return "question"
     if message.startswith("/") and looks_like_slash_command(message):
         return "skill"
     return None
