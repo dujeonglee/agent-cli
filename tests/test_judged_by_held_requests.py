@@ -242,6 +242,28 @@ class TestScenes:
         assert s.audited == 1
         assert s.file is None and s.surface.exit_code == 1
 
+    def test_query_segment_cannot_end_on_wait_before_it_answers(self, tmp_path):
+        """질의(u-1)가 열린 구간의 깨울 것 없는 `wait` 는 거절이다(5d) — 질의 구간이 답 없이 `wait` 로 끝나는 길이
+        없다. 거절 뒤 답하면 결과 파일·종료 0·감사 그대로."""
+        s = Session(tmp_path)
+        script = Script(call("wait"), call("complete", result="four", answers=[QUERY]))
+        result = s.segment(script)
+        assert (result.success, result.output) == (True, "four")
+        assert result.human_requests == (QUERY,) and script.calls == 2
+        assert s.audited == 1
+        assert s.file == "four" and s.surface.exit_code == 0
+
+    def test_mail_segment_that_ends_on_nothing_to_wait_for_is_not_judged(
+        self, tmp_path
+    ):
+        s = Session(tmp_path)
+        # 둘째 줄은 쓰이지 않는다 — 대본은 마지막 줄을 되풀이하므로 거절로 되돌아가면 `wait` 되풀이 대신 이 줄로 끝난다
+        result = s.segment(
+            Script(call("wait"), call("complete", result="x")), opener="mail"
+        )
+        assert (result.success, result.output, result.human_requests) == (True, "", ())
+        assert s.audited == 0 and s.file is None and s.surface.exit_code == 1
+
     def test_a_stopped_segment_still_says_what_it_held(self, tmp_path):
         """어떻게 끝났든 칸은 실린다 — 정지로 끝난 작업 구간."""
         stop = threading.Event()

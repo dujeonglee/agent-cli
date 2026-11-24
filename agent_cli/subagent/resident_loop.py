@@ -23,8 +23,6 @@ from typing import TYPE_CHECKING, Any
 
 from agent_cli.actor import RunEnd
 from agent_cli.loop.kind import (
-    WAIT_NEXT_KEEP_WORKING,
-    WAIT_NEXT_RESIDENT,
     LoopKind,
     LoopKindError,
     PromptProfile,
@@ -127,10 +125,6 @@ class ResidentLoop(LoopKind):
         return runner if runner is not None else self._run_loop
 
     # ── 엔진이 묻는 것 (v10.88.0) ──
-    def wait_refused_next(self) -> str:
-        """run 에이전트는 런이 끝나면 내려간다; 상주는 다음 메시지가 새 런을 연다(ctx 는 수명에 하나)."""
-        return WAIT_NEXT_KEEP_WORKING if self.tm.ends_after_task else WAIT_NEXT_RESIDENT
-
     def session_ended(self) -> bool:
         """세션이 끝나는 중인가 — main 상자가 닫혔다(`shutdown_all` 이 맨 먼저 닫는다, 5e1). main 과 같은 사실이다."""
         return self.registry._post.is_closed("main")
@@ -290,7 +284,7 @@ class ResidentLoop(LoopKind):
         - `complete` 는 국소다: 산출물은 자동으로 아무에게도 가지 않는다. 요청 항목이면 이
           런은 요청자에게 회신을 **빚졌고**, 갚았으면 끝; 안 갚았으면 `run_ended` →
           `end_run` 이 런 요약을 라벨 붙여 폴백 배달한다(독촉 3회를 지나고도 안 보낸 경우).
-          중단된 런은 빚을 버린다(`wait` 는 런을 끝내지 않는다 — 깬 뒤 같은 런이 갚는다, 5c-1).
+          중단된 런은 빚을 버린다(받아들여진 `wait` 는 런을 끝내지 않는다 — 깬 뒤 같은 런이 갚는다, 5c-1).
         - out 레코드(대화창의 발신 줄)는 **실제 발신** 둘뿐: 하니스 폴백(라벨 붙음)과 사람
           발신(창이 곧 배달 — `reply_debts` 가 사람 주소를 뺀다).
         - ``handled``/``state`` 는 **정리 뒤**(`_close_run`) — idle 은 '이 런의 일이 다
@@ -324,7 +318,8 @@ class ResidentLoop(LoopKind):
             self._answer_stopped_run()
         # 🤝 창의 out 줄 — 하니스 폴백은 도구 호출 없는 유일한 발신이라(v9.23.0) 웹이 ⚠ 줄로 그린다: 갚지 못한 빚마다
         # 한 줄, 그 빚의 id 와 상대로(`end_run` 이 보내는 폴백과 한 줄씩 맞는다). 사람이 창에서 연 구간은 창이 곧
-        # 배달이다 — 그 사람에게 결과 한 줄(폴백이 아니다).
+        # 배달이다 — 그 사람에게 결과 한 줄(폴백이 아니다). 결과가 빈 글이면(기다릴 것 없는 `wait` 로 끝났다 — 5d) 그
+        # 사람에게 한 말이 없다: 줄을 내지 않는다.
         line = {
             "key": tm.key,
             "direction": "out",
@@ -339,7 +334,7 @@ class ResidentLoop(LoopKind):
             reg._record(
                 tm, {**line, "text": text, "item": d.id, "to": d.to, "fallback": True}
             )
-        if human:
+        if human and result.output != "":
             reg._record(
                 tm,
                 {**line, "text": output, "item": iid, "to": author, "fallback": False},
@@ -392,7 +387,7 @@ class ResidentLoop(LoopKind):
 class AgentActor:
     """에이전트 워커의 액터 (`actor.run_actor`) — 자기 받은편지함에서 런을 열 것(첫 깨우는 봉투, 사람의 말은 묶음)을
     시한 없이 기다려 그 종류(`ResidentLoop`)로 돌린다. 수명: 상주는 끝내기(✕·세션 종료 — 상자가 닫힌다)까지, run
-    에이전트(``ends_after_task``)는 과제 하나 — 런이 끝나면 내려온다(`wait` 는 런을 끝내지 않는다).
+    에이전트(``ends_after_task``)는 과제 하나 — 런이 끝나면 내려온다(받아들여진 `wait` 는 런을 끝내지 않는다).
 
     런의 예외는 종류가 회신으로 바꾼다(`ResidentLoop.crashed`) — 워커의 사망·정지 뒤처리는 레지스트리의 `_worker` 가
     든다."""
@@ -429,8 +424,8 @@ class AgentActor:
     def ended(self, start: Start, end: RunEnd) -> bool:
         """run 에이전트는 런이 끝나면 내려온다 — `complete`·정지·턴 상한·오류 어느 끝이든(사용자 결정 2026-11-15:
         회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도 남으면 런 끝 폴백이 런 요약으로
-        회신한다). `wait` 는 런을 끝내지 않는다(5c-1). 런 중간의 `reply` 는 끝이 아니다. 세션 종료(``session_end``)는
-        과제의 끝이 아니다 — 내려옴(`OnAgentEnd` 훅)도 없이 워커를 끝낸다(5e1 결정 E)."""
+        회신한다). 받아들여진 `wait` 는 런을 끝내지 않는다(5c-1); 닫지 않은 것도 깨울 것도 없는 `wait` 는 끝내고, 그 끝에도
+        내려온다(5d). 런 중간의 `reply` 는 끝이 아니다. 세션 종료(``session_end``)는 과제의 끝이 아니다 — 내려옴(`OnAgentEnd` 훅)도 없이 워커를 끝낸다(5e1 결정 E)."""
         if end.outcome == "session_end":
             return True
         if self.tm.ends_after_task:

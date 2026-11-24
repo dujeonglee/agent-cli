@@ -101,8 +101,8 @@ class WaitTool(Tool):
         "background job, a monitor, an agent you asked. Ends this turn without "
         "closing any open item; the report wakes you with the items still "
         "open. If nothing reports for a while, you are woken with what is still "
-        "running. Refused when nothing will wake you: then keep working, or call "
-        "`complete`."
+        "running. When nothing will wake you: refused while a `reply` you owe or a "
+        "person's request is still open; with nothing owed, the run ends."
     )
     parameters: ClassVar[dict] = {
         "type": "object",

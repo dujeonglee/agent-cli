@@ -454,6 +454,28 @@ class TestRecovery:
         assert "Action loop unresolved" in data["content"]
         assert r.hub.persistent_count == 1
 
+    def test_a_failed_end_keeps_its_payload_and_a_quiet_end_says_so(self):
+        """실패한 끝(기본)의 payload 는 종전 그대로 — 기다릴 것 없이 끝난 런(5d)만 ``failed: false`` 를 싣는다. 둘 다
+        영속(재접속에 남는다)."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.hub.register(conn)
+
+        r.error("Max turns (3) reached.", turn=3)
+        r.error("Run ended — nothing to wait for.", turn=4, failed=False)
+
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "turn_error" and "failed" not in data
+        assert (data["turn"], data["content"]) == (3, "Max turns (3) reached.")
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "turn_error"
+        assert {k: data[k] for k in ("turn", "content", "failed")} == {
+            "turn": 4,
+            "content": "Run ended — nothing to wait for.",
+            "failed": False,
+        }
+        assert r.hub.persistent_count == 2
+
 
 class TestTurnErrorEventName:
     """A turn/tool error must emit under the ``turn_error`` SSE event name,

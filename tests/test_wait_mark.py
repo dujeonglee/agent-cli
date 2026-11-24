@@ -173,14 +173,14 @@ class TestInPlace:
 
 
 class TestRefused:
-    def test_a_refused_wait_does_not_mark(self, reg):
-        """깨울 것이 없다 — 거절되고 런이 잇는다. 표시는 서지 않는다."""
+    def test_nothing_to_wait_for_does_not_mark(self, reg):
+        """깨울 것도 빚도 없다 — 받아들여 작업 구간이 끝난다(5d). 기다리지 않으므로 표시는 서지 않는다."""
         loop = _loop(
             make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg),
             _provider(WAIT, DONE),
         )
-        assert loop.run().output == "done"
-        assert "wait refused — nothing would wake you" in str(loop._state.messages)
+        assert loop.run().output == ""
+        assert "Observation: nothing to wait for:" in str(loop._state.messages)
         assert reg._post.is_waiting("main") is False
 
     def test_a_wait_refused_for_arrived_mail_does_not_mark(self, reg, schedule_on):

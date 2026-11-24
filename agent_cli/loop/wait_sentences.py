@@ -1,14 +1,50 @@
 """`wait` 가 모델에게 말하는 문장 — 한 곳 (5b).
 
-거절(이미 도착·서로 기다림)과 기다림이 깨진 까닭을 짓는 함수들이다. 판정은 하지 않는다 — 부르는 쪽
-(`dispatch._op_wait`)이 판정한 사실을 받아 글로만 바꾼다. `constants` 의 낱말 말고는 기대는 것이 없어, 문장만
-다른 비교 트리를 만들 때 이 파일 하나를 바꾸면 된다. 깨울 것이 없을 때의 거절과 그 끝맺음(`WAIT_NOTHING_PENDING`·
-`WAIT_NEXT_*`)은 아직 `loop/kind.py` 에 있다 — 5d 에서 끝맺음을 하나로 줄일 때 이리 옮긴다.
+거절(이미 도착·서로 기다림·닫지 않은 것)과 기다릴 것 없는 끝, 기다림이 깨진 까닭을 짓는 함수들이다. 판정은 하지
+않는다 — 부르는 쪽(`dispatch._op_wait`)이 판정한 사실을 받아 글로만 바꾼다. `constants` 의 낱말 말고는 기대는 것이
+없어, 문장만 다른 비교 트리를 만들 때 이 파일 하나를 바꾸면 된다.
 """
 
 from __future__ import annotations
 
 from agent_cli.constants import ARRIVAL_NOTICE, ARRIVAL_USER, SCHEDULE_ADDR_PREFIX
+
+#: 깨울 것도 닫지 않은 것(갚지 않은 회신·답하지 않은 사람의 요청)도 없는 `wait` — 받아들이고 작업 구간을 끝낸다(5d). 기록에 남아 다음 작업 구간의 모델이 읽는다.
+#: 누구에게나 한 문장이다
+NOTHING_TO_WAIT_FOR = (
+    "nothing to wait for: no job or monitor of yours is running, no agent owes you "
+    "a reply, and you owe none. This run has ended."
+)
+
+
+#: 그 끝의 화면 한 줄(사람이 본다 — 모델 입력이 아니다)
+RUN_ENDED_NOTHING_TO_WAIT_FOR = "Run ended — nothing to wait for."
+
+
+#: 사람의 요청이 남은 거절의 끝 — 기다리는 방법(에이전트에게서 들으려면 요청을 먼저 보낸다). 누가 읽든 같은 글
+HEAR_FROM_AN_AGENT = " To hear from an agent, send it a request with `message` first."
+
+
+def open_items_refusal(reply_ids: list[str], request_ids: list[str]) -> str:
+    """깨울 것이 없는데 닫지 않은 것이 있다 — 갚지 않은 회신(``reply_ids``, `r-`)과 답하지 않은 사람의 요청(``request_ids``,
+    `u-`)의 번호를 말한다(되묻기와 같은 번호). 번호가 여럿이면 하나씩 대괄호로 쉼표로 잇는다 — ``[r-2], [r-5]``."""
+    replies = ", ".join(f"[{i}]" for i in reply_ids)
+    requests = ", ".join(f"[{i}]" for i in request_ids)
+    if replies and requests:
+        return (
+            f"nothing would wake you, and you still owe a `reply` {replies} and an "
+            f"answer to {requests}. Settle those first, or keep working."
+            + HEAR_FROM_AN_AGENT
+        )
+    if requests:
+        return (
+            f"nothing would wake you, and {requests} is still unanswered. Answer it "
+            "with `complete`, or keep working." + HEAR_FROM_AN_AGENT
+        )
+    return (
+        f"nothing would wake you, and you still owe a `reply` {replies}. Reply "
+        "first, or keep working."
+    )
 
 
 def mutual_wait_refusal(parked: list[str], owed_ids: list[str]) -> str:

@@ -131,13 +131,17 @@ def _wait_observation(loop) -> str:
 
 
 def test_only_a_command_queued_and_nothing_to_wake(reg):
-    """장면 D — 깨울 것이 없다. 명령은 도착분이 아니다 — 깨울 것이 없다는 거절(종전: "the user wrote to you …")."""
+    """장면 D — 깨울 것이 없다. 명령은 도착분이 아니다 — 깨울 것이 없다는 거절이고, 닫지 않은 것은 질의(u-1)뿐이다
+    (종전: "the user wrote to you …"; 5d: 명령은 닫지 않은 것에 들지 않는다)."""
     loop = _loop(reg, _provider_that_types_a_command_then_waits(reg))
     res = loop.run()
     assert res.success
     obs = _wait_observation(loop)
-    assert "wait refused — nothing would wake you:" in obs
-    assert "the user wrote to you" not in obs
+    assert obs == (
+        "Observation: wait refused — nothing would wake you, and [u-1] is still "
+        "unanswered. Answer it with `complete`, or keep working. To hear from an "
+        "agent, send it a request with `message` first."
+    )
 
 
 def test_only_a_command_queued_while_a_job_runs(reg, jobs):

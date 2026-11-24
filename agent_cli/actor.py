@@ -40,7 +40,8 @@ class RunEnd:
     @classmethod
     def of(cls, finished: Any, *, stopped: bool = False) -> RunEnd:
         """종류의 반환에서 — 세션 종료로 끝났으면 ``session_end``, 정지가 섰으면 ``stopped``, 실패면 ``failed``,
-        아니면 ``done``. `wait` 는 런을 끝내지 않는다(5c-1) — 런의 끝이 아니다."""
+        아니면 ``done``. 받아들여진 `wait` 는 런을 끝내지 않는다(5c-1). 닫지 않은 것도 깨울 것도 없는 `wait` 의 끝은 빈 결과의
+        성공이라 ``done`` 이다(5d)."""
         result = finished[0] if isinstance(finished, tuple) else finished
         outcome: Outcome
         if bool(getattr(result, "session_ended", False)):

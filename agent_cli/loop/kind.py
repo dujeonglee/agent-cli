@@ -47,24 +47,6 @@ class LoopKindError(Exception):
     """종류가 런을 열 수 없다 — 모델(또는 호스트)에게 보낼 사유 한 줄이 메시지다."""
 
 
-#: `wait` 거절 — 깨울 것이 없다. 사실은 누구에게나 한 문장이고, 다음 걸음은 종류가 정한다
-#: (`LoopKind.wait_refused_next`): main 은 요청을 먼저 보내야 회신이 오고, 상주는 런을 끝내면 다음
-#: 메시지가 새 런을 연다(문맥은 그대로), run 에이전트·하니스 작업은 과제를 잇거나 끝낸다.
-WAIT_NOTHING_PENDING = (
-    "nothing would wake you: no job or monitor of yours is running and no agent "
-    "owes you a reply."
-)
-WAIT_NEXT_KEEP_WORKING = " Keep working, or call `complete` if the task is done."
-WAIT_NEXT_MAIN = (
-    WAIT_NEXT_KEEP_WORKING
-    + " To hear from an agent, send it a request with `message` first."
-)
-WAIT_NEXT_RESIDENT = (
-    " You do not need `wait` to receive messages: end this run with `complete`, "
-    "and the next message to you starts a new run with your memory intact."
-)
-
-
 @dataclass(frozen=True)
 class PromptProfile:
     """⑨ 프롬프트 윤곽 — 시스템 프롬프트·꼬리·거절 문구가 종류에 따라 달라지는 입력 전부.
@@ -272,11 +254,6 @@ class LoopKind:
         없이(`AgentLoop._on_interrupt`, 5e1). 기본은 거짓 — main(`MainInput.closed`)과 에이전트(레지스트리 우편의
         main 상자)가 같은 사실을 읽는다."""
         return False
-
-    def wait_refused_next(self) -> str:
-        """깨울 것이 없어 `wait` 를 거절할 때 문장의 다음 걸음 — 과제를 잇거나 끝낸다(run·하니스 작업).
-        새 종류는 덮어쓰지 않으면 이 기본("Keep working …")을 쓴다; main·상주는 자기 길을 말한다."""
-        return WAIT_NEXT_KEEP_WORKING
 
     def intake(self) -> list[dict]:
         """⑮ 턴 경계에 흡수할 항목 — 종류가 **어디서 받을지** 정하고 엔진이 넣는다.

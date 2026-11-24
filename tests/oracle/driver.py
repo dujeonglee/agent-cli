@@ -1409,7 +1409,8 @@ def s12_hop_limit(root: Path) -> dict:
 
 def s13_wait_refusals_and_wakes(root: Path) -> dict:
     """§4 제자리 wait 거절·수락·깬 이유: 기다릴 것 없음 → 거절 / 메일이 이미 도착 → 거절(다음 턴에 배달) / 사람
-    말에 깸(기다림은 그대로) / 회신에 깸 / 한가한 main 을 메일이 깨운다(메일 런)."""
+    말에 깸(기다림은 그대로) / 회신에 깸 / 한가한 main 을 메일이 깨운다(메일 런). `[5d 에서 바뀜]` 첫 거절이 닫지 않은
+    사람의 요청 번호를 말한다(그 구간은 u-1 을 들었다)."""
     box: dict = {}
 
     def job_mail(n: int) -> str:
@@ -1432,7 +1433,7 @@ def s13_wait_refusals_and_wakes(root: Path) -> dict:
     p = Provider(
         {
             "MAIN": [
-                call("wait"),  # 기다릴 것 없음
+                call("wait"),  # 기다릴 것 없음 — 닫지 않은 u-1 이 있어 거절
                 job_mail_then_wait,  # 이미 도착
                 complete_all("job seen"),
                 # 둘째 런(사람): 느린 run 에이전트를 기다리다 사람 말에 깨고, 다시 기다리다 회신에 깬다
@@ -2547,7 +2548,8 @@ def s25_run_agent_leaves_queue(root: Path) -> dict:
 
 def s26_auditor_range(root: Path) -> dict:
     """1단계 ⑧ 감사 구간: 사람 런이 `complete` 로 끝나면 감사 작업 하나 → 그 결과는 main 앞 통지 → main 의 메일 런.
-    감사가 도는 동안 main 의 `wait` 는 감사를 근거로 삼지 않는다(거절)."""
+    감사가 도는 동안 main 의 `wait` 는 감사를 근거로 삼지 않는다(거절 — `[5d 에서 바뀜]` 거절이 닫지 않은 u-2 를
+    말한다)."""
     box: dict = {}
     go = threading.Event()
     facts: dict = {}
@@ -2826,7 +2828,7 @@ def s37_command_queued_before_wait(root: Path) -> dict:
     `[5b-3 에서 바뀜]` 종전엔 `wait` 판정이 줄 선 명령을 사람의 말로 세어 거절했다("the user wrote to you … right
     below" — 아래에 글은 없었다). 지금은 들어올 때 명령으로 표시된 말을 세지 않는다 — `wait` 는 받아들여지고, 명령은
     제자리 대기가 시작하자마자 그 자리에서 라우팅된다(대기 도중 친 명령 s24 와 같은 길). 회신이 깨우면 main 은 남은
-    `wait`(깨울 것 없음 — 거절)를 거쳐 끝낸다."""
+    `wait`(깨울 것 없음 — 닫지 않은 u-1 이 있어 거절, `[5d 에서 바뀜]` 그 번호를 말한다)를 거쳐 끝낸다."""
     box: dict = {}
 
     def type_a_command(s):

@@ -34,11 +34,8 @@ from tests.test_engine_p2 import (
 #: 실제 엔진의 main 세션(레지스트리·입력 큐·MainLoop) — P2 테스트의 픽스처 그대로
 session = test_engine_p2.session
 
-REFUSED = (
-    "Observation: wait refused — nothing would wake you: no job or monitor of yours is "
-    "running and no agent owes you a reply. Keep working, or call `complete` if the "
-    "task is done. To hear from an agent, send it a request with `message` first."
-)
+#: 깨울 것이 없고 사람의 요청이 열려 있는 `wait` 의 거절 — 그 번호를 말한다(5d)
+UNANSWERED = "is still unanswered. Answer it with `complete`, or keep working."
 
 
 @pytest.fixture
@@ -197,7 +194,8 @@ class TestWhoWakesTheRequester:
 class TestMainSeesIt:
     def test_main_reading_the_reply_first_gets_wait_refused_not_parked(self, session):
         """CI min-deps 에서 난 순서를 결정적으로 — 회신이 main 의 다음 경계 전에 오고, run 에이전트는 아직
-        내려오지 않았다. 종전엔 그 `wait` 가 "working on your request" 로 런을 끝냈다(waiting).
+        내려오지 않았다. 종전엔 그 `wait` 가 "working on your request" 로 런을 끝냈다(waiting). 갚은 run 은 깨울 근거가
+        아니다 — 깨울 것이 없고, 사람의 질의가 아직 열려 있어 거절된다(`[5d 에서 바뀜]` 거절이 그 번호를 말한다).
 
         회신 순서는 테스트가 쥔다: 에이전트는 main 의 둘째 모델 호출이 시작된 뒤에야 `reply` 한다 — `agent`
         호출 뒤 경계보다 회신이 먼저 오면 그 경계가 회신을 배달해 버려 이 순서를 볼 수 없다."""
@@ -210,9 +208,7 @@ class TestMainSeesIt:
             return call("reply", id=owed_id(msgs), text="3 callers: a.py, b.py, c.py")
 
         def agent_linger(msgs):
-            assert release.wait(
-                10
-            )  # main 이 둘째 `wait` 의 답을 받을 때까지 내려오지 않는다
+            assert release.wait(10)  # main 의 작업 구간이 끝날 때까지 내려오지 않는다
             return call("complete", result="replied")
 
         def main_wait_after_reply(msgs):
@@ -225,28 +221,27 @@ class TestMainSeesIt:
             )
             return call("shell", command="true")
 
-        def main_complete(msgs):
-            release.set()
-            return complete_all("main finished")(msgs)
-
         p = Provider(
             {
                 "MAIN": [
                     call("agent", mode="run", task="TASK-W find callers"),
                     main_wait_after_reply,
                     call("wait"),
-                    main_complete,
+                    complete_all("main finished"),
                 ],
                 "TASK-W": [agent_reply, agent_linger],
             }
         )
         s = session(p)
         holder["reg"] = s["reg"]
-        result = s["run"]()
+        try:
+            result = s["run"]()
+        finally:
+            release.set()
         assert result.success and not getattr(result, "waiting", False)
         text = contents(s["ctx"])
         assert "3 callers: a.py, b.py, c.py" in text
-        assert REFUSED in text
+        assert UNANSWERED in text
         assert "working on your request" not in text
         assert not main_waits_in_place(s["reg"])
 
@@ -274,4 +269,4 @@ class TestMainSeesIt:
         assert result.success and not getattr(result, "waiting", False)
         text = contents(s["ctx"])
         assert "will wake on: agent:agt-" in text and "late answer" in text
-        assert REFUSED not in text
+        assert UNANSWERED not in text

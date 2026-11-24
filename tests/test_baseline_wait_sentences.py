@@ -3,7 +3,7 @@
 진짜 `MainLoop`·진짜 상주 워커(`AgentRegistry`)에 대본 provider 를 꽂아 모델이 읽는 관찰 문장을 **원문 그대로**
 비교한다. 오라클(s01·s13·s21·s23·s25)이 이미 고정한 칸은 여기 없다:
 
-- main: 기다릴 것 없음·이미 도착 거절, 사람 말·회신에 깸 — s13 / 에이전트 owes·working — s01·s23 /
+- main: 이미 도착 거절, 사람 말·회신에 깸 — s13 / 에이전트 owes·working — s01·s23 /
   queued(내려온 run) — s25
 - 상주: main 의 회신을 기다림("main owes you a reply") — s21
 
@@ -114,6 +114,12 @@ def _main_wait(session_factory, scripts, release=None) -> tuple[list[str], objec
     result = s["run"]()
     return _wait_lines(contents(s["ctx"])), result
 
+
+#: `[5d 에서 바뀜]` 깨울 것이 없는데 과제의 회신(r-1)을 빚졌다 — 거절이 그 번호를 말한다. 종류마다 갈리던 끝맺음이 없다
+_OWED_R1 = (
+    "Observation: wait refused — nothing would wake you, and you still owe a "
+    "`reply` [r-1]. Reply first, or keep working."
+)
 
 #: 깬 뒤 같은 런이 닫는 대본(5c-1)
 _WAIT_THEN_DONE = {"MAIN": [call("wait"), complete_all("done")]}
@@ -381,7 +387,8 @@ class TestResidentAccepts:
         ]
 
     def test_schedule_does_not_wake_a_resident(self, resident):
-        """예약은 main 에게 발화한다 — 상주의 깨울 것이 아니다(5b 변화 8). 예약만 켜져 있으면 깨울 것이 없는 거절이다."""
+        """예약은 main 에게 발화한다 — 상주의 깨울 것이 아니다(5b 변화 8). 예약만 켜져 있으면 깨울 것이 없다 — 과제의
+        회신을 빚졌으니 거절이다."""
         set_schedule_registry(_schedule_stub())
         text = resident["run"](
             {
@@ -392,18 +399,11 @@ class TestResidentAccepts:
                 ]
             }
         )
-        assert _wait_lines(text) == [
-            (
-                "Observation: wait refused — nothing would wake you: no job or monitor of "
-                "yours is running and no agent owes you a reply. You do not need `wait` to "
-                "receive messages: end this run with `complete`, and the next message to "
-                "you starts a new run with your memory intact."
-            )
-        ]
+        assert _wait_lines(text) == [_OWED_R1]
 
 
 class TestResidentRefuses:
-    def test_nothing_pending(self, resident):
+    def test_nothing_to_wake_while_owing(self, resident):
         text = resident["run"](
             {
                 "TASK-R1": [
@@ -413,21 +413,14 @@ class TestResidentRefuses:
                 ]
             }
         )
-        # 상주는 런을 끝내면 다음 메시지가 새 런을 연다 — 거절이 그 길을 말한다
-        assert _wait_lines(text) == [
-            (
-                "Observation: wait refused — nothing would wake you: no job or monitor of "
-                "yours is running and no agent owes you a reply. You do not need `wait` to "
-                "receive messages: end this run with `complete`, and the next message to "
-                "you starts a new run with your memory intact."
-            )
-        ]
+        assert _wait_lines(text) == [_OWED_R1]
 
-    def test_complete_then_next_message_opens_a_new_run_with_memory(
+    def test_paid_then_wait_ends_and_the_next_message_opens_a_new_run_with_memory(
         self, resident, renderer
     ):
-        """거절 문장이 말하는 사실의 가드 — 갚은 뒤 `wait` 가 거절된 상주가 그 안내대로 `complete` 하면 아무것도
-        더 보내지 않고 한가해지고, 다음 메시지가 새 런을 연다. 새 런의 모델은 앞 런을 기억한다(같은 ctx)."""
+        """`[5d 에서 바뀜]` 갚은 뒤의 `wait` 는 빚도 깨울 것도 없어 받아들여지고 작업 구간이 끝난다(종전: 거절 → 그 안내대로
+        `complete`). 아무것도 더 보내지 않고 한가해지고, 다음 메시지가 새 작업 구간을 연다. 새 구간의 모델은 앞 구간을
+        기억한다(같은 ctx) — 끝을 알린 관찰도."""
         seen: list = []
 
         def second_run(msgs):
@@ -439,13 +432,15 @@ class TestResidentRefuses:
                 "TASK-R1": [
                     lambda m: call("reply", id=owed_id(m), text="first done"),
                     call("wait"),
-                    call("complete", result="ok"),
                     second_run,
                     call("complete", result="ok"),
                 ]
             }
         )
-        assert "You do not need `wait` to receive messages" in text
+        assert text.endswith(
+            "Observation: nothing to wait for: no job or monitor of yours is running, no "
+            "agent owes you a reply, and you owe none. This run has ended."
+        )
         reg, key = resident["reg"], resident["key"]
         replies = [m.get("output") for m in absorbed_mail(reg)]
         assert replies == [
@@ -457,12 +452,12 @@ class TestResidentRefuses:
         assert [m.get("output") for m in absorbed_mail(reg)] == ["second done"]
         (msgs,) = seen
         body = "\n".join(str(m.get("content") or "") for m in msgs)
-        # 앞 런(과제·회신·거절)이 그대로 있고 그 뒤에 새 메시지
+        # 앞 구간(과제·회신·끝)이 그대로 있고 그 뒤에 새 메시지
         assert body.index("TASK-R1 the job") < body.index("first done")
-        assert body.index("You do not need `wait`") < body.index("SECOND ask")
+        assert body.index("nothing to wait for") < body.index("SECOND ask")
 
-    def test_nothing_pending_run_agent(self, resident):
-        """run 에이전트는 런이 끝나면 내려간다 — 상주의 "다음 메시지가 새 런" 은 사실이 아니다."""
+    def test_nothing_to_wake_while_owing_run_agent(self, resident):
+        """run 에이전트도 같은 문장이다(5d — 종전엔 상주와 끝맺음이 갈렸다)."""
         text = resident["run"](
             {
                 "TASK-R1": [
@@ -473,13 +468,7 @@ class TestResidentRefuses:
             },
             ends_after_task=True,
         )
-        assert _wait_lines(text) == [
-            (
-                "Observation: wait refused — nothing would wake you: no job or monitor of "
-                "yours is running and no agent owes you a reply. Keep working, or call "
-                "`complete` if the task is done."
-            )
-        ]
+        assert _wait_lines(text) == [_OWED_R1]
 
     def test_mail_arrived_while_thinking(self, resident):
         def notice_then_wait(msgs):

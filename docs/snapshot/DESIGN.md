@@ -102,7 +102,7 @@ git 은 작업 트리 안의 `.git` 디렉터리를 gitlink(커밋 sha)로만 �
 EVENTS = ["OnSessionStart", "PreToolUse", "PreWait", "OnSessionEnd"]
 def on_session_start(ctx):   # git 확인 → init → 시작 커밋 → 성공 시에만 안내 주입
 def pre_tool_use(ctx):       # shell·edit_file·write_file 직전 checkpoint (최소 간격) — 함수명은 EVENT_TO_FUNC(on_ 없음)
-def pre_wait(ctx):           # 받아들여진 wait 직전 "before wait (turn N)" (force — v10.163.0, wait 는 런을 끝내지 않는다)
+def pre_wait(ctx):           # 받아들여진 wait 직전 "before wait (turn N)" (force — v10.163.0, 받아들여진 wait 는 런을 끝내지 않는다)
 def on_session_end(ctx):     # 마지막 checkpoint (세션 끝 상태도 복원 가능하게)
 ```
 
