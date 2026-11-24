@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,7 +22,9 @@ from agent_cli.session_slots import (
     set_monitor_registry,
     set_schedule_registry,
 )
+from agent_cli.subagent.agents_live import AgentRegistry
 from agent_cli.tools.virtual import WaitTool
+from tests.binding_support import make_binding
 from tests.loop_ports import make_ports, queue_inbox
 from tests.loopkit import make_loop
 from tests.test_agents_live import _FakeLoopResult, make_registry, wait_until
@@ -29,7 +32,7 @@ from tests.test_baseline_wait_sentences import (  # noqa: F401 — 픽스처
     renderer,
     resident,
 )
-from tests.test_engine_p2 import call, owed_id
+from tests.test_engine_p2 import Provider, call, owed_id
 
 CAPS = ModelCapabilities(
     context_window=32768, max_output_tokens=4096, supports_thinking=False
@@ -91,7 +94,36 @@ def _wait_observations(loop) -> list[str]:
     ]
 
 
+class _OneJob:
+    """main 의 작업 하나가 도는 대역 — 체크인이 걸리면(``log_size``, 제자리 대기가 시작했다) 그다음 ``running`` 은 비어
+    작업이 끝난 것으로 깨운다."""
+
+    def __init__(self) -> None:
+        self.armed = False
+        self.job = SimpleNamespace(id=1, command="sleep 30")
+
+    def running(self, owner=None):
+        return [] if self.armed or owner != "main" else [self.job]
+
+    def log_size(self, job):
+        self.armed = True
+        return 0
+
+
 class TestJudgment:
+    def test_a_persons_request_held_while_a_job_runs_waits_in_place(self, reg):
+        """깨울 것이 있으면 받아들인다 — 사람의 요청(u-1)을 든 채라도. 판정 순서의 ② 는 닫지 않은 것을 보지 않는다."""
+        set_job_registry(_OneJob())
+        p = _provider(WAIT, {"action": "complete", "result": "ok", "answers": ["u-1"]})
+        loop, result = _run(
+            make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg), p
+        )
+        (first,) = _wait_observations(loop)[:1]
+        assert first.startswith(
+            "Observation: waiting — will wake on: job #1 (`sleep 30`)"
+        )
+        assert (result.success, result.output) == (True, "ok")
+
     def test_a_persons_request_is_not_a_debt(self, reg):
         """main 이 사람의 요청(u-1)만 연 채 `wait` — 빚이 없다. 받아들여 빈 결과의 성공으로 끝난다(모델 호출 1).
         그 작업 구간은 u-1 을 들었다(감사·`run` 의 판정이 읽는 값)."""
@@ -183,6 +215,47 @@ class TestPersonInAnAgentWindow:
         ]
         assert out == ["hello"]
         reg.shutdown_all()
+
+
+def _window_history(tmp_path, renderer, script: list) -> tuple[str, list[str]]:  # noqa: F811
+    """진짜 상주 워커 — 사람이 그 창에 쓴 말(u-)로 연 구간 하나를 대본으로 돌리고 (history 글, 발신 줄)을 돌려준다."""
+    p = Provider({"TASK-W": script})
+    binding = make_binding(provider=p, capabilities=CAPS, model="m")
+    reg = AgentRegistry(
+        tmp_path / "s",
+        runtime={"binding": binding, "max_turns": 20, "depth": 0, "max_depth": 2},
+    )
+    set_agent_registry(reg)
+    try:
+        key, _ = reg.spawn(name="aa")
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        assert reg.request(key, "TASK-W window words", author="user:dj") == ""
+        assert wait_until(lambda: reg.get(key).handled >= 1)
+        hist = tmp_path / "s" / "agents" / key / "history.jsonl"
+        text = "\n".join(
+            str(json.loads(ln).get("content") or "")
+            for ln in hist.read_text(encoding="utf-8").splitlines()
+            if ln.strip()
+        )
+        out = [
+            kw["text"]
+            for name, kw in renderer.calls
+            if name == "agent_message" and kw.get("direction") == "out"
+        ]
+        return text, out
+    finally:
+        reg.shutdown_all()
+        set_agent_registry(None)
+
+
+class TestPersonsWordsInAnAgentWindow:
+    def test_wait_with_the_persons_request_open(self, tmp_path, renderer):  # noqa: F811
+        """사람이 창에서 연 구간(u-)이 그 말에 답하기 전에 `wait` — 지금 값: 빚(r-)이 없어 끝난다, 발신 줄 없음."""
+        text, out = _window_history(
+            tmp_path, renderer, [call("wait"), call("complete", result="ok")]
+        )
+        assert text.endswith(NOTHING_TO_WAIT_FOR)
+        assert out == []
 
 
 class TestRunAgent:
