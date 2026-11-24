@@ -315,11 +315,35 @@ def _steer(monkeypatch, typed: str):
     return q, stdin, M._terminal_steer_input(q, _Surface())
 
 
-def test_a_line_typed_while_a_prompt_holds_the_terminal_is_taken_by_the_wait(
+def test_a_line_typed_while_a_prompt_holds_the_terminal_is_left_to_the_prompt(
     monkeypatch,
 ):
+    """프롬프트가 `interactive_lock` 을 쥔 동안 친 줄은 프롬프트의 것이다 — 제자리 대기 읽기는 가져가지 않는다."""
     q, stdin, wait = _steer(monkeypatch, "y\n")
     with _HeldPrompt():
-        assert wait(0) is True
-    assert [i["text"] for i in q.snapshot()] == ["y"]
-    assert stdin.read() == ""
+        assert wait(0) is False
+    assert q.snapshot() == []
+    assert stdin.read() == "y\n"
+
+
+class TestReadTerminalLine:
+    def test_a_typed_line_goes_to_main(self, monkeypatch):
+        q, _, _ = _steer(monkeypatch, "skip the tests\n")
+        assert M.read_terminal_line(q, 0) is True
+        assert [i["text"] for i in q.snapshot()] == ["skip the tests"]
+
+    def test_nothing_typed(self, monkeypatch):
+        q, _, _ = _steer(monkeypatch, "")
+        assert M.read_terminal_line(q, 0) is False
+
+    def test_not_read_while_a_prompt_holds_the_terminal(self, monkeypatch):
+        q, stdin, _ = _steer(monkeypatch, "y\n")
+        with _HeldPrompt():
+            assert M.read_terminal_line(q, 0) is None
+        assert stdin.read() == "y\n" and q.snapshot() == []
+
+    def test_not_read_when_the_input_is_not_a_terminal(self, monkeypatch):
+        q, _, _ = _steer(monkeypatch, "hello\n")
+        monkeypatch.setattr(M.sys, "stdin", io.StringIO("hello\n"))
+        assert M.read_terminal_line(q, 0) is None
+        assert q.snapshot() == []

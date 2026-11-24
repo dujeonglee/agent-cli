@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import select
 import signal
 import subprocess
 import sys
@@ -43,6 +44,7 @@ from agent_cli.providers import (
     get_capabilities,
 )
 from agent_cli.render import C, console, get_renderer
+from agent_cli.render.base import interactive_lock
 from agent_cli.terminate import SigTerm, Terminated, wait_left
 
 app = typer.Typer(
@@ -2388,37 +2390,51 @@ def _terminal_steer_input(main_input, surface):
     보고, 터미널이면 그 사이 친 한 줄을 같은 판정으로: 명령이 아니면 main 앞에 넣고 참(꺼내는 것은 다음 턴 경계의
     흡수다). 터미널이 아니면 줄 선 말만 본다.
 
-    터미널 줄은 main 이 제자리에서 기다리는 동안에만 읽는다 — 그 밖의 시간엔 `ask`·확인
-    프롬프트가 같은 표준입력을 쓴다.
+    친 줄은 `read_terminal_line` 하나로 읽는다 — 프롬프트(`ask`·확인 대화)가 표준입력을 쥐고 있으면 읽지 않는다(그
+    줄은 프롬프트의 것이다), 표준입력이 터미널이 아니면 줄 선 말만 본다.
 
     친 줄도 main 앞에 넣는다(들어오는 문 하나 — 명령인가는 거기서 판정한다). 명령(``/stop agt-3`` 등)은 줄 선 것이든
     친 것이든 그 자리에서 ``surface.route`` 하고
     기다림을 깨우지 않는다 — 깨우면 main 이 "사용자가 썼다" 로 깨어 그 말이 없는 관찰을 읽는다(명령은 흡수 때
     소비된다). 멈춘 에이전트의 회신이 따로 깨운다 (v10.148.0: 줄 선 명령도 — 종전엔 친 줄만)."""
-    import select
-
     from agent_cli.runtime import wait_for_human_words
 
     queued = wait_for_human_words(main_input, surface)
 
     def wait(timeout: float) -> bool:
-        if not sys.stdin.isatty():
-            return queued(timeout)
         if queued(0):
             return True
+        took = read_terminal_line(main_input, timeout)
+        if took is None:
+            return queued(timeout)
+        return queued(0) if took else False
+
+    return wait
+
+
+def read_terminal_line(main_input, timeout: float) -> bool | None:
+    """터미널에서 친 한 줄을 main 앞에 넣는다 — 넣었으면 True, 시한 안에 줄이 없으면 False, 읽지 않았으면 None(6c).
+
+    읽지 않는 때: 표준입력이 터미널이 아니다("친 줄을 읽을 수 있나" 의 판정은 여기 하나 — 파이프·하니스) · 프롬프트
+    (`ask`·확인 대화)가 표준입력을 쥐고 있다 — 그 읽기와 같은 잠금(`interactive_lock`, `Renderer._guarded_read`)을 못
+    잡으면 그 줄은 프롬프트의 것이다 · 표준입력을 고를 수 없다. 넣은 줄은 들어오는 문(`MainInput.enqueue`)이 명령인가를
+    판정한다 — 명령이 아닌 말은 언제나 main 의 요청이다(열린 질문의 답으로 짐작하지 않는다)."""
+    if not sys.stdin.isatty() or not interactive_lock.acquire(blocking=False):
+        return None
+    try:
         try:
             ready, _, _ = select.select([sys.stdin], [], [], timeout)
         except (OSError, ValueError):
-            return queued(timeout)
+            return None
         if not ready:
             return False
         text = sys.stdin.readline().strip()
-        if is_blank_words(text):
-            return False
-        main_input.enqueue(None, text)
-        return queued(0)
-
-    return wait
+    finally:
+        interactive_lock.release()
+    if is_blank_words(text):
+        return False
+    main_input.enqueue(None, text)
+    return True
 
 
 def _agent_mail_notice(reply: dict, busy: bool) -> None:
