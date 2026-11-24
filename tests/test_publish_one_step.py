@@ -54,12 +54,14 @@ class OneStep:
     def __init__(self):
         self.step = Step()
         self.first_read = threading.Event()
+        self.second_knocked = False
 
     def hold_first(self) -> None:
-        """뜨는 함수 안에서 부른다 — 첫째 스레드면 둘째가 문을 두드릴 때까지 붙든다."""
+        """뜨는 함수 안에서 부른다 — 첫째 스레드면 둘째가 문을 두드릴 때까지 붙든다. 두드렸는지는 적어 두고 `run` 이
+        단언한다(이 스레드 안에서 단언하면 이 스레드만 죽고 테스트는 둘째가 낸 값으로 통과한다)."""
         if threading.current_thread().name == "first":
             self.first_read.set()
-            assert self.step.knocked.wait(10)
+            self.second_knocked = self.step.knocked.wait(10)
 
     def run(self, first, second) -> None:
         a = threading.Thread(target=first, name="first")
@@ -70,6 +72,8 @@ class OneStep:
         for t in (a, b):
             t.join(10)
             assert not t.is_alive()
+        # 둘째는 그 걸음의 문 앞에서 기다렸어야 한다 — 기다리지 않고 지나갔으면 그 걸음은 묶여 있지 않다
+        assert self.second_knocked
 
 
 def test_the_roster_shown_last_is_the_newest(tmp_path, renderer, monkeypatch):  # noqa: F811
