@@ -640,8 +640,6 @@ class AgentLoop:
             # 메일이 연 런 — 시작 메시지가 없다. 런을 연 봉투를 턴 경계의 흡수와 같은 길로 넣는다
             self._absorb([self._opening])
             return
-        if not self.query and not self.query_images:
-            return  # 넣을 시작 메시지가 없다
         self._add_user_message(
             self.query,
             self.query_author,

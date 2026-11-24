@@ -3735,6 +3735,17 @@ class TestChatWithImages:
             == "image/png"
         )
 
+    @pytest.mark.parametrize("content", ["", "   "])
+    def test_chat_with_no_text_and_no_image_is_400(self, server_and_client, content):
+        """글도 이미지도 없는 말 — 에이전트 창과 같은 400, 줄 서지 않는다(전에는 200 accepted)."""
+        server, _, client = server_and_client
+        r = client.post(
+            "/api/input?token=testtoken", json={"kind": "chat", "content": content}
+        )
+        assert r.status_code == 400
+        assert r.json()["detail"] == "content must be a non-empty string"
+        assert server.main_input.pending_count() == 0
+
     def test_bad_images_are_400_and_nothing_is_queued(
         self, server_and_client, tmp_path
     ):

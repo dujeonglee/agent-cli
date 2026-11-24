@@ -273,7 +273,7 @@ class TestCliLine:
 def _loop(tmp_path, *, requests=(), main=True):
     q = [dict(it) for it in requests]
     return make_loop(
-        query="",
+        query="go",  # 번호 없는 시작 — 장부에는 턴 경계의 요청만 오른다
         provider=MagicMock(),
         capabilities=ModelCapabilities(
             context_window=32768, max_output_tokens=4096, supports_thinking=False

@@ -49,6 +49,7 @@ from agent_cli.constants import (
     CHECKIN_STEPS_S,
     harness_mail_tool,
     has_words,
+    is_blank_words,
     is_private_owner,
 )
 from agent_cli.loop.kind import LoopKindError
@@ -1515,7 +1516,7 @@ class AgentRegistry:
         if not self._agent_alive(f"agent:{key}"):
             reason = f" ({tm.error})" if tm.error else ""
             return f'agent "{key}" is dead{reason} — spawn a new one'
-        if not message.strip() and not images:  # 이미지만 든 말도 일감이다
+        if is_blank_words(message, images):  # 이미지만 든 말도 일감이다
             return "empty message"
         # Stamp the request's time BEFORE enqueuing. The worker runs on its own
         # thread and can dequeue + emit ``begin_agent_work`` (scope_start) the

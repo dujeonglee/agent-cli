@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import threading
 
-from agent_cli.main_input import CLOSED, MainInput
+import pytest
+
+from agent_cli.main_input import CLOSED, EmptyWords, MainInput
 from agent_cli.post import envelope as post_envelope
 
 
@@ -102,6 +104,23 @@ class TestMainInput:
         q.enqueue(None, "a")  # 락 밖 호출이라 pending_count 재진입 가능해야 한다
         q.wait_to_open(0)
         assert events == [1, 0]
+
+    @pytest.mark.parametrize("text", ["", "   ", "\n\t "])
+    def test_words_with_no_text_and_no_image_are_refused_at_the_door(self, text):
+        """글도 이미지도 없는 말은 말이 아니다 — 넣지 않는다(공백뿐인 글 포함). main 앞에 서는 말은 모두 이 문을 지난다."""
+        events = []
+        q = MainInput(on_change=lambda: events.append("changed"))
+        with pytest.raises(EmptyWords, match="content must be a non-empty string"):
+            q.enqueue(None, text)
+        with pytest.raises(EmptyWords):
+            q.enqueue("c1", text, nickname="dj", images=[])
+        assert q.pending_count() == 0 and q.post.queued("main") == () and events == []
+
+    def test_words_that_are_only_an_image_pass_the_door(self):
+        q = MainInput()
+        item = q.enqueue(None, "", images=[{"path": "a.png"}])
+        assert item["text"] == "" and item["images"] == [{"path": "a.png"}]
+        assert q.pending_count() == 1
 
     def test_words_stand_without_a_row(self):
         q = MainInput()

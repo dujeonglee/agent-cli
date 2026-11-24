@@ -134,6 +134,16 @@ def test_config_error_leaves_no_session_dir(isolated):
     assert _session_dirs(isolated) == before
 
 
+@pytest.mark.parametrize("query", ["", "   ", "\n"])
+def test_an_empty_query_is_a_usage_error_before_boot(isolated, query):
+    """글도 이미지도 없는 질의는 말이 아니다 — 세션을 만들기 전에 한 줄과 종료 코드 2(provider 도 서버도 필요 없다)."""
+    before = _session_dirs(isolated)
+    r = CliRunner().invoke(app, ["run", query])
+    assert r.exit_code == 2, r.output
+    assert r.output.strip() == "query is empty"
+    assert _session_dirs(isolated) == before
+
+
 def test_two_runs_in_one_second_get_two_sessions(isolated, monkeypatch):
     import agent_cli.session.store as session_mod
 

@@ -23,6 +23,7 @@ from agent_cli.constants import CHECKIN_STEPS_S, format_duration
 from agent_cli.dialects import get as get_dialect
 from agent_cli.jobs import JobRegistry
 from agent_cli.loop.core import mail_item
+from agent_cli.main_input import intake_item
 from agent_cli.monitor import MonitorRegistry, build
 from agent_cli.prompts.system_prompt import build_live_agents_section
 from agent_cli.providers.base import LLMResponse
@@ -670,6 +671,8 @@ class TestLoopWiring:
         loop = make_loop(
             ports=make_ports(inbox=queue_inbox(lambda: None), agent_registry=reg),
             query="",
+            # 그 알림이 main 의 런을 연다 — 제품처럼 꺼내 시작에 싣는다
+            opening=intake_item(reg._post.next_run("main", timeout=0)),
             provider=_provider(
                 {"action": "wait"}, {"action": "complete", "answers": []}
             ),
