@@ -15,10 +15,12 @@ import threading
 import pytest
 from rich.console import Console
 
+import agent_cli.loop.dispatch as dispatch_mod
 import agent_cli.main as M
 import agent_cli.render as render_mod
 from agent_cli.command_table import command_kind
 from agent_cli.context.manager import ContextManager
+from agent_cli.loop.dispatch import ASK_REFUSED_NOBODY_CAN_ANSWER
 from agent_cli.main_input import MainInput
 from agent_cli.render.base import interactive_lock
 from agent_cli.render.minimal import MinimalRenderer
@@ -98,23 +100,56 @@ def _dispatch(text: str, reg, *, author: str = "user") -> _Output:
 
 
 class TestAskWhereNobodyCanAnswer:
-    def test_main_gets_no_response_as_its_answer(self, reg, tmp_path, no_viewer):
+    """답이 올 수 없는 표면(`can_prompt` 거짓)에서는 누가 묻든 같은 거절 — 갈래(막음/올림) 앞 한 곳."""
+
+    def test_main_is_refused_and_no_prompt_opens(
+        self, reg, tmp_path, no_viewer, monkeypatch
+    ):
+        monkeypatch.setattr(dispatch_mod, "_handle_ask", _must_not_prompt)
         ctx = ContextManager(tmp_path / "s", max_context_tokens=30_000)
         _run_scripted(ctx, [_ask()], questions=reg.question_port(None))
         (obs,) = _observations(ctx)
-        assert "A: (no response)" in obs["content"]
+        assert obs["content"] == f"Observation: {ASK_REFUSED_NOBODY_CAN_ANSWER}"
+        assert obs["success"] is False
 
-    def test_an_agents_question_goes_up_with_nobody_to_answer_it(
+    def test_an_agents_question_is_refused_and_not_opened(
         self, reg, tmp_path, no_viewer
     ):
         key = spawn_idle(reg)
         ctx = ContextManager(tmp_path / "s", max_context_tokens=30_000)
         _run_scripted(ctx, [_ask()], questions=reg.question_port(key))
         (obs,) = _observations(ctx)
-        assert 'sent — "which directory should I use?"' in obs["content"]
-        assert [q.text for q in reg.open_human_questions()] == [
-            "which directory should I use?"
-        ]
+        assert obs["content"] == f"Observation: {ASK_REFUSED_NOBODY_CAN_ANSWER}"
+        assert obs["success"] is False
+        assert reg.open_human_questions() == []
+
+    def test_an_ask_carrying_several_questions_opens_none(
+        self, reg, tmp_path, no_viewer
+    ):
+        key = spawn_idle(reg)
+        ctx = ContextManager(tmp_path / "s", max_context_tokens=30_000)
+        two = json.dumps({"action": "ask", "questions": ["first?", "second?"]})
+        _run_scripted(ctx, [two], questions=reg.question_port(key))
+        (obs,) = _observations(ctx)
+        assert obs["content"] == f"Observation: {ASK_REFUSED_NOBODY_CAN_ANSWER}"
+        assert reg.open_human_questions() == []
+
+    def test_where_an_answer_can_come_the_agent_still_asks(
+        self, reg, tmp_path, monkeypatch
+    ):
+        r = MinimalRenderer(Console(file=io.StringIO(), width=200))
+        monkeypatch.setattr(type(r), "can_prompt", lambda self: True)
+        monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
+        key = spawn_idle(reg)
+        ctx = ContextManager(tmp_path / "s", max_context_tokens=30_000)
+        _run_scripted(ctx, [_ask()], questions=reg.question_port(key))
+        (obs,) = _observations(ctx)
+        assert obs["success"] is True and "sent" in obs["content"]
+        assert len(reg.open_human_questions()) == 1
+
+
+def _must_not_prompt(questions):
+    raise AssertionError("the blocking prompt opened where nobody can answer")
 
 
 # ── 명령 ────────────────────────────────────────────────────
