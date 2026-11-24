@@ -1042,6 +1042,7 @@ SIGTERM(보드가 방을 끌 때)은 `run`·`web` 모두 같은 정리(`close_se
 - 서버: FastAPI 앱 `web/server.py::create_app` 이 `WebServer`(렌더러·워커 스레드·API 상태)를 감싼다. 엔드포인트 목록은 그 파일 머리에 있다.
 - 렌더러와 허브: 이벤트 모양·스코프·재생·status.json 은 `WebRenderer`(`render/web.py`), 연결·재생 버퍼·스티키·뷰어 별명은 `EventHub`(`render/web_hub.py`).
   렌더러의 `_emit` 이 이벤트 하나를 한 번 직렬화해 `hub.publish` 에 넘기면, 허브가 재생 버퍼와 열린 연결 전부의 큐에 넣는다.
+- 읽은 값을 내는 일은 읽기와 내기가 한 걸음이다: 다른 곳의 상태를 떠서 스티키·status.json 으로 내는 함수 — 명단(`AgentRegistry._notify_roster`), 대기열(`WebServer.broadcast_queue`), 작업(`JobRegistry._changed`), 노브(`WebServer.broadcast_knobs`), status.json(`WebRenderer._publish_status`) — 는 여러 스레드가 부르므로 각자 그 일만 하는 락 하나로 뜨기와 내기를 묶는다. 묶지 않으면 먼저 뜬 값이 나중에 나가 새 값을 덮는다. 그 락은 그 걸음에만 쓴다(레지스트리의 `_cv`·작업 표의 락·렌더러의 `_lock` 을 쥔 채 렌더러를 부르지 않는다).
 - 다중 뷰어 — 모두 동등하게 입력·대기열을 쓸 수 있다.
 - `--base-path <prefix>`: 프런트 URL 이 전부 상대 경로이고 `index` 가 `<base href="<prefix>/">` 를 넣어, 리버스 프록시의 경로 접두 밑에서 돈다.
 - 세션별 `web.json`(주소·토큰·pid, 있으면 title·endpoint)과 `status.json` 을 `instance_file.py` 가 쓴다 — 바깥 오케스트레이터(보드)가 읽는다. `--idle-timeout` 이면 `web/idle.py` 가 스스로 끝낸다.
