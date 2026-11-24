@@ -35,7 +35,6 @@
     {
      "caller_task": null,
      "item": "u-1",
-     "items": null,
      "key": "agt-A",
      "message": "TASK-F hi there",
      "profile": "helper",

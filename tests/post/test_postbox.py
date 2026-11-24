@@ -9,7 +9,7 @@ from agent_cli.post.postbox import BoxError, Postbox
 
 X = E.reply("x-1", "agent:a", "main", "ans", re="r-9")
 OPS = (
-    "put", "take_next", "take_all", "take_all_human_first", "take_reply",
+    "put", "take_next", "take_all", "take_reply",
     "remove_all", "finish_run",
 )  # fmt: skip
 
@@ -20,7 +20,6 @@ EXPECT = {
     ("queued", "put"): "error",
     ("queued", "take_next"): "taken",
     ("queued", "take_all"): "taken",
-    ("queued", "take_all_human_first"): "taken",
     ("queued", "take_reply"): "none",
     ("queued", "remove_all"): "none",
     ("queued", "finish_run"): "queued",
@@ -30,7 +29,6 @@ EXPECT = {
         for op in (
             "take_next",
             "take_all",
-            "take_all_human_first",
             "take_reply",
             "remove_all",
         )
@@ -74,7 +72,7 @@ def test_envelope_location_table(place, op):
 
 
 def test_table_size():
-    assert len(EXPECT) == 3 * len(OPS) == 21
+    assert len(EXPECT) == 3 * len(OPS) == 18
 
 
 def _h(i):
@@ -91,34 +89,33 @@ class TestTaking:
         box.put(_r(1, wakes=False))
         box.put(_r(2))
         box.put(_r(3))
-        assert [e.id for e in box.take_next()] == ["n-2"]
+        assert box.take_next().id == "n-2"
         assert [e.id for e in box.queued()] == [
             "n-1",
             "n-3",
         ]  # 깨우지 않는 것은 줄에 남는다
 
-    def test_take_next_batches_the_humans_that_follow(self):
+    def test_take_next_takes_one_envelope_even_when_people_follow(self):
         box = Postbox()
         for e in (_h(1), _h(2), _r(3), _h(4)):
             box.put(e)
-        assert [e.id for e in box.take_next()] == ["u-1", "u-2"]
-        assert [e.id for e in box.take_next()] == ["n-3"]
-        assert [e.id for e in box.take_next()] == ["u-4"]
-        assert box.take_next() == ()
+        assert box.take_next().id == "u-1"
+        assert box.take_next().id == "u-2"
+        assert box.take_next().id == "n-3"
+        assert box.take_next().id == "u-4"
+        assert box.take_next() is None
 
     def test_only_quiet_envelopes_open_nothing(self):
         box = Postbox()
         box.put(_r(1, wakes=False))
-        assert box.take_next() == () and box.count(waking_only=True, words=True) == 0
+        assert box.take_next() is None and box.count(waking_only=True, words=True) == 0
 
-    def test_take_all_keeps_arrival_order_and_human_first_moves_people_ahead(self):
-        a, b = Postbox(), Postbox()
+    def test_take_all_keeps_arrival_order(self):
+        a = Postbox()
         for e in (_r(1), _h(2), _r(3), _h(4)):
             a.put(e)
-            b.put(e)
         assert [e.id for e in a.take_all()] == ["n-1", "u-2", "n-3", "u-4"]
-        assert [e.id for e in b.take_all_human_first()] == ["u-2", "u-4", "n-1", "n-3"]
-        assert [e.id for e in b.taken()] == ["u-2", "u-4", "n-1", "n-3"]
+        assert [e.id for e in a.taken()] == ["n-1", "u-2", "n-3", "u-4"]
 
 
 class TestCounts:

@@ -313,6 +313,16 @@ def has_words(text) -> bool:
     return bool(_WORD_CHAR.search(str(text or "")))
 
 
+#: 빈 말을 거절하는 글 — 웹의 400(main 의 ``/api/input``, 에이전트 창의 ``/api/agent/<key>/input``)
+EMPTY_WORDS = "content must be a non-empty string"
+
+
+def is_blank_words(text, images=None) -> bool:
+    """사람의 말이 아닌가 — 글을 strip 하면 비고 이미지도 없다. 공백뿐인 글도 빈 글이다. 사람의 말이 들어오는 문
+    (main 의 `MainInput.enqueue`, 에이전트 창, 터미널 줄)이 같은 판정을 쓴다."""
+    return not str(text or "").strip() and not images
+
+
 def browser_knobs() -> dict:
     """env 노브 — `AGENT_CLI_BROWSER_TOOL=0` 끔, `AGENT_CLI_BROWSER_HOSTS`(쉼표 목록,
     비면 전부 허용), `AGENT_CLI_BROWSER_EXECUTABLE`(브라우저 실행 파일),

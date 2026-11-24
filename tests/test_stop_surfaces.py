@@ -401,8 +401,10 @@ class TestStopEverythingDoesNotWakeMain:
         (tm,) = s["reg"]._agents.values()
         assert wait_until(lambda: tm.state == "busy")
         assert s["reg"].stop_all_runs() == [tm.key]
-        assert wait_until(lambda: main_input.wait_to_open(0) == ())
-        assert s["reg"].arrived_for("main", waking_only=True, words=False)
+        assert wait_until(
+            lambda: s["reg"].arrived_for("main", waking_only=True, words=False)
+        )
+        assert "mail" in main_input.wait_to_open(0)  # 그 회신이 main 의 런을 연다
 
 
 class TestCtrlCDuringAPrompt:
@@ -444,7 +446,7 @@ class TestCommandsTypedDuringTheWait:
             def echo(self, item):
                 routed.append(("echo", item["text"]))
 
-            def route(self, text, start=None, *, item=None):
+            def route(self, text, *, item=None):
                 routed.append(text)
                 if text in declines:
                     paths.add(text)  # 실행 직전에 같은 이름의 경로가 생겼다

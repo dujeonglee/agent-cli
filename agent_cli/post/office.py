@@ -11,7 +11,6 @@ hop 상한·요청자 부재·사람 주소 같은 판정은 호출자의 몫이
 
 from __future__ import annotations
 
-import enum
 import threading
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Literal
@@ -44,16 +43,6 @@ class _Mark:
 CLOSED = _Mark("CLOSED")
 
 
-class Take(enum.Enum):
-    """`next_run` 이 런을 열 봉투를 꺼내는 법 — 주소의 주인이 정한다."""
-
-    #: main — 사람의 말 먼저 하나. 깨우는 메일만 있으면 꺼내지 않고 빈 묶음(메일이 연 런 — 그 첫 턴 경계가 흡수한다).
-    #: 닫히면 줄 선 사람의 말이 있어도 끝(그 말로 런을 열지 않는다 — 끄는 중이다)
-    WORDS_FIRST = "words_first"
-    #: 에이전트 — 첫 깨우는 봉투(사람의 말이면 이어진 사람의 말까지 한 묶음)를 집는다. 닫히면 줄 선 것이 있어도 끝
-    ARRIVAL = "arrival"
-
-
 class ConsistencyError(AssertionError):
     """불변식 위반 — 어긴 것의 목록을 든다."""
 
@@ -84,11 +73,11 @@ class PostOffice:
 
     # ── 런 ───────────────────────────────────────────
 
-    def absorb(self, addr: str, *, human_first: bool = False) -> tuple[Envelope, ...]:
-        """턴 경계 — 줄 선 것 전부를 지금 런으로(``human_first`` 면 사람의 말 먼저). 그 줄은 picked."""
+    def absorb(self, addr: str) -> tuple[Envelope, ...]:
+        """턴 경계 — 줄 선 것 전부를 도착 순서로 지금 런으로. 그 줄은 picked."""
         with self.cv:
             box = self._box(addr)
-            envs = box.take_all_human_first() if human_first else box.take_all()
+            envs = box.take_all()
             self._picked(envs)
             return envs
 
@@ -293,48 +282,30 @@ class PostOffice:
                 and addr not in self._closed
             )
 
-    def next_run(self, addr: str, take: Take, *, timeout: float | None):
-        """``addr`` 의 다음 런을 열 봉투 — 꺼낸 봉투 묶음(튜플), 닫혔으면 `CLOSED`, ``timeout`` 이 지나면 None.
-        꺼내는 법은 ``take`` (`Take`). `Take.WORDS_FIRST` 의 빈 묶음은 메일이 연 런이다(메일은 꺼내지 않는다 — 열기와
-        첫 경계 사이에 저장이 있어도 메일은 디스크에 남아, 재시작이 잃지 않는다). 기다리는 동안 ``addr`` 는
-        한가함(`idle`)이고, 열 것을 돌려줄 때 내린다 — 판정과 내림이 한 락 구간이다. 꺼낸 봉투의 줄은 picked."""
+    def next_run(self, addr: str, *, timeout: float | None):
+        """``addr`` 의 다음 런을 열 봉투 — 줄 선 첫 **깨우는** 봉투 하나(사람의 말이든 메일이든 도착 순서), 닫혔으면
+        `CLOSED`, ``timeout`` 이 지나면 None. main 과 에이전트가 같은 규칙이다. 나머지는 줄에 남아 그 런의 첫 턴
+        경계(`absorb`)가 도착 순서로 읽는다. 기다리는 동안 ``addr`` 는 한가함(`idle`)이고, 열 것을 돌려줄 때 내린다 —
+        판정과 내림이 한 락 구간이다. 꺼낸 봉투의 줄은 picked."""
         with self.cv:
             box = self._box(addr)
             self._idle.add(addr)
-            if take is Take.ARRIVAL:
-                self.cv.wait_for(
-                    lambda: (
-                        addr in self._closed
-                        or box.count(waking_only=True, words=True) > 0
-                    ),
-                    timeout,
-                )
-                if addr in self._closed:
-                    return CLOSED
-                envs = box.take_next()
-                if not envs:
-                    return None
-                self._idle.discard(addr)
-                self._picked(envs)
-                return envs
-
-            def ready() -> bool:
-                return (
-                    bool(box.words())
-                    or addr in self._closed
-                    or box.count(waking_only=True, words=False) > 0
-                )
-
-            self.cv.wait_for(ready, timeout)
+            self.cv.wait_for(
+                lambda: (
+                    addr in self._closed or box.count(waking_only=True, words=True) > 0
+                ),
+                timeout,
+            )
             if addr in self._closed:
-                return CLOSED  # 닫힘이 이긴다 — 줄 선 사람의 말로 런을 열지 않는다(끄는 중이다)
-            if box.words():
-                self._idle.discard(addr)
-                return (self._take_first_words(box),)
-            if box.count(waking_only=True, words=False):
-                self._idle.discard(addr)
-                return ()
-            return None
+                return (
+                    CLOSED  # 닫힘이 이긴다 — 줄 선 것으로 런을 열지 않는다(끄는 중이다)
+                )
+            env = box.take_next()
+            if env is None:
+                return None
+            self._idle.discard(addr)
+            self._picked((env,))
+            return env
 
     def close(self, addr: str) -> None:
         """``addr`` 의 상자를 닫는다 — 기다리는 이를 깨운다. 줄 선 것은 그대로다(런을 열지 않는다 — 꺼내는 쪽이
@@ -573,16 +544,6 @@ class PostOffice:
 
     def _box_or_empty(self, addr: str) -> Postbox:
         return self._boxes.get(addr) or Postbox()
-
-    def _take_first_words(self, box: Postbox) -> Envelope | None:
-        """줄 선 첫 사람의 말을 뺀다 — 줄 있는 봉투면 빼기 **전에** `RowError`."""
-        first = next(iter(box.words()), None)
-        if first is None:
-            return None
-        self._ensure_rowless(first)
-        env = box.take_first_words()
-        self.cv.notify_all()
-        return env
 
     @staticmethod
     def _ensure_rowless(env: Envelope) -> None:

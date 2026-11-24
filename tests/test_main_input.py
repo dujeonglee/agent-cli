@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import threading
 
-from agent_cli.main_input import CLOSED, MainInput
+import pytest
+
+from agent_cli.main_input import CLOSED, EmptyWords, MainInput
 from agent_cli.post import envelope as post_envelope
 
 
@@ -14,8 +16,8 @@ class TestMainInput:
         q = MainInput()
         q.enqueue("c1", "first", nickname="bob", images=[{"path": "a.png"}])
         q.enqueue(None, "second")
-        a = q.wait_to_open(1)
-        b = q.wait_to_open(1)
+        a = q.wait_to_open(1)["message"]
+        b = q.wait_to_open(1)["message"]
         assert a == {
             "id": a["id"],
             "conn_id": "c1",
@@ -48,7 +50,7 @@ class TestMainInput:
         q.enqueue("c1", "plain words")
         q.enqueue("c1", "/stop agt-3")
         assert q.take_first_command() is None  # 맨 앞이 말이다 — 꺼내지 않는다
-        assert q.wait_to_open(0)["text"] == "plain words"
+        assert q.wait_to_open(0)["message"]["text"] == "plain words"
         got = q.take_first_command()
         assert got["text"] == "/stop agt-3" and got["command"] is True
         assert q.pending_count() == 0
@@ -87,7 +89,7 @@ class TestMainInput:
         q.enqueue(None, "x")
         assert [i["text"] for i in q.snapshot()] == ["x"]
         assert q.pending_count() == 1
-        assert q.wait_to_open(0)["text"] == "x"
+        assert q.wait_to_open(0)["message"]["text"] == "x"
 
     def test_cancel_owner_only(self):
         q = MainInput()
@@ -103,6 +105,23 @@ class TestMainInput:
         q.wait_to_open(0)
         assert events == [1, 0]
 
+    @pytest.mark.parametrize("text", ["", "   ", "\n\t "])
+    def test_words_with_no_text_and_no_image_are_refused_at_the_door(self, text):
+        """글도 이미지도 없는 말은 말이 아니다 — 넣지 않는다(공백뿐인 글 포함). main 앞에 서는 말은 모두 이 문을 지난다."""
+        events = []
+        q = MainInput(on_change=lambda: events.append("changed"))
+        with pytest.raises(EmptyWords, match="content must be a non-empty string"):
+            q.enqueue(None, text)
+        with pytest.raises(EmptyWords):
+            q.enqueue("c1", text, nickname="dj", images=[])
+        assert q.pending_count() == 0 and q.post.queued("main") == () and events == []
+
+    def test_words_that_are_only_an_image_pass_the_door(self):
+        q = MainInput()
+        item = q.enqueue(None, "", images=[{"path": "a.png"}])
+        assert item["text"] == "" and item["images"] == [{"path": "a.png"}]
+        assert q.pending_count() == 1
+
     def test_words_stand_without_a_row(self):
         q = MainInput()
         item = q.enqueue(None, "x")
@@ -115,4 +134,6 @@ class TestMainInput:
         q.post.deliver(post_envelope.notice("n-1", "job", "main", "done"))
         q.enqueue(None, "hi")
         assert [i["text"] for i in q.snapshot()] == ["hi"] and q.pending_count() == 1
-        assert q.wait_to_open(0)["text"] == "hi" and q.pending_count() == 0
+        assert "mail" in q.wait_to_open(0)  # 먼저 온 메일이 연다 — 말은 줄에 남는다
+        assert q.pending_count() == 1
+        assert q.wait_to_open(0)["message"]["text"] == "hi" and q.pending_count() == 0

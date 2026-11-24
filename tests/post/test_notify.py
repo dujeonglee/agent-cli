@@ -12,7 +12,7 @@ import threading
 import pytest
 
 from agent_cli.post import envelope as E
-from agent_cli.post.office import PostOffice, Take
+from agent_cli.post.office import PostOffice
 
 A = "agent:a"
 
@@ -44,9 +44,8 @@ def _notifies(office, call) -> int:
 
 #: 아무것도 바꾸지 않는 호출 — 빈 상자·없는 줄.
 NOTHING_CHANGES = {
-    "next_run": lambda o: o.next_run(A, Take.ARRIVAL, timeout=0),
+    "next_run": lambda o: o.next_run(A, timeout=0),
     "absorb": lambda o: o.absorb(A),
-    "absorb_human_first": lambda o: o.absorb(A, human_first=True),
     "take": lambda o: o.take(A),
     "take_reply": lambda o: o.take_reply(A, "r-9"),
     "complete": lambda o: o.complete(A, ["u-9"], run_id="u-1"),
@@ -69,7 +68,7 @@ def test_a_call_that_changes_something_wakes(office):
         _notifies(office, lambda: office.deliver(E.request("r-1", "main", A, "a"))) >= 1
     )
     office.deliver(E.request("r-2", "main", A, "b"))
-    assert _notifies(office, lambda: office.next_run(A, Take.ARRIVAL, timeout=0)) >= 1
+    assert _notifies(office, lambda: office.next_run(A, timeout=0)) >= 1
     assert _notifies(office, lambda: office.absorb(A)) >= 1
     assert (
         _notifies(office, lambda: office.end_run(A, run_id="r-1", outcome="done")) >= 1
@@ -79,7 +78,7 @@ def test_a_call_that_changes_something_wakes(office):
     office.deliver(E.reply("n-4", A, "main", "ans", re="r-7"))
     assert _notifies(office, lambda: office.take_reply("main", "r-7")) >= 1
     office.deliver(E.human("u-5", "user:dj", A, "hi"))
-    office.next_run(A, Take.ARRIVAL, timeout=0)
+    office.next_run(A, timeout=0)
     assert _notifies(office, lambda: office.complete(A, ["u-5"], run_id="u-5")) >= 1
     office.deliver(E.notice("n-6", "main", A, "x"))
     assert _notifies(office, lambda: office.remove_queued(A)) >= 1

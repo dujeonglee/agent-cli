@@ -107,7 +107,6 @@
      {
       "caller_task": null,
       "item": "r-2",
-      "items": null,
       "key": "agt-A",
       "message": "TASK-W1 ask bb, then tell me",
       "profile": "aa",
@@ -196,7 +195,6 @@
      {
       "caller_task": null,
       "item": "r-1",
-      "items": null,
       "key": "agt-B",
       "message": "TASK-W2 compute 6*7",
       "profile": "bb",

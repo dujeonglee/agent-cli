@@ -130,25 +130,15 @@ class Model:
         first = next((i for i, e in enumerate(q) if e["wakes"]), None)
         if first is None:
             return []
-        idx = [first]
-        if _human(q[first]):
-            j = first + 1
-            while j < len(q) and _human(q[j]) and q[j]["wakes"]:
-                idx.append(j)
-                j += 1
-        took = [q[i] for i in idx]
-        self.queued[addr] = [e for i, e in enumerate(q) if i not in idx]
+        took = [q[first]]
+        self.queued[addr] = [e for i, e in enumerate(q) if i != first]
         self._t(addr).extend(took)
         self._pick_all(took)
         return took
 
-    def absorb(self, addr, human_first=False):
+    def absorb(self, addr):
         q = self._q(addr)
-        took = (
-            ([e for e in q if _human(e)] + [e for e in q if not _human(e)])
-            if human_first
-            else list(q)
-        )
+        took = list(q)
         self.queued[addr] = []
         self._t(addr).extend(took)
         self._pick_all(took)

@@ -59,7 +59,7 @@ agent_cli/
 ├── main.py                  typer CLI — `run`·`web`·`setup`·`mcp`·`knobs`·`sessions`·`stats`·`update` 명령과 `@agent`·`/skill` 디스패치
 ├── runtime.py               run/web 세션 조립(`SessionSpec`→stores→owners→`wire_session`)·정리, `MainLoop`
 ├── wake.py                  한 주소를 무엇이 깨우나(`wake_items` — 에이전트 몫은 장부·명단 사본 `WakeFacts` 의 순수 함수, 고리 찾기 `parked_view`)·체크인 알림·메일 → 레코드·`release_owner`, 루프의 우편 창구 `Mailbox`(포트 `mailbox`)
-├── pump.py                  세션 펌프 — main 상자에서 런을 열 것(사람의 말 먼저, 없으면 깨우는 메일)을 꺼내 라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
+├── pump.py                  세션 펌프 — main 상자에서 런을 열 것(줄 선 첫 깨우는 봉투 하나, 도착 순서)을 꺼내 라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
 ├── actor.py                 런을 여는 루프 하나 `run_actor` — 기다림·열기·런·끝 판정, main(`pump.MainActor`)과 에이전트 워커(`resident_loop.AgentActor`)가 같은 루프를 돈다
 ├── command_table.py         사용자 명령 표 하나 — 웹 `/help` 와 `run "/help"` 가 여기서 나온다
 ├── config.py                config.json 의 서버(endpoint) 표·고르는 순서·이 프로세스의 서버, 서버별 models.json 읽기·저장, 옛 모양 판정·`.v1` 이름 바꾸기, 방언 바인딩(`bind_user_dialect`)
@@ -519,7 +519,7 @@ AgentLoop.run()
     ├─ OnSessionStart 훅 → 주입된 시스템 섹션 반영
     ├─ while _should_continue():                        ← stop_event 가 서면 _interrupted
     │    ├─ _interrupted → _on_interrupt()
-    │    ├─ _intake()            ← 종류의 intake(): main 상자(사람의 말 먼저, 메일 뒤)·받은편지함 항목을 흡수
+    │    ├─ _intake()            ← 종류의 intake(): main 상자·받은편지함 항목을 도착 순서로 흡수
     │    ├─ show_open_items()    ← 장부를 화면에 (main 런만)
     │    └─ _execute_turn()
     │         ├─ 지시사항·메모리 변경 반영, PreLLMCall 훅
@@ -721,7 +721,8 @@ run 은 터미널 줄 — 대기 중 친 `/`·`@` 명령은 그 자리에서 라
 - 도구: `skill.allowed_tools ∩ 호출자 도구` (공통이 없으면 거절, 스킬에 제한이 없으면 호출자 범위)
 - 역할: 호출자의 역할
 - 깊이: 호출자 +1 — 스킬→스킬 재귀도 깊이가 막는다
-- 결과가 없으면 `Skill returned no result`, 예외는 `run_skill(<name>) failed: …`
+- 채운 글이 비면(인자 없이 부른 `$ARGUMENTS` 만의 스킬) 돌지 않고 거절한다 — `Skill "<name>" cannot run: …`
+- 모델이 빈 결과로 끝내면 `Skill returned no result`, 예외는 `run_skill(<name>) failed: …`
 
 ### 6.4 Hashline 시스템 (`tools/read_file.py`)
 

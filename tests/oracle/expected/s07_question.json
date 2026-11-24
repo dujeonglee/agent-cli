@@ -68,7 +68,6 @@
     {
      "caller_task": null,
      "item": "r-1",
-     "items": null,
      "key": "agt-A",
      "message": "TASK-G pick a version",
      "profile": "helper",
@@ -130,7 +129,6 @@
     {
      "caller_task": null,
      "item": "u-1",
-     "items": null,
      "key": "agt-A",
      "message": "Your question: TASK-G v1 or v2?\nAnswer: v2",
      "profile": "helper",

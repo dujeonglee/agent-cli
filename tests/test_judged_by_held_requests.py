@@ -82,6 +82,13 @@ class Session:
         사람의 말) · ``"mail"``(메일이 연다 — 시작 메시지 없음). ``words`` 는 첫 턴 경계에 서 있는 사람의 말
         (번호, 글), ``mail`` 은 그 경계에 서 있는 통지."""
         queue = [{"message": {"id": rid, "text": text}} for rid, text in words]
+        mail = list(mail)
+        # 메일이 연 작업 구간은 그 메일을 시작에 싣는다(`Start.opening`) — 없으면 장부에 오르지 않는 통지 하나
+        opening = (
+            {"mail": dict(mail.pop(0) if mail else {**JOB_DONE, "ledger": "none"})}
+            if opener == "mail"
+            else None
+        )
         queue += [{"mail": dict(m)} for m in mail]
 
         def take() -> list:
@@ -103,6 +110,7 @@ class Session:
             model="m",
             ctx=self.ctx,
             ports=make_ports(inbox=take),
+            opening=opening,
             **start,
             **attrs,
         )
@@ -165,6 +173,66 @@ class TestScenes:
         result = s.segment(script, opener="mail", mail=[JOB_DONE])
         assert result.success and result.human_requests == ()
         assert s.audited == 0 and s.file is None
+
+    def test_mail_opens_first_and_the_query_read_at_its_boundary_is_still_the_query(
+        self, tmp_path
+    ):
+        """도착 순서 — 메일이 argv 질의보다 먼저 서 있어 메일이 연다. 질의는 그 작업 구간의 첫 턴 경계가 읽고, 그 답이
+        결과 파일·종료 0 이다(무엇이 열었나로 판정하던 때는 파일 없음·종료 1 이었다)."""
+        s = Session(tmp_path)
+        script = Script(call("complete", result="four", answers=[QUERY]))
+        result = s.segment(
+            script, opener="mail", mail=[JOB_DONE], words=[(QUERY, "what is 2+2")]
+        )
+        assert result.success and result.human_requests == (QUERY,)
+        assert s.file.startswith("four") and s.surface.exit_code == 0
+        assert s.audited == 1
+
+    def test_a_command_that_was_the_query_is_judged_when_mail_opened_first(
+        self, tmp_path
+    ):
+        """argv 질의가 명령인데 메일이 먼저 서 있었다 — 명령은 메일이 연 작업 구간의 첫 턴 경계에서 실행되고, 그
+        답이 결과 파일·종료 0 이다(그 말의 번호로 안다). 그 작업 구간 자체는 통지만 들어 판정을 덮지 않는다."""
+        s = Session(tmp_path)
+
+        def dispatch(text, stop, item=None):
+            _ConsoleDispatchOutput(report=s.surface.routed).skill_result(
+                "review", f"did {text}"
+            )
+            return True
+
+        s.surface._dispatch = dispatch
+        result = run_loop(
+            provider=Script(call("complete", result="noted", answers=[])),
+            capabilities=CAPS,
+            model="m",
+            ctx=s.ctx,
+            ports=make_ports(
+                inbox=iter(
+                    [
+                        [
+                            {
+                                "message": {
+                                    "id": QUERY,
+                                    "text": "/review",
+                                    "command": True,
+                                }
+                            }
+                        ],
+                    ]
+                    + [[]] * 20
+                ).__next__,
+                route_message=lambda text, item: s.surface.route(text, item=item),
+            ),
+            query="",
+            query_author_is_user=False,
+            opening={"mail": {**JOB_DONE, "ledger": "none"}},
+        )
+        assert s.file == "did /review" and s.surface.exit_code == 0
+        s.ended(result)
+        assert result.success and result.human_requests == ()
+        assert s.file == "did /review" and s.surface.exit_code == 0
+        assert s.audited == 0
 
     def test_scheduled_words_are_audited_but_are_not_the_query(self, tmp_path):
         s = Session(tmp_path)

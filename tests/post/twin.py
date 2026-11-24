@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from agent_cli.post.office import PostOffice, Take
+from agent_cli.post.office import PostOffice
 from agent_cli.post.postbox import BoxError
 from agent_cli.post.request_book import RowError
 from tests.post.reference import Model, Refused
@@ -80,9 +80,9 @@ class Twin:
         if op == "deliver":
             o.deliver(args["e"])
         elif op == "next_run":
-            o.next_run(args["addr"], Take.ARRIVAL, timeout=0)
+            o.next_run(args["addr"], timeout=0)
         elif op == "absorb":
-            o.absorb(args["addr"], human_first=args.get("human_first", False))
+            o.absorb(args["addr"])
         elif op == "pay":
             o.pay(args["debtor"], args["rid"], args["reply"], run_id=args["run_id"])
         elif op == "complete":

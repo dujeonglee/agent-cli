@@ -1,6 +1,6 @@
 """세션 펌프 — run(텍스트 UI) 과 web 이 **같은 루프**를 돈다 (docs/pump/DESIGN.md).
 
-main 상자에서 런을 열 것을 꺼내(사람의 말 먼저, 없으면 깨우는 메일) → 라우팅 → 런 → 런 종료 처리 → 정지 판정.
+main 상자에서 런을 열 것을 꺼내(줄 선 첫 깨우는 봉투 하나 — 사람의 말이든 메일이든 도착 순서) → 라우팅 → 런 → 런 종료 처리 → 정지 판정.
 호스트가 꽂는 것은 둘뿐이다:
 
 - :class:`LifetimePolicy` — "왜 살아 있는가". run 은 큐·에이전트·모니터·예약이
@@ -129,11 +129,10 @@ class PumpSurface(Protocol):
     def bind_stop(self, event: threading.Event | None) -> None:
         """이 런의 중단 핸들을 표면에 건다(None = 해제)."""
 
-    def route(self, text: str, start: Any = None, *, item: dict | None = None) -> bool:
+    def route(self, text: str, *, item: dict | None = None) -> bool:
         """명령을 처리하고 True — 런을 열지 않는다. 들어올 때 명령으로 표시된 말(`MainInput` 항목의 ``command``)만
         온다. 거짓이면 실행이 받지 않았다(문과 실행 사이에 같은 이름의 경로가 생겼다 — `looks_like_slash_command` 의
-        규칙 2) — 부르는 쪽은 그 말을 사람의 말로 다룬다. ``start`` 는 펌프가 이 차례를 열 때의 시작(`Start`)이고, 턴
-        경계·제자리 대기의 라우팅은 None 이다. ``item`` 은 그
+        규칙 2) — 부르는 쪽은 그 말을 사람의 말로 다룬다. ``item`` 은 그
         글을 실어 온 사람의 말 항목(``{text, nickname, images, …}``, 없으면 None — 터미널 줄) — 그 말에 딸린 것(이미지)은
         그 말이 가는 곳으로 간다 (v10.149.3)."""
 
@@ -165,7 +164,7 @@ class PumpDeps:
 
 
 class MainActor:
-    """main 의 액터 (`actor.run_actor`) — main 상자에서 런을 열 것(사람의 말 먼저, 없으면 깨우는 메일)을 꺼내, 명령이면
+    """main 의 액터 (`actor.run_actor`) — main 상자에서 런을 열 것(줄 선 첫 깨우는 봉투 하나, 도착 순서)을 꺼내, 명령이면
     그 자리에서 라우팅하고 아니면 런을 돌린다. 수명은 세션이다 — 정책(`LifetimePolicy`)이 끝을 정하거나 상자가 닫힌다.
 
     런의 예외는 표면이 정한다(`run_failed`) — web 은 삼키고 `ended` 가 ``crashed`` 로 끝 정리를 한다, run 은
@@ -202,16 +201,17 @@ class MainActor:
         self.deps.surface.idle()
 
     def take(self, timeout: float | None):
-        """사람의 말과 메일이 같은 상자·같은 조건변수 — 판정과 대기가 한 락이라 그 사이 온 것을 놓치지 않는다. 사람의 말
-        항목, 빈 묶음(메일이 연 런 — 메일은 꺼내지 않았다, 그 첫 턴 경계가 흡수한다), `CLOSED`, 또는 None(시한 —
-        한가함은 그대로: 끄면 그 사이 온 메일이 "바쁨" 으로 보인다)."""
+        """사람의 말과 메일이 같은 상자·같은 조건변수 — 판정과 대기가 한 락이라 그 사이 온 것을 놓치지 않는다. 런을 연
+        봉투 하나(도착 순서 — ``{"message": 항목}`` 또는 ``{"mail": …}``), `CLOSED`, 또는 None(시한 — 한가함은 그대로:
+        끄면 그 사이 온 메일이 "바쁨" 으로 보인다)."""
         return self.deps.main_input.wait_to_open(timeout=timeout)
 
     def open(self, got):
-        """그 차례의 시작 — 사람의 말이면 말풍선을 내고, 명령(들어올 때의 표시)이면 그 자리에서 라우팅하고 None(런을
-        열지 않는다). 실행이 받지 않은 명령은 사람의 말로 런을 연다."""
+        """그 차례의 시작 — 사람의 말이 열었으면 말풍선을 내고, 명령(들어올 때의 표시)이면 그 자리에서 라우팅하고
+        None(런을 열지 않는다). 실행이 받지 않은 명령은 사람의 말로 런을 연다. 메일이 열었으면 그 메일이 런의 첫
+        입력이다(`MainLoop.start`)."""
         d = self.deps
-        item = got if got else None
+        item = got.get("message")  # 사람의 말이 열었을 때만
         d.surface.busy()
         if item is not None:
             d.surface.echo(item)
@@ -225,12 +225,12 @@ class MainActor:
         if d.agent_registry is not None:
             d.agent_registry.main_stop_wakes = True
         self._bind_stop(stop_event)
-        start = d.main.start(item, stop_event)
+        start = d.main.start(got, stop_event)
         if item is None or not item.get("command"):
             return start
         # 명령의 라우팅도 런과 같은 보호 안 — 그 예외도 `run_failed` 로 간다(web 은 알리고 계속)
         try:
-            routed = d.surface.route(start.query, start, item=item)
+            routed = d.surface.route(start.query, item=item)
         except Exception as exc:
             try:
                 if not d.surface.run_failed(exc):

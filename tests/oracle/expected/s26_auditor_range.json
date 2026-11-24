@@ -218,6 +218,14 @@
     {}
    ],
    [
+    "note_request",
+    [
+     "n-1",
+     6
+    ],
+    {}
+   ],
+   [
     "open_items",
     [
      {
@@ -225,16 +233,18 @@
        "left": 8,
        "total": 8
       },
-      "items": []
+      "items": [
+       {
+        "closer": "complete",
+        "head": "audit: run one is fine",
+        "hidx": null,
+        "id": "n-1",
+        "source": "mail",
+        "turns": 0,
+        "who": "mail"
+       }
+      ]
      }
-    ],
-    {}
-   ],
-   [
-    "note_request",
-    [
-     "n-1",
-     6
     ],
     {}
    ],

@@ -68,7 +68,6 @@
     {
      "caller_task": null,
      "item": "r-1",
-     "items": null,
      "key": "agt-A",
      "message": "TASK-C do the work",
      "profile": "helper",
@@ -949,6 +948,15 @@
     }
    ],
    [
+    "set_run_authors",
+    [
+     [
+      "dj"
+     ]
+    ],
+    {}
+   ],
+   [
     "open_items",
     [
      {
@@ -958,15 +966,6 @@
       },
       "items": []
      }
-    ],
-    {}
-   ],
-   [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
     ],
     {}
    ],

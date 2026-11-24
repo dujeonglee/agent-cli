@@ -49,11 +49,12 @@ from agent_cli.constants import (
     CHECKIN_STEPS_S,
     harness_mail_tool,
     has_words,
+    is_blank_words,
     is_private_owner,
 )
 from agent_cli.loop.kind import LoopKindError
 from agent_cli.main_input import intake_item
-from agent_cli.post.office import CLOSED, PostOffice, Take
+from agent_cli.post.office import CLOSED, PostOffice
 from agent_cli.post.request_book import RowError
 from agent_cli.session.store import AGENTS_DIR
 from agent_cli.session_slots import get_job_registry
@@ -1016,7 +1017,7 @@ class AgentRegistry:
         stopped: bool = False,
         **meta,
     ) -> int:
-        """런 끝의 **유일한** 정리 (v10.77.0) — 상주 단건·사람 배치·main 펌프가
+        """런 끝의 **유일한** 정리 (v10.77.0) — 에이전트의 런과 main 펌프가
         모두 여기로 온다. 처리한 빚 수를 돌려준다. `wait` 는 런을 끝내지 않는다(5c-1) — 여기 오지 않는다.
 
         - ``stopped`` (정지로 끊김): 남은 빚을 버린다. 사람·모델의 정지(■·✕)는 런의 정리가
@@ -1515,7 +1516,7 @@ class AgentRegistry:
         if not self._agent_alive(f"agent:{key}"):
             reason = f" ({tm.error})" if tm.error else ""
             return f'agent "{key}" is dead{reason} — spawn a new one'
-        if not message.strip() and not images:  # 이미지만 든 말도 일감이다
+        if is_blank_words(message, images):  # 이미지만 든 말도 일감이다
             return "empty message"
         # Stamp the request's time BEFORE enqueuing. The worker runs on its own
         # thread and can dequeue + emit ``begin_agent_work`` (scope_start) the
@@ -1697,7 +1698,7 @@ class AgentRegistry:
             }
             self._record(tm, absorbed)
             if is_human_addr(author):
-                # 빚은 아니지만 `reply` 거부 사유가 이걸 본다 (사람 배치와 동일)
+                # 빚은 아니지만 `reply` 거부 사유가 이걸 본다
                 uid = iid
                 self.note_owes(me, author, text, id=uid)
                 out.append(
@@ -1744,15 +1745,15 @@ class AgentRegistry:
         self._notify_roster()
         return out
 
-    def _close_run(self, tm: AgentInstance, handled: int) -> None:
-        """런 끝 — 두 처리 경로(단건·사람 배치)의 공통 마무리.
+    def _close_run(self, tm: AgentInstance) -> None:
+        """런 끝의 마무리.
 
         ``handled`` 증가와 처리 중 표시 해제(v9.24.5)를 **한 번의 저장**에
         싣는다. 해제를 따로 저장하면 회신이 나간 뒤 다음 항목을 꺼내기까지
         디스크 쓰기가 한 번 더 끼어, 그 사이 idle 로 보이는 창이 넓어진다."""
         with self._cv:
-            # 흡수분(v9.25.0)까지 이 런이 처리했다 — 시작 항목 수보다 클 수 있다
-            tm.handled += handled + tm.absorbed_in_run
+            # 런을 연 항목 하나와 턴 경계의 흡수분(v9.25.0)까지 이 런이 처리했다
+            tm.handled += 1 + tm.absorbed_in_run
             tm.absorbed_in_run = 0
             # 든 것과 이 런에서 닫힌 줄은 런 끝 정리(`run_ended` → `end_run(done|stopped)`)가 이미 비웠다
         self._save_state()  # ``handled`` 를 싣는다 — 증가 뒤에
@@ -2042,9 +2043,9 @@ class AgentRegistry:
         return handler
 
     def absorb_main(self) -> list[dict]:
-        """main 의 턴 경계 — 상자의 줄 선 것 전부를 지금 런의 흡수 항목으로(사람의 말 먼저, 메일 뒤, `intake_item`).
+        """main 의 턴 경계 — 상자의 줄 선 것 전부를 지금 런의 흡수 항목으로(도착 순서, `intake_item`).
         무엇이든 꺼냈으면 대기열을 다시 그린다."""
-        out = [intake_item(e) for e in self._post.absorb("main", human_first=True)]
+        out = [intake_item(e) for e in self._post.absorb("main")]
         if out:
             self._pending_changed()
         return out
@@ -2743,19 +2744,19 @@ class AgentRegistry:
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()
 
-    def _next_run_items(self, tm: AgentInstance) -> list[dict]:
-        """다음 런을 열 항목 — 창구의 `next_run`(`Take.ARRIVAL`: 첫 **깨우는** 봉투, 사람의 말이면 이어진 사람의
-        말까지 묶음 — 깨우지 않는 봉투는 줄에 남아 그 런의 첫 흡수가 읽는다). 올 때까지 시한 없이 기다린다: 배달이
-        깨우고, 끝내기(`_stop_worker`)가 상자를 닫아 깨운다. 닫혔으면 빈 목록.
+    def _next_run_item(self, tm: AgentInstance) -> dict | None:
+        """다음 런을 열 항목 — 창구의 `next_run`(첫 **깨우는** 봉투 하나 — 나머지는 줄에 남아 그 런의
+        첫 흡수가 도착 순서로 읽는다). 올 때까지 시한 없이 기다린다: 배달이 깨우고, 끝내기(`_stop_worker`)가 상자를
+        닫아 깨운다. 닫혔으면 None.
 
         집는 순간 ``busy`` 다(P0-9b) — 그 사이 세션 판정의 `has_agent_work`(상태·쌓인 일)가 "활동 없음" 으로 보지
         않게 같은 락 구간에서(창구 조건변수는 이 레지스트리의 것 — 기다리는 동안 모든 깊이가 풀린다)."""
         with self._cv:
-            envs = self._post.next_run(f"agent:{tm.key}", Take.ARRIVAL, timeout=None)
-            if envs is CLOSED or not envs:
-                return []
+            env = self._post.next_run(f"agent:{tm.key}", timeout=None)
+            if env is CLOSED or env is None:
+                return None
             tm.state = "busy"
-            return [dict(e.payload) for e in envs]
+            return dict(env.payload)
 
     def _stop_worker(self, tm: AgentInstance) -> None:
         """평생 정지 — ``stop_event`` 를 세우고(엔진·흡수가 본다) 그 상자를 닫는다(기다리는 워커가 깨어 나온다; 줄 선

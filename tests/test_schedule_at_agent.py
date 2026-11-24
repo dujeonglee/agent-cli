@@ -111,9 +111,9 @@ def test_scheduled_at_agent_goes_as_user_scheduler_name(tmp_path, renderer):  # 
         )  # 스케줄러의 발화 길 — main 상자에 사람의 말로
         real_route = surface.route
 
-        def route_then_close(text, start=None, *, item=None):
+        def route_then_close(text, *, item=None):
             try:
-                return real_route(text, start, item=item)
+                return real_route(text, item=item)
             finally:
                 main_input.close()  # 그 한 차례 뒤에 끝낸다(닫힘은 줄 선 말을 이긴다)
 

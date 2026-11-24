@@ -305,7 +305,7 @@ class Surface:
         """들어오는 문(`MainInput`)이 묻는 판정 — 이 표면의 명령 표."""
         return text in self.commands
 
-    def route(self, text, start=None, *, item=None):
+    def route(self, text, *, item=None):
         fn = self.commands.get(text)
         if fn is None:
             return False

@@ -63,8 +63,8 @@ def live(tmp_path):
 
 def _route(live, text, nickname):
     item = {"id": "u-1", "text": text, "nickname": nickname, "images": []}
-    start = MainLoop.start(item, threading.Event())
-    assert live.surface.route(start.query, start, item=item) is True
+    start = MainLoop.start({"message": item}, threading.Event())
+    assert live.surface.route(start.query, item=item) is True
 
 
 def test_human_addr():

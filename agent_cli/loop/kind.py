@@ -187,7 +187,7 @@ class Caller:
 @dataclass
 class Start:
     """런을 여는 것 — 시작 메시지와 그 귀속. 종류가 ``start(...)`` 로 만들거나(스킬은 템플릿
-    치환, 상주는 받은편지함 묶음) 호스트가 넘긴다(main 은 펌프가 꺼낸 사람의 말로, 메일이 연 런은 빈 시작으로 — `MainLoop.start`)."""
+    치환, 상주는 받은편지함 묶음) 호스트가 넘긴다(main 은 펌프가 꺼낸 봉투로 — 사람의 말이면 시작 메시지, 메일이면 ``opening``, `MainLoop.start`)."""
 
     query: str
     images: list[dict] = field(default_factory=list)
@@ -196,6 +196,8 @@ class Start:
     author_is_user: bool = False
     request_id: str = ""
     user_requests: list = field(default_factory=list)
+    #: 시작 메시지 없이 런을 연 봉투(main 의 메일) — 턴 경계 흡수 항목 하나의 모양(`LoopKind.intake`)
+    opening: dict | None = None
     #: main 만 — 런마다 새 Event(펌프). 다른 종류는 자기 ``stop_event`` 를 쓴다.
     stop_event: Any = None
 

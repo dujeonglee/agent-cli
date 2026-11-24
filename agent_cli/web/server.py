@@ -60,8 +60,9 @@ from starlette.background import BackgroundTask
 
 from agent_cli import images as _images
 from agent_cli.command_table import web_input_is_command
+from agent_cli.constants import EMPTY_WORDS, is_blank_words
 from agent_cli.knobs import web_states
-from agent_cli.main_input import MainInput, human_addr
+from agent_cli.main_input import EmptyWords, MainInput, human_addr
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
 from agent_cli.session_slots import get_job_registry, get_schedule_registry
@@ -1451,10 +1452,8 @@ def create_app(server: WebServer) -> FastAPI:
         # 실린다(답은 글). 이미지만 있는 일감도 된다(v10.147.2 — 그 전엔 레지스트리가
         # "empty message" 로 거절해 404 였다).
         images = server.image_refs(body.get("images") or [])
-        if not content.strip() and not images:
-            raise HTTPException(
-                status_code=400, detail="content must be a non-empty string"
-            )
+        if is_blank_words(content, images):
+            raise HTTPException(status_code=400, detail=EMPTY_WORDS)
         author = human_addr(server.renderer.hub.nickname_for(body.get("conn_id")))
         answer_id = body.get("answer_id")
         if answer_id:
@@ -1545,7 +1544,12 @@ def create_app(server: WebServer) -> FastAPI:
             # display until it's dequeued — by the worker to START a run, or by
             # the running loop at a turn boundary to INJECT — at which point it
             # is rendered as a conversation card.
-            server.enqueue(body.get("conn_id"), content, images=images)
+            try:
+                server.enqueue(body.get("conn_id"), content, images=images)
+            except (
+                EmptyWords
+            ) as e:  # 글도 이미지도 없다 — 말이 아니다(에이전트 창과 같은 글)
+                raise HTTPException(status_code=400, detail=str(e)) from None
             return JSONResponse({"accepted": True})
         if (
             kind in ("prompt", "confirm")

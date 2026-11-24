@@ -18,11 +18,11 @@ import threading
 from collections.abc import Callable
 
 from agent_cli import item_ids
-from agent_cli.constants import INPUT_IS_COMMAND
+from agent_cli.constants import EMPTY_WORDS, INPUT_IS_COMMAND, is_blank_words
 from agent_cli.post.envelope import Envelope, is_human_words, words
-from agent_cli.post.office import CLOSED, PostOffice, Take
+from agent_cli.post.office import CLOSED, PostOffice
 
-__all__ = ["CLOSED", "MAIN", "MainInput", "human_addr", "intake_item"]
+__all__ = ["CLOSED", "MAIN", "EmptyWords", "MainInput", "human_addr", "intake_item"]
 
 #: 사람의 입력을 받는 주소
 MAIN = "main"
@@ -32,6 +32,10 @@ def human_addr(nickname: str | None) -> str:
     """사람의 주소 — 별명이 있으면 ``user:<별명>``, 없으면(``run`` 의 argv 질의·터미널 줄) ``user``. main 앞 사람의
     말·에이전트 채널 입력·main 입력창의 ``@agt-…`` 요청이 같은 규칙을 쓴다 (v10.149.4)."""
     return f"user:{nickname}" if nickname else "user"
+
+
+class EmptyWords(ValueError):
+    """글도 이미지도 없는 말 — 사람의 말이 아니라 넣지 않았다(`MainInput.enqueue`)."""
 
 
 class MainInput:
@@ -69,7 +73,12 @@ class MainInput:
     ) -> dict:
         """사람의 말 하나를 상자 끝에 — 그 항목을 돌려준다. id 는 장부 형식(``u-N``, 세션 할당기 하나)이고 그 문자열이
         꼬리·`answers`·기록의 `request_id`·웹 취소까지 같다. ``src`` 는 봉투의 보낸 이 — 없으면 그 사람(`human_addr`),
-        예약 발화는 ``schedule:<id>``(`constants.schedule_addr`). 명령인가는 여기서 한 번 판정해 봉투에 싣는다."""
+        예약 발화는 ``schedule:<id>``(`constants.schedule_addr`). 명령인가는 여기서 한 번 판정해 봉투에 싣는다.
+
+        글도 이미지도 없는 말(공백뿐인 글 포함)은 말이 아니다 — 넣지 않고 `EmptyWords`. main 앞에 서는 사람의 말은
+        모두 이 문을 지난다."""
+        if is_blank_words(text, images):
+            raise EmptyWords(EMPTY_WORDS)
         command = self._is_command is not None and bool(self._is_command(text))
         env = words(
             item_ids.next_id(item_ids.USER),
@@ -90,13 +99,14 @@ class MainInput:
     # ── 꺼내기 ───────────────────────────────────────
 
     def wait_to_open(self, timeout: float | None):
-        """펌프: 다음 런을 열 것 — 사람의 말 항목(꺼냄), 빈 묶음 ``()``(깨우는 메일이 있다 — 메일이 연 런, 메일은
-        꺼내지 않는다), `CLOSED`, 또는 None(``timeout``). 기다리는 동안 main 은 한가함(`idle`)이다."""
-        got = self.post.next_run(MAIN, Take.WORDS_FIRST, timeout=timeout)
-        if got is None or got is CLOSED or not got:
+        """펌프: 다음 런을 연 봉투 — 줄 선 첫 깨우는 것 하나(도착 순서)를 꺼내 턴 경계 흡수 항목의 모양으로
+        (`intake_item`: 사람의 말은 ``{"message": 항목}``, 메일은 ``{"mail": …}``), `CLOSED`, 또는 None(``timeout``).
+        기다리는 동안 main 은 한가함(`idle`)이다."""
+        got = self.post.next_run(MAIN, timeout=timeout)
+        if got is None or got is CLOSED:
             return got
         self._changed()
-        return self.item_of(got[0])
+        return intake_item(got)
 
     def take_first_command(self) -> dict | None:
         """맨 앞의 사람의 말이 명령이면(들어올 때의 판정) 꺼내 돌려준다, 아니면 None — main 이 제자리에서 기다리는

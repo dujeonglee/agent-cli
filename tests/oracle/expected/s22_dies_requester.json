@@ -91,7 +91,6 @@
     {
      "caller_task": null,
      "item": "r-1",
-     "items": null,
      "key": "agt-A",
      "message": "TASK-E2 slow job",
      "profile": "bb",
@@ -139,7 +138,6 @@
     {
      "caller_task": null,
      "item": "r-2",
-     "items": null,
      "key": "agt-B",
      "message": "TASK-E1 ask bb",
      "profile": "aa",
@@ -218,7 +216,6 @@
     {
      "caller_task": null,
      "item": "n-2",
-     "items": null,
      "key": "agt-B",
      "message": "TASK-E1 fyi",
      "profile": "aa",

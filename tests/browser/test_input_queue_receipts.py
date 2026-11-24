@@ -34,7 +34,7 @@ def _send(page, text: str) -> None:
 
 def _open_next(stack) -> dict:
     """턴 경계가 하듯 맨 앞 줄을 꺼낸다(말풍선은 호출자가 낸다)."""
-    return stack.server.main_input.wait_to_open(0)
+    return stack.server.main_input.wait_to_open(0)["message"]
 
 
 def _wait_in_place(stack, routed: list):

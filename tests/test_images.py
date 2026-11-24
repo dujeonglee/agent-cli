@@ -439,7 +439,7 @@ class TestQueueAndRequest:
         assert q.enqueue(None, "plain")["images"] == []
         import threading
 
-        start = MainLoop.start(item, threading.Event())
+        start = MainLoop.start({"message": item}, threading.Event())
         assert start.images == [ref] and start.query == "look"
 
 
@@ -550,6 +550,38 @@ class TestInjectedMessageImages:
         rec = loop.messages[-1]
         assert rec["content"] == "[dj]: see\n[image: cap.png (640×480)]"
         assert rec["images"] == [ref]
+
+
+class TestImagesOnlyStarter:
+    def test_a_starter_that_is_only_images_reaches_the_model(self, tmp_path):
+        """글 없이 이미지만 보낸 말로 연 런 — 그 이미지가 시작 메시지로 들어간다. 전에는 글이 비면 시작 메시지를 넣지
+        않아, 엔진이 "읽을 것 없는 런" 으로 모델을 부르지 않고 끝냈다(그 갈래는 없어졌다)."""
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from tests.loop_ports import make_ports, queue_inbox
+        from tests.loopkit import make_loop
+
+        ref = ImageRef("cap.png", "image/png", 640, 480, 1, "").to_dict()
+        ctx = ContextManager(tmp_path / "s", max_context_tokens=30_000)
+        loop = make_loop(
+            query="",
+            query_images=[ref],
+            query_request_id="u-1",
+            query_author="dj",
+            provider=MagicMock(),
+            capabilities=ModelCapabilities(
+                context_window=32768, max_output_tokens=4096, supports_thinking=False
+            ),
+            model="m",
+            ctx=ctx,
+            ports=make_ports(inbox=queue_inbox(lambda: None)),
+        )
+        loop._setup()
+        (rec,) = [m for m in ctx.get_raw_messages() if m.get("role") == "user"]
+        assert rec["images"] == [ref] and rec["request_id"] == "u-1"
+        assert rec["content"] == "[dj]: \n[image: cap.png (640×480)]"
 
 
 class TestMinimalEchoImages:

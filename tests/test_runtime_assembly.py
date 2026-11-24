@@ -729,8 +729,13 @@ class _ItemsPump:
             item = None if wake else {"id": qid, "text": text, "nickname": None}
             if item is not None:
                 self.deps.surface.echo(item)
-            start = self.deps.main.start(item, threading.Event())
-            if not wake and self.deps.surface.route(text, start, item=item):
+            opened = (
+                {"mail": {"kind": "job", "output": text, "ledger": "none"}}
+                if wake
+                else {"message": item}
+            )
+            start = self.deps.main.start(opened, threading.Event())
+            if not wake and self.deps.surface.route(text, item=item):
                 continue
             res = self.deps.main.run(start)
             # 엔진 대역(`run_loop` 모의)은 칸을 싣지 않는다 — 엔진이 싣는 값을 여기서

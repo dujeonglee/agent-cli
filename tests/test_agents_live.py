@@ -1640,9 +1640,9 @@ def make_gated_recording_runner():
 class TestHumanInterventionRouting:
     """D8: 인간(비-main 화자) 문답은 대화 창에만 — main mailbox 비오염."""
 
-    def test_multiple_human_requests_batched_into_one_turn(self, tmp_path, renderer):
-        """C-1: 사람-직접 요청이 여러 건 대기하면 한 턴에 배치 — 러너가 두 메시지를
-        모두 담은 단일 query 를 한 번만 본다(2회 아님) + 안내문 포함. 회신은 창만(⑥)."""
+    def test_each_human_request_opens_its_own_run(self, tmp_path, renderer):
+        """사람-직접 요청이 여러 건 대기해도 런은 하나가 연다 — 묶지 않는다(main 과 같은 규칙). 이 러너는 턴 경계
+        흡수를 하지 않으므로 둘째는 다음 런을 연다(실제 엔진은 첫 턴 경계에서 도착 순서로 읽는다). 회신은 창만(⑥)."""
         runner = make_gated_recording_runner()
         reg = make_registry(tmp_path, runner=runner)
         key, _ = reg.spawn()
@@ -1650,27 +1650,19 @@ class TestHumanInterventionRouting:
         # warmup 으로 worker 를 gate 에 묶어둔다
         reg.request(key, "warmup", author="user:alice")
         assert wait_until(lambda: len(runner.seen) == 1)
-        # 묶여 있는 동안 사람-직접 2건 enqueue → 다음 턴에 배치
         reg.request(key, "msg one", author="user:alice")
         reg.request(key, "msg two", author="user:bob")
         runner.gate.set()
-        assert wait_until(lambda: len(runner.seen) == 2)  # warmup + 배치 1회
-        batched = runner.seen[1]
-        assert "[user:alice]: msg one" in batched
-        assert "[user:bob]: msg two" in batched
-        # v9.22.0: 배치 안내문은 없다 — 항목별 id 가 회계로 가고 꼬리·answers 가
-        # "전부 답하라" 를 강제한다(main 의 QUEUED_REQUEST_NOTICE 와 같은 결정).
-        assert "arrived together" not in batched
+        assert wait_until(lambda: len(runner.seen) == 3)
+        assert runner.seen[1:] == ["[user:alice]: msg one", "[user:bob]: msg two"]
         assert not reg.arrived_for(
             "main", waking_only=False, words=False
         )  # 전부 user:* → 창만
-        assert wait_until(lambda: reg.get(key).handled == 3)  # warmup + 2건
-        # v9.23.0: 배치 런의 scope_start 가 항목 id 전부를 싣는다 — 웹의 런
-        # 블록이 큐에서 먼저 도착한 수신 줄 둘을 자기 머리로 끌어오는 근거.
+        assert wait_until(lambda: reg.get(key).handled == 3)
         begins = [
             c[1] for c in renderer.named("begin_agent_work") if c[1]["key"] == key
         ]
-        assert begins[-1]["items"] == ["u-2", "u-3"] and begins[-1]["item"] == "u-2"
+        assert [b["item"] for b in begins] == ["u-1", "u-2", "u-3"]
         reg.shutdown_all()
 
     def test_main_delegations_processed_individually(self, tmp_path, renderer):
@@ -1898,7 +1890,7 @@ class TestRunMessagePump:
                 threading.Thread(target=later, daemon=True).start()
                 arrived.set()
             else:
-                q.post.absorb("main", human_first=True)  # 메일 런의 턴 경계 배달을 흉내
+                q.post.absorb("main")  # 메일 런의 턴 경계 배달을 흉내
 
         q.enqueue(None, "spawn and go")
         self._pump(q, reg, run_one)
@@ -1914,7 +1906,7 @@ class TestRunMessagePump:
 
         def run_one(text, *, wake):
             calls.append((text, wake))
-            q.post.absorb("main", human_first=True)
+            q.post.absorb("main")
 
         self._pump(q, reg, run_one)
         assert calls == [("", True)]

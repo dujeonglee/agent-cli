@@ -21,7 +21,7 @@ from agent_cli.command_table import (
     looks_like_slash_command,
     run_input_is_command,
 )
-from agent_cli.constants import SHELL_COMMAND_TIMEOUT
+from agent_cli.constants import SHELL_COMMAND_TIMEOUT, is_blank_words
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import (
     DialectUnbound as _DialectUnbound,
@@ -534,7 +534,7 @@ class _ConsoleSurface:
         """지금 런의 stop Event(한가하면 None) — Ctrl+C 처리기가 본다. 읽기만 한다."""
         return self._stop
 
-    def route(self, text: str, start=None, *, item: dict | None = None) -> bool:
+    def route(self, text: str, *, item: dict | None = None) -> bool:
         if text.startswith("/sh"):
             return False
         # argv 질의였던 명령만 판정·결과 파일이 된다 — 그 말의 번호로 안다
@@ -1985,6 +1985,10 @@ def run(
     """
     _apply_style(style)
     query_images = _stage_query_images(image)
+    if is_blank_words(query, query_images):
+        # 글도 이미지도 없는 질의는 말이 아니다 — 세션을 만들기 전에 끝낸다(main 앞의 문 `MainInput.enqueue` 와 같은 판정)
+        console.print("query is empty", style=C["error"], markup=False)
+        raise typer.Exit(2)
     # /sh prefix: Run shell command directly without LLM
     if query.startswith("/sh ") or query == "/sh":
         cmd = query[3:].strip()
@@ -2368,7 +2372,7 @@ def _terminal_steer_input(main_input, surface):
         if not ready:
             return False
         text = sys.stdin.readline().strip()
-        if not text:
+        if is_blank_words(text):
             return False
         main_input.enqueue(None, text)
         return queued(0)

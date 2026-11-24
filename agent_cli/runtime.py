@@ -808,7 +808,7 @@ class MainLoop(LoopKind):
             ),
             hook_runner=_hook_runner_port(),
             peer_roster=None,
-            # 턴 경계의 흡수는 main 상자 하나(사람의 말 먼저, 메일 뒤 — `AgentRegistry.absorb_main`)
+            # 턴 경계의 흡수는 main 상자 하나(도착 순서 — `AgentRegistry.absorb_main`)
             mailbox=Mailbox(
                 agent_registry,
                 "main",
@@ -836,7 +836,7 @@ class MainLoop(LoopKind):
         return WAIT_NEXT_MAIN
 
     def intake(self) -> list[dict]:
-        """main 상자의 줄 선 것 전부 — 사람의 말 먼저(라우팅은 엔진), 메일 뒤 (``mailbox.take``)."""
+        """main 상자의 줄 선 것 전부 — 도착 순서(사람의 말의 라우팅은 엔진, ``mailbox.take``)."""
         mailbox = self.ports.mailbox
         return list(mailbox.take() or []) if mailbox.has_inbox else []
 
@@ -866,11 +866,15 @@ class MainLoop(LoopKind):
         )
 
     @staticmethod
-    def start(item: dict | None, stop_event) -> Start:
-        """펌프가 꺼낸 것 → 시작. 사람의 말이면 그 말이 시작 메시지(작성자 = 닉네임, 없으면 run 의 argv 질의), ``None``
-        이면 메일이 연 런 — 시작 메시지가 없고 사람의 요청이 아니다(그 런의 첫 턴 경계가 메일을 배달한다)."""
+    def start(opened: dict, stop_event) -> Start:
+        """펌프가 꺼낸 봉투(`MainInput.wait_to_open` 의 모양) → 시작. 사람의 말이면 그 말이 시작 메시지(작성자 =
+        닉네임, 없으면 run 의 argv 질의). 메일이면 시작 메시지가 없고 사람의 요청이 아니다 — 그 메일이 런의 첫
+        입력이다(엔진이 턴 경계의 흡수와 같은 길로 넣는다)."""
+        item = opened.get("message")
         if item is None:
-            return Start(query="", author_is_user=False, stop_event=stop_event)
+            return Start(
+                query="", author_is_user=False, opening=opened, stop_event=stop_event
+            )
         return Start(
             query=str(item.get("text") or ""),
             images=list(item.get("images") or []),

@@ -7,7 +7,7 @@ import threading
 import pytest
 
 from agent_cli.post import envelope as E
-from agent_cli.post.office import CLOSED, PostOffice, Take
+from agent_cli.post.office import CLOSED, PostOffice
 from agent_cli.post.request_book import RowError
 
 
@@ -45,18 +45,14 @@ class TestTakeAndSplit:
         assert [e.id for e in po.words("main")] == ["u-2", "u-4"]
         assert [e.id for e in po.mail("main")] == ["n-1", "n-3"]
 
-    def test_absorb_human_first_takes_words_then_mail_and_holds_only_the_mail(self):
+    def test_absorb_takes_words_and_mail_in_arrival_order(self):
         po = PostOffice()
         for env in (_words(1), _mail(2), _words(3)):
             po.deliver(env)
-        assert [e.id for e in po.absorb("main", human_first=True)] == [
-            "u-1",
-            "u-3",
-            "n-2",
-        ]
+        assert [e.id for e in po.absorb("main")] == ["u-1", "n-2", "u-3"]
         assert po.queued("main") == ()
         # 런이 든다(런이 끝나면 비운다) — 줄은 메일의 것만, 사람의 말은 줄이 없다
-        assert [e.id for e in po.taken("main")] == ["u-1", "u-3", "n-2"]
+        assert [e.id for e in po.taken("main")] == ["u-1", "n-2", "u-3"]
         po.check_consistency()
 
     def test_withdraw(self):
@@ -77,18 +73,21 @@ class TestTakeAndSplit:
 
 
 class TestWaitToOpen:
-    def test_words_first_then_waking_mail_then_nothing(self):
+    def test_the_first_waking_envelope_opens_in_arrival_order(self):
+        """먼저 온 메일이 연다 — 사람의 말을 앞세우지 않는다. 연 메일은 든다(줄이 있다), 연 말은 들지 않는다."""
         po = PostOffice()
         po.deliver(_mail(1))
         po.deliver(_words(2))
-        assert po.next_run("main", Take.WORDS_FIRST, timeout=0)[0].id == "u-2"
-        assert po.next_run("main", Take.WORDS_FIRST, timeout=0) == ()
-        assert [e.id for e in po.queued("main")] == ["n-1"]  # 메일은 꺼내지 않는다
+        assert po.next_run("main", timeout=0).id == "n-1"
+        assert [e.id for e in po.taken("main")] == ["n-1"]
+        assert po.next_run("main", timeout=0).id == "u-2"
+        assert [e.id for e in po.taken("main")] == ["n-1"] and po.queued("main") == ()
+        assert po.next_run("main", timeout=0) is None
 
     def test_mail_that_does_not_wake_opens_nothing(self):
         po = PostOffice()
         po.deliver(_mail(1, wakes=False))
-        assert po.next_run("main", Take.WORDS_FIRST, timeout=0) is None
+        assert po.next_run("main", timeout=0) is None
 
     def test_closed_wins_over_queued_words(self):
         """닫히면 줄 선 사람의 말이 있어도 끝 — 그 말로 런을 열지 않는다(끄는 중이다). 줄은 그대로다."""
@@ -96,21 +95,21 @@ class TestWaitToOpen:
         po.deliver(_words(1))
         po.deliver(_mail(2))
         po.close("main")
-        assert po.next_run("main", Take.WORDS_FIRST, timeout=0) is CLOSED
+        assert po.next_run("main", timeout=0) is CLOSED
         assert [e.id for e in po.queued("main")] == ["u-1", "n-2"]
         assert not po.wait_words("main", 0)
 
     def test_idle_stays_through_a_timeout_and_goes_off_when_something_opens(self):
         po = PostOffice()
         assert not po.idle("main")
-        assert po.next_run("main", Take.WORDS_FIRST, timeout=0) is None
+        assert po.next_run("main", timeout=0) is None
         assert po.idle("main")
         po.deliver(_words(1))
-        po.next_run("main", Take.WORDS_FIRST, timeout=0)
+        po.next_run("main", timeout=0)
         assert not po.idle("main")
-        po.next_run("main", Take.WORDS_FIRST, timeout=0)
+        po.next_run("main", timeout=0)
         po.deliver(_mail(2))
-        assert po.next_run("main", Take.WORDS_FIRST, timeout=0) == ()
+        assert po.next_run("main", timeout=0).id == "n-2"
         assert not po.idle("main")
 
     def test_a_delivery_wakes_the_waiter(self):
@@ -120,7 +119,7 @@ class TestWaitToOpen:
 
         def waiter():
             entered.set()
-            got.append(po.next_run("main", Take.WORDS_FIRST, timeout=None))
+            got.append(po.next_run("main", timeout=None))
 
         t = threading.Thread(target=waiter)
         t.start()
@@ -128,4 +127,4 @@ class TestWaitToOpen:
         # 기다림에 든 뒤 배달한다 — 판정과 대기가 한 락이라 먼저 와도 놓치지 않는다
         po.deliver(_words(1))
         t.join(5)
-        assert not t.is_alive() and got[0][0].id == "u-1"
+        assert not t.is_alive() and got[0].id == "u-1"

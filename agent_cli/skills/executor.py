@@ -302,6 +302,14 @@ class SkillLoop(LoopKind):
         from agent_cli.subagent.runner import create_subagent_ctx
 
         skill, caller = self.skill, self.caller
+        if not start.query.strip():
+            # 채운 글이 비었다 — 모델에게 줄 입력이 없다. 아는 것만 말한다: 글이 비었다, 인자가 비었다
+            raise LoopKindError(
+                f'Skill "{skill.name}" cannot run: its prompt is empty.'
+                if self.arguments.strip()
+                else f'Skill "{skill.name}" cannot run: no arguments were given '
+                "and its prompt is empty without them."
+            )
         effective = skill.allowed_tools
         parent = caller.tools
         if effective and parent:
