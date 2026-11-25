@@ -138,7 +138,6 @@ class ResidentLoop(LoopKind):
         return PromptProfile(
             role=self.tm.role_prompt,
             peer_section=self.peer_agents_section,
-            ask_guide=True,
             reports_to_caller=True,
         )
 

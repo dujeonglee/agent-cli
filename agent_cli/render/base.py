@@ -293,21 +293,6 @@ class Renderer(ABC):
 
     # ── Ask-tool announcement ────────────────────────
     #
-    # The ``ask`` tool's "Agent asks:" header + question list is a UI
-    # concern too. CLI surfaces need to print the questions before
-    # reading stdin (terminals don't echo the prompt context back).
-    # Web surfaces don't because ``prompt_user(context=...)`` already
-    # carries the question text into the form. The loop calls this
-    # before ``prompt_user``; the renderer decides what to draw.
-
-    def announce_ask(self, questions: list[str], *, prefix: str = "") -> None:
-        """Announce the ask-tool questions before the input prompt.
-
-        Default: no-op. WebRenderer keeps the default — the same text
-        already arrives at the UI via the ``context`` argument of
-        ``prompt_user``, so a duplicate emission would just be noise.
-        MinimalRenderer overrides to print a colored block.
-        """
 
     # ── Nested scope lifecycle ───────────────────────
     #
@@ -793,47 +778,6 @@ class Renderer(ABC):
         """Signal end of streaming. Default: no-op."""
 
     # ── User input ──────────────────────────────────
-
-    @abstractmethod
-    def prompt_user(
-        self,
-        prompt: str,
-        *,
-        default: str = "",
-        multiline: bool = True,
-        continuation: str = "... ",
-        context: str = "",
-    ) -> str:
-        """Read free-form text input from the user.
-
-        ``EOFError`` / ``KeyboardInterrupt`` propagate to the caller —
-        different consumers want different policy (the setup wizard
-        aborts, the ask tool substitutes a fallback). ``default`` covers
-        only the empty-submission case.
-
-        Args:
-            prompt: Prompt string shown to the user.
-            default: Returned when the user submits empty (whitespace-
-                only) input. Lets callers mirror the bracketed-default
-                pattern (``"  Size [4096]: "``) without inspecting
-                emptiness afterwards. NOT a fallback for EOF / Ctrl+C.
-            multiline: ``True`` enables multi-line submission (triple-
-                quote blocks, paste detection) — the ``ask`` tool answer
-                uses this. ``False`` reads a single line — setup wizard
-                prompts use this.
-            continuation: Prompt prefix shown for subsequent lines of
-                a multi-line block. Ignored when ``multiline=False``.
-            context: Optional pre-input announcement (e.g. the ``ask``
-                tool's question list) that the renderer may surface
-                alongside the input affordance. CLI renderers typically
-                ignore this — they already print such announcements
-                via ``console.print`` for color. Out-of-band UIs (web)
-                use it to attach the question to the input form so
-                the user doesn't have to scroll back.
-
-        Returns:
-            The stripped user input, or ``default`` on empty input.
-        """
 
     def can_prompt(self) -> bool:
         """Whether an interactive prompt — a ``confirm`` y/n/a or ``ask``'s

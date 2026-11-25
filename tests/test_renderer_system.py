@@ -118,7 +118,7 @@ class TestMinimalConfirmPausesLive:
         r._live = live
         monkeypatch.setattr("builtins.input", lambda prompt="": "the answer")
 
-        value = r.prompt_user("Q: ", multiline=False)
+        value = r.prompt_user("Q: ")
 
         assert value == "the answer"
         live.stop.assert_called_once()
@@ -137,7 +137,7 @@ class TestMinimalConfirmPausesLive:
         monkeypatch.setattr("builtins.input", _raise)
 
         try:
-            r.prompt_user("Q: ", multiline=False)
+            r.prompt_user("Q: ")
         except EOFError:
             pass
         live.stop.assert_called_once()
@@ -441,10 +441,11 @@ class TestMinimalRendererContract:
         assert any("model detected: m1" in m for _, m in r.statuses)
         assert any("model loaded: m1" in m for _, m in r.statuses)
 
-    def test_abstract_surface_is_exactly_nine(self):
+    def test_abstract_surface_is_exactly_eight(self):
+        """6b: `prompt_user` 는 추상 표면에서 빠졌다 — 막는 `ask` 가 없어져 부팅 마법사(터미널 렌더러)만 쓴다."""
         from agent_cli.render.base import Renderer
 
-        assert len(Renderer.__abstractmethods__) == 9
+        assert len(Renderer.__abstractmethods__) == 8
         assert Renderer.__abstractmethods__ == frozenset(
             {
                 "header",
@@ -454,7 +455,6 @@ class TestMinimalRendererContract:
                 "final",
                 "error",
                 "status",
-                "prompt_user",
                 "confirm",
             }
         )

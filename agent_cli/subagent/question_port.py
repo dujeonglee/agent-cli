@@ -202,12 +202,21 @@ class QuestionPort:
     (``key=None``) — 묻기·빚 갚기가 루프와 무관하게 하나이기 때문이다(6b).
     """
 
-    def __init__(self, registry: AgentRegistry, key: str | None = None):
+    def __init__(
+        self,
+        registry: AgentRegistry,
+        key: str | None = None,
+        *,
+        address: str = "",
+        name: str = "",
+    ):
         self._reg = registry
-        self.key = key
-        # 이 주체의 **주소**(질문의 target 과 비교) / **발신 라벨**(asker).
-        self.me = "main" if key is None else f"agent:{key}"
-        self.asker = "main" if key is None else key
+        self.name = name  # 스킬 런의 스킬 이름(6b) — 질문의 묻는 쪽 이름표
+        # 이 주체의 **주소**(질문의 target 과 비교) / **발신 라벨**(asker). 스킬 런(6b)은 자기 주소(``skill:…``)가
+        # 셋 모두다 — 묻고, 답을 받고, 빚은 없다.
+        self.key = key if not address else address
+        self.me = address or ("main" if key is None else f"agent:{key}")
+        self.asker = address or ("main" if key is None else key)
 
     def ask(self, text: str) -> tuple[str, str]:
         """사람에게 질문 등록 — ``(id, err)``, err 가 비면 성공 (v10.77.0, B).
@@ -218,7 +227,7 @@ class QuestionPort:
         도구를 만들었는데, 실제 기록에서 `answer` 11회가 전부 실패했다. main 도 같은 길이다(6b) — 열린 질문은
         트레이·`/questions` 의 목록에 서고, 사람이 답하거나 닫아서 닫힌다.
         """
-        return self._reg.register_question(self.asker, text)
+        return self._reg.register_question(self.asker, text, name=self.name)
 
     def debts(self) -> list[dict]:
         """이 런이 아직 갚지 않은 회신 빚 (v9.22.0) — main·상주 **같은 코드**.

@@ -362,7 +362,9 @@ AUDITOR_NAME = "auditor"
 # **private 주소** — 하니스 작업이 프로세스 수명의 메일함을 자기 턴 경계와 `wait` 에서
 # 읽는다(종전엔 주소만 있고 메일함이 없어 통지가 버려졌다).
 HARNESS_OWNER_PREFIX = "harness:"
-_PRIVATE_OWNER_PREFIXES = (HARNESS_OWNER_PREFIX,)
+#: 스킬 런의 주소 (6b) — 사람에게 물은 질문의 답·닫힘이 드는 상자. 스킬 런이 턴 경계와 `wait` 에서 읽는다
+SKILL_OWNER_PREFIX = "skill:"
+_PRIVATE_OWNER_PREFIXES = (HARNESS_OWNER_PREFIX, SKILL_OWNER_PREFIX)
 
 
 #: 하니스 통지(잡·모니터·체크인)의 레코드 계약 — 한 표 (v10.84.0, 사용자 결정 C):

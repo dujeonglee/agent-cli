@@ -250,7 +250,11 @@ class TestKindsStateTheirPolicy:
         from agent_cli.subagent.resident_loop import ResidentLoop
         from tests.binding_support import make_binding
 
-        reg = object()
+        class _Reg:  # 스킬 런은 레지스트리에서 자기 주소의 질문 포트를 받는다(6b)
+            def question_port(self, key=None, *, address="", name=""):
+                return object()
+
+        reg = _Reg()
         main = MainLoop(
             binding=make_binding(model="m"),
             ctx=None,
@@ -299,13 +303,13 @@ class TestKindsStateTheirPolicy:
         return main, skill, one, harness, reg
 
     def test_who_can_wait(self, tmp_path):
-        """`wait` 는 깨울 길(받을 상자)이 있는 루프면 제자리에서 기다리고, 없으면(스킬 — 호출자의 턴 안 인라인) 거부한다
-        (5c-1: 정책 셋 → 이 하나, `ports.wakeable`)."""
+        """`wait` 는 깨울 길(받을 상자)이 있는 루프면 제자리에서 기다리고, 없으면 거부한다(5c-1: 정책 셋 → 이 하나,
+        `ports.wakeable`). 6b: 스킬 런도 자기 주소의 상자가 있다 — 자기가 건 질문의 답을 기다린다."""
         main, skill, one, harness, _ = self._kinds(tmp_path)
         assert one.ports.wakeable() and harness.ports.wakeable()
         # 이 대역의 main 은 레지스트리 없이 섰다 — 받을 상자가 없어 깨울 길도 없다(제품의 main 은 늘 레지스트리가 있다)
         assert not main.ports.wakeable()
-        assert not skill.ports.wakeable()  # 호출자의 턴 안 인라인
+        assert skill.ports.wakeable()  # 자기 주소(`skill:…`)의 상자
         # 맨 종류: 상자가 없으면 거부, 있으면 기다린다
         assert not make_kind().ports.wakeable()
         assert make_kind(
@@ -319,6 +323,9 @@ class TestKindsStateTheirPolicy:
         class _Reg:
             def absorb_main(self):
                 return [{"mail": {"key": "agt-1", "output": "late reply"}}]
+
+            def question_port(self, key=None, *, address="", name=""):
+                return object()
 
         caller = make_caller(agent_registry=_Reg())
         from agent_cli.skills.executor import SkillLoop
@@ -335,13 +342,12 @@ class TestKindsStateTheirPolicy:
     def test_prompt_profile(self, tmp_path):
         main, skill, one, harness, _ = self._kinds(tmp_path)
         p = main.prompt_profile()
-        assert p.role == "" and not p.ask_guide and not p.reports_to_caller
-        s = skill.prompt_profile()
-        assert s.reports_to_caller
-        o = (
-            one.prompt_profile()
-        )  # run 에이전트 = 에이전트: `ask` 안내를 받는다, `message` 동료 채널
-        assert o.ask_guide and o.reports_to_caller
+        assert p.role == "" and not p.reports_to_caller
+        assert skill.prompt_profile().reports_to_caller
+        assert one.prompt_profile().reports_to_caller
+        # `ask` 안내는 에이전트만(포트의 술어 하나): run 에이전트는 받고, main·스킬은 받지 않는다
+        assert one.ports.ask_guide()
+        assert not main.ports.ask_guide() and not skill.ports.ask_guide()
         assert harness.prompt_profile().role == "body"
         assert skill.renders() is False and one.renders() and main.renders()
         assert main.tracks_run_authors and not skill.tracks_run_authors

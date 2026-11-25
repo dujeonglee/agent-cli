@@ -302,9 +302,7 @@ class TestWebRenderer:
         r.hub.set_nickname("c1", "dj")
         threading.Timer(
             0.2,
-            lambda: r.push_user_input(
-                "confirm", {"key": "c", "comment": "hint", "conn_id": "c1"}
-            ),
+            lambda: r.push_confirm({"key": "c", "comment": "hint", "conn_id": "c1"}),
         ).start()
         from agent_cli.render.base import ConfirmOption
 
@@ -421,9 +419,7 @@ def _answer_when_asked(r: WebRenderer, key: str, comment: str, seen: dict):
                 seen["stuck"] = r.hub.sticky_payload("stuck")
                 seen["prompt"] = r.hub.sticky_payload("input_required")
                 seen["status"] = _status_once_awaiting(r._status_dir, deadline)
-                r.push_user_input(
-                    "confirm", {"key": key, "comment": comment, "conn_id": "c1"}
-                )
+                r.push_confirm({"key": key, "comment": comment, "conn_id": "c1"})
                 return
             time.sleep(0.02)
 
@@ -731,7 +727,7 @@ class TestAutoApproveDoesNotSkipThePause:
         r = WebRenderer()
         r.set_auto_approve(True)
         threading.Timer(
-            0.3, lambda: r.push_user_input("confirm", {"key": "s", "comment": ""})
+            0.3, lambda: r.push_confirm({"key": "s", "comment": ""})
         ).start()
         asked: list = []
         orig = r.set_sticky

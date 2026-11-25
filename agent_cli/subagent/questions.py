@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from agent_cli import item_ids
 from agent_cli import render as render_surface
 from agent_cli.agent_icon import agent_display_name
+from agent_cli.constants import is_private_owner
 from agent_cli.post.request_book import RowError
 from agent_cli.subagent.agent_mail import is_human_addr
 from agent_cli.subagent.question_port import QuestionPort
@@ -47,6 +48,7 @@ class Question:
     text: str
     asked_at: float = field(default_factory=time.time)
     asked_in: str = ""  # asker 가 이 질문을 건 런(을 연 배달의 id)
+    name: str = ""  # 스킬 런이 물었으면 그 스킬 이름(6b) — `asker_label`
 
     @property
     def to_human(self) -> bool:
@@ -65,8 +67,11 @@ MAIN = "main"
 
 
 def asker_address(asker: str) -> str:
-    """묻는 쪽의 우편 주소 — main 은 ``main``, 에이전트는 ``agent:<key>``. 답·닫힘 봉투가 이 상자로 간다."""
-    return MAIN if asker == MAIN else f"agent:{asker}"
+    """묻는 쪽의 우편 주소 — main 은 ``main``, 스킬 런은 자기 주소(``skill:…`` 그대로), 에이전트는 ``agent:<key>``.
+    답·닫힘 봉투가 이 상자로 간다."""
+    if asker == MAIN or is_private_owner(asker):
+        return asker
+    return f"agent:{asker}"
 
 
 def _new_question_id() -> str:
@@ -84,11 +89,15 @@ class QuestionsMixin:
         """사람 답을 기다리는 열린 질문의 asker — 종료 시 경고 표시용."""
         return sorted({q.asker for q in self.open_human_questions()})
 
-    def question_port(self, key: str | None = None) -> QuestionPort:
-        """루프에 넘길 seam. ``key=None`` 이면 main 용."""
-        return QuestionPort(self, key)
+    def question_port(
+        self, key: str | None = None, *, address: str = "", name: str = ""
+    ) -> QuestionPort:
+        """루프에 넘길 seam. ``key=None`` 이면 main 용, ``address``·``name`` 은 스킬 런의 주소와 스킬 이름(6b)."""
+        return QuestionPort(self, key, address=address, name=name)
 
-    def register_question(self, asker: str, text: str) -> tuple[str, str]:
+    def register_question(
+        self, asker: str, text: str, *, name: str = ""
+    ) -> tuple[str, str]:
         """사람에게 질문 등록 — ``(id, err)``. 아무것도 블록하지 않는다. ``asker`` 는 에이전트 키 또는 ``"main"``(6b).
 
         표면은 ❓ 트레이(열린 질문 목록 — `_notify_questions`)와 묻는 쪽의 줄이다(에이전트는 대화 창, main 은 터미널의
@@ -97,7 +106,7 @@ class QuestionsMixin:
         if not text:
             return "", "empty question"
         tm = self._agents.get(asker)
-        if tm is None and asker != MAIN:
+        if tm is None and asker != MAIN and not is_private_owner(asker):
             return "", f'unknown asker "{asker}"'
         asked_in = tm.current_item if tm is not None else ""
         with self._cv:
@@ -114,6 +123,7 @@ class QuestionsMixin:
                 target="user",
                 text=text,
                 asked_in=asked_in,
+                name=name,
             )
             self._post.ask(q.id, asker_address(asker), q.target, text, meta=q)
             # 질문 줄은 질문을 여는 구간에서 적는다 — 답의 in 이 앞서지 않게 (v10.146.4)
@@ -121,9 +131,11 @@ class QuestionsMixin:
             self._lines_in_section(lines)
         self._lines_after_section(lines)
         if (
-            asker == MAIN
-        ):  # main 은 대화 창이 없다 — 터미널의 질문 줄(웹은 트레이와 `ask` 카드가 보인다)
-            render_surface.get_renderer().question_line("main", q.id, q.text)
+            asker not in self._agents
+        ):  # 대화 창이 없는 묻는 쪽(main·스킬 런)은 터미널의 질문 줄
+            render_surface.get_renderer().question_line(
+                self.asker_label(q), q.id, q.text
+            )
         self._notify_questions()
         return q.id, ""
 
@@ -211,7 +223,7 @@ class QuestionsMixin:
         except RowError:
             return unknown  # 다른 사람이 먼저 답하거나 닫았다 — 줄이 이미 닫혔다
         if refused:  # 묻는 쪽이 멈췄거나 사라져 받지 못한다 — 그 질문들을 닫고 명단에 알린다 (v10.149.1)
-            self._purge_questions_for(q.asker)
+            self.close_questions_of(q.asker)
             return f'the agent that asked "{qid}" has stopped — the question is closed'
         self._notify_questions()
         return ""
@@ -222,19 +234,28 @@ class QuestionsMixin:
         try:
             render_surface.get_renderer().open_questions(
                 [
-                    {"id": q.id, "asker": q.asker, "text": q.text, "ts": q.asked_at}
+                    {
+                        "id": q.id,
+                        "asker": q.asker,
+                        "label": self.asker_label(q),
+                        "text": q.text,
+                        "ts": q.asked_at,
+                    }
                     for q in self.open_human_questions()
                 ]
             )
         except Exception:
             pass
 
-    def asker_label(self, asker: str) -> str:
-        """질문 목록(`/questions`)의 묻는 쪽 — main 은 "main", 에이전트는 질문 줄과 같은 이름 ``이름 (키)``."""
-        tm = self._agents.get(asker)
-        if tm is None:
-            return asker
-        return f"{agent_display_name(tm.key, tm.profile_name, tm.instance_name)} ({tm.key})"
+    def asker_label(self, q: Question) -> str:
+        """질문의 묻는 쪽 이름표 하나 — 터미널 질문 줄·`/questions`·❓ 트레이가 같은 글을 쓴다(6b). main 은 "main",
+        스킬 런은 ``skill <스킬 이름>``, 에이전트는 질문 줄과 같은 ``이름 (키)``."""
+        tm = self._agents.get(q.asker)
+        if tm is not None:
+            return f"{agent_display_name(tm.key, tm.profile_name, tm.instance_name)} ({tm.key})"
+        if is_private_owner(q.asker):
+            return f"skill {q.name}" if q.name else "skill"
+        return q.asker
 
     def _deliver_to_asker(
         self, q: Question, body: str, *, kind: str, todo: str, closes_as: str
@@ -242,6 +263,14 @@ class QuestionsMixin:
         """질문을 닫는 봉투(답·닫힘)를 묻는 쪽에게 — 줄 없는 ``n-`` 봉투(회신과 같다: 기다리던 것의 도착이지 새 항목이
         아니다), 질문 줄 닫기와 한 락 구간. main 은 메일로, 에이전트는 받은편지함으로 — 봉투 모양과 글은 같다.
         `request` 의 거절(묻는 쪽이 받지 못함) 또는 ""."""
+        if is_private_owner(q.asker):  # 스킬 런의 상자 — private 메일과 같은 길
+            self._push_private(
+                q.asker,
+                {"kind": kind, "re": q.id, "output": body, "todo": todo},
+                settles=q.id,
+                closes_as=closes_as,
+            )
+            return ""
         if q.asker == MAIN:
             self._push_reply(
                 {"kind": kind, "re": q.id, "output": body, "todo": todo},
@@ -261,12 +290,12 @@ class QuestionsMixin:
             closes_as=closes_as,
         )
 
-    def _purge_questions_for(self, key: str) -> None:
+    def close_questions_of(self, asker: str) -> None:
         """그가 건 질문을 닫고(받을 곳이 없다) 저장·명단 알림 — 영구 사망(✕·크래시, ``not revivable``)과 답이
         거절됐을 때(`answer_question`)만 부른다. 세션 종료(``shutdown_all``)에서 지우면 직후의 ``_save_state`` 가
         빈 목록을 저장해 resume 이 질문을 되살리지 못한다.
         """
-        outgoing = self._post.forget_questions_of(f"agent:{key}")
+        outgoing = self._post.forget_questions_of(asker_address(asker))
         if outgoing:
             self._notify_questions()
 

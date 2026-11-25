@@ -886,9 +886,7 @@ class TestFrameClock:
 
 
 class TestPromptUser:
-    """``Renderer.prompt_user`` — setup wizard / ask tool
-    all route through here so a web renderer can satisfy the same API
-    via form submission instead of stdin."""
+    """``MinimalRenderer.prompt_user`` — 부팅 마법사의 한 줄 읽기(6b: 막는 `ask` 와 여러 줄 읽기는 지웠다)."""
 
     def _make(self):
         buf = StringIO()
@@ -898,17 +896,15 @@ class TestPromptUser:
     def test_single_line_returns_stripped_input(self, monkeypatch):
         monkeypatch.setattr("builtins.input", lambda _p: "  hello world  ")
         r = self._make()
-        assert r.prompt_user("prompt: ", multiline=False) == "hello world"
+        assert r.prompt_user("prompt: ") == "hello world"
 
     def test_single_line_empty_returns_default(self, monkeypatch):
         monkeypatch.setattr("builtins.input", lambda _p: "")
         r = self._make()
-        assert r.prompt_user("prompt: ", default="4096", multiline=False) == "4096"
+        assert r.prompt_user("prompt: ", default="4096") == "4096"
 
     def test_single_line_eof_propagates(self, monkeypatch):
-        # EOF / Ctrl+C propagate so the caller can pick a policy
-        # (setup wizard: abort; ask tool:
-        # catch + substitute fallback).
+        # EOF / Ctrl+C propagate so the caller can pick a policy (setup wizard: abort).
         import pytest
 
         def raise_eof(_p):
@@ -917,7 +913,7 @@ class TestPromptUser:
         monkeypatch.setattr("builtins.input", raise_eof)
         r = self._make()
         with pytest.raises(EOFError):
-            r.prompt_user("prompt: ", default="fallback", multiline=False)
+            r.prompt_user("prompt: ", default="fallback")
 
     def test_single_line_keyboard_interrupt_propagates(self, monkeypatch):
         import pytest
@@ -928,25 +924,7 @@ class TestPromptUser:
         monkeypatch.setattr("builtins.input", raise_int)
         r = self._make()
         with pytest.raises(KeyboardInterrupt):
-            r.prompt_user("prompt: ", default="abort", multiline=False)
-
-    def test_multiline_delegates_to_rich_input(self, monkeypatch):
-        # ``read_rich_input`` is the existing reader; we just verify
-        # we delegate to it and respect default-on-EOF semantics.
-        monkeypatch.setattr(
-            "agent_cli.input_history.read_rich_input",
-            lambda _p, continuation="... ": "  multi  ",
-        )
-        r = self._make()
-        assert r.prompt_user("prompt: ", multiline=True) == "multi"
-
-    def test_multiline_empty_returns_default(self, monkeypatch):
-        monkeypatch.setattr(
-            "agent_cli.input_history.read_rich_input",
-            lambda _p, continuation="... ": "",
-        )
-        r = self._make()
-        assert r.prompt_user("prompt: ", default="def", multiline=True) == "def"
+            r.prompt_user("prompt: ", default="abort")
 
 
 class TestConsoleColorIsolation:

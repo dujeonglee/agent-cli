@@ -42,7 +42,6 @@ class TestSingleScopePins:
 
     유저: config.json · models.json (머신 사실)
     프로젝트: mcp · skills · agents · hooks · hooks.json · DIRECTIVE
-    sessions_dir(): chat_history
     """
 
     # ── 유저 스코프 ──
@@ -102,14 +101,6 @@ class TestSingleScopePins:
 
         assert sysprompt._DIRECTIVE_PATHS == [Path.cwd() / _A]
         assert sysprompt.project_directive_file() == Path.cwd() / _A / "DIRECTIVE.md"
-
-    # ── sessions_dir 스코프 ──
-    def test_chat_history_lives_in_sessions_dir(self):
-        """작업 트리(.agent-cli/)가 아니라 sessions_dir() — 타이핑한 내용이
-        트리에 남지 않고, AGENT_CLI_SESSIONS_DIR 로 컨테이너에서 뺄 수 있다."""
-        import agent_cli.input_history as ih
-
-        assert ih._HISTORY_FILE == Path(_A) / "sessions" / "chat_history"
 
     @pytest.mark.parametrize("name", ["home", "Path.home"])
     def test_no_consumer_reaches_for_home_except_user_scope(self, name):
@@ -248,25 +239,3 @@ class TestUserScopeFilesAreIgnoredAtRuntime:
         (home / ".agent-cli" / "config.json").write_text(_server("USER-MODEL"))
         monkeypatch.setattr(cfgmod, "_CONFIG_PATH", home / ".agent-cli" / "config.json")
         assert cfgmod.endpoint_config("home")["default_model"] == "USER-MODEL"
-
-
-class TestChatHistoryFollowsSessionsDir:
-    """chat_history 는 sessions_dir() 를 따른다 — 작업 트리가 아니라
-    AGENT_CLI_SESSIONS_DIR 로 옮길 수 있는 곳 (docs/config-scopes §4)."""
-
-    def test_default_under_dot_agent_cli_sessions(self, monkeypatch):
-        monkeypatch.delenv("AGENT_CLI_SESSIONS_DIR", raising=False)
-        assert sessions_dir() / "chat_history" == Path(_A) / "sessions" / "chat_history"
-
-    def test_env_moves_history_out_of_tree(self, monkeypatch, tmp_path):
-        """컨테이너·CI 에서 트리를 안 더럽히는 게 이 위치 선택의 이유."""
-        monkeypatch.setenv("AGENT_CLI_SESSIONS_DIR", str(tmp_path / "out"))
-        assert sessions_dir() / "chat_history" == tmp_path / "out" / "chat_history"
-        assert not str(sessions_dir()).startswith(_A)
-
-    def test_history_module_pins_sessions_dir(self):
-        """input_history 가 자기 경로를 따로 조립하면 이 계약이 깨진다."""
-        import agent_cli.input_history as ih
-
-        assert ih._HISTORY_FILE.parent == sessions_dir()
-        assert ih._HISTORY_FILE.name == "chat_history"

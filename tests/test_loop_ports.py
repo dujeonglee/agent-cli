@@ -37,7 +37,9 @@ BUILDERS = {
         enqueue_user_message=_S,
         route_message=_S,
     ),
-    "skill": lambda: SkillLoop.make_ports(agent_registry=_Reg(), owner="agent:parent"),
+    "skill": lambda: SkillLoop.make_ports(
+        agent_registry=_Reg(), owner="agent:parent", address="skill:s-1"
+    ),
     "private": lambda: PrivateLoop.make_ports("harness:auditor:1-2"),
     "resident": lambda: ResidentLoop.make_ports(
         key="k1",
@@ -53,7 +55,7 @@ BUILDERS = {
 class _Reg:
     """`question_port` 만 있는 최소 레지스트리 대역."""
 
-    def question_port(self, key):
+    def question_port(self, key=None, *, address="", name=""):
         return _S
 
     def absorb_main(self):  # main 의 턴 경계 흡수

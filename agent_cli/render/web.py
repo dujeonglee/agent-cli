@@ -126,7 +126,7 @@ class WebRenderer(Renderer):
     """Renderer for ``agent-cli web``.
 
     Thread-safe: emit methods are called from the AgentLoop worker
-    thread; ``push_user_input`` (and ``hub.register``) are called from the
+    thread; ``push_confirm`` (and ``hub.register``) are called from the
     FastAPI request handlers (async, but the calls themselves are
     synchronous from the renderer's POV). The renderer's own state (scope
     maps, pending notes, prompt snapshots, …) is guarded by ``self._lock``;
@@ -1822,14 +1822,12 @@ class WebRenderer(Renderer):
         return self.hub.sticky_payload("input_required") is not None
 
     def awaiting_input_kind(self) -> str | None:
-        """Kind (``"prompt"`` | ``"confirm"``) of the pending input wait, or
+        """Kind (``"confirm"`` — the only blocking prompt) of the pending input wait, or
         ``None`` when nothing is waiting. Read by POST /api/input's gate: an
         answer with no matching wait is refused (409) instead of landing in
         ``_input_queue`` and auto-answering the NEXT prompt — the stale-click
         poisoning seen when a connection-starved browser flushes queued
-        confirm clicks, or when two viewers race to answer the same prompt.
-        The kind match also stops a confirm tuple from feeding a prompt wait
-        that expects a plain string (and vice versa)."""
+        confirm clicks, or when two viewers race to answer the same prompt."""
         payload = self.hub.sticky_payload("input_required")
         return payload.get("kind") if payload is not None else None
 
@@ -2241,57 +2239,16 @@ class WebRenderer(Renderer):
 
     # ─── Input methods (Renderer ABC) ───────────────
 
-    def prompt_user(
-        self,
-        prompt: str,
-        *,
-        default: str = "",
-        multiline: bool = True,
-        continuation: str = "... ",
-        context: str = "",
-    ) -> str:
-        """Push an ``input_required`` event and block the worker thread
-        until POST /api/input arrives with a chat / ask answer.
-
-        ``EOFError`` is raised if ``push_abort()`` was signalled while
-        waiting — gives the same propagation semantics as the CLI
-        renderer so interactive teardown logic stays consistent.
-
-        ``context`` (e.g. the ``ask`` tool's question block) is
-        forwarded as a separate field so the frontend can attach it
-        to the input affordance — the user doesn't have to scroll
-        back to the assistant card to see what they're answering.
-        """
-
-        meta = self.prompt_meta()
-        value = self._await_human(
-            "prompt",
-            {
-                "prompt": prompt,
-                "context": context,
-                # Who/why: which delegate agent is asking + its
-                # reasoning, so the user can attribute the prompt.
-                "agent": meta["agent"],
-                "reasoning": meta["reasoning"],
-            },
-        )
-        return value if value else default
-
     def can_prompt(self) -> bool:
         """Always ``True``: the web channel can ALWAYS deliver an answer —
-        if nobody is watching right now, the pending ``input_required``
-        sticky replays into the next client's snapshot, the status file
-        flags ``awaiting_input`` (agent-board shows "답변 필요"), and the
-        worker waits until someone shows up and answers (v7.8.0).
+        an open question stays in the ❓ tray and a pending confirm's
+        ``input_required`` sticky replays into the next client's snapshot,
+        the status file flags ``awaiting_input`` (agent-board shows "답변
+        필요"), and the answer comes whenever someone shows up.
 
         This is deliberately "can an answer EVER arrive", not "is someone
-        here NOW" (that's ``hub.has_live_connections``). The old now-based
-        gate made every ask/confirm fired while the user was viewing a
-        DIFFERENT board room collapse to "(no response)" in the same
-        millisecond — with resident multi-room use, "wait and surface on
-        the board" is the correct semantics. CLI renderers keep the
-        TTY-based gate: without a terminal an answer can truly never
-        arrive there."""
+        here NOW" (that's ``hub.has_live_connections``). Where no answer can
+        ever arrive (CLI renderers without a terminal), ``ask`` is refused."""
         return True
 
     def _note_auto_approved(self, text: str) -> None:
@@ -2366,25 +2323,18 @@ class WebRenderer(Renderer):
 
     # ─── External hooks ─────────────────────────────
 
-    def push_user_input(self, kind: str, payload: dict[str, Any]) -> None:
-        """Called by FastAPI POST /api/input handler.
-
-        ``kind``: ``"prompt"`` (chat / ask answer) or ``"confirm"``.
-        ``payload``: For prompt, ``{"content": "..."}``. For confirm,
-        ``{"key": "...", "comment": "..."}``.
-        """
-        if kind == "confirm":
-            # 답한 뷰어 (v10.120.0): 확인의 코멘트를 그 사람의 메시지로 넣을 때(Hint) 쓴다
-            nick = self.hub.nickname_for(payload.get("conn_id"))
-            self._input_queue.put(
-                (
-                    payload.get("key", ""),
-                    payload.get("comment", ""),
-                    "" if nick == "?" else nick,
-                )
+    def push_confirm(self, payload: dict[str, Any]) -> None:
+        """POST /api/input 의 확인 대화 답 — 막는 물음은 확인 대화뿐이다. ``payload``: ``{"key": "...", "comment": "...",
+        "conn_id": …}``."""
+        # 답한 뷰어 (v10.120.0): 확인의 코멘트를 그 사람의 메시지로 넣을 때(Hint) 쓴다
+        nick = self.hub.nickname_for(payload.get("conn_id"))
+        self._input_queue.put(
+            (
+                payload.get("key", ""),
+                payload.get("comment", ""),
+                "" if nick == "?" else nick,
             )
-        else:
-            self._input_queue.put(payload.get("content", ""))
+        )
 
     def push_user_message(
         self,

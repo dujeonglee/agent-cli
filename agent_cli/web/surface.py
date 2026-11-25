@@ -37,7 +37,7 @@ class WebSurface:
         self._renderer.worker_idle()
 
     def busy(self) -> None:
-        # 다음 dequeue 까지 바쁨 — 그 사이의 prompt_user/confirm 대기도 포함.
+        # 다음 dequeue 까지 바쁨 — 그 사이의 확인 대화 대기도 포함.
         self._renderer.worker_busy()
 
     def echo(self, item: dict) -> None:

@@ -121,9 +121,9 @@ class WaitTool(Tool):
 
 class AskTool(Tool):
     name = "ask"
-    requires_handler = "ctx"  # 비대화형 루프(ctx 없음)에선 목록에서 제거
-    # 누가 묻든 한 설명 (6b) — 질문을 올리고 바로 돌아온다. 종전엔 main·스킬의 막는 설명과 상주의 막지 않는
-    # 설명(`RESIDENT_DESCRIPTION`)이 둘이었다. 묻고 나서 어디로 가나는 질문이 열린 동안 꼬리가 말한다(6a).
+    # 질문 포트가 있는 루프에만 — main·에이전트·스킬 런(6b). 묻고 나서 `wait` 로 기다릴 수 있는 루프와 같다
+    requires_handler = "questions"
+    # 누가 묻든 한 설명 — 질문을 올리고 바로 돌아온다. 묻고 나서 어디로 가나는 질문이 열린 동안 꼬리가 말한다(6a).
     description = (
         "Ask the person one question and keep working — you are not blocked. It "
         "goes to their question tray; the answer arrives later as a new message "
@@ -230,8 +230,9 @@ class ReplyTool(Tool):
     summary = "Answer a request someone is waiting on — another agent's `message` or the request you were given."
     # v10.56.0 (장부 P3 §11.3): main 에도 붙는다 — 빚을 갚는 도구는 루프와 무관하게
     # 하나다. 종전엔 상주 전용(``message_handler``)이었고 main 은 `agent` 의 옛 요청 모드
-    # 로 "가장 오래된 빚" 을 갚았다. 질문 포트가 있는 루프(main·상주)에 붙는다.
-    requires_handler = "questions"
+    # 로 "가장 오래된 빚" 을 갚았다. 6b: `message` 와 짝 — 메시지를 주고받는 루프(main·에이전트)에 붙는다.
+    # 질문 포트로 정하면 스킬 런(이제 자기 주소로 묻는다)에도 붙는데, 스킬에는 갚을 빚이 없다.
+    requires_handler = "message_handler"
     force_mount = True
     description = (
         "Reply to a request someone is waiting on — an agent's `message` that expects "

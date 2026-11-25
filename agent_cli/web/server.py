@@ -3,13 +3,13 @@
 Endpoints (not exhaustive — see the route decorators):
   - ``GET  /api/health`` — liveness probe (no auth)
   - ``GET  /api/stream`` — SSE event stream (auth via ``token`` query)
-  - ``POST /api/input``  — submit chat message / ask answer / confirm reply
+  - ``POST /api/input``  — submit chat message / confirm reply
     (``chat`` may carry ``images: [path]`` — workspace images, v10.60.0)
   - ``POST /api/images/upload?name=`` — stage one image under
     ``.agent-cli/tmp/uploads/`` and return its ``ImageRef`` (v10.60.0)
   - ``GET  /api/images/support`` — ``{supported: true|false|null}`` without probing
   - ``GET  /api/workspace/file?path=`` — serve one workspace **image** (thumbnails)
-  - ``POST /api/abort``  — interrupt the current ``prompt_user`` / ``confirm``
+  - ``POST /api/abort``  — interrupt the pending ``confirm``
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn; body ``{"scope"}`` (v10.142.0):
     ``"main"`` (default) · ``"agents"`` (every working agent's run) · ``"all"`` (both)
   - ``POST /api/agent/{key}/stop`` — ■ stop that agent's run (a run agent comes down, v10.142.0)
@@ -1543,7 +1543,6 @@ def create_app(server: WebServer) -> FastAPI:
 
         Body shape::
 
-            {"kind": "prompt", "content": "..."}
             {"kind": "confirm", "key": "y", "comment": "..."}
             {"kind": "chat", "content": "...", "images": ["path", ...]}
 
@@ -1575,10 +1574,7 @@ def create_app(server: WebServer) -> FastAPI:
             ) as e:  # 글도 이미지도 없다 — 말이 아니다(에이전트 창과 같은 글)
                 raise HTTPException(status_code=400, detail=str(e)) from None
             return JSONResponse({"accepted": True})
-        if (
-            kind in ("prompt", "confirm")
-            and server.renderer.awaiting_input_kind() != kind
-        ):
+        if kind == "confirm" and server.renderer.awaiting_input_kind() != kind:
             # Gate: accept an answer only while a wait of the SAME kind is
             # outstanding. A keyless answer (flushed stale clicks from a
             # connection-starved browser, the loser of a two-viewers race)
@@ -1589,26 +1585,8 @@ def create_app(server: WebServer) -> FastAPI:
                 status_code=409,
                 detail=f"no pending {kind} — already answered or aborted",
             )
-        if kind == "prompt":
-            # Echo prompt answers so the UI shows the user's reply
-            # immediately. Semantic note: the LLM gets the answer via
-            # the ask-tool's observation return (Q/A pair), NOT as a
-            # standalone user message — but for the user a silent
-            # textarea clear feels broken. The user_message card is a
-            # UI-only echo; doesn't change LLM context.
-            content = body.get("content", "")
-            if isinstance(content, str) and content:
-                # ``author`` puts the answer on the team view's user lane.
-                # UI-echo only (not in history), so it never feeds the
-                # ``answers`` attribution — that is loop-owned.
-                nick = server.renderer.hub.nickname_for(body.get("conn_id"))
-                server.renderer.push_user_message(
-                    content, author="" if nick == "?" else nick
-                )
-            server.renderer.push_user_input(kind, body)
-            return JSONResponse({"accepted": True})
         if kind == "confirm":
-            server.renderer.push_user_input(kind, body)
+            server.renderer.push_confirm(body)
             return JSONResponse({"accepted": True})
         raise HTTPException(status_code=400, detail=f"unknown kind '{kind}'")
 
@@ -1631,7 +1609,7 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.post("/api/abort")
     async def abort():
-        """Interrupt the current ``prompt_user`` / ``confirm`` wait."""
+        """Interrupt the pending ``confirm`` wait."""
         server.renderer.push_abort()
         return JSONResponse({"accepted": True})
 

@@ -1426,25 +1426,10 @@ class TurnDispatcher:
                 return self._emit_obs(
                     turn.record, accumulate, "ask", ASK_REFUSED_NOBODY_CAN_ANSWER, False
                 )
-            port = self.cfg.kind.ports.questions
-            if port is not None:
-                return self._op_ask_async(turn.record, questions, port, accumulate)
-            # 질문 포트가 없으면(스킬) 사람에게 직접 묻는다.
-            # 종전엔 여기 ``cfg.ask_handler`` 분기가 하나 더 있었는데 실값
-            # 생산자가 **하나도 없었다** — 상주 에이전트의 ask 는 v9.12 에서
-            # 질문 포트로 옮겨갔고, 그때 남은 죽은 가지였다.
-            user_response = _handle_ask(questions)
-            # ``ask`` is a normal observation-producing op (the user's
-            # reply is the observation), not a terminal. In a multi-op turn
-            # it accumulates like read/shell so consecutive asks batch into
-            # the one combined observation; alone it appends its own.
-            return self._emit_obs(
-                turn.record,
-                accumulate,
-                "ask",
-                f"User responded:\n{user_response}",
-                True,
-                render=False,  # the answer is surfaced by the input UI
+            # 누가 묻든 한 길(6b) — 질문 포트가 질문을 올리고 바로 돌아온다. `ask` 는 포트가 있는 루프에만 붙는다
+            # (`AskTool.requires_handler`)
+            return self._op_ask_async(
+                turn.record, questions, self.cfg.kind.ports.questions, accumulate
             )
 
         return _NOT_HANDLED
@@ -1988,66 +1973,6 @@ def _extract_questions(action_input) -> list[str]:
         text = _extract_question_text(raw_questions)
         return [text] if text else []
     return []
-
-
-def _handle_ask(questions: list[str]) -> str:
-    """Display all questions at once and collect a single response.
-
-    종전엔 ``handler`` 인자로 **블로킹 ask 라우팅**(teammate P2)을 받았다 —
-    worker 가 질문을 main mailbox 에 올리고 답을 블록 대기하는 경로. 상주
-    에이전트의 ask 가 v9.12 에서 비동기 질문 포트로 옮겨가면서 실값을 주는
-    생산자가 사라졌고, 그 뒤로 분기는 **테스트만 붙들고 있었다**(협력자를
-    직접 만들어 검사하니 도달 불가를 아무도 못 봤다 — 이 저장소의 배선
-    누락과 정확히 같은 모양). C3 에서 인자째 제거한다.
-    """
-    import re
-
-    from agent_cli.render import get_renderer
-
-    # Strip existing leading "1.", "2)", "- ", etc. so our numbering isn't doubled
-    def _strip_leading_marker(q: str) -> str:
-        return re.sub(r"^\s*(?:\d+[.):]|[-*•])\s+", "", q)
-
-    # Respect nested depth prefix (so ask inside skill/delegate aligns with │)
-    renderer = get_renderer()
-    prefix = getattr(renderer, "_prefix", "")
-
-    # Announce the questions through the renderer instead of writing
-    # to ``console`` directly. CLI renderers print the colored block;
-    # WebRenderer no-ops because the same text reaches the UI via
-    # ``prompt_user(context=...)`` below, and a duplicate emission
-    # would just bleed terminal noise into the web-launch terminal.
-    cleaned_questions = [_strip_leading_marker(q) for q in questions]
-    renderer.announce_ask(cleaned_questions, prefix=prefix)
-    # Plain-text mirror of the announcement above — passed to
-    # ``prompt_user`` as ``context`` so out-of-band renderers (web)
-    # can surface the question alongside the input affordance. CLI
-    # renderers ignore it; ``announce_ask`` is what the terminal
-    # user sees with colour.
-    if len(questions) > 1:
-        context_lines = [
-            f"{i}. {_strip_leading_marker(q)}" for i, q in enumerate(questions, 1)
-        ]
-    else:
-        context_lines = [_strip_leading_marker(questions[0])]
-    context_text = "Agent asks:\n" + "\n".join(f"  {line}" for line in context_lines)
-    # Route through the renderer so paste and """ ... """ multiline work
-    # at the CLI and a web renderer can serve the same prompt as a form
-    # without the loop knowing the difference. ``prompt_user`` propagates
-    # EOF / Ctrl+C — caller policy is "(no response)" so the assistant
-    # gets a stable answer slot even when the user bails. 답이 올 수 없는 곳은 여기 오지 않는다 — `_op_ask` 가 거절한다.
-    try:
-        answer = renderer.prompt_user(
-            f"{prefix}\n{prefix}Your answer: ",
-            multiline=True,
-            continuation=f"{prefix}... ",
-            context=context_text,
-        )
-    except (EOFError, KeyboardInterrupt):
-        answer = "(no response)"
-
-    q_part = "\n".join(f"Q: {_strip_leading_marker(q)}" for q in questions)
-    return f"{q_part}\nA: {answer}"
 
 
 _ECHO_FINAL_RE = re.compile(

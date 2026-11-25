@@ -37,6 +37,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from typing import Any
 
+from agent_cli.constants import is_private_owner
 from agent_cli.session_slots import get_hook_runner
 
 
@@ -90,9 +91,14 @@ class LoopPorts:
 
     def wakeable(self) -> bool:
         """이 루프를 **깨울 길이 있는가** (v10.65.0, `wait` 의 전제) — 턴 경계에 흡수할 상자가 있는가
-        (``mailbox.has_inbox`` — main 은 main 상자, 상주·private(하니스)는 받은편지함). 스킬
-        루프는 없다: 호출자의 턴 안에서 도는 인라인 런이라 받은편지함이 없다."""
+        (``mailbox.has_inbox`` — main 은 main 상자, 상주·private(하니스·스킬 런)는 자기 주소의 상자)."""
         return self.mailbox.has_inbox
+
+    def ask_guide(self) -> bool:
+        """`ask` 안내(`_ASK_INLINE`)를 싣는가 — 에이전트만: 질문 포트가 에이전트 키로 묻는 루프. main(키 없음)과 스킬
+        런(자기 주소 ``skill:…``)은 아니다 — 안내의 "For an agent, send a `message`" 가 `message` 없는 스킬에는 거짓이다."""
+        key = getattr(self.questions, "key", None)
+        return key is not None and not is_private_owner(key)
 
     def handler_resources(self) -> dict[str, Any]:
         """``Tool.requires_handler`` 가 보는 뷰 — 손으로 안 적는다.

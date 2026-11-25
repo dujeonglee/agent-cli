@@ -893,59 +893,19 @@ class MinimalRenderer(Renderer):
 
     # ── User input ──────────────────────────────────
 
-    def prompt_user(
-        self,
-        prompt: str,
-        *,
-        default: str = "",
-        multiline: bool = True,
-        continuation: str = "... ",
-        context: str = "",
-    ) -> str:
-        """CLI implementation — readline + paste detection for multi-line,
-        single ``input()`` call for one-line prompts.
+    def prompt_user(self, prompt: str, *, default: str = "") -> str:
+        """한 줄 읽기 — 부팅 마법사(방언·모델 능력)만 쓴다. ``EOFError`` /
+        ``KeyboardInterrupt`` 는 부르는 쪽으로 올린다. 빈 입력이면 ``default``. 디코딩이 깨진 붙여 넣기는 빈 입력으로.
+        읽기는 ``_guarded_read`` 를 지난다 — 다른 프롬프트(확인 대화)와 차례를 지키고, 떠 있는 Live 패널을 잠시 멈춘다."""
 
-        ``EOFError`` / ``KeyboardInterrupt`` propagate to the caller —
-        different consumers want different policy (the setup wizard
-        aborts back to caller, the ask tool substitutes
-        ``"(no response)"``), so the renderer doesn't impose one. Empty
-        input → ``default`` substitution.
+        def _read():
+            self._emit_prompt_meta_header(include_action=False)
+            return input(prompt)
 
-        Decode errors get swallowed by ``read_rich_input`` (one-shot
-        warning + empty) so the user can retype without aborting.
-
-        ``context`` is ignored — callers that announce pre-input text
-        (e.g. ``_handle_ask``'s coloured question block) print it
-        directly via ``console.print`` so Rich markup survives.
-        """
-        del context  # CLI prints announcements separately for color.
-        # Reads go through ``_guarded_read`` → serialized against other
-        # prompts (confirm / concurrent delegate asks) and wrapped in
-        # ``_prompt_display_guard`` so an active Live panel doesn't paint
-        # over the prompt. EOF / KbInt propagate (see docstring). The
-        # provenance header (who/why) prints inside the guard so it lands
-        # after the Live panel is paused.
-        if multiline:
-            from agent_cli.input_history import read_rich_input
-
-            def _read():
-                self._emit_prompt_meta_header(include_action=False)
-                return read_rich_input(prompt, continuation=continuation)
-
+        try:
             value = self._guarded_read(_read).strip()
-        else:
-
-            def _read():
-                self._emit_prompt_meta_header(include_action=False)
-                return input(prompt)
-
-            try:
-                value = self._guarded_read(_read).strip()
-            except UnicodeDecodeError:
-                # Mirror read_rich_input's behaviour: drop the broken
-                # paste and let the caller treat it as no input. EOF /
-                # KbInt deliberately not caught — see method docstring.
-                value = ""
+        except UnicodeDecodeError:
+            value = ""
         return value if value else default
 
     def _emit_prompt_meta_header(self, *, include_action: bool) -> None:
@@ -1185,26 +1145,3 @@ class MinimalRenderer(Renderer):
             style=_MUTED,
             markup=False,
         )
-
-    # ── Ask-tool announcement ────────────────────────
-
-    def announce_ask(self, questions: list[str], *, prefix: str = "") -> None:
-        """Print the ``Agent asks:`` header + each question in colour.
-
-        Mirrors the plain-text version that ``loop.py`` passes to
-        ``prompt_user(context=...)`` for web surfaces; the CLI needs
-        the spelled-out version because terminals don't echo the
-        prompt context back to the user.
-        """
-        # Local import to keep `C` palette resolution lazy — the
-        # render/__init__ module sets up `_renderer` at import time
-        # and we don't want a hard circular dependency.
-        from agent_cli.render import C
-
-        accent = C["accent"]
-        self.con.print(f"{prefix}\n{prefix}[{accent}]Agent asks:[/]")
-        if len(questions) > 1:
-            for i, q in enumerate(questions, 1):
-                self.con.print(f"{prefix}  {i}. {q}")
-        else:
-            self.con.print(f"{prefix}  {questions[0]}")

@@ -607,6 +607,7 @@ class TestQuestionPort:
             "debts",  # v9.22.0 — main·상주 공통 회신 빚 목록 (v10.77.0: answer 빚 없음)
             "awaited",  # v10.141.0 — 보내 놓고 아직 못 받은 회신(장부의 기다리는 회신)
             "open_questions",  # 6a — 내가 건 열린 질문(꼬리의 `## Your open questions`)
+            "name",  # 6b — 스킬 런의 스킬 이름(질문의 묻는 쪽 이름표)
         }
         assert isinstance(port, QuestionPort)
 
@@ -794,7 +795,7 @@ class TestFlipToolMount:
         reg = mkreg()
         a = spawn_idle(reg)
 
-        def tools_for(questions):
+        def tools_for(questions, message_handler=None):
             from unittest.mock import MagicMock
 
             loop = make_loop(
@@ -803,14 +804,18 @@ class TestFlipToolMount:
                 capabilities=_caps(),
                 model="m",
                 active_tools=["shell"],
-                ports=make_ports(questions=questions),
+                ports=make_ports(questions=questions, message_handler=message_handler),
             )
             return list(loop.tools_list)
 
         assert "answer" not in _BUILTIN_ORDER
         for port in (None, reg.question_port(a), reg.question_port(None)):
             assert "answer" not in tools_for(port)
-        assert "reply" in tools_for(reg.question_port(a))  # force_mount
+        # `reply` 는 `message` 와 짝 — 메시지를 주고받는 루프에 강제 탑재(6b; 질문 포트만으로는 아니다 — 스킬 런)
+        assert "reply" in tools_for(
+            reg.question_port(a), reg.message_handler(f"agent:{a}")
+        )
+        assert "reply" not in tools_for(reg.question_port(address="skill:s-1"))
 
 
 class TestFlipDispatch:

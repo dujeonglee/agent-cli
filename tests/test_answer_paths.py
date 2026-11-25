@@ -17,7 +17,6 @@ from types import SimpleNamespace
 import pytest
 from rich.console import Console
 
-import agent_cli.loop.dispatch as dispatch_mod
 import agent_cli.main as M
 import agent_cli.render as render_mod
 from agent_cli.agent_icon import agent_display_name
@@ -117,15 +116,13 @@ def _dispatch(text: str, reg, *, author: str = "user") -> _Output:
 class TestAskWhereNobodyCanAnswer:
     """답이 올 수 없는 표면(`can_prompt` 거짓)에서는 누가 묻든 같은 거절 — 갈래(막음/올림) 앞 한 곳."""
 
-    def test_main_is_refused_and_no_prompt_opens(
-        self, reg, tmp_path, no_viewer, monkeypatch
-    ):
-        monkeypatch.setattr(dispatch_mod, "_handle_ask", _must_not_prompt)
+    def test_main_is_refused_and_no_question_opens(self, reg, tmp_path, no_viewer):
         ctx = ContextManager(tmp_path / "s", max_context_tokens=30_000)
         _run_scripted(ctx, [_ask()], questions=reg.question_port(None))
         (obs,) = _observations(ctx)
         assert obs["content"] == f"Observation: {ASK_REFUSED_NOBODY_CAN_ANSWER}"
         assert obs["success"] is False
+        assert reg.open_human_questions() == []
 
     def test_an_agents_question_is_refused_and_not_opened(
         self, reg, tmp_path, no_viewer
@@ -161,10 +158,6 @@ class TestAskWhereNobodyCanAnswer:
         (obs,) = _observations(ctx)
         assert obs["success"] is True and "sent" in obs["content"]
         assert len(reg.open_human_questions()) == 1
-
-
-def _must_not_prompt(questions):
-    raise AssertionError("the blocking prompt opened where nobody can answer")
 
 
 # ── 명령 ────────────────────────────────────────────────────
@@ -235,10 +228,12 @@ class TestAnswerCommand:
         assert _dispatch("/questions", reg).lines == [("no open questions", True)]
 
 
+@pytest.mark.parametrize("asker", ["agent", "main", "skill"])
 def test_plain_words_on_the_web_go_to_main_and_the_question_stays_open(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, asker
 ):
-    """열린 에이전트 질문이 있어도 웹 채팅 칸의 보통의 말은 main 의 요청이다 — 질문의 답이 되지 않는다."""
+    """열린 질문이 있어도(누가 물었든 — 6b) 웹 채팅 칸의 보통의 말은 main 의 요청이다 — 질문의 답이 되지 않는다(사용자
+    규칙: 답은 번호를 적은 명령·트레이로만)."""
     monkeypatch.chdir(
         tmp_path
     )  # 세션 조립이 작업 폴더에 무엇을 만들든 저장소 밖에서 — 오라클 드라이버와 같다
@@ -252,7 +247,13 @@ def test_plain_words_on_the_web_go_to_main_and_the_question_stays_open(
 
     s = Session(tmp_path, Provider({"MAIN": [main_reads]}), path="web")
     key = spawn_idle(s.reg)
-    qid = _open_question(s.reg, key)
+    port = {
+        "agent": lambda: s.reg.question_port(key),
+        "main": lambda: s.reg.question_port(None),
+        "skill": lambda: s.reg.question_port(address="skill:s-1"),
+    }[asker]()
+    qid, err = port.ask("which directory should I use?")
+    assert not err
     s.say("use src/util", nickname="dj")
     t = s.pump_in_thread()
     try:
@@ -260,7 +261,10 @@ def test_plain_words_on_the_web_go_to_main_and_the_question_stays_open(
     finally:
         s.close()
         t.join(20)
-    assert "use src/util" in read[0] and qid not in read[0]
+    words = read[0].split("── end of message", 1)[
+        0
+    ]  # 꼬리(main 의 열린 질문 목록)는 빼고 본다
+    assert "use src/util" in words and qid not in words
     assert [q.id for q in s.reg.open_human_questions()] == [qid]
     assert s.reg.backlog_of(key) == 0  # 묻는 쪽에게 간 것이 없다
 

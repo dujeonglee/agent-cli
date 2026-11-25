@@ -540,14 +540,16 @@ class _ConsoleSurface:
     def route(self, text: str, *, item: dict | None = None) -> bool:
         if text.startswith("/sh"):
             return False
-        # argv 질의였던 명령만 판정·결과 파일이 된다 — 그 말의 번호로 안다
+        # argv 질의였던 명령만 판정·결과 파일이 된다 — 그 말의 번호로 안다. 라우팅은 겹칠 수 있다: 질의였던 스킬이
+        # 묻고 기다리는 동안 친 명령이 그 안에서 라우팅된다(6b) — 끝나면 바깥 명령의 판정으로 돌려 놓는다
+        outer = self._routing_query
         self._routing_query = (
             bool(self.query_id) and (item or {}).get("id") == self.query_id
         )
         try:
             handled = self._dispatch(text, self._stop, item)
         finally:
-            self._routing_query = False
+            self._routing_query = outer
         if handled and (item or {}).get("images") and not command_takes_images(text):
             console.print(
                 IMAGES_NOT_TAKEN, style=C["error"], markup=False
@@ -1001,7 +1003,7 @@ def _dispatch_question(
     parts = message.split(maxsplit=2)
     if parts[0] == "/questions":
         lines = [
-            f"{q.id}  {agent_registry.asker_label(q.asker)}  {q.text}"
+            f"{q.id}  {agent_registry.asker_label(q)}  {q.text}"
             for q in agent_registry.open_human_questions()
         ]
         if not lines:
@@ -1325,7 +1327,7 @@ def _ask_dialect(renderer) -> str:
             soft_wrap=True,
         )
     prompt = f"  Dialect ({' / '.join(names)}): "
-    answer = renderer.prompt_user(prompt, multiline=False).strip().lower()
+    answer = renderer.prompt_user(prompt).strip().lower()
     while answer not in names:
         console.print(
             f"  Unknown dialect '{answer}'. Available: {', '.join(names)}",
@@ -1333,7 +1335,7 @@ def _ask_dialect(renderer) -> str:
             markup=False,
             highlight=False,
         )
-        answer = renderer.prompt_user(prompt, multiline=False).strip().lower()
+        answer = renderer.prompt_user(prompt).strip().lower()
     return answer
 
 
@@ -1360,18 +1362,16 @@ def _prompt_model_capabilities(model: str):
         # 빈 입력의 기본값 = 탐지 실패 때 실제로 쓰이는 값 (v10.126.0; 종전 질문은
         # [4096] 이라 적고 빈 입력도 4096 이었는데, 묻지 않은 길은 256K 였다)
         default_window = DEFAULT_CAPABILITIES.context_window
-        ctx_input = renderer.prompt_user(
-            f"  Context window size [{default_window}]: ", multiline=False
-        )
+        ctx_input = renderer.prompt_user(f"  Context window size [{default_window}]: ")
         context_window = int(ctx_input) if ctx_input else default_window
 
         thinking_input = renderer.prompt_user(
-            "  Supports thinking? (y/n) [n]: ", multiline=False
+            "  Supports thinking? (y/n) [n]: "
         ).lower()
         supports_thinking = thinking_input in ("y", "yes")
 
         vision_input = renderer.prompt_user(
-            "  Can view images (vision)? (y/n) [n]: ", multiline=False
+            "  Can view images (vision)? (y/n) [n]: "
         ).lower()
         supports_vision = vision_input in ("y", "yes")
 

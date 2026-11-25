@@ -376,12 +376,11 @@ class ToolBridge:
         종류별 설명/스키마 교체·인라인 안내로. `tool_help` 와 A5 자동 전문이 쓴다."""
         from agent_cli.prompts.system_prompt import tool_guide_text
 
-        profile = self.cfg.kind.prompt_profile()
         return tool_guide_text(
             name,
             self.cfg.tools_list,
             self.cfg.dialect,
-            ask_guide=profile.ask_guide,
+            ask_guide=self.cfg.kind.ports.ask_guide(),
         )
 
     def _run_ctx(self) -> RunContext:

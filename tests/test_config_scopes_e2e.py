@@ -50,9 +50,6 @@ out["config_paths"] = [str(_CONFIG_PATH)]
 out["models_paths"] = [str(_GLOBAL_MODELS_PATH)]
 out["default_model"] = endpoint_config("home").get("default_model", "")
 
-import agent_cli.input_history as ih
-out["chat_history"] = str(ih._HISTORY_FILE)
-
 print(json.dumps(out))
 """
 
@@ -155,15 +152,6 @@ class TestFreshProcessWiring:
         assert got["config_paths"] == [str(home / ".agent-cli" / "config.json")]
         assert got["default_model"] == "USER-MODEL"  # PROJECT-MODEL 무시
         assert got["models_paths"][0] == str(home / ".agent-cli" / "models.json")
-
-    def test_chat_history_default_and_env(self, tmp_path):
-        home, proj = _seed(tmp_path)
-        got = _probe(home, proj)
-        assert got["chat_history"] == str(
-            Path(".agent-cli") / "sessions" / "chat_history"
-        )
-        moved = _probe(home, proj, {"AGENT_CLI_SESSIONS_DIR": str(tmp_path / "out")})
-        assert moved["chat_history"] == str(tmp_path / "out" / "chat_history")
 
     def test_running_from_subdirectory_sees_nothing(self, tmp_path):
         """알고 받아들인 손실(docs/config-scopes §3): 프로젝트는 git 루트가

@@ -361,6 +361,27 @@ class TestRunSurface:
         s.route("/x", item={"id": QUERY, "text": "/x"})
         assert out.read_text(encoding="utf-8") == "did /x" and s.exit_code == 0
 
+    def test_a_command_routed_while_the_query_skill_waits_does_not_take_its_verdict(
+        self, tmp_path
+    ):
+        """질의였던 스킬이 묻고 기다리는 동안 친 `/answer` 는 그 안에서 라우팅된다(6b) — 그 결과는 질의의 답이 아니고,
+        스킬이 끝나며 낸 결과가 질의의 판정이다."""
+        out = tmp_path / "result.txt"
+
+        def dispatch(text, stop, item=None):
+            report = _ConsoleDispatchOutput(report=s.routed)
+            if text == "/demo":
+                s.route("/answer q-1 x", item={"id": "u-9", "text": "/answer q-1 x"})
+                report.skill_result("demo", "GOT x")
+            else:
+                report.agent_dispatch_result("answered q-1", True)
+            return True
+
+        s = _ConsoleSurface(result_file=str(out), dispatch=dispatch)
+        s.query_id = QUERY
+        s.route("/demo", item={"id": QUERY, "text": "/demo"})
+        assert out.read_text(encoding="utf-8") == "GOT x" and s.exit_code == 0
+
 
 class TestLedger:
     def test_human_request_ids_are_the_u_ids_in_arrival_order(self):

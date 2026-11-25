@@ -48,6 +48,7 @@ from agent_cli.session_slots import (
     set_hook_runner,
     set_job_registry,
     set_monitor_registry,
+    set_nested_wait_input,
     set_schedule_registry,
 )
 from agent_cli.wake import Mailbox
@@ -259,22 +260,26 @@ def wait_for_human_words(main_input, surface):
         item = main_input.take_first_command()
         if item is None:
             return True
-        surface.echo(item)
-        if surface.route(str(item.get("text") or ""), item=item):
-            return (
-                False  # 명령은 처리했다 — 기다림은 계속(멈춘 에이전트의 회신이 깨운다)
-            )
-        # 실행이 받지 않았다(문과 실행 사이에 같은 이름의 경로가 생겼다) — 사람의 말로 다시 넣는다: 문이 다시 판정해
-        # (이제 경로) 말로 서고, 깨운다(다음 턴 경계가 주입한다). 상자 맨 앞에 되돌릴 길이 우편에 없어 끝에 선다.
-        main_input.enqueue(
-            item.get("conn_id") or None,
-            str(item.get("text") or ""),
-            nickname=item.get("nickname"),
-            images=item.get("images") or None,
-        )
-        return True
+        # 명령은 처리했다 — 기다림은 계속(멈춘 에이전트의 회신이 깨운다). 받지 않았으면 말로 되돌렸다 — 깨운다
+        return not route_or_requeue(main_input, surface, item)
 
     return wait
+
+
+def route_or_requeue(main_input, surface, item: dict) -> bool:
+    """대기 중 꺼낸 명령 하나 — 말풍선을 내고(``surface.echo``) 라우팅한다. 실행이 받지 않았으면(문과 실행 사이에 같은
+    이름의 경로가 생겼다) 사람의 말로 다시 넣는다: 문이 다시 판정해(이제 경로) 말로 선다. 상자 맨 앞에 되돌릴 길이 우편에
+    없어 끝에 선다. 받았으면 참. main 의 제자리 대기와 스킬의 대기(`commands_during_nested_wait`)가 같이 쓴다."""
+    surface.echo(item)
+    if surface.route(str(item.get("text") or ""), item=item):
+        return True
+    main_input.enqueue(
+        item.get("conn_id") or None,
+        str(item.get("text") or ""),
+        nickname=item.get("nickname"),
+        images=item.get("images") or None,
+    )
+    return False
 
 
 def wire_agent_mail(registry, *, on_mail_notice=None, parent_ctx=None):
@@ -592,6 +597,28 @@ def build_session_owners(
     return SessionOwners(agent_registry=registry, auditor=auditor)
 
 
+def commands_during_nested_wait(main_input, surface, read_line=None):
+    """스킬 런이 제자리에서 기다리는 동안(6b) 사람의 입력 — ``(timeout) -> bool``, 언제나 거짓(스킬을 깨우지 않는다).
+
+    스킬은 main 의 차례 안에서 돈다 — main 은 바쁘고, main 앞의 말은 스킬이 끝난 뒤 main 이 읽는다. 그래서 기다리는
+    동안 줄 선 명령(`/answer`·`/close`·`/stop` 등)만 부를 때마다 하나씩 그 자리에서 라우팅한다(`route_or_requeue` —
+    실행이 받지 않은 것은 main 의 말로 되돌린다) — 질문의 답은 그 길로 스킬의 상자에 든다. ``read_line`` 은 터미널에서 친 한 줄을 main 앞에 넣는 법(`main.read_terminal_line` — `run` 만, 웹은 없다):
+    스킬이 기다리는 동안 터미널을 읽는 것은 이것뿐이다."""
+
+    def wait(timeout: float) -> bool:
+        if read_line is not None:
+            read_line(timeout)
+        # 한 번에 하나 — 되돌린 말이 아직 명령으로 판정되면(실행만 거절했다) 같은 부름 안에서 다시 꺼내지 않게
+        item = main_input.take_command()
+        if item is not None:
+            route_or_requeue(
+                main_input, surface, item
+            )  # 되돌린 말은 main 의 것 — 스킬을 깨우지 않는다
+        return False
+
+    return wait
+
+
 def wire_session(
     spec: SessionSpec,
     stores: SessionStores,
@@ -659,6 +686,10 @@ def wire_session(
             read_terminal=on_idle_input,
         )
     )
+    # 스킬 런의 제자리 대기가 사람의 명령을 받는 길 (6b) — 펌프와 같은 표면으로 라우팅한다
+    set_nested_wait_input(
+        commands_during_nested_wait(main_input, surface, read_line=on_idle_input)
+    )
     # 첫 정산이 꺼져 있던 동안 지난 발화를 질문으로 남긴다. 펌프가 돌기 전에 발화한
     # 예약은 main 상자에 줄 설 뿐이다 (v10.130.5).
     stores.schedules.start()
@@ -722,7 +753,7 @@ def session_has_live_work(
     - 에이전트 몫(`AgentRegistry.has_agent_work` — 일하는 중이거나 할 일이 쌓였다). 레지스트리는 웹 부트스트랩이
       늦게 채워 None 일 수 있다.
     - 사람에게 물은 열린 질문(6c) — 답이 올 수 없는 세션에서는 `ask` 가 거절되어 질문이 열리지 않으므로, 열린 질문은
-      곧 답이 올 수 있는 질문이다. 묻는 쪽이 영구히 끝나면 질문이 닫힌다(`AgentRegistry._purge_questions_for`).
+      곧 답이 올 수 있는 질문이다. 묻는 쪽이 영구히 끝나면 질문이 닫힌다(`AgentRegistry.close_questions_of`).
     - 살아 있는 모니터·진행 중인 하니스 작업(감사 — 결과를 main 메일함에 넣어야 끝난다, v10.42.0)·돌고 있는
       백그라운드 작업(v10.47.0)·켜진 예약. 종전엔 이 항이 붙을 때마다 두 곳에 한 줄씩 넣어야 했고, 초판 모니터는
       web 쪽을 빠뜨려 뷰어 없는 인스턴스가 살아 있는 모니터를 데리고 자기를 거뒀다.
@@ -851,7 +882,6 @@ class MainLoop(LoopKind):
         return PromptProfile(
             role="",  # 기본 ROLE_PROMPT
             peer_section="",
-            ask_guide=False,
             reports_to_caller=False,
         )
 

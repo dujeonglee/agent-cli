@@ -1917,12 +1917,21 @@ class AgentRegistry(QuestionsMixin):
 
     # ── private 메일함 (v10.84.0, docs/wait/DESIGN.md §7) ─────────────────
 
-    def _push_private(self, addr: str, mail: dict) -> None:
-        """``run:``·``harness:`` 주소로 온 메일 — 그 루프가 읽는 목록에 넣고 깨운다.
-        main 메일함과 달리 디스크·UI·대기열 콜백이 없다(프로세스 수명)."""
+    def _push_private(
+        self,
+        addr: str,
+        mail: dict,
+        *,
+        settles: str = "",
+        closes_as: str = "user_answered",
+    ) -> None:
+        """``harness:``·``skill:`` 주소로 온 메일 — 그 루프가 읽는 목록에 넣고 깨운다. main 메일함과 달리
+        디스크·UI·대기열 콜백이 없다(프로세스 수명). ``settles``·``closes_as`` 는 질문을 닫는 봉투(6b — 스킬 런의 답)."""
         with self._cv:
             self._stamp_mail(mail)
-            self._post_deliver(envelope_of_main_mail(mail, addr))
+            self._post_deliver(
+                envelope_of_main_mail(mail, addr), settles=settles, closes_as=closes_as
+            )
 
     def take_mail(self, addr: str) -> list[dict]:
         """private 메일함을 비우며 전부 돌려준다 — 루프의 메일함 포트(``mailbox.take``)가 턴
@@ -2088,7 +2097,7 @@ class AgentRegistry(QuestionsMixin):
         (`_answer_after_stop`)가 원인(``stop_cause``)을 보고 한다."""
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
         # 건 질문은 지금 닫는다 (v10.149.1) — 워커의 정리(다음 턴 경계)까지 미루면 그 사이 트레이에 남아 답이 갈 곳이 없다
-        self._purge_questions_for(tm.key)
+        self.close_questions_of(tm.key)
         self.cancel_checkin(f"agent:{tm.key}")  # 죽은 에이전트에게 알림이 가지 않게
         # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
         # 현재 턴을 마저 돌고(join 은 best-effort), 그 창에 발화하면 항목이
@@ -2600,7 +2609,7 @@ class AgentRegistry(QuestionsMixin):
                 # 세션 종료(shutdown_all)는 revivable 을 유지하므로 여기
                 # 들어오지 않는다 — 들어오면 직후의 _save_state 가 빈 목록을
                 # 저장해 resume 이 알릴 열린 질문이 항상 0건이 된다.
-                self._purge_questions_for(tm.key)
+                self.close_questions_of(tm.key)
             # 감시 폐기의 **정본 위치** — kill·크래시·세션 종료가 모두
             # 여기로 수렴하고, 여기가 죽음이 확정되는 곳이다. kill/
             # shutdown_all 의 조기 드롭은 그 앞 창을 좁힐 뿐이다.
