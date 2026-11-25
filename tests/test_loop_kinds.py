@@ -335,13 +335,13 @@ class TestKindsStateTheirPolicy:
     def test_prompt_profile(self, tmp_path):
         main, skill, one, harness, _ = self._kinds(tmp_path)
         p = main.prompt_profile()
-        assert p.role == "" and p.ask_blocking and not p.reports_to_caller
+        assert p.role == "" and not p.ask_guide and not p.reports_to_caller
         s = skill.prompt_profile()
         assert s.reports_to_caller
         o = (
             one.prompt_profile()
-        )  # run 에이전트 = 에이전트: 비차단 ask, `message` 동료 채널
-        assert not o.ask_blocking and o.reports_to_caller
+        )  # run 에이전트 = 에이전트: `ask` 안내를 받는다, `message` 동료 채널
+        assert o.ask_guide and o.reports_to_caller
         assert harness.prompt_profile().role == "body"
         assert skill.renders() is False and one.renders() and main.renders()
         assert main.tracks_run_authors and not skill.tracks_run_authors
@@ -363,6 +363,7 @@ class TestEngineAsksTheKind:
             "not self.skill_name",
             "render=not self",
             "questions.nonblocking",
+            "questions.key",
             "self.cfg.depth > 0",
             "self.cfg.kind.depth > 0",  # v10.133.0 의 같은 추측
         ]

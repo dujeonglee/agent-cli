@@ -35,7 +35,7 @@ from tests.loopkit import make_loop
 class _Port:
     def __init__(self, debts=()):
         self.list = list(debts)
-        self.nonblocking = True
+        self.key = "agt-fake"  # 에이전트의 포트
 
     def debts(self):
         return list(self.list)

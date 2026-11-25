@@ -122,27 +122,16 @@ class WaitTool(Tool):
 class AskTool(Tool):
     name = "ask"
     requires_handler = "ctx"  # 비대화형 루프(ctx 없음)에선 목록에서 제거
-    # v10.112.0: main 의 안내 블록(`_ASK_INLINE`, 304 토큰 — "ask vs complete" 결정
-    # 나무)을 지웠다. 벤치 946 세션 0회·실사용 59 세션 2회(진짜 질문), 막으려던
-    # 오용(작별 인사를 `ask` 로)은 기록에 없었다. 그 뜻은 마지막 한 문장이 맡는다.
+    # 누가 묻든 한 설명 (6b) — 질문을 올리고 바로 돌아온다. 종전엔 main·스킬의 막는 설명과 상주의 막지 않는
+    # 설명(`RESIDENT_DESCRIPTION`)이 둘이었다. 묻고 나서 어디로 가나는 질문이 열린 동안 꼬리가 말한다(6a).
     description = (
-        "Ask the user one question and wait for their reply. One question per call — to"
-        " ask several, make several `ask` calls in one turn (each is answered in turn)."
-        " Use only when you cannot proceed without specific input; otherwise end with "
-        "`complete`. A closing remark or a pleasantry is not a question — end with "
-        "`complete` instead."
-    )
-    # 상주 에이전트용 (docs/agent-ask/DESIGN.md §3.1). 거기서 ``ask`` 는
-    # **막지 않는다** — 질문을 사람의 트레이에 올리고 즉시 돌아온다. 마지막
-    # 문장이 중요하다: ask 는 보통 "막혔다" 는 뜻이라 "계속하라" 고만 하면 작은
-    # 모델이 추측으로 메우고 끝낸다. v10.77.0 (B): 주소는 언제나 사람 — 에이전트·
-    # main 에게서 무언가 필요하면 `message` 다(요청 → 상대가 `reply` 를 빚진다).
-    RESIDENT_DESCRIPTION = (
         "Ask the person one question and keep working — you are not blocked. It "
         "goes to their question tray; the answer arrives later as a new message "
         "and you continue from there. Carry on with anything that does not depend "
-        "on it. To get something from "
-        "main or another agent, send it a `message` — its `reply` comes back to you."
+        "on it. Use it only when you need specific input from the person; a closing "
+        "remark or a pleasantry is not a question — end with `complete` instead. To "
+        "get something from an agent, send it a `message` — its `reply` comes back "
+        "to you."
     )
     parameters: ClassVar[dict] = {
         "type": "object",

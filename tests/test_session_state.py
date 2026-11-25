@@ -687,7 +687,7 @@ class TestOpenItemsInTail:
         from agent_cli.loop.ledger import Ledger
 
         class _Port:
-            nonblocking = True
+            key = "agt-fake"  # 에이전트의 포트 — 자기 주소로 묻는다
 
             def debts(self):
                 return list(debts)
@@ -738,7 +738,7 @@ class TestOpenItemsInTail:
 
     def test_loop_tail_carries_the_ports_debts(self, tmp_path):
         class _Port:
-            nonblocking = True
+            key = "agt-fake"  # 에이전트의 포트 — 자기 주소로 묻는다
 
             def debts(self):
                 return [_REPLY]
@@ -760,7 +760,7 @@ class TestOpenItemsInTail:
 class _AskerPort:
     """묻는 쪽의 질문 포트 대역 — 열린 질문만 안다."""
 
-    nonblocking = True
+    key = "agt-fake"  # 에이전트의 포트 — 자기 주소로 묻는다
 
     def __init__(self, questions):
         self.questions = questions

@@ -45,7 +45,7 @@ def _system_prompt(name: str, **kw) -> str:
 class TestNoKoreanReachesTheModel:
     @pytest.mark.parametrize("name", dialects.list_names())
     def test_system_prompt_is_english(self, name):
-        for kw in ({}, {"nonblocking_ask": True}, {"depth": 1, "max_depth": 1}):
+        for kw in ({}, {"ask_guide": True}, {"depth": 1, "max_depth": 1}):
             hits = [
                 ln
                 for ln in _system_prompt(name, **kw).splitlines()
@@ -102,7 +102,7 @@ class TestNoThoughtFieldInPrompts:
 
     @pytest.mark.parametrize("name", dialects.list_names())
     def test_system_prompt_never_says_thought(self, name):
-        for kw in ({}, {"nonblocking_ask": True}):
+        for kw in ({}, {"ask_guide": True}):
             text = _system_prompt(name, **kw)
             hits = [
                 ln

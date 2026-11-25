@@ -46,7 +46,7 @@ def _special_ops() -> set[str]:
 
 def _ports():
     port = MagicMock()
-    port.nonblocking = True
+    port.key = "agt-fake"  # 에이전트의 포트
     port.reply.return_value = ""
     port.ask.return_value = ("q1", "")
     return {"questions": port, "message_handler": lambda to, text, **kw: ""}

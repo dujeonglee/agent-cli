@@ -429,6 +429,15 @@ class Renderer(ABC):
         """teammate request 1건 처리 종료 — begin_agent_work 과 짝. ``stopped`` (v10.142.0): 사람(또는 모델)이
         멈춘 런 — 실패가 아니라 정지로 그린다. 기본 no-op."""
 
+    def open_questions(self, questions: list) -> None:
+        """사람에게 온 열린 질문 목록 (6b) — 질문이 열리고 닫힐 때마다 ``[{id, asker, text, ts}]``. web 은 sticky(❓
+        트레이의 출처), CLI 는 no-op."""
+
+    def question_line(
+        self, asker: str, qid: str, text: str, *, to: str = "user"
+    ) -> None:
+        """사람에게 건 질문 한 줄 (6b) — 터미널이 그린다(번호·답하는 법). web 은 no-op: 트레이와 `ask` 카드가 보인다."""
+
     def agent_roster(self, roster: list) -> None:
         """teammate 목록/상태 스냅샷 (P4) — spawn/kill/상태 전이마다 호출.
         web 은 sticky 브로드캐스트(대화 창 목록), CLI 는 no-op."""

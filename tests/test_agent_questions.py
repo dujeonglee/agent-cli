@@ -383,17 +383,13 @@ class TestSurfaces:
         assert [q["id"] for q in row["open_questions"]] == [qid]
         assert row["open_questions"][0]["to"] == "user"
 
-    def test_registering_notifies_the_roster(self, mkreg, tmp_path, renderer):
-        """트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
-        사람 주소 질문이 다음 브로드캐스트까지 화면에 안 뜬다."""
+    def test_registering_notifies_the_question_list(self, mkreg, tmp_path, renderer):
+        """트레이의 출처는 열린 질문 목록 하나다(6b) — 알리지 않으면 질문이 다음 알림까지 화면에 안 뜬다."""
         reg = mkreg()
         a = spawn_idle(reg)
-        before = len(renderer.named("agent_roster"))
         qid, _ = reg.register_question(a, "배포?")
-        rosters = renderer.named("agent_roster")
-        assert len(rosters) > before
-        (row,) = [r for r in rosters[-1][1]["roster"] if r["key"] == a]
-        assert [q["id"] for q in row["open_questions"]] == [qid]
+        last = renderer.named("open_questions")[-1][1]["questions"]
+        assert [(q["id"], q["asker"]) for q in last] == [(qid, a)]
 
     def test_open_human_question_counts_as_activity(self, mkreg, tmp_path, renderer):
         """idle-reap 이 세션을 걷으면 resume 은 되살리지 않으므로(§3.9)
@@ -480,9 +476,8 @@ class TestReplyFreshness:
         reg.request(b, "평범한 일감")
         assert wait_until(lambda: len(rep.kinds()) == 1)
 
-    def test_same_question_across_runs_is_not_folded(self, mkreg, renderer):
-        """중복 접기는 **런 안에서만**. 런마다 자기 질문이 있어야 그 런의 결과
-        알림(`_with_human_notice`)이 맞는다."""
+    def test_same_question_while_open_is_folded_across_runs(self, mkreg, renderer):
+        """중복 접기는 **열려 있는 동안** — 누구에게나 한 규칙(6b, 결정 F; 종전엔 같은 런 안에서만)."""
         reg = mkreg()
         ids, n = [], []
 
@@ -500,7 +495,7 @@ class TestReplyFreshness:
         assert wait_until(lambda: len(ids) == 1)
         reg.request(b, "일감 2")
         assert wait_until(lambda: len(ids) == 2)
-        assert ids[0] != ids[1]  # 런이 다르면 별개의 질문
+        assert ids[0] == ids[1]  # 열려 있는 동안은 같은 질문
 
     def test_same_question_within_one_run_is_folded(self, mkreg, renderer):
         """런 안에서는 접는다 — ``_op_ask`` 가 루프 탐지기 앞에서 반환해
@@ -586,17 +581,16 @@ class TestQuestionPort:
             assert not err
             assert _question(reg, qid).target == "user"
 
-    def test_main_ask_is_refused(self, mkreg, renderer):
-        """main 이 포트로 물으면 **보이지도 답할 수도 사라지지도 않는**
-        질문이 생긴다 — 로스터/창은 asker 를 에이전트 키로 찾아 못 찾고,
-        ``open_human_questions`` 에만 남아 idle-reap 을 영구 차단한다.
-        resume 이 되살리면 매 세션 부활한다."""
+    def test_main_asks_through_the_same_port(self, mkreg, renderer):
+        """main 도 같은 길로 묻는다(6b) — 열린 질문 목록에 서고, 사람이 답하면 main 의 메일로 간다."""
         reg = mkreg()
         qid, err = reg.question_port(None).ask("이거 해도 되나요?")
-        assert not qid
-        assert "blocking" in err
+        assert not err
+        assert [(q.id, q.asker) for q in reg.open_human_questions()] == [(qid, "main")]
+        assert reg.answer_question(qid, "네", by="user:dj") == ""
         assert reg.open_human_questions() == []
-        assert _web_room_is_live(reg) is False
+        (mail,) = absorbed_mail(reg)
+        assert mail["kind"] == "answer" and mail["re"] == qid
 
     def test_port_never_exposes_the_registry(self, mkreg, renderer):
         """레지스트리가 서브루프에 닿으면 '팀원 안 팀원 금지' 의 단일
@@ -609,15 +603,11 @@ class TestQuestionPort:
             "key",
             "me",
             "asker",
-            "nonblocking",
             "reply",  # v9.21.0 — 빚진 회신을 갚는 표면. 레지스트리 노출은 아니다.
             "debts",  # v9.22.0 — main·상주 공통 회신 빚 목록 (v10.77.0: answer 빚 없음)
             "awaited",  # v10.141.0 — 보내 놓고 아직 못 받은 회신(장부의 기다리는 회신)
             "open_questions",  # 6a — 내가 건 열린 질문(꼬리의 `## Your open questions`)
         }
-        # 상주는 비블로킹, main 은 기존 블로킹 경로 (§8-④)
-        assert port.nonblocking is True
-        assert reg.question_port(None).nonblocking is False
         assert isinstance(port, QuestionPort)
 
 
@@ -886,9 +876,8 @@ class TestFlipDispatch:
         assert "no unpaid request" not in rec["content"]
         assert result.success and result.output == "안녕!"
 
-    def test_main_ask_still_blocks(self, mkreg, tmp_path, renderer):
-        """main·delegate 의 ``ask``(사람에게 묻기)는 무변경이다 — 포트를
-        받아도 비블로킹 분기를 타면 안 된다."""
+    def test_main_ask_returns_at_once(self, mkreg, tmp_path, renderer):
+        """main 의 ``ask`` 도 질문을 올리고 바로 돌아온다(6b) — 막는 프롬프트가 없다."""
         from agent_cli.context.manager import ContextManager
 
         reg = mkreg()
@@ -898,9 +887,11 @@ class TestFlipDispatch:
             [json.dumps({"action": "ask", "question": "괜찮나요?"})],
             questions=reg.question_port(None),
         )
-        assert reg.open_human_questions() == []  # 목록에 안 들어간다
+        (q,) = reg.open_human_questions()
+        assert q.asker == "main"
         obs = "\n".join(str(m) for m in ctx.get_raw_messages())
-        assert "User responded" in obs  # 기존 사용자-프롬프트 경로
+        assert f'question \\"{q.id}\\" sent' in obs or f'question "{q.id}" sent' in obs
+        assert "User responded" not in obs
 
 
 class TestFlipPrompt:
@@ -935,17 +926,20 @@ class TestFlipPrompt:
 
         resident = system_for(reg.question_port(a), "r")
         main = system_for(reg.question_port(None), "m")
-        # 도구 설명 — 상주 ask 만 "keep working" 을 말한다
+        # 도구 설명은 하나(6b) — 누구에게나 "keep working"
         assert "one question and keep working" in resident
-        assert "one question and keep working" not in main
-        assert "wait for their reply" in main and "wait for their reply" not in resident
-        # 인라인 가이드도 함께 — 둘이 엇갈리면 모델이 헷갈린다
+        assert "one question and keep working" in main
+        assert (
+            "wait for their reply" not in main
+            and "wait for their reply" not in resident
+        )
+        # 인라인 안내는 에이전트에게만(결정 C — main 에는 싣지 않는다)
         assert "does not block you" in resident
         assert "does not block you" not in main
         # v10.112.0: main 의 `ask` 안내("pick by intent")는 지웠다 — main 에는 안내가 없고
         # 대화형 종결은 설명의 한 문장이 맡는다.
         assert "pick by intent" not in main and "pick by intent" not in resident
-        assert "A closing remark or a pleasantry is not a question" in main
+        assert "a closing remark or a pleasantry is not a question" in main
 
     def test_resident_ask_description_says_it_does_not_block(self):
         """설명이 'WAIT for their reply' 라고 거짓말하면 모델이 그걸 믿고
@@ -954,17 +948,15 @@ class TestFlipPrompt:
         from agent_cli.prompts.system_prompt import _build_tools_section
 
         wf = get_wf("json_fc")
-        blocking = _build_tools_section(["ask"], wf)
-        resident = _build_tools_section(["ask"], wf, nonblocking_ask=True)
-        assert "wait for their reply" in blocking
-        assert "wait for their reply" not in resident
-        assert "not blocked" in resident
-        # 인라인 가이드도 함께 바뀐다 — 둘이 엇갈리면 모델이 헷갈린다
-        assert "does not block you" in resident
-        assert "does not block you" not in blocking
-        # v10.112.0: 차단형 `ask` 의 안내는 없다 — 설명의 한 문장만
-        assert "pick by intent" not in blocking
-        assert "end with `complete` instead" in blocking
+        main = _build_tools_section(["ask"], wf)
+        agent = _build_tools_section(["ask"], wf, ask_guide=True)
+        # 설명은 하나 — 누구도 "기다린다" 고 듣지 않는다(6b)
+        for text in (main, agent):
+            assert "wait for their reply" not in text and "not blocked" in text
+            assert "end with `complete` instead" in text
+        # 안내는 에이전트에게만(결정 C)
+        assert "does not block you" in agent
+        assert "does not block you" not in main
 
 
 # ── ⑧ 질문은 사람에게만 (v9.20.0 `to="user"` → v10.77.0 B) ────────
@@ -1014,7 +1006,7 @@ class TestAskToUser:
         from tests.loopkit import make_loop
 
         class _Port:
-            nonblocking = True
+            key = "agt-fake"  # 에이전트의 포트 — 자기 주소로 묻는다
 
         def system_for(questions, tag):
             loop = make_loop(
@@ -1035,7 +1027,7 @@ class TestAskToUser:
         assert '"to"' not in resident and '"to"' not in main
 
     def test_guide_no_longer_promises_the_asker_a_reminder(self, tmp_path):
-        from agent_cli.prompts.system_prompt import _ASK_INLINE_RESIDENT as g
+        from agent_cli.prompts.system_prompt import _ASK_INLINE as g
 
         assert "you will be reminded" not in g, "asker 는 독촉을 못 받는다"
         assert "nobody chases them" in " ".join(g.split())
@@ -1057,7 +1049,7 @@ class TestAskToUser:
         seen = []
 
         class _Port:
-            nonblocking = True
+            key = "agt-fake"  # 에이전트의 포트 — 자기 주소로 묻는다
 
             def ask(self, text):
                 seen.append(text)
@@ -1157,7 +1149,7 @@ class TestReplyNagCap:
     """
 
     class _OwedPort:
-        nonblocking = True
+        key = "agt-fake"  # 에이전트의 포트 — 자기 주소로 묻는다
 
         def __init__(self):
             self.replies = []

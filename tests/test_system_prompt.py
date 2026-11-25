@@ -132,7 +132,7 @@ class TestMultiOpPromptBranches:
         assert "- complete:" in section
         # v10.112.0: "`ask` vs `complete`" 안내 블록을 지웠다 — 그 뜻은 `ask` 설명의 한 문장
         assert (
-            "A closing remark or a pleasantry is not a question — end with "
+            "a closing remark or a pleasantry is not a question — end with "
             "`complete` instead." in section
         )
         assert "`ask` vs `complete`" not in section
@@ -414,13 +414,16 @@ class TestBuildSystemPrompt:
         from agent_cli.tools import TOOLS
 
         d = TOOLS["ask"].description
-        assert "otherwise end with `complete`" in d
-        assert "A closing remark or a pleasantry is not a question" in d
+        # 6b: 설명 하나 — 질문이 아닌 끝맺음은 `complete`, 묻고 나서 어디로 가나는 꼬리가 말한다
+        assert (
+            "a closing remark or a pleasantry is not a question — end with `complete` instead"
+            in d
+        )
         flat = re.sub(r"\s+", " ", build_system_prompt(_make_caps(), ["ask"])).lower()
         assert "rule of thumb" not in flat and "`ask` vs `complete`" not in flat
         dialect = _get_dialect("json_fc")
         assert "ask" not in _build_tool_inline_guides(["ask"], dialect)
-        resident = _build_tool_inline_guides(["ask"], dialect, nonblocking_ask=True)
+        resident = _build_tool_inline_guides(["ask"], dialect, ask_guide=True)
         assert "does not block you" in resident["ask"]
 
     def test_hashline_guide_ties_refs_to_the_latest_view_of_the_lines(self):
@@ -1710,12 +1713,9 @@ class TestEditVsWriteRule:
     guide) vs "only for creating new files" (the end of the edit guide)."""
 
     def _desc(self, tools):
-        from agent_cli.prompts.system_prompt import description_overrides_for
         from agent_cli.tools import TOOLS
 
-        return description_overrides_for(tools).get(
-            "write_file", TOOLS["write_file"].description
-        )
+        return TOOLS["write_file"].description
 
     def test_full_rewrite_of_a_small_file_is_allowed(self):
         d = self._desc(["write_file", "edit_file"])

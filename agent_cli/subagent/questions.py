@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from agent_cli import item_ids
+from agent_cli import render as render_surface
+from agent_cli.agent_icon import agent_display_name
 from agent_cli.post.request_book import RowError
 from agent_cli.subagent.agent_mail import is_human_addr
 from agent_cli.subagent.question_port import QuestionPort
@@ -58,6 +60,15 @@ QUESTION_CLOSED_TODO = (
 )
 
 
+#: main 의 묻는 쪽 이름이자 우편 주소 (6b)
+MAIN = "main"
+
+
+def asker_address(asker: str) -> str:
+    """묻는 쪽의 우편 주소 — main 은 ``main``, 에이전트는 ``agent:<key>``. 답·닫힘 봉투가 이 상자로 간다."""
+    return MAIN if asker == MAIN else f"agent:{asker}"
+
+
 def _new_question_id() -> str:
     return item_ids.next_id(item_ids.QUESTION)
 
@@ -78,24 +89,24 @@ class QuestionsMixin:
         return QuestionPort(self, key)
 
     def register_question(self, asker: str, text: str) -> tuple[str, str]:
-        """사람에게 질문 등록 — ``(id, err)``. 아무것도 블록하지 않는다.
+        """사람에게 질문 등록 — ``(id, err)``. 아무것도 블록하지 않는다. ``asker`` 는 에이전트 키 또는 ``"main"``(6b).
 
-        표면은 ❓ 트레이(로스터의 ``open_questions``)와 asker 의 대화 창이다 —
-        배달할 inbox 가 없다. 사람이 답하면 :meth:`answer_question` 이 asker 에게
-        새 배달로 보낸다."""
+        표면은 ❓ 트레이(열린 질문 목록 — `_notify_questions`)와 묻는 쪽의 줄이다(에이전트는 대화 창, main 은 터미널의
+        질문 줄). 사람이 답하거나 닫으면 그 봉투가 묻는 쪽에게 간다(`_close_question`)."""
         text = (text or "").strip()
         if not text:
             return "", "empty question"
         tm = self._agents.get(asker)
-        if tm is None:
+        if tm is None and asker != MAIN:
             return "", f'unknown asker "{asker}"'
-        asked_in = tm.current_item
+        asked_in = tm.current_item if tm is not None else ""
         with self._cv:
-            # 중복 접기 — **같은 런 안에서만**. ``_op_ask`` 는 루프 탐지기
-            # 앞에서 반환하므로(dispatch.py) 한 런이 같은 질문을 반복해도
-            # 구조적으로 안 잡힌다. 런 경계를 넘으면 접지 않는다.
+            # 중복 접기 — 같은 묻는 쪽의 같은 글이 **열려 있는 동안**(6b — 누구에게나 한 규칙). ``_op_ask`` 는 루프
+            # 탐지기 앞에서 반환하므로(dispatch.py) 반복을 여기서 접는다. 닫힌 뒤 다시 물으면 새 번호다.
             for q in self.open_human_questions():
-                if q.asker == asker and q.text == text and q.asked_in == asked_in:
+                if q.asker == asker and q.text == text:
+                    # 이 런도 물었다 — 런 결과의 알림(`_with_human_notice`)이 이 런에 그 질문을 싣게
+                    q.asked_in = asked_in
                     return q.id, ""
             q = Question(
                 id=_new_question_id(),
@@ -104,14 +115,16 @@ class QuestionsMixin:
                 text=text,
                 asked_in=asked_in,
             )
-            self._post.ask(q.id, f"agent:{asker}", q.target, text, meta=q)
+            self._post.ask(q.id, asker_address(asker), q.target, text, meta=q)
             # 질문 줄은 질문을 여는 구간에서 적는다 — 답의 in 이 앞서지 않게 (v10.146.4)
             lines = self._question_line(q)
             self._lines_in_section(lines)
         self._lines_after_section(lines)
-        # 트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
-        # 질문이 다음 로스터 브로드캐스트까지 화면에 안 뜬다.
-        self._notify_roster()
+        if (
+            asker == MAIN
+        ):  # main 은 대화 창이 없다 — 터미널의 질문 줄(웹은 트레이와 `ask` 카드가 보인다)
+            render_surface.get_renderer().question_line("main", q.id, q.text)
+        self._notify_questions()
         return q.id, ""
 
     def _question_line(self, q: Question) -> list[tuple[AgentInstance, dict]]:
@@ -200,13 +213,42 @@ class QuestionsMixin:
         if refused:  # 묻는 쪽이 멈췄거나 사라져 받지 못한다 — 그 질문들을 닫고 명단에 알린다 (v10.149.1)
             self._purge_questions_for(q.asker)
             return f'the agent that asked "{qid}" has stopped — the question is closed'
+        self._notify_questions()
         return ""
+
+    def _notify_questions(self) -> None:
+        """열린 질문 목록을 표면에 (6b) — 웹 트레이의 출처 하나(sticky), 터미널은 아무것도 안 한다. main·에이전트의
+        질문이 같은 목록이다. 표시용 — 실행 경로를 막지 않는다."""
+        try:
+            render_surface.get_renderer().open_questions(
+                [
+                    {"id": q.id, "asker": q.asker, "text": q.text, "ts": q.asked_at}
+                    for q in self.open_human_questions()
+                ]
+            )
+        except Exception:
+            pass
+
+    def asker_label(self, asker: str) -> str:
+        """질문 목록(`/questions`)의 묻는 쪽 — main 은 "main", 에이전트는 질문 줄과 같은 이름 ``이름 (키)``."""
+        tm = self._agents.get(asker)
+        if tm is None:
+            return asker
+        return f"{agent_display_name(tm.key, tm.profile_name, tm.instance_name)} ({tm.key})"
 
     def _deliver_to_asker(
         self, q: Question, body: str, *, kind: str, todo: str, closes_as: str
     ) -> str:
         """질문을 닫는 봉투(답·닫힘)를 묻는 쪽에게 — 줄 없는 ``n-`` 봉투(회신과 같다: 기다리던 것의 도착이지 새 항목이
-        아니다), 질문 줄 닫기와 한 락 구간. `request` 의 거절(묻는 쪽이 받지 못함) 또는 ""."""
+        아니다), 질문 줄 닫기와 한 락 구간. main 은 메일로, 에이전트는 받은편지함으로 — 봉투 모양과 글은 같다.
+        `request` 의 거절(묻는 쪽이 받지 못함) 또는 ""."""
+        if q.asker == MAIN:
+            self._push_reply(
+                {"kind": kind, "re": q.id, "output": body, "todo": todo},
+                settles=q.id,
+                closes_as=closes_as,
+            )
+            return ""
         return self.request(
             q.asker,
             body,
@@ -226,7 +268,7 @@ class QuestionsMixin:
         """
         outgoing = self._post.forget_questions_of(f"agent:{key}")
         if outgoing:
-            self._notify_roster()
+            self._notify_questions()
 
     def _with_human_notice(self, tm: AgentInstance, run_item: str, output: str) -> str:
         """이 런이 **사람에게** 물어 둔 미답 질문을 결과에 실어 알린다.

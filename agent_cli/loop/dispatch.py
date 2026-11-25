@@ -1427,9 +1427,9 @@ class TurnDispatcher:
                     turn.record, accumulate, "ask", ASK_REFUSED_NOBODY_CAN_ANSWER, False
                 )
             port = self.cfg.kind.ports.questions
-            if port is not None and not self.cfg.kind.prompt_profile().ask_blocking:
+            if port is not None:
                 return self._op_ask_async(turn.record, questions, port, accumulate)
-            # 비동기 포트가 없으면(main/delegate) 사람에게 직접 묻는다.
+            # 질문 포트가 없으면(스킬) 사람에게 직접 묻는다.
             # 종전엔 여기 ``cfg.ask_handler`` 분기가 하나 더 있었는데 실값
             # 생산자가 **하나도 없었다** — 상주 에이전트의 ask 는 v9.12 에서
             # 질문 포트로 옮겨갔고, 그때 남은 죽은 가지였다.

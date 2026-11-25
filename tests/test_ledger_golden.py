@@ -46,11 +46,11 @@ _FIXTURE = Path(__file__).parent / "fixtures" / "ledger_golden.json"
 
 
 class _Port:
-    """질문 포트 흉내 — 빚 목록만. ``nonblocking`` 이 상주/main 을 가른다."""
+    """질문 포트 흉내 — 빚 목록만. ``key`` 가 상주/main 을 가른다(6b)."""
 
     def __init__(self, debts, *, resident):
         self._debts = list(debts)
-        self.nonblocking = resident
+        self.key = "agt-fake" if resident else None
 
     def debts(self):
         return list(self._debts)

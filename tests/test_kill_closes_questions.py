@@ -55,8 +55,7 @@ def test_kill_while_working_closes_its_questions_at_once(tmp_path, renderer):  #
         assert reg.get(key).state == "busy"  # 워커는 아직 런 안 — 그래도
         assert _open_qs(reg, key) == []  # 질문은 이미 닫혔다
         assert reg.open_human_questions() == []
-        last = renderer.named("agent_roster")[-1][1]["roster"]
-        assert [r["open_questions"] for r in last if r["key"] == key] == [[]]
+        assert renderer.named("open_questions")[-1][1]["questions"] == []
         assert "already-answered" in reg.answer_question(qid, "x", by="user:dj")
     finally:
         gate.set()
@@ -119,8 +118,7 @@ def test_answer_to_a_stopping_asker_is_refused_even_without_the_kill(
         r = reg.answer_question(qid, "src/main.py", by="user:dj")
         assert r == f'the agent that asked "{qid}" has stopped — the question is closed'
         assert reg.open_human_questions() == []
-        last = renderer.named("agent_roster")[-1][1]["roster"]
-        assert [r["open_questions"] for r in last if r["key"] == key] == [[]]
+        assert renderer.named("open_questions")[-1][1]["questions"] == []
     finally:
         gate.set()
         reg.shutdown_all()

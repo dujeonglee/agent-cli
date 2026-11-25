@@ -1663,10 +1663,19 @@ class AgentRegistry(QuestionsMixin):
             return f"{type(exc).__name__}: {exc}"
         return f'unroutable address "{addr}"'
 
-    def _push_reply(self, reply: dict, *, settles: str = "", lines=()) -> None:
+    def _push_reply(
+        self,
+        reply: dict,
+        *,
+        settles: str = "",
+        closes_as: str = "user_answered",
+        lines=(),
+    ) -> None:
         with self._cv:  # 배달 순간의 한가함은 배달 구간에서 읽는다 — 락을 놓으면 펌프가 이 메일로 런을 열 수 있다
             self._stamp_mail(reply)
-            self._post_deliver(envelope_of_main_mail(reply), settles=settles)
+            self._post_deliver(
+                envelope_of_main_mail(reply), settles=settles, closes_as=closes_as
+            )
             idle_at_delivery = self._post.idle("main")
             self._lines_in_section(lines)
         self._lines_after_section(lines)

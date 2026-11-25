@@ -851,7 +851,7 @@ class MainLoop(LoopKind):
         return PromptProfile(
             role="",  # 기본 ROLE_PROMPT
             peer_section="",
-            ask_blocking=True,
+            ask_guide=False,
             reports_to_caller=False,
         )
 

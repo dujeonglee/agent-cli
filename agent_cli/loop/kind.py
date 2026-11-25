@@ -56,8 +56,8 @@ class PromptProfile:
     role: str
     #: 상주의 `## Live Agents` 안내 + Reply Discipline (빈 문자열이면 없음)
     peer_section: str
-    #: `ask` 가 사람 답을 기다리며 막는가 (상주는 질문 포트로 비차단)
-    ask_blocking: bool
+    #: `ask` 안내(`_ASK_INLINE`)를 싣는가 — 자기 주소로 묻는 에이전트·스킬만(6b, 결정 C: main 에는 없다)
+    ask_guide: bool
     #: 종결문이 "호출자에게 보고" 어투인가 (서브루프)
     reports_to_caller: bool
 
@@ -268,7 +268,7 @@ class LoopKind:
         return PromptProfile(
             role=self.agent_role,
             peer_section=self.peer_agents_section,
-            ask_blocking=not (q is not None and getattr(q, "nonblocking", False)),
+            ask_guide=getattr(q, "key", None) is not None,
             reports_to_caller=self.depth > 0,
         )
 
@@ -390,7 +390,7 @@ class PrivateLoop(LoopKind):
         return PromptProfile(
             role=self.agent_role,
             peer_section="",
-            ask_blocking=True,
+            ask_guide=False,
             reports_to_caller=True,
         )
 

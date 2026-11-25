@@ -163,11 +163,11 @@ class LLMCaller:
             from agent_cli.prompts.system_prompt import function_schemas_for
 
             profile = self.cfg.kind.prompt_profile()
-            nonblocking_ask = not profile.ask_blocking
+            ask_guide = profile.ask_guide
             self._function_schemas_cache = function_schemas_for(
                 self.cfg.tools_list,
                 self.cfg.dialect,
-                nonblocking_ask=nonblocking_ask,
+                ask_guide=ask_guide,
             )
         return self._function_schemas_cache
 

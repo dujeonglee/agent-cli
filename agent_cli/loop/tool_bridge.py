@@ -381,7 +381,7 @@ class ToolBridge:
             name,
             self.cfg.tools_list,
             self.cfg.dialect,
-            nonblocking_ask=not profile.ask_blocking,
+            ask_guide=profile.ask_guide,
         )
 
     def _run_ctx(self) -> RunContext:

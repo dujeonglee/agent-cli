@@ -264,7 +264,7 @@ class SkillLoop(LoopKind):
         return PromptProfile(
             role=self.agent_role,  # 호출자의 역할 (D3)
             peer_section="",
-            ask_blocking=True,
+            ask_guide=False,
             reports_to_caller=True,
         )
 

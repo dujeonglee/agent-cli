@@ -4,17 +4,24 @@
 
 from __future__ import annotations
 
+import io
 import json
 
 import pytest
 from fastapi.testclient import TestClient
+from rich.console import Console
 
 import agent_cli.render as render_mod
 from agent_cli.command_table import command_kind
+from agent_cli.loop.ledger import OPEN_QUESTIONS_HEAD, Ledger
 from agent_cli.main import CLOSE_USAGE
+from agent_cli.render.minimal import MinimalRenderer
 from agent_cli.render.web import WebRenderer
 from agent_cli.skills.executor import SkillLoop
+from agent_cli.subagent.agent_mail import build_reply_record
+from agent_cli.wake import wake_items
 from agent_cli.web.server import WebServer, create_app
+from tests.mail_support import absorbed_mail
 from tests.test_agent_questions import _FakeLoopResult, spawn_idle
 from tests.test_agents_live import make_registry, wait_until
 from tests.test_answer_paths import _dispatch
@@ -142,3 +149,61 @@ def test_the_question_path_answers_and_closes(reg):
         == 409
     )
     assert client.post(f"/api/questions/{q1}/nope?token=t", json={}).status_code == 404
+
+
+# ── main 도 같은 길로 묻는다 ──────────────────────────────────
+
+
+def test_main_reads_the_answer_and_the_close_as_envelopes(reg):
+    """main 의 질문에 온 답·닫힘은 메일로 — 에이전트가 읽는 것과 같은 봉투·같은 글, 줄 없는 ``n-``."""
+    q1, _ = reg.question_port(None).ask("which directory?")
+    q2, _ = reg.question_port(None).ask("json or yaml?")
+    assert reg.answer_question(q1, "use src/util", by="user:dj") == ""
+    assert reg.close_question(q2, by="user:dj") == ""
+    answer, closed = [build_reply_record(m)["content"] for m in absorbed_mail(reg)]
+    a_id = answer.split("[", 1)[1].split("]", 1)[0]
+    c_id = closed.split("[", 1)[1].split("]", 1)[0]
+    assert a_id.startswith("n-") and c_id.startswith("n-")
+    assert answer == (
+        f"── answer [{a_id}] from the user re [{q1}] ──\n"
+        "Your question: which directory?\nAnswer: use src/util\n"
+        "(Continue the work it was blocking.)"
+    )
+    assert closed == (
+        f"── closed [{c_id}] from the user re [{q2}] ──\n"
+        "Your question: json or yaml?\n"
+        "(The user closed it without an answer. Go on with what you have, and say what you assumed.)"
+    )
+
+
+def test_mains_open_question_rides_mains_tail_and_wakes_main(reg):
+    qid, _ = reg.question_port(None).ask("which directory?")
+    led = Ledger()
+    led.bind_questions(reg.question_port(None))
+    assert led.questions_block(can_wait=True) == (
+        f'{OPEN_QUESTIONS_HEAD}\n- "{qid}" · "which directory?"'
+    )
+    assert wake_items("main", agents=reg, with_schedule=False) == [
+        (f"q:{qid}", f'your question "{qid}" to the user')
+    ]
+
+
+def test_mains_question_has_a_terminal_line_and_is_listed(reg, monkeypatch):
+    buf = io.StringIO()
+    r = MinimalRenderer(Console(file=buf, width=200))
+    monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
+    key = spawn_idle(reg)
+    q1, _ = reg.question_port(None).ask("which directory?")
+    q2, _ = reg.question_port(key).ask("json or yaml?")
+    lines = [ln for ln in buf.getvalue().splitlines() if ln.strip()]
+    i = lines.index(f"❓ [main → user] {q1}")
+    assert lines[i + 1] == "which directory?"
+    assert (
+        lines[i + 2] == f"  answer with: /answer {q1} <text> · close with: /close {q1}"
+    )
+    ((listing, ok),) = _dispatch("/questions", reg).lines
+    assert ok and listing.splitlines()[0] == "Open questions:"
+    assert f"{q1}  main  which directory?" in listing.splitlines()
+    assert any(
+        ln.startswith(f"{q2}  ") and f"({key})" in ln for ln in listing.splitlines()
+    )

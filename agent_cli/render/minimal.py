@@ -1162,28 +1162,29 @@ class MinimalRenderer(Renderer):
             return
         from agent_cli.agent_icon import agent_display_name, agent_icon
 
-        base_icon = agent_icon(key)
-        icon = (
-            "❓"
-            if direction == "question"
-            else (base_icon if success else base_icon + "✗")
-        )
         # 이름을 앞에, 주소(key)를 뒤에 — 웹 채널 칩과 같은 배치. 터미널엔
         # 흐리게 할 자리가 없으니 괄호로 눌러 둔다. v9.9.0.
-        # 질문은 번호와 답하는 법을 단다(6c) — 터미널의 답은 그 번호를 적은 `/answer` 하나다
-        number = f" {item}" if direction == "question" and item else ""
+        label = f"{agent_display_name(key, profile, instance_name)} ({key})"
+        if direction == "question":
+            self.question_line(label, item, text, to=to)
+            return
+        base_icon = agent_icon(key)
+        icon = base_icon if success else base_icon + "✗"
+        self.con.print(f"\n{icon} [{label} → {to}]", style="bold cyan", markup=False)
+        self.con.print(text, highlight=False, markup=False)
+
+    def question_line(
+        self, asker: str, qid: str, text: str, *, to: str = "user"
+    ) -> None:
+        """사람에게 건 질문 한 줄 — 번호와 답·닫는 법을 단다(6c·6b). 터미널의 답은 그 번호를 적은 `/answer`,
+        닫기는 `/close` 하나다. 에이전트의 질문(대화 창 줄)과 main 의 질문이 같은 모양이다."""
+        self.con.print(f"\n❓ [{asker} → {to}] {qid}", style="bold cyan", markup=False)
+        self.con.print(text, highlight=False, markup=False)
         self.con.print(
-            f"\n{icon} [{agent_display_name(key, profile, instance_name)} ({key}) → {to}]{number}",
-            style="bold cyan",
+            f"  answer with: /answer {qid} <text> · close with: /close {qid}",
+            style=_MUTED,
             markup=False,
         )
-        self.con.print(text, highlight=False, markup=False)
-        if number:
-            self.con.print(
-                f"  answer with: /answer {item} <text> · close with: /close {item}",
-                style=_MUTED,
-                markup=False,
-            )
 
     # ── Ask-tool announcement ────────────────────────
 

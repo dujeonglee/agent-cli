@@ -79,6 +79,9 @@ class RecordingRenderer:
     def agent_roster(self, roster):
         self._rec("agent_roster", roster=roster)
 
+    def open_questions(self, questions):
+        self._rec("open_questions", questions=questions)
+
     def agent_message(self, **kw):
         self._rec("agent_message", **kw)
 
@@ -1281,7 +1284,7 @@ def make_asking_runner(question="which branch?"):
         ports = kind.ports
         assert not hasattr(ports, "ask_handler"), "블로킹 ask 포트가 되살아났다"
         assert ports.owner.startswith("agent:"), ports.owner
-        assert ports.questions.nonblocking is True
+        assert ports.questions.key is not None  # 에이전트의 포트 — 자기 주소로 묻는다
         # 답 런에서는 다시 묻지 않는다 — 묻고 또 묻는 고리가 테스트를 멈춘다.
         if start.query.startswith("── answer ["):
             return _FakeLoopResult(output=f"resumed with: {start.query}"), 0.01

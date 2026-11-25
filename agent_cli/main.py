@@ -16,7 +16,6 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
-from agent_cli.agent_icon import agent_display_name
 from agent_cli.command_table import (
     IMAGES_NOT_TAKEN,
     command_kind,
@@ -1002,10 +1001,8 @@ def _dispatch_question(
     parts = message.split(maxsplit=2)
     if parts[0] == "/questions":
         lines = [
-            f"{q['id']}  {agent_display_name(row['key'], row['profile'], row['name'])}"
-            f" ({row['key']})  {q['text']}"
-            for row in agent_registry.roster_snapshot()
-            for q in row["open_questions"]
+            f"{q.id}  {agent_registry.asker_label(q.asker)}  {q.text}"
+            for q in agent_registry.open_human_questions()
         ]
         if not lines:
             output.agent_dispatch_result(NO_OPEN_QUESTIONS, True)
