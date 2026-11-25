@@ -104,11 +104,21 @@ class TestDeliverAnswer:
 
 class TestDeliverSurface:
     def test_unknown_address_is_rejected_not_silently_dropped(self, reg, calls):
-        err = reg.deliver(
-            "somewhere", mail={}, text="x", author="main", expects_reply=False
-        )
+        err = reg.deliver("somewhere", mail={}, text="x", author="main")
         assert err == 'unroutable address "somewhere"'
         assert (calls.mail, calls.requests) == ((), [])
+
+    def test_a_report_to_an_agent_is_a_notice_not_a_request(self, calls):
+        """작업·모니터·감사 보고는 통지다 — 받는 에이전트는 회신을 빚지지 않는다(그 런의 산출물은 어디로도
+        되돌아가지 않는다). 종류·장부 표지는 봉투 재료로 넘어간다."""
+        reg = calls.registry
+        assert (
+            reg.deliver("agent:k1", mail={"kind": "monitor"}, text="x", author="main")
+            == ""
+        )
+        ((key, text, kw),) = calls.requests
+        assert (key, text, kw["author"], kw["kind"]) == ("k1", "x", "main", "monitor")
+        assert kw["expects_reply"] is False
 
     def test_agent_backend_propagates_the_error_string(self, reg):
         """`request` 의 에러가 호출부로 그대로 올라간다 — 삼키지 않는다.
@@ -117,7 +127,5 @@ class TestDeliverSurface:
         `'unroutable address "agent:nope"'` 가 그 부분 문자열을 포함해
         **지운 채로 통과**한다. 백엔드가 실제로 불렸음을 문구로 고정한다.
         """
-        err = reg.deliver(
-            "agent:nope", mail={}, text="x", author="main", expects_reply=False
-        )
+        err = reg.deliver("agent:nope", mail={}, text="x", author="main")
         assert err.startswith('unknown agent "nope"')

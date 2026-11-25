@@ -108,7 +108,6 @@ class TestPrivateMailbox:
                 mail=self._mail(),
                 text="t",
                 author="main",
-                expects_reply=False,
             )
             == ""
         )
@@ -128,7 +127,6 @@ class TestPrivateMailbox:
                 mail=self._mail(),
                 text="t",
                 author="main",
-                expects_reply=False,
             )
             == ""
         )
@@ -136,7 +134,7 @@ class TestPrivateMailbox:
 
     def test_unknown_address_is_still_unroutable(self, reg):
         assert "unroutable" in reg.deliver(
-            "foo", mail=self._mail(), text="t", author="main", expects_reply=False
+            "foo", mail=self._mail(), text="t", author="main"
         )
 
     def test_wait_mail_wakes_on_arrival(self, reg):
@@ -146,7 +144,6 @@ class TestPrivateMailbox:
                 mail=self._mail(),
                 text="t",
                 author="main",
-                expects_reply=False,
             )
 
         threading.Timer(0.3, later).start()
@@ -199,7 +196,6 @@ class TestPrivateMailbox:
                 mail=self._mail(),
                 text="t",
                 author="main",
-                expects_reply=False,
             )
 
         threading.Timer(0.02, later).start()
@@ -214,9 +210,7 @@ class TestPrivateMailbox:
     def test_drop_mailbox_discards_and_cancels_checkin(self, reg, jobs):
         jobs.start("sleep 30", owner="harness:x")
         assert reg.arm_checkin("harness:x", checkin_ids("harness:x"))
-        reg.deliver(
-            "harness:x", mail=self._mail(), text="t", author="main", expects_reply=False
-        )
+        reg.deliver("harness:x", mail=self._mail(), text="t", author="main")
         assert reg.drop_mailbox("harness:x") == 1
         assert reg.arrived_for("harness:x", waking_only=False, words=True) == 0
         assert reg.fire_checkin("harness:x") == ""  # 걸린 것이 풀렸다
@@ -286,7 +280,6 @@ class TestOneContractForHarnessNotices:
             mail=dict(mail),
             text=mail["output"],
             author="main",
-            expects_reply=False,
         )
         assert err == ""
         rec = reg.absorb_pending(reg.get(key))[0]["record"]
@@ -408,7 +401,6 @@ class TestReleaseOwner:
             mail={"kind": "job", "output": "x"},
             text="x",
             author="main",
-            expects_reply=False,
         )
         note = release_owner("harness:z", registry=reg).note
         assert (

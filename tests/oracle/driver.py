@@ -1606,7 +1606,6 @@ def s13_wait_refusals_and_wakes(root: Path) -> dict:
             },
             text="",
             author="",
-            expects_reply=False,
         )
 
     def job_mail_then_wait(msgs):
@@ -1783,7 +1782,6 @@ def _job_mail(s: Session, n: int) -> str:
         },
         text="",
         author="",
-        expects_reply=False,
     )
 
 

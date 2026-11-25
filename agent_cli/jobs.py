@@ -613,7 +613,6 @@ class JobRegistry:
                     },
                     text=report,
                     author="main",
-                    expects_reply=False,
                 )
         finally:
             with self._lock:

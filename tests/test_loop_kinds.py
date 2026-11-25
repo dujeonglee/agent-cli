@@ -216,7 +216,6 @@ class TestPrivateLoop:
                 mail={"kind": "job", "output": "job #1 finished", "success": True},
                 text="job #1 finished",
                 author="harness",
-                expects_reply=False,
             )
             assert [m["record"]["tool"] for m in k.ports.mailbox.take()] == ["job"]
             reg.deliver(
@@ -224,7 +223,6 @@ class TestPrivateLoop:
                 mail={"kind": "job", "output": "late", "success": True},
                 text="late",
                 author="harness",
-                expects_reply=False,
             )
             k.release()
             assert reg.take_mail("harness:t9") == []  # 메일함이 버려졌다

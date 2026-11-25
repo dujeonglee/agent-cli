@@ -140,7 +140,6 @@ class TestInPlace:
                     mail={"kind": "job", "output": "done"},
                     text="done",
                     author="main",
-                    expects_reply=False,
                 )
             return [jobs.job]
 

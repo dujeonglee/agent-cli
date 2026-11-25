@@ -1612,8 +1612,6 @@ class AgentRegistry(QuestionsMixin):
         mail: dict,
         text: str,
         author: str,
-        expects_reply: bool,
-        hop: int = 0,
     ) -> str:
         """주소 하나로 배달 — 백엔드 둘. 에러 문자열 또는 "".
 
@@ -1621,7 +1619,7 @@ class AgentRegistry(QuestionsMixin):
         한 곳으로 배달된다.
 
         main 은 메일함에 ``mail``(구조)을, 에이전트는 받은편지함에 ``text``(평문)를, private 주소는
-        private 메일함에 ``mail`` 을 받는다.
+        private 메일함에 ``mail`` 을 받는다. 통지라 받는 쪽은 회신을 빚지지 않는다(``expects_reply=False``).
         """
         try:
             if addr == "main":
@@ -1634,8 +1632,7 @@ class AgentRegistry(QuestionsMixin):
                     addr.split(":", 1)[1],
                     text,
                     author=author,
-                    expects_reply=expects_reply,
-                    hop=hop,
+                    expects_reply=False,
                     kind=str(mail.get("kind") or ""),
                     ledger=str(mail.get("ledger") or ""),
                 )

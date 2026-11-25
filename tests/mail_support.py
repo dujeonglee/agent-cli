@@ -12,7 +12,7 @@ from agent_cli.wake import WaitingOn, schedule_wakes, wake_items
 
 def to_main(reg, mail: dict) -> str:
     """``mail`` 을 main 메일함으로 배달한다 — 에러 문자열 또는 ""."""
-    return reg.deliver("main", mail=mail, text="", author="", expects_reply=False)
+    return reg.deliver("main", mail=mail, text="", author="")
 
 
 def absorbed_mail(reg) -> list[dict]:

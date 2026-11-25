@@ -423,15 +423,13 @@ class TestDeliveryToTheInstallingAddress:
         reg.tick(time.time())
         assert reg.deliver.calls[0][1]["mail"]["success"] is True
 
-    def test_expects_reply_is_false_so_the_run_output_goes_nowhere(self, reg, tmp_path):
-        """감시 보고로 시작한 런의 산출물이 발신자에게 되돌아가면 안 된다 —
-        질문·독촉·peer 회신과 같은 의미다."""
+    def test_the_report_is_authored_by_main(self, reg, tmp_path):
+        """author 가 주소가 아니면 그 런에서 거는 ask 가 unroutable 로 취소된다. 보고가 받는 쪽에 빚을 만들지
+        않는 것은 배달(`AgentRegistry.deliver`)의 몫이다 — tests/test_deliver_seam.py."""
         _, log = _watch(reg, tmp_path, owner="agent:k1")
         log.write_text("X\n")
         reg.tick(time.time())
         kw = reg.deliver.calls[0][1]
-        assert kw["expects_reply"] is False
-        # author 가 주소가 아니면 그 런에서 거는 ask 가 unroutable 로 취소된다.
         assert kw["author"] == "main"
 
     def test_record_shape_needs_no_registration_anywhere(self):

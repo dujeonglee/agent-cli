@@ -130,7 +130,6 @@ def test_private_mail_is_arrived(reg):
         mail={"kind": "job", "output": "done"},
         text="done",
         author="main",
-        expects_reply=False,
     )
     assert _mailbox("harness:x", reg).arrivals() == ("notice",)
 

@@ -114,7 +114,7 @@ class TestKillBy:
         assert d.addrs == ["main"]  # 정확히 하나
         _addr, kw = d.calls[0]
         assert kw["mail"]["kind"] == "job" and kw["mail"]["success"] is False
-        assert kw["author"] == "main" and kw["expects_reply"] is False
+        assert kw["author"] == "main" and "expects_reply" not in kw
         text = kw["text"]
         head = text.splitlines()[0]
         assert head.startswith("🧵 job #1 stopped by user alice after ")

@@ -809,7 +809,6 @@ class TestWaitAndScope:
             mail={"kind": "job", "success": True, "output": "job #1 finished"},
             text="job #1 finished",
             author="job",
-            expects_reply=False,
         )
         # 묻는 쪽과 상관없이 main 의 상자다. 1 이어도 낱말은 같다
         assert reg.format_status().splitlines()[-1] == (
