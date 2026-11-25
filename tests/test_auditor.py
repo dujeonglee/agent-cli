@@ -480,7 +480,6 @@ class TestAssembly:
             },
             text="AUDIT pass",
             author=AUDITOR_NAME,
-            expects_reply=False,
         )
 
     def test_boot_line_only_when_enabled(self):

@@ -39,7 +39,7 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
         src, dst = rnd.sample(ADDRS, 2)
         pick = rnd.randrange(6)
         if pick == 0:
-            return E.request(nid("r"), src, dst, "ask", hop=rnd.randrange(3))
+            return E.request(nid("r"), src, dst, "ask")
         if pick == 1:
             return E.human(nid("u"), "user:dj", rnd.choice(ADDRS[1:]), "hi")
         if pick == 2:
@@ -48,13 +48,7 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
             return E.reply(
                 nid("n"), src, dst, "ans", re=any_id(), wakes=rnd.random() < 0.7
             )
-        return E.system(
-            nid("n"),
-            "job",
-            dst,
-            "done",
-            opens_row=rnd.random() < 0.6,
-        )
+        return E.system(nid("n"), "job", dst, "done")
 
     ops: list[tuple[str, dict]] = []
     for _ in range(STEPS):
@@ -115,19 +109,8 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
             ops.append(
                 ("deliver", {"e": E.notice(nid("n"), addr, rnd.choice(ADDRS), "m")})
             )
-        elif k == 8:
-            ops.append(
-                (
-                    "complete",
-                    {
-                        "addr": addr,
-                        "ids": rnd.sample(ids, min(2, len(ids))),
-                        "run_id": run,
-                    },
-                )
-            )
         elif k == 9:
-            outcome = rnd.choice(["done", "stopped", "session_end"])
+            outcome = rnd.choice(["done", "stopped"])
             replies = {}
             for rid in rnd.sample(ids, min(2, len(ids))):
                 replies[rid] = E.reply(nid("n"), addr, rnd.choice(ADDRS), "fb", re=rid)
@@ -283,7 +266,7 @@ def test_the_generator_reaches_every_operation_and_both_verdicts():
             refused += impl_refused
             accepted += not impl_refused
     assert seen == {
-        "deliver", "next_run", "absorb", "pay", "complete", "end_run",
+        "deliver", "next_run", "absorb", "pay", "end_run",
         "remove_queued", "take_reply", "ask", "answer", "forget_questions_of",
         "owe", "take",
     }  # fmt: skip

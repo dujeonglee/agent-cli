@@ -88,7 +88,6 @@ def monitor_notice(s, n: int) -> None:
             },
             text="",
             author="",
-            expects_reply=False,
         )
         == ""
     )

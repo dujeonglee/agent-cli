@@ -809,7 +809,6 @@ class TestWaitAndScope:
             mail={"kind": "job", "success": True, "output": "job #1 finished"},
             text="job #1 finished",
             author="job",
-            expects_reply=False,
         )
         # 묻는 쪽과 상관없이 main 의 상자다. 1 이어도 낱말은 같다
         assert reg.format_status().splitlines()[-1] == (
@@ -2525,7 +2524,7 @@ class TestPeerMessaging:
         지킨다(빚이 없어 `reply` 가 거부된다; Reply Discipline 5)."""
         runner = _RecordingRunner()
         reg, a, b = self._reg_two(tmp_path, runner)
-        assert reg._deliver_peer_reply(a, b, "here is my move", 0, re="r-7") == ""
+        assert reg._deliver_peer_reply(a, b, "here is my move", re="r-7") == ""
         assert wait_until(lambda: reg.get(a).handled >= 1)
         q = next(q for q in runner.queries() if "here is my move" in q)
         assert q.startswith(f"── reply [n-1] from {b} (beta) re [r-7] ──\n")
@@ -2765,19 +2764,6 @@ class TestPeerMessaging:
         assert rec["tool"] == "agent"
         assert "yo" in rec["content"]
         assert not is_format_intervention(rec)
-
-    def test_hop_cap_stops_peer_reply(self, tmp_path, renderer):
-        from agent_cli.subagent.agents_live import _MAX_PEER_HOPS
-
-        runner = _RecordingRunner()
-        reg, a, b = self._reg_two(tmp_path, runner)
-        # 상한 도달 → 재주입 안 함 (A 안 돎)
-        reg._deliver_peer_reply(a, b, "x", hop=_MAX_PEER_HOPS)
-        assert not wait_until(lambda: reg.get(a).handled >= 1, timeout=0.4)
-        # 상한 미만 → 재주입 (A 돎)
-        reg._deliver_peer_reply(a, b, "y", hop=_MAX_PEER_HOPS - 1)
-        assert wait_until(lambda: reg.get(a).handled >= 1)
-        reg.shutdown_all()
 
     def test_message_tool_gated_by_handler(self, tmp_path):
         from unittest.mock import MagicMock

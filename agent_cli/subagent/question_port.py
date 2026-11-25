@@ -44,7 +44,6 @@ class ReplyDebt:
     to: str  # "main" | "agent:<key>" | "user" | "user:<nick>"
     text: str  # 무엇에 대한 회신인지 (빚 목록의 설명)
     answers: list = field(default_factory=list)  # 요청 항목의 귀속 스냅샷
-    hop: int = 0  # peer 폴백 배달의 hop
     settled: bool = False
     id: str = ""  # 요청 번호 — `reply(id=…)` 가 가리키는 값
     #: 닫힌 줄이면 닫힌 사유(장부의 ``Row.how`` — "reply"·"unsent"·…), 열린 줄이면 "". "unsent" 는 회신이
@@ -70,7 +69,6 @@ def _not_delivered(d) -> str:
 Verdict = Literal[
     "empty",
     "no_words",
-    "unknown_self",
     "none_owed_human",
     "none_owed_unsent",
     "none_owed_replied",
@@ -87,7 +85,6 @@ class ReplyFacts(NamedTuple):
     """`reply` 판정의 재료 — 갚는 주체의 사본. ``opener_row`` 는 ``opener`` 에게 진 가장 최근 줄(갚았든 아니든),
     ``by_id`` 는 그 ``id`` 의 줄(이 주체의 것일 때만)."""
 
-    known: bool  # 주체가 명단에 있는가 (main 은 언제나)
     owed: tuple[ReplyDebt, ...]  # 아직 갚지 않은 빚 — 열린 순서
     opener: str | None  # 이 런을 연 주소 — 레지스트리가 모르면 None
     opener_row: ReplyDebt | None
@@ -100,14 +97,12 @@ def judge_reply(
     """`reply(text, id)` 의 판정 — ``(판정, 갚을 빚)``; 갚을 빚은 ``"pay"`` 일 때만. 읽기만 한다. ``text``·``id`` 는
     앞뒤 공백을 걷은 값이다.
 
-    순서: 글 → 주체 → ``id`` 가 이 런에서 이미 닫힌 내 줄(가지 못함·이미 갚음 — 그 줄로 말한다) → 빚이 없음(런을
+    순서: 글 → ``id`` 가 이 런에서 이미 닫힌 내 줄(가지 못함·이미 갚음 — 그 줄로 말한다) → 빚이 없음(런을
     연 주소에게 진 줄로 사유를 고른다) → ``id`` 없음 → ``id`` 가 빚에 없음 → 갚음."""
     if not text:
         return "empty", None
     if not has_words(text):
         return "no_words", None
-    if not facts.known:
-        return "unknown_self", None
     prior = facts.by_id
     if prior is not None and prior.settled:
         # 이 런에서 이미 닫힌 내 줄 — 누구든(main·에이전트, 빚이 남았든 아니든) 그 줄로 말한다
@@ -146,8 +141,6 @@ def reply_refusal(verdict: Verdict, text: str, id: str, facts: ReplyFacts) -> st
         return "empty reply — nothing sent"
     if verdict == "no_words":
         return f"reply has no words ({text[:20]!r}) — nothing sent; say it in words"
-    if verdict == "unknown_self":
-        return "unknown agent"
     if verdict == "none_owed_human":
         return (
             "nothing to send — your requester is a person watching this "

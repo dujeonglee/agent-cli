@@ -211,7 +211,6 @@ class ResidentLoop(LoopKind):
                 author,
                 item["text"],
                 answers=item.get("answers") or [],
-                hop=item.get("hop", 0),
                 id=item["id"],
             )
         reg._notify_roster()

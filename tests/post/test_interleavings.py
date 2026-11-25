@@ -86,7 +86,6 @@ class TestOrders:
         """마지막 경계(흡수) 뒤, 런 끝 전에 온 메일은 줄에 남아 다음 런을 깨운다 — 사라지지 않는다."""
         main = [
             ("absorb", {"addr": "main"}),
-            ("complete", {"addr": "main", "ids": [], "run_id": "u-0"}),
             (
                 "end_run",
                 {"addr": "main", "run_id": "u-0", "outcome": "done", "replies": {}},
@@ -103,7 +102,7 @@ class TestOrders:
                 twin.office.arrived("main", waking_only=True, words=True) > 0
             ) is late
 
-        assert run([], main, agent, check) == 4
+        assert run([], main, agent, check) == 3
 
     def test_cancel_against_taking(self):
         """✕ 와 꺼내기가 같은 봉투를 두고 — 둘 중 하나만 이긴다: 집혔으면 빚, 지워졌으면 removed 회신."""
@@ -195,11 +194,11 @@ class TestOrders:
         sender = [
             (
                 "deliver",
-                {"e": E.system("n-1", "job", "harness:j", "a", opens_row=False)},
+                {"e": E.system("n-1", "job", "harness:j", "a")},
             ),
             (
                 "deliver",
-                {"e": E.system("n-2", "job", "harness:j", "b", opens_row=False)},
+                {"e": E.system("n-2", "job", "harness:j", "b")},
             ),
         ]
 

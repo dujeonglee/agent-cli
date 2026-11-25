@@ -75,7 +75,7 @@ class TestStartAndFinish:
         assert d.addrs == ["main"]
         _addr, kw = d.calls[0]
         assert kw["mail"]["kind"] == "job" and kw["mail"]["success"] is False
-        assert kw["author"] == "main" and kw["expects_reply"] is False
+        assert kw["author"] == "main" and "expects_reply" not in kw
         text = kw["text"]
         assert text.startswith("🧵 job #1 finished rc=3 after")
         assert "`echo hello; echo world; exit 3`" in text

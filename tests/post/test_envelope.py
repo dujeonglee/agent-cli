@@ -17,12 +17,7 @@ from agent_cli.post import envelope as E
         (lambda: E.notice("n-1", "agent:a", "main", "fyi"), "notice", None),
         (lambda: E.reply("n-2", "agent:a", "main", "ok", re="r-1"), "reply", None),
         (
-            lambda: E.system("n-3", "job", "main", "done", opens_row=True),
-            "system",
-            "complete",
-        ),
-        (
-            lambda: E.system("n-4", "job", "agent:a", "done", opens_row=False),
+            lambda: E.system("n-4", "job", "agent:a", "done"),
             "system",
             None,
         ),
@@ -35,7 +30,7 @@ def test_each_maker_says_how_it_closes(make, kind, closes_by):
 
 
 def test_a_checkin_is_a_system_notice_that_opens_no_row():
-    env = E.system("n-5", "harness", "agent:a", "⏰", opens_row=False)
+    env = E.system("n-5", "harness", "agent:a", "⏰")
     assert env.closes_by is None and env.wakes is True
 
 

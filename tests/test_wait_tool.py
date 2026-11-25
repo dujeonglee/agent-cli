@@ -510,7 +510,6 @@ class TestAlreadyArrived:
                 mail={"kind": "monitor", "success": True, "output": "🔔 hit"},
                 text="🔔 hit",
                 author="main",
-                expects_reply=False,
             )
             == ""
         )

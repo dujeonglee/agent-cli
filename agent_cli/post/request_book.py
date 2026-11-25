@@ -1,11 +1,11 @@
 """요청 장부 — 기다리는 상대가 있는 의무의 줄 (시안 §1·§3).
 
-줄 하나 = 누군가 기다린다: u-(사람이 기다림), r-(에이전트·main 이 회신을 기다림), n-(main 앞 하니스 통지 —
-main 의 답을 받을 사람이 기다림), q-(에이전트가 사람의 답을 기다림). 회신·통지·체크인은 줄이 없다.
+줄 하나 = 누군가 기다린다: u-(사람이 기다림), r-(에이전트·main 이 회신을 기다림), q-(에이전트가 사람의 답을
+기다림). 회신·통지·하니스 통지·체크인은 줄이 없다.
 줄의 종류는 봉투 머리(``kind``·``closes_by``)에서만 정한다 — 주소·id 문자열을 해석하지 않는다.
 
 상태: ``queued``(봉투가 받는 쪽 상자에 줄 섰다) → ``picked``(빚으로 적혔다 — 런이 집었다) → 닫힘. 닫힌 줄은
-쌓지 않는다: 런 안에서 닫힌 것(:data:`IN_RUN` — 명시 회신·갚음·complete)만 그 빚진 쪽의 런이 끝날 때까지 남고
+쌓지 않는다: 런 안에서 닫힌 것(:data:`IN_RUN` — 명시 회신·갚음·폴백·정지·런 끝)만 그 빚진 쪽의 런이 끝날 때까지 남고
 (:meth:`RequestBook.purge_closed` — "이미 갚았다" 거부 문구가 읽는 구간), 런 밖에서 닫힌 것(removed·dropped·질문의 답 등)은 바로 지운다. 런이
 어떻게 끝나든(`wait` 로 끝나도) 그 런에서 닫힌 줄은 버린다 — 열린 빚(잠든 빚)만 다음 런으로 간다. 락이 없다 —
 `PostOffice` 의 조건변수 아래서만 바꾼다.
@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from agent_cli.post.envelope import Envelope
 
-RowKind = Literal["u", "n", "r", "q"]
+RowKind = Literal["u", "r", "q"]
 State = Literal["queued", "picked", "closed"]
 How = Literal[
     "reply",
@@ -27,37 +27,30 @@ How = Literal[
     "stopped",
     "removed",
     "dropped",
-    "completed",
     "run_ended",
     "user_answered",
     "user_closed",
     "undeliverable",
-    "died",
 ]
 
 #: 봉투 머리 → 줄 종류. 표에 없는 조합은 줄을 열지 않는다(`RowError`).
 ROW_KIND: dict[tuple[str, str], RowKind] = {
     ("request", "reply"): "r",
     ("request", "complete"): "u",
-    ("system", "complete"): "n",
 }
 
 #: (줄 종류, 상태) → 닫을 수 있는 방법. 없는 칸은 `RowError`.
 CLOSES: dict[tuple[RowKind, State], frozenset[str]] = {
-    ("r", "queued"): frozenset({"removed", "dropped", "died"}),
-    ("u", "queued"): frozenset({"dropped", "died"}),
-    ("n", "queued"): frozenset({"dropped", "died"}),
-    ("r", "picked"): frozenset(
-        {"reply", "unsent", "fallback", "stopped", "dropped", "died"}
-    ),
-    ("u", "picked"): frozenset({"completed", "run_ended", "dropped"}),
-    ("n", "picked"): frozenset({"completed", "run_ended", "dropped"}),
+    ("r", "queued"): frozenset({"removed", "dropped"}),
+    ("u", "queued"): frozenset({"dropped"}),
+    ("r", "picked"): frozenset({"reply", "unsent", "fallback", "stopped", "dropped"}),
+    ("u", "picked"): frozenset({"run_ended", "dropped"}),
     ("q", "picked"): frozenset({"user_answered", "user_closed", "undeliverable"}),
 }
 
 #: 런 안에서 닫는 방법 — 닫힌 줄의 ``closed_in_run`` 이 비면 안 된다(불변식 I5)
 IN_RUN: frozenset[str] = frozenset(
-    {"reply", "unsent", "completed", "fallback", "stopped", "run_ended"}
+    {"reply", "unsent", "fallback", "stopped", "run_ended"}
 )
 
 #: 닫힌 뒤에도 그 빚진 쪽의 런 끝까지 남기는 방법 — 런 안에서 닫는 것 전부. "이미 갚았다" 거부 사유가
@@ -79,7 +72,6 @@ class Row:
     kind: RowKind
     text: str
     answers: tuple[str, ...] = ()
-    hop: int = 0
     state: State = "queued"
     how: How | None = None
     closed_in_run: str = ""
@@ -100,9 +92,7 @@ class RequestBook:
         kind = ROW_KIND.get((env.kind, env.closes_by or ""))
         if kind is None:
             raise RowError(f"no row for a {env.kind}/{env.closes_by} envelope")
-        return self._add(
-            Row(env.id, env.src, env.dst, kind, env.text, env.answers, env.hop)
-        )
+        return self._add(Row(env.id, env.src, env.dst, kind, env.text, env.answers))
 
     def open_human(self, rid: str, src: str, dst: str, text: str, *, answers=()) -> Row:
         """봉투 없이 곧바로 집힌 사람의 말(u-) — main 의 입력은 입력 큐를 지나 상자에 들지 않는다."""
@@ -115,13 +105,12 @@ class RequestBook:
         creditor: str,
         text: str,
         *,
-        hop: int = 0,
         answers=(),
     ) -> Row:
         """봉투 없이 곧바로 집힌 r 줄 — ``debtor`` 가 ``creditor`` 에게 `reply` 를 빚진다(봉투가 상자를 지나지
         않은 빚: main 이 관찰로 읽은 요청, 테스트가 세운 빚). 같은 id 의 줄이 있으면 `RowError`."""
         return self._add(
-            Row(rid, creditor, debtor, "r", text, tuple(answers), hop, state="picked")
+            Row(rid, creditor, debtor, "r", text, tuple(answers), state="picked")
         )
 
     def open_question(
@@ -186,11 +175,11 @@ class RequestBook:
         )
 
     def open_requests(self, addr: str) -> tuple[Row, ...]:
-        """``addr`` 의 런이 `complete` 의 ``answers`` 로 닫을 집힌 u·n 줄 — 연 순서(Open Requests)."""
+        """``addr`` 앞의 집힌 u 줄 — 연 순서. 그 런의 끝(`PostOffice.end_run`)이 run_ended 로 닫는다."""
         return tuple(
             r
             for r in self._rows.values()
-            if r.kind in ("u", "n") and r.state == "picked" and r.dst == addr
+            if r.kind == "u" and r.state == "picked" and r.dst == addr
         )
 
     def open_questions(self) -> tuple[Row, ...]:

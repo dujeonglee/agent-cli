@@ -14,18 +14,17 @@ from agent_cli.post.request_book import RequestBook, RowError
 
 HOWS = (
     "reply", "unsent", "fallback", "stopped", "removed", "dropped",
-    "completed", "run_ended", "user_answered", "undeliverable", "died",
+    "run_ended", "user_answered", "undeliverable",
 )  # fmt: skip
 OPS = ("pick",) + tuple(f"close:{h}" for h in HOWS)
-KINDS = ("r", "u", "n", "q")
+KINDS = ("r", "u", "q")
 STATES = ("none", "queued", "picked", "closed")
 
 #: 허용 칸 — (종류, 상태, 연산) → 결과("picked" | "closed" 남음 | "gone" 지워짐). 나머지 칸은 RowError.
 EXPECT = {
-    **{(k, "queued", "pick"): "picked" for k in ("r", "u", "n")},
+    **{(k, "queued", "pick"): "picked" for k in ("r", "u")},
     ("r", "queued", "close:removed"): "gone",
-    **{(k, "queued", "close:dropped"): "gone" for k in ("r", "u", "n")},
-    **{(k, "queued", "close:died"): "gone" for k in ("r", "u", "n")},
+    **{(k, "queued", "close:dropped"): "gone" for k in ("r", "u")},
     ("r", "picked", "close:reply"): "closed",
     (
         "r",
@@ -35,10 +34,8 @@ EXPECT = {
     ("r", "picked", "close:fallback"): "closed",
     ("r", "picked", "close:stopped"): "closed",
     ("r", "picked", "close:dropped"): "gone",
-    ("r", "picked", "close:died"): "gone",
-    **{(k, "picked", "close:completed"): "closed" for k in ("u", "n")},
-    **{(k, "picked", "close:run_ended"): "closed" for k in ("u", "n")},
-    **{(k, "picked", "close:dropped"): "gone" for k in ("u", "n")},
+    ("u", "picked", "close:run_ended"): "closed",
+    ("u", "picked", "close:dropped"): "gone",
     ("q", "picked", "close:user_answered"): "gone",
     ("q", "picked", "close:undeliverable"): "gone",
 }
@@ -57,13 +54,12 @@ def _book_with(kind: str, state: str) -> RequestBook:
     env = {
         "r": E.request("x-1", "main", "agent:a", "do"),
         "u": E.human("x-1", "user:dj", "agent:a", "hi"),
-        "n": E.system("x-1", "job", "main", "done", opens_row=True),
     }[kind]
     book.open(env)
     if state in ("picked", "closed"):
         book.pick("x-1")
     if state == "closed":
-        book.close("x-1", "reply" if kind == "r" else "completed", in_run="run-0")
+        book.close("x-1", "reply" if kind == "r" else "run_ended", in_run="run-0")
     return book
 
 
@@ -98,13 +94,13 @@ def test_row_transition_table(kind, state, op):
 
 def test_table_size():
     """칸 수 — 보고용 숫자를 고정한다(허용 칸 + 금지 칸 = 전체)."""
-    assert len(CELLS) == 4 * 4 * 12 - 2 * 12
-    assert len([c for c in CELLS if c in EXPECT]) == len(EXPECT) == 24
+    assert len(CELLS) == 3 * 4 * 10 - 2 * 10
+    assert len([c for c in CELLS if c in EXPECT]) == len(EXPECT) == 14
 
 
 @pytest.mark.parametrize(
     "how",
-    ["reply", "unsent", "completed", "fallback", "stopped", "run_ended"],
+    ["reply", "unsent", "fallback", "stopped", "run_ended"],
 )
 def test_closing_inside_a_run_needs_the_run(how):
     kind = "r" if how in ("reply", "unsent", "fallback", "stopped") else "u"
@@ -118,8 +114,9 @@ def test_closing_inside_a_run_needs_the_run(how):
     [
         E.notice("x-1", "agent:a", "main", "fyi"),
         E.reply("x-1", "agent:a", "main", "ok", re="r-1"),
-        E.system("x-1", "job", "agent:a", "done", opens_row=False),
+        E.system("x-1", "job", "agent:a", "done"),
         E.Envelope("x-1", "notice", "a", "b", "t", closes_by="complete"),
+        E.Envelope("x-1", "system", "a", "b", "t", closes_by="complete"),
         E.Envelope("x-1", "system", "a", "b", "t", closes_by="reply"),
     ],
 )
@@ -133,9 +130,6 @@ def test_row_kind_comes_from_the_header_not_the_address():
     book = RequestBook()
     assert book.open(E.request("r-1", "user:dj", "agent:a", "x")).kind == "r"
     assert book.open(E.human("u-2", "agent:z", "agent:a", "x")).kind == "u"
-    assert (
-        book.open(E.system("n-3", "user:dj", "main", "x", opens_row=True)).kind == "n"
-    )
 
 
 def test_duplicate_ids_are_refused():
@@ -171,9 +165,8 @@ class TestQuestions:
         book.open(E.request("r-2", "agent:b", "agent:a", "second"))
         book.open(E.request("r-3", "main", "agent:a", "third"))
         book.open(E.human("u-4", "user:dj", "agent:a", "hi"))
-        book.open(E.system("n-5", "job", "main", "done", opens_row=True))
         book.open_question("q-6", "agent:a", "user:dj", "v1 or v2?")
-        for rid in ("r-1", "r-2", "u-4", "n-5"):
+        for rid in ("r-1", "r-2", "u-4"):
             book.pick(rid)
         return book
 
@@ -184,10 +177,10 @@ class TestQuestions:
         """빚으로 적히기 전(queued)에도 기다림은 있다 — `wait` 의 근거."""
         assert [r.rid for r in self._book().awaited_by("main")] == ["r-1", "r-3"]
 
-    def test_open_requests_are_the_picked_u_and_n(self):
+    def test_open_requests_are_the_picked_u(self):
         book = self._book()
         assert [r.rid for r in book.open_requests("agent:a")] == ["u-4"]
-        assert [r.rid for r in book.open_requests("main")] == ["n-5"]
+        assert [r.rid for r in book.open_requests("main")] == []
 
     def test_open_questions(self):
         assert [r.rid for r in self._book().open_questions()] == ["q-6"]
@@ -201,13 +194,13 @@ class TestQuestions:
 
 def test_owe_opens_a_picked_reply_debt_without_an_envelope():
     book = RequestBook()
-    row = book.owe("r-1", "main", "agent:a", "decide", hop=2, answers=("dj",))
-    assert (row.kind, row.state, row.src, row.dst, row.hop) == (
+    row = book.owe("r-1", "main", "agent:a", "decide", answers=("dj",))
+    assert (row.kind, row.state, row.src, row.dst, row.answers) == (
         "r",
         "picked",
         "agent:a",
         "main",
-        2,
+        ("dj",),
     )
     assert [r.rid for r in book.owed_by("main")] == ["r-1"]
     with pytest.raises(RowError):

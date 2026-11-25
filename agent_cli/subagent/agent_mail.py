@@ -145,7 +145,7 @@ def view_of_inbox_item(item: dict) -> MailView:
 # - main·private 메일: peer_message 의 ``expects_reply`` → `request` — main 이 빚을 적는다(`AgentLoop._inject_mail`);
 #   ``notice`` → `notice`; ``re`` 가 있으면(명시 회신·정지 회신) 또는 kind reply(폴백) → `reply`; 그 밖
 #   (job·monitor·harness·died·checkin) → `system`, 줄 없음 — main 앞 메일의 n- 항목은 루프 장부(`Ledger`)가 들고
-#   있다(4c 에서 옮긴다). ``wakes_main`` 거짓 → 깨우지 않음.
+#   있다. ``wakes_main`` 거짓 → 깨우지 않음.
 
 
 def envelope_of_item(item: dict, dst: str) -> Envelope:
@@ -171,7 +171,6 @@ def envelope_of_item(item: dict, dst: str) -> Envelope:
     elif not kind and item.get("expects_reply", True):
         env = post_envelope.request(
             **common,
-            hop=int(item.get("hop", 0) or 0),
             answers=item.get("answers") or (),
         )
     elif kind == "reply":
@@ -179,13 +178,12 @@ def envelope_of_item(item: dict, dst: str) -> Envelope:
             **common,
             re=str(item.get("re") or ""),
             mark=str(item.get("mark") or ""),
-            hop=int(item.get("hop", 0) or 0),
             wakes=wakes,
         )
     elif kind in ("", "notice"):
-        env = post_envelope.notice(**common, hop=int(item.get("hop", 0) or 0))
+        env = post_envelope.notice(**common)
     else:
-        env = post_envelope.system(**common, opens_row=False)
+        env = post_envelope.system(**common)
     return replace(env, wakes=wakes and env.wakes)
 
 
@@ -222,7 +220,7 @@ def envelope_of_main_mail(mail: dict, dst: str = "main") -> Envelope:
             answers=mail.get("answers") or (),
         )
     else:
-        env = post_envelope.system(**common, opens_row=False)
+        env = post_envelope.system(**common)
     return replace(env, wakes=wakes and env.wakes)
 
 

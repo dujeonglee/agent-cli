@@ -18,14 +18,12 @@ class Refused(Exception):
 KIND = {
     ("request", "reply"): "r",
     ("request", "complete"): "u",
-    ("system", "complete"): "n",
 }
 
 #: 런 안에서 닫는 방법 — 그 빚진 쪽의 런이 끝날 때까지 닫힌 채 남는다
 IN_RUN = {
     "reply",
     "unsent",
-    "completed",
     "fallback",
     "stopped",
     "run_ended",
@@ -38,9 +36,7 @@ def _human(e: dict) -> bool:
 
 def _may_close(kind: str, state: str, how: str) -> bool:
     if state == "queued":
-        return how in (
-            {"removed", "dropped", "died"} if kind == "r" else {"dropped", "died"}
-        )
+        return how in ({"removed", "dropped"} if kind == "r" else {"dropped"})
     if state != "picked":
         return False
     if kind == "r":
@@ -50,10 +46,9 @@ def _may_close(kind: str, state: str, how: str) -> bool:
             "fallback",
             "stopped",
             "dropped",
-            "died",
         }
-    if kind in ("u", "n"):
-        return how in {"completed", "run_ended", "dropped"}
+    if kind == "u":
+        return how in {"run_ended", "dropped"}
     return how in {"user_answered", "undeliverable"}  # q
 
 
@@ -158,44 +153,26 @@ class Model:
         self._close(rid, "reply", run_id)
         self._put(reply)
 
-    def complete(self, addr, ids, run_id):
-        for rid in ids:
-            r = self.rows.get(rid)
-            if (
-                r
-                and r["kind"] in ("u", "n")
-                and r["state"] == "picked"
-                and r["dst"] == addr
-            ):
-                self._close(rid, "completed", run_id)
-
     def end_run(self, addr, run_id, outcome, replies):
-        closing = set(self._owed(addr)) if outcome in ("done", "stopped") else set()
-        if set(replies) - closing:
+        if set(replies) - set(self._owed(addr)):
             raise Refused("unused replies")
-        if outcome in ("done", "stopped"):
-            for e in replies.values():
-                if self._anywhere(e["id"]):
-                    raise Refused("dup reply")
-            how = "fallback" if outcome == "done" else "stopped"
-            for rid in self._owed(addr):
-                if rid in replies:
-                    self._close(rid, how, run_id)
-                    self._put(replies[rid])
-                else:
-                    self._close(rid, "dropped")
-            for rid, r in list(self.rows.items()):
-                if (
-                    r["kind"] in ("u", "n")
-                    and r["state"] == "picked"
-                    and r["dst"] == addr
-                ):
-                    self._close(rid, "run_ended", run_id)
-            for rid, r in list(self.rows.items()):
-                if r["state"] == "closed" and r["dst"] == addr:
-                    del self.rows[rid]
-        if outcome != "session_end":
-            self.taken[addr] = []
+        for e in replies.values():
+            if self._anywhere(e["id"]):
+                raise Refused("dup reply")
+        how = "fallback" if outcome == "done" else "stopped"
+        for rid in self._owed(addr):
+            if rid in replies:
+                self._close(rid, how, run_id)
+                self._put(replies[rid])
+            else:
+                self._close(rid, "dropped")
+        for rid, r in list(self.rows.items()):
+            if r["kind"] == "u" and r["state"] == "picked" and r["dst"] == addr:
+                self._close(rid, "run_ended", run_id)
+        for rid, r in list(self.rows.items()):
+            if r["state"] == "closed" and r["dst"] == addr:
+                del self.rows[rid]
+        self.taken[addr] = []
 
     def remove_queued(self, addr, replies):
         queued_r = {

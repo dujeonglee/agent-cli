@@ -230,7 +230,6 @@ class TestMainRepliesById:
                 "둘째 답",
                 {
                     "author": "main",
-                    "hop": 1,
                     "expects_reply": False,
                     "kind": "reply",
                     "re": d2.id,

@@ -28,7 +28,6 @@ def _job_mail(reg) -> None:
         mail={"kind": "job", "success": True, "output": "🧵 job #1 finished rc=0"},
         text="",
         author="",
-        expects_reply=False,
     )
 
 

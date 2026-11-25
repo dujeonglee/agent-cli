@@ -453,7 +453,7 @@ class TestAgentLines:
         _fake_agent(reg, "p", state="idle")
         _fake_agent(reg, "q", state="idle")
         reg._deliver_peer_reply(
-            "p", "q", "stopped", 0, re="r-1", mark="stopped by user", opens_run=False
+            "p", "q", "stopped", re="r-1", mark="stopped by user", opens_run=False
         )
         assert [v.wakes for v in reg.queued_for("agent:p")] == [False]
         assert reg.checkin_agent_lines("main", {}) == (

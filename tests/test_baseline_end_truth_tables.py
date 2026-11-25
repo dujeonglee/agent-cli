@@ -278,7 +278,6 @@ def test_waking_mail_before_main_is_live_for_run_and_web(tmp_path):
             mail={"kind": "job", "success": True, "output": "🧵 job #1 finished rc=0"},
             text="",
             author="",
-            expects_reply=False,
         )
         renderer = SimpleNamespace(
             hub=SimpleNamespace(has_live_connections=lambda: False),

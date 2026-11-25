@@ -5,7 +5,7 @@
 서로를 깨우며 돈다). 저장·렌더·콜백은 하지 않는다 — 락 밖에서 호출자가 한다. 조건변수는 주어지면 그것을(입력 큐와 공유), 아니면 기본
 `threading.Condition()`(재진입 락)을 쓴다.
 
-hop 상한·요청자 부재·사람 주소 같은 판정은 호출자의 몫이다 — 여기서는 회신 없이 닫으라는 지시(빈 ``replies``)로
+요청자 부재·사람 주소 같은 판정은 호출자의 몫이다 — 여기서는 회신 없이 닫으라는 지시(빈 ``replies``)로
 받는다.
 """
 
@@ -26,7 +26,7 @@ from agent_cli.post.request_book import (
     RowError,
 )
 
-Outcome = Literal["done", "stopped", "session_end"]
+Outcome = Literal["done", "stopped"]
 
 
 class _Mark:
@@ -104,15 +104,12 @@ class PostOffice:
         creditor: str,
         text: str,
         *,
-        hop: int = 0,
         answers: Iterable[str] = (),
     ) -> Row:
         """봉투 없이 곧바로 집힌 r 줄 — 빚이 상자를 지나지 않고 생겼다. 같은 id 의 줄이 이미 있으면 `RowError`
         (이미 집힌 봉투의 빚인지는 호출자가 `row` 로 먼저 본다). 장부의 r 줄은 저장 대상이 아니다."""
         with self.cv:
-            row = self._book.owe(
-                rid, debtor, creditor, text, hop=hop, answers=tuple(answers)
-            )
+            row = self._book.owe(rid, debtor, creditor, text, answers=tuple(answers))
             self.cv.notify_all()
             return row
 
@@ -152,20 +149,6 @@ class PostOffice:
             self._book.close(rid, "unsent", in_run=run_id)
             self.cv.notify_all()
 
-    def complete(
-        self, addr: str, ids: Iterable[str], *, run_id: str
-    ) -> tuple[str, ...]:
-        """``addr`` 의 런이 `complete` 의 ``answers`` 로 닫은 u·n 줄 — 닫은 id(없는 id 는 건너뛴다). 줄은 저장
-        대상이 아니다(장부는 q- 만 저장 — 시안 §7)."""
-        with self.cv:
-            open_ids = {r.rid for r in self._book.open_requests(addr)}
-            done = tuple(i for i in ids if i in open_ids)
-            for rid in done:
-                self._book.close(rid, "completed", in_run=run_id)
-            if done:
-                self.cv.notify_all()
-            return done
-
     def end_run(
         self,
         addr: str,
@@ -174,44 +157,32 @@ class PostOffice:
         outcome: Outcome,
         replies: Mapping[str, Envelope] | None = None,
     ) -> None:
-        """``addr`` 의 런이 끝났다. 규칙 하나:
+        """``addr`` 의 런이 끝났다(``done``·``stopped``). 규칙 하나: 집힌 r 줄마다 ``replies`` 에 그 rid 가 있으면 그
+        회신을 배달하고 닫는다(``done`` → fallback, ``stopped`` → stopped), 없으면 dropped. 집힌 u 줄은 run_ended.
+        들고 있던 봉투를 비우고, 남겨 둔 닫힌 줄(명시 회신)을 버린다.
 
-        - ``done``·``stopped``: 집힌 r 줄마다 ``replies`` 에 그 rid 가 있으면 그 회신을 배달하고 닫는다(``done`` →
-          fallback, ``stopped`` → stopped), 없으면 dropped. 집힌 u·n 줄은 run_ended. 들고 있던 봉투를 비우고,
-          남겨 둔 닫힌 줄(명시 회신)을 버린다.
-        - ``session_end`` [단계 5 에서 쓰임 — 지금 제품은 부르지 않는다]: 아무것도 건드리지 않는다 — 프로세스가 끝나면
-          우편째 사라진다(재시작은 우편을 올리지 않는다, 5c-0).
-
-        쓰이지 않을 회신은 받지 않는다: ``replies`` 의 rid 가 이번에 닫는 r 줄이 아니거나, ``session_end`` 인데
-        ``replies`` 가 있으면 아무것도 바꾸지 않고 `RowError`. (`wait` 는 런의 끝이 아니다 — 5c-1.)"""
+        쓰이지 않을 회신은 받지 않는다: ``replies`` 의 rid 가 이번에 닫는 r 줄이 아니면 아무것도 바꾸지 않고
+        `RowError`. (`wait` 는 런의 끝이 아니다 — 5c-1.)"""
         replies = replies or {}
         with self.cv:
             box = self._box(addr)
-            closing = (
-                {r.rid for r in self._book.owed_by(addr)}
-                if outcome in ("done", "stopped")
-                else set()
-            )
-            self._ensure_used(replies, closing)
+            self._ensure_used(replies, {r.rid for r in self._book.owed_by(addr)})
+            self._ensure_new(replies.values())
             changed = False
-            if outcome in ("done", "stopped"):
-                self._ensure_new(replies.values())
-                how = "fallback" if outcome == "done" else "stopped"
-                for row in self._book.owed_by(addr):
-                    changed = True
-                    env = replies.get(row.rid)
-                    if env is None:
-                        self._book.close(row.rid, "dropped")
-                        continue
-                    self._book.close(row.rid, how, in_run=run_id)
-                    self._deliver(env)
-                for row in self._book.open_requests(addr):
-                    changed = True
-                    self._book.close(row.rid, "run_ended", in_run=run_id)
-            if outcome in ("done", "stopped"):
-                changed = bool(self._book.purge_closed(addr)) or changed
-            if outcome != "session_end":
-                changed = bool(box.finish_run()) or changed
+            how = "fallback" if outcome == "done" else "stopped"
+            for row in self._book.owed_by(addr):
+                changed = True
+                env = replies.get(row.rid)
+                if env is None:
+                    self._book.close(row.rid, "dropped")
+                    continue
+                self._book.close(row.rid, how, in_run=run_id)
+                self._deliver(env)
+            for row in self._book.open_requests(addr):
+                changed = True
+                self._book.close(row.rid, "run_ended", in_run=run_id)
+            changed = bool(self._book.purge_closed(addr)) or changed
+            changed = bool(box.finish_run()) or changed
             if changed:
                 self.cv.notify_all()
 

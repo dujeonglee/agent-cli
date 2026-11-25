@@ -78,7 +78,6 @@ def build_auditor(registry, *, parent_ctx, on_change=None) -> SessionAuditor | N
             mail={"kind": "harness", "job": job, "success": success, "output": output},
             text=output,
             author=job,
-            expects_reply=False,
         )
 
     jobs = HarnessJobs(

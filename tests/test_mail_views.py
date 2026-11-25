@@ -105,7 +105,6 @@ class TestQueuedFor:
             mail={"kind": "job", "output": "done"},
             text="done",
             author="harness",
-            expects_reply=False,
         )
         (m,) = reg.queued_for("harness:job-1")
         assert (m.src, m.text) == ("job", "done") and m.id.startswith("n-")

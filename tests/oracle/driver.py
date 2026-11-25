@@ -1553,43 +1553,6 @@ def s11_stop_everything(root: Path) -> dict:
     return s.collect(facts)
 
 
-def s12_hop_limit(root: Path) -> dict:
-    """§4 dropped(hop 상한): hop 6 으로 받은 요청의 회신(폴백)은 요청자에게 가지 않는다."""
-    box: dict = {}
-    p = Provider(
-        {
-            "MAIN": [
-                call("agent", mode="spawn", name="xx"),
-                call("agent", mode="spawn", name="yy"),
-                complete_all("spawned"),
-            ],
-            "TASK-M": [call("complete", result="hop done")] * 10,
-        }
-    )
-    s = box["s"] = Session(root, p, path="web")
-    s.say("MAIN go", nickname="dj")
-    facts: dict = {}
-
-    def done(s):
-        until(lambda: runs_ended(s) >= 1)
-        xx, yy = s.agent_keys()
-        until(lambda: s.agent_state(xx) == "idle" and s.agent_state(yy) == "idle")
-        facts["request"] = s.reg.request(yy, "TASK-M deep", author=f"agent:{xx}", hop=6)
-        until(
-            lambda: (
-                [r["handled"] for r in s.reg.roster_snapshot() if r["key"] == yy] == [1]
-            ),
-            "yy ran",
-        )
-        until(lambda: s.agent_state(yy) == "idle")
-        facts["xx_handled"] = [
-            r["handled"] for r in s.reg.roster_snapshot() if r["key"] == xx
-        ]
-
-    drive(s, path="web", until_done=done)
-    return s.collect(facts)
-
-
 def s13_wait_refusals_and_wakes(root: Path) -> dict:
     """§4 제자리 wait 거절·수락·깬 이유: 기다릴 것 없음 → 거절 / 메일이 이미 도착 → 거절(다음 턴에 배달) / 사람
     말에 깸(기다림은 그대로) / 회신에 깸 / 한가한 main 을 메일이 깨운다(메일 런). `[5d 에서 바뀜]` 첫 거절이 닫지 않은
@@ -1606,7 +1569,6 @@ def s13_wait_refusals_and_wakes(root: Path) -> dict:
             },
             text="",
             author="",
-            expects_reply=False,
         )
 
     def job_mail_then_wait(msgs):
@@ -1783,7 +1745,6 @@ def _job_mail(s: Session, n: int) -> str:
         },
         text="",
         author="",
-        expects_reply=False,
     )
 
 
@@ -3450,7 +3411,6 @@ SCENARIOS = {
     "s09_stop_square": s09_stop_square,
     "s10_kill_x": s10_kill_x,
     "s11_stop_everything": s11_stop_everything,
-    "s12_hop_limit": s12_hop_limit,
     "s13_wait": s13_wait_refusals_and_wakes,
     "s14_restart_query": lambda root: s14_restart_resume(root, query=True),
     "s14_restart_mail_run": lambda root: s14_restart_resume(root, query=False),

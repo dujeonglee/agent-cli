@@ -295,9 +295,6 @@ class MonitorRegistry:
             },
             text=report,
             author="main",
-            # 이 런의 산출물은 어디로도 되돌아가지 않는다 — 질문·독촉·peer
-            # 회신과 같은 의미다.
-            expects_reply=False,
         )
 
     # ── 평가 스레드 ────────────────────────────

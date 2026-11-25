@@ -31,7 +31,6 @@ def _job_notice(reg, n: int) -> str:
         mail={"kind": "job", "success": True, "output": f"🧵 job #{n} finished rc=0"},
         text="",
         author="",
-        expects_reply=False,
     )
 
 

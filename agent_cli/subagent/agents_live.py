@@ -115,20 +115,12 @@ def clamp_max_agents(value) -> int:
     return max(MAX_AGENTS_MIN, n)
 
 
-# 에이전트↔에이전트 메시지 재주입 상한 (v5.11). 배달된 회신은 terminal
-# (expects_reply=False)이라 자동으로 늘지 않으므로 이 상한은 에이전트들이
-# 명시적으로 서로 request 를 주고받는 사이클의 안전망일 뿐 — 데드락은
-# 비동기라 구조적으로 불가.
-_MAX_PEER_HOPS = 6
-
-
 def _debt_view(row) -> ReplyDebt:
     """장부의 빚 줄 → 옛 공개 모양(`ReplyDebt`). 갚은 줄(런 안에서 닫혀 남은 것)은 ``settled``."""
     return ReplyDebt(
         to=row.src,
         text=row.text,
         answers=list(row.answers),
-        hop=row.hop,
         settled=row.state == "closed",
         id=row.rid,
         closed_by=row.how or "",
@@ -751,7 +743,6 @@ class AgentRegistry(QuestionsMixin):
         text: str,
         *,
         answers: list | None = None,
-        hop: int = 0,
         id: str = "",
     ) -> ReplyDebt:
         """``debtor`` 가 ``to`` 에게 회신을 빚진다 — 요청마다 새 빚(v9.25.0).
@@ -771,7 +762,7 @@ class AgentRegistry(QuestionsMixin):
                     )
                 else:
                     row = self._post.owe(
-                        rid, debtor, to, text, hop=hop, answers=list(answers or [])
+                        rid, debtor, to, text, answers=list(answers or [])
                     )
             return _debt_view(row)
 
@@ -795,7 +786,7 @@ class AgentRegistry(QuestionsMixin):
     def _pay_debt(self, debtor: str, d: ReplyDebt, text: str) -> str:
         if debtor == "main":
             return self._deliver_peer_reply(
-                d.to.split(":", 1)[1], "main", text, 0, re=d.id, settles=d.id
+                d.to.split(":", 1)[1], "main", text, re=d.id, settles=d.id
             )
         key = debtor.split(":", 1)[1]
         if d.to == "main":
@@ -813,23 +804,21 @@ class AgentRegistry(QuestionsMixin):
         requester = d.to.split(":", 1)[1]
         out = self._outbound_line(key, text, to=requester)
         return self._deliver_peer_reply(
-            requester, key, text, 0, re=d.id, settles=d.id, lines=out
+            requester, key, text, re=d.id, settles=d.id, lines=out
         )
 
     def reply_facts(self, debtor: str, id: str) -> ReplyFacts:
         """`reply` 판정의 재료(`question_port.ReplyFacts`) — ``_cv`` 를 한 번 쥐고 뜬다. 런을 연 주소는 에이전트만
         안다(지금 런의 첫 항목 author); main 의 런은 펌프가 연다 — None. 읽기만 한다."""
         with self._cv:
-            known, opener = True, None
+            opener = None
             if debtor.startswith("agent:"):
                 tm = self._agents.get(debtor.split(":", 1)[1])
-                known = tm is not None
                 if (
                     tm is not None
                 ):  # 빈 author 도 "아는" 것이다 — 그 주소에게 진 줄이 없을 뿐
                     opener = str(tm.current_author or "")
             return ReplyFacts(
-                known=known,
                 owed=tuple(self.reply_debts(debtor)),
                 opener=opener,
                 opener_row=None if opener is None else self.reply_debt(debtor, opener),
@@ -1050,7 +1039,7 @@ class AgentRegistry(QuestionsMixin):
         """빚 하나의 폴백 회신 — 배달했으면 1. main 은 상대에게(받은편지함), 상주는 main(메일함)·요청자에게."""
         if debtor == "main":
             err = self._deliver_peer_reply(
-                d.to.split(":", 1)[1], "main", peer_summary, 0, re=d.id, settles=d.id
+                d.to.split(":", 1)[1], "main", peer_summary, re=d.id, settles=d.id
             )
             return 0 if err else 1
         key = debtor.split(":", 1)[1]
@@ -1070,7 +1059,7 @@ class AgentRegistry(QuestionsMixin):
             )
         else:
             self._deliver_peer_reply(
-                d.to.split(":", 1)[1], key, peer_summary, d.hop, re=d.id, settles=d.id
+                d.to.split(":", 1)[1], key, peer_summary, re=d.id, settles=d.id
             )
         return 1
 
@@ -1285,7 +1274,6 @@ class AgentRegistry(QuestionsMixin):
         message: str,
         *,
         author: str = "main",
-        hop: int = 0,
         expects_reply: bool = True,
         answers: list | None = None,
         images: list[dict] | None = None,
@@ -1328,7 +1316,6 @@ class AgentRegistry(QuestionsMixin):
         ``expects_reply`` (v5.11): 이 아이템 처리 후 산출물을 발신자에게
         되돌릴지. main/watch/user·peer 요청=True(회신 라우팅), 배달된 peer
         회신=False(terminal — 수신자는 소비만, 재라우팅 없음 → 핑퐁 방지).
-        ``hop`` 은 peer 재주입 깊이(_MAX_PEER_HOPS 안전망).
         """
         resolved = self.resolve_key(key)
         tm = self._agents.get(resolved) if resolved else None
@@ -1369,7 +1356,6 @@ class AgentRegistry(QuestionsMixin):
             "id": item_id,
             "text": message,
             "author": author,
-            "hop": hop,
             "expects_reply": expects_reply,
             # 발신 시각 — 🤝 창의 수신 줄(agent_msg "in", ts=send_ts)과
             # 작업 카드(begin_agent_work→scope_start 의 `nav_ts`)가 같은 값을 갖는다.
@@ -1564,7 +1550,6 @@ class AgentRegistry(QuestionsMixin):
                     author,
                     text,
                     answers=item.get("answers") or [],
-                    hop=item.get("hop", 0),
                     id=rid,
                 )
                 rec = {
@@ -1614,8 +1599,6 @@ class AgentRegistry(QuestionsMixin):
         mail: dict,
         text: str,
         author: str,
-        expects_reply: bool,
-        hop: int = 0,
     ) -> str:
         """주소 하나로 배달 — 백엔드 둘. 에러 문자열 또는 "".
 
@@ -1623,7 +1606,7 @@ class AgentRegistry(QuestionsMixin):
         한 곳으로 배달된다.
 
         main 은 메일함에 ``mail``(구조)을, 에이전트는 받은편지함에 ``text``(평문)를, private 주소는
-        private 메일함에 ``mail`` 을 받는다.
+        private 메일함에 ``mail`` 을 받는다. 통지라 받는 쪽은 회신을 빚지지 않는다(``expects_reply=False``).
         """
         try:
             if addr == "main":
@@ -1636,8 +1619,7 @@ class AgentRegistry(QuestionsMixin):
                     addr.split(":", 1)[1],
                     text,
                     author=author,
-                    expects_reply=expects_reply,
-                    hop=hop,
+                    expects_reply=False,
                     kind=str(mail.get("kind") or ""),
                     ledger=str(mail.get("ledger") or ""),
                 )
@@ -1705,7 +1687,6 @@ class AgentRegistry(QuestionsMixin):
         requester_key: str,
         from_key: str,
         output: str,
-        hop: int,
         *,
         re: str = "",
         mark: str = "",
@@ -1718,18 +1699,15 @@ class AgentRegistry(QuestionsMixin):
         ``from_key`` 는 에이전트 키 또는 ``"main"``(main 이 `reply` 로 갚을 때).
         ``expects_reply=False`` 로 넣어 요청자가 소비만 하고 되받아치지 않게
         한다(핑퐁 방지). 봉투(``reply``)가 무엇에 대한 회신인지(``re``) 적는다
-        (v10.77.0). 상한(_MAX_PEER_HOPS) 초과나 요청자 부재/사망 시 드롭 —
+        (v10.77.0). 요청자 부재/사망 시 드롭 —
         best-effort 배관(데드락은 비동기라 불가).
         """
-        if hop >= _MAX_PEER_HOPS:
-            return f"reply dropped — peer hop limit ({_MAX_PEER_HOPS}) reached"
         if not self._agent_alive(f"agent:{requester_key}"):
             return REPLY_REQUESTER_GONE.format(key=requester_key, rid=re)
         return self.request(
             requester_key,
             output,
             author="main" if from_key == "main" else f"agent:{from_key}",
-            hop=hop + 1,
             expects_reply=False,
             kind="reply",
             re=re,
@@ -2179,7 +2157,7 @@ class AgentRegistry(QuestionsMixin):
         for d in self.reply_debts(f"agent:{tm.key}"):
             text = reply_of(tm.key, d.id, d.text)
             self._send_stop_reply(  # 회신의 배달이 곧 갚음
-                tm, d.to, d.id, text, mark, hop=d.hop, answers=d.answers, settles=True
+                tm, d.to, d.id, text, mark, answers=d.answers, settles=True
             )
 
     def _answer_queued(
@@ -2206,7 +2184,6 @@ class AgentRegistry(QuestionsMixin):
                 str(it.get("id") or ""),
                 text,
                 mark,
-                hop=int(it.get("hop", 0) or 0),
             )
 
     def _send_stop_reply(
@@ -2217,7 +2194,6 @@ class AgentRegistry(QuestionsMixin):
         text: str,
         mark: str,
         *,
-        hop: int = 0,
         answers: list | None = None,
         settles: bool = False,
     ) -> None:
@@ -2249,7 +2225,6 @@ class AgentRegistry(QuestionsMixin):
                 to.split(":", 1)[1],
                 tm.key,
                 text,
-                hop,
                 re=rid,
                 mark=mark,
                 opens_run=tm.stop_replies_wake,
