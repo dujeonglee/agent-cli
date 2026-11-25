@@ -33,19 +33,10 @@ class TestDeliver:
         office.deliver(E.request("r-1", "main", A, "do"))
         assert _rows(office) == [("r-1", "queued", None)]
 
-    def test_main_n_items_open_their_row_at_put_too(self, office):
-        """수정 2: 닫는 법이 있는 봉투는 모두 put 때 줄이 선다 — main 앞 n- 도. 열린 요청(`open_requests`)은
-        picked 만 보이므로 밖에서는 "주입 때 생김" 과 같다."""
-        office.deliver(E.system("n-1", "job", "main", "done", opens_row=True))
-        assert _rows(office) == [("n-1", "queued", None)]
-        assert office.open_requests("main") == ()
-        office.absorb("main")
-        assert [r.rid for r in office.open_requests("main")] == ["n-1"]
-
     def test_notices_replies_and_checkins_open_no_row(self, office):
         office.deliver(E.notice("n-1", A, "main", "fyi"))
         office.deliver(E.reply("n-2", A, "main", "ok", re="r-0"))
-        office.deliver(E.system("n-3", "harness", A, "⏰", opens_row=False))
+        office.deliver(E.system("n-3", "harness", A, "⏰"))
         assert office.rows() == ()
 
     def test_a_duplicate_id_changes_nothing(self, office):
@@ -182,7 +173,7 @@ class TestOweAndTake:
         assert office.rows() == () and [e.re for e in office.queued(A)] == ["r-1"]
 
     def test_take_empties_a_private_box_without_holding(self, office):
-        office.deliver(E.system("n-1", "job", "harness:j", "done", opens_row=False))
+        office.deliver(E.system("n-1", "job", "harness:j", "done"))
         envs = office.take("harness:j")
         assert [e.id for e in envs] == ["n-1"]
         assert office.queued("harness:j") == () == office.taken("harness:j")

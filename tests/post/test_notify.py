@@ -72,7 +72,7 @@ def test_a_call_that_changes_something_wakes(office):
     assert (
         _notifies(office, lambda: office.end_run(A, run_id="r-1", outcome="done")) >= 1
     )
-    office.deliver(E.system("n-3", "job", "harness:j", "done", opens_row=False))
+    office.deliver(E.system("n-3", "job", "harness:j", "done"))
     assert _notifies(office, lambda: office.take("harness:j")) >= 1
     office.deliver(E.reply("n-4", A, "main", "ans", re="r-7"))
     assert _notifies(office, lambda: office.take_reply("main", "r-7")) >= 1

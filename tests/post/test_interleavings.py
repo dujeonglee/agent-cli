@@ -194,11 +194,11 @@ class TestOrders:
         sender = [
             (
                 "deliver",
-                {"e": E.system("n-1", "job", "harness:j", "a", opens_row=False)},
+                {"e": E.system("n-1", "job", "harness:j", "a")},
             ),
             (
                 "deliver",
-                {"e": E.system("n-2", "job", "harness:j", "b", opens_row=False)},
+                {"e": E.system("n-2", "job", "harness:j", "b")},
             ),
         ]
 

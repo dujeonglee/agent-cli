@@ -48,13 +48,7 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
             return E.reply(
                 nid("n"), src, dst, "ans", re=any_id(), wakes=rnd.random() < 0.7
             )
-        return E.system(
-            nid("n"),
-            "job",
-            dst,
-            "done",
-            opens_row=rnd.random() < 0.6,
-        )
+        return E.system(nid("n"), "job", dst, "done")
 
     ops: list[tuple[str, dict]] = []
     for _ in range(STEPS):

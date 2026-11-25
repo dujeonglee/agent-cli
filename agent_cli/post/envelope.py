@@ -170,22 +170,11 @@ def system(
     dst: str,
     text: str,
     *,
-    opens_row: bool,
     ts: float = 0.0,
     payload: Mapping[str, Any] | None = None,
 ) -> Envelope:
-    """하니스 통지 — 작업·모니터·감사·사망·체크인. ``opens_row`` 면 `complete` 로 닫는 줄(n-)이 선다(main 앞),
-    아니면 줄 없이 관찰로만(에이전트 앞·체크인)."""
-    return Envelope(
-        id,
-        "system",
-        src,
-        dst,
-        text,
-        closes_by="complete" if opens_row else None,
-        ts=ts,
-        payload=payload or _EMPTY,
-    )
+    """하니스 통지 — 작업·모니터·감사·사망·체크인. 줄이 없다(읽으면 끝)."""
+    return Envelope(id, "system", src, dst, text, ts=ts, payload=payload or _EMPTY)
 
 
 def is_human_words(env: Envelope) -> bool:

@@ -18,7 +18,6 @@ class Refused(Exception):
 KIND = {
     ("request", "reply"): "r",
     ("request", "complete"): "u",
-    ("system", "complete"): "n",
 }
 
 #: 런 안에서 닫는 방법 — 그 빚진 쪽의 런이 끝날 때까지 닫힌 채 남는다
@@ -51,7 +50,7 @@ def _may_close(kind: str, state: str, how: str) -> bool:
             "dropped",
             "died",
         }
-    if kind in ("u", "n"):
+    if kind == "u":
         return how in {"run_ended", "dropped"}
     return how in {"user_answered", "undeliverable"}  # q
 
@@ -173,11 +172,7 @@ class Model:
                 else:
                     self._close(rid, "dropped")
             for rid, r in list(self.rows.items()):
-                if (
-                    r["kind"] in ("u", "n")
-                    and r["state"] == "picked"
-                    and r["dst"] == addr
-                ):
+                if r["kind"] == "u" and r["state"] == "picked" and r["dst"] == addr:
                     self._close(rid, "run_ended", run_id)
             for rid, r in list(self.rows.items()):
                 if r["state"] == "closed" and r["dst"] == addr:

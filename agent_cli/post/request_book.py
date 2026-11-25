@@ -1,7 +1,7 @@
 """요청 장부 — 기다리는 상대가 있는 의무의 줄 (시안 §1·§3).
 
-줄 하나 = 누군가 기다린다: u-(사람이 기다림), r-(에이전트·main 이 회신을 기다림), n-(main 앞 하니스 통지 —
-main 의 답을 받을 사람이 기다림), q-(에이전트가 사람의 답을 기다림). 회신·통지·체크인은 줄이 없다.
+줄 하나 = 누군가 기다린다: u-(사람이 기다림), r-(에이전트·main 이 회신을 기다림), q-(에이전트가 사람의 답을
+기다림). 회신·통지·하니스 통지·체크인은 줄이 없다.
 줄의 종류는 봉투 머리(``kind``·``closes_by``)에서만 정한다 — 주소·id 문자열을 해석하지 않는다.
 
 상태: ``queued``(봉투가 받는 쪽 상자에 줄 섰다) → ``picked``(빚으로 적혔다 — 런이 집었다) → 닫힘. 닫힌 줄은
@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from agent_cli.post.envelope import Envelope
 
-RowKind = Literal["u", "n", "r", "q"]
+RowKind = Literal["u", "r", "q"]
 State = Literal["queued", "picked", "closed"]
 How = Literal[
     "reply",
@@ -38,19 +38,16 @@ How = Literal[
 ROW_KIND: dict[tuple[str, str], RowKind] = {
     ("request", "reply"): "r",
     ("request", "complete"): "u",
-    ("system", "complete"): "n",
 }
 
 #: (줄 종류, 상태) → 닫을 수 있는 방법. 없는 칸은 `RowError`.
 CLOSES: dict[tuple[RowKind, State], frozenset[str]] = {
     ("r", "queued"): frozenset({"removed", "dropped", "died"}),
     ("u", "queued"): frozenset({"dropped", "died"}),
-    ("n", "queued"): frozenset({"dropped", "died"}),
     ("r", "picked"): frozenset(
         {"reply", "unsent", "fallback", "stopped", "dropped", "died"}
     ),
     ("u", "picked"): frozenset({"run_ended", "dropped"}),
-    ("n", "picked"): frozenset({"run_ended", "dropped"}),
     ("q", "picked"): frozenset({"user_answered", "user_closed", "undeliverable"}),
 }
 
@@ -185,11 +182,11 @@ class RequestBook:
         )
 
     def open_requests(self, addr: str) -> tuple[Row, ...]:
-        """``addr`` 앞의 집힌 u·n 줄 — 연 순서. 그 런의 끝(`PostOffice.end_run`)이 run_ended 로 닫는다."""
+        """``addr`` 앞의 집힌 u 줄 — 연 순서. 그 런의 끝(`PostOffice.end_run`)이 run_ended 로 닫는다."""
         return tuple(
             r
             for r in self._rows.values()
-            if r.kind in ("u", "n") and r.state == "picked" and r.dst == addr
+            if r.kind == "u" and r.state == "picked" and r.dst == addr
         )
 
     def open_questions(self) -> tuple[Row, ...]:

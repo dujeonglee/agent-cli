@@ -163,7 +163,7 @@ class PostOffice:
         """``addr`` 의 런이 끝났다. 규칙 하나:
 
         - ``done``·``stopped``: 집힌 r 줄마다 ``replies`` 에 그 rid 가 있으면 그 회신을 배달하고 닫는다(``done`` →
-          fallback, ``stopped`` → stopped), 없으면 dropped. 집힌 u·n 줄은 run_ended. 들고 있던 봉투를 비우고,
+          fallback, ``stopped`` → stopped), 없으면 dropped. 집힌 u 줄은 run_ended. 들고 있던 봉투를 비우고,
           남겨 둔 닫힌 줄(명시 회신)을 버린다.
         - ``session_end`` [단계 5 에서 쓰임 — 지금 제품은 부르지 않는다]: 아무것도 건드리지 않는다 — 프로세스가 끝나면
           우편째 사라진다(재시작은 우편을 올리지 않는다, 5c-0).
