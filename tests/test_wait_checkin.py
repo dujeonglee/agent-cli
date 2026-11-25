@@ -411,6 +411,30 @@ class TestAgentLines:
             "A question to the user is answered by the user, not by you."
         )
 
+    def test_parked_debtor_blocked_only_on_a_human_question(self, reg, monkeypatch):
+        """잠든 채무자가 사람의 답만 기다린다 — 그의 질문이 그를 깨우므로 main 에게도 깨울 것이다(6a). 줄에는 그가
+        기다리는 이름이 없어 "itself waiting on" 구절이 빠지고, 질문 구절만 선다."""
+        _fake_agent(reg, "n", profile="reviewer")
+        reg.mark_waiting("agent:n")
+        reg.note_owes("agent:n", "main", "t", id="r-2")
+        qid, err = reg.register_question("n", "?")
+        assert not err
+        assert checkin_ids("main") == {"agent:n"}
+        asked = time.time()
+        with monkeypatch.context() as m:
+            m.setattr(time, "time", lambda: asked + 300)  # 5분 뒤의 알림
+            lines = reg.checkin_agent_lines("main", {})
+        assert lines == (
+            [
+                (
+                    "agent:n (reviewer) · owes you a reply · "
+                    f'blocked on question "{qid}" to the user, unanswered for 5m'
+                )
+            ],
+            True,
+            True,
+        )
+
     def test_busy_debtor_line(self, reg):
         _fake_agent(
             reg, "p", state="busy", current_author="agent:q", last_at=time.time() - 5

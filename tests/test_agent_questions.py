@@ -612,6 +612,7 @@ class TestQuestionPort:
             "reply",  # v9.21.0 — 빚진 회신을 갚는 표면. 레지스트리 노출은 아니다.
             "debts",  # v9.22.0 — main·상주 공통 회신 빚 목록 (v10.77.0: answer 빚 없음)
             "awaited",  # v10.141.0 — 보내 놓고 아직 못 받은 회신(장부의 기다리는 회신)
+            "open_questions",  # 6a — 내가 건 열린 질문(꼬리의 `## Your open questions`)
         }
         # 상주는 비블로킹, main 은 기존 블로킹 경로 (§8-④)
         assert port.nonblocking is True
@@ -848,7 +849,8 @@ class TestFlipDispatch:
         (q,) = reg.open_human_questions()
         assert q.text == "v1 or v2?" and q.target == "user"
         obs = "\n".join(str(m) for m in ctx.get_raw_messages())
-        assert "not blocked" in obs
+        # 관찰은 일어난 일만 — 묻고 나서 어디로 가나는 꼬리가 말한다(6a)
+        assert "not blocked" not in obs and "`complete`" not in obs
         assert q.id in obs  # 모델이 id 를 본다 → 같은 것을 되묻지 않는다
         # 사람이 트레이에서 답한다
         assert reg.answer_question(q.id, "v2", by="user:dj") == ""
@@ -1035,8 +1037,10 @@ class TestAskToUser:
         from agent_cli.prompts.system_prompt import _ASK_INLINE_RESIDENT as g
 
         assert "you will be reminded" not in g, "asker 는 독촉을 못 받는다"
-        assert "nobody chases them" in g
-        assert "cannot reach a run that is still going" in g
+        assert "nobody chases them" in " ".join(g.split())
+        assert "cannot reach a run that is still going" not in g, (
+            "6a — 답은 기다리는 런을 깨운다"
+        )
         assert "`ask` reaches only the person" in g and "`message`" in g
         assert "`to`" not in g
         assert not HANGUL.findall(g)

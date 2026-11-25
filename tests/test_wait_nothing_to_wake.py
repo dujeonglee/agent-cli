@@ -43,7 +43,7 @@ WAIT = {"action": "wait"}
 #: 빚도 깨울 것도 없다 — 받아들여 작업 구간이 끝난다. 누구에게나 같은 글이다(종류마다 갈리던 끝맺음이 없다)
 NOTHING_TO_WAIT_FOR = (
     "Observation: nothing to wait for: no job or monitor of yours is running, no agent "
-    "owes you a reply, and you owe none. This run has ended."
+    "owes you a reply, no question of yours is open, and you owe none. This run has ended."
 )
 
 

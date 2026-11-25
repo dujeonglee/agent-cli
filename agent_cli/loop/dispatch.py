@@ -1125,7 +1125,7 @@ class TurnDispatcher:
         깨울 것(`ports.mailbox.wake_sources`)이 있으면: 호출과 관찰을 기록하고(히스토리는 보통의 op + 관찰
         모양 — 새 카드 종류 없이 재생·resume 이 그대로 그린다) **그 자리에서** 깨울 것이 올 때까지 막는다
         (`_wait_in_place`). 깨면 같은 런이 잇는다 — 다음 턴 경계의 흡수(`kind.intake`)가 깨운 것을 넣고, 장부는
-        그대로다(같은 런). main·상주·run 에이전트·하니스 작업, 기다리는 것이 회신·작업·모니터 무엇이든 같다.
+        그대로다(같은 런). main·상주·run 에이전트·하니스 작업, 기다리는 것이 회신·작업·모니터·내가 건 질문 무엇이든 같다.
         없으면 물음은 하나다(5d) — 닫지 않은 것이 있나: 갚지 않은 회신(`ledger.debts` — `r-`)과 답하지 않은 사람의
         요청(`ledger.unanswered_human_request_ids` — `u-`, `complete` 의 `answers` 로 닫는 것). 있으면 그 번호를 말하는
         거절 관찰을 남기고 런을 잇는다. 없으면 받아들인다 — 관찰 한 줄을 기록하고 빈 결과의 성공으로 작업 구간을 끝낸다
@@ -1487,8 +1487,8 @@ class TurnDispatcher:
         """상주 에이전트의 ``ask`` — **막지 않는다** (DESIGN.md §3.1).
 
         질문을 사람의 트레이에 올리고 즉시 관찰을 돌려준다. 답은 나중에 새
-        메시지(= 새 런)로 오고, 그때 이 에이전트의 ctx 는 그대로라 하던 일을
-        잇는다. 주소는 언제나 사람이다(v10.77.0, B) — 종전의 ``to`` 는 지웠다.
+        메시지로 온다 — `wait` 로 기다리면 그 답이 같은 런을 깨우고(6a), 런이 끝났으면 새 런을 연다. 어느 쪽이든
+        이 에이전트의 ctx 는 그대로라 하던 일을 잇는다. 주소는 언제나 사람이다(v10.77.0, B) — 종전의 ``to`` 는 지웠다.
         """
         lines = []
         refused = 0
@@ -1499,12 +1499,8 @@ class TurnDispatcher:
                 lines.append(f"could not ask: {err}")
             else:
                 lines.append(f'question "{qid}" sent — "{q}"')
-        obs = (
-            "\n".join(lines)
-            + "\nYou are not blocked. Continue with whatever does not depend "
-            "on the answer; it will arrive as a new message. If nothing else "
-            "can proceed, `complete` — you will be resumed when it arrives."
-        )
+        # 관찰은 일어난 일만 — 묻고 나서 어디로 가나는 질문이 열린 동안 꼬리의 ``## Your open questions`` 가 말한다(6a)
+        obs = "\n".join(lines)
         # 질문이 전부 올라갔을 때만 성공으로 적는다 — ``_op_message`` 와 같다. 관찰 글은 그대로다.
         return self._emit_obs(record, accumulate, "ask", obs, not refused)
 

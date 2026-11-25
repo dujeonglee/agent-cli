@@ -439,7 +439,7 @@ class TestResidentRefuses:
         )
         assert text.endswith(
             "Observation: nothing to wait for: no job or monitor of yours is running, no "
-            "agent owes you a reply, and you owe none. This run has ended."
+            "agent owes you a reply, no question of yours is open, and you owe none. This run has ended."
         )
         reg, key = resident["reg"], resident["key"]
         replies = [m.get("output") for m in absorbed_mail(reg)]

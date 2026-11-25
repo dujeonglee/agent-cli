@@ -186,6 +186,7 @@ def build_session_state(
     web_sources: str = "",
     items: str = "",
     jobs: str = "",
+    questions: str = "",
     guidelines: str = "",
     reports_to_caller: bool = False,
     compaction_notice: bool = False,
@@ -222,6 +223,10 @@ def build_session_state(
     and the model reads it nowhere near the moment it calls ``complete`` (live
     session cgyx7z). The tail is re-read every turn and is not persisted.
 
+    ``questions`` (6a) is the ``## Your open questions`` block
+    (``Ledger.questions_block``) — the loop's own open questions to the person,
+    only while one is open; it says where to go while the answer is pending.
+
     ``agents`` / ``memory`` are the already-rendered sections
     (``build_live_agents_section(include_state=True)`` / ``memory.render_index``)
     — passed in rather than fetched here so this stays a pure function and the
@@ -236,6 +241,7 @@ def build_session_state(
         for b in (
             items.strip(),
             jobs.strip(),
+            questions.strip(),
             agents.strip(),
             memory.strip(),
             web_sources.strip(),

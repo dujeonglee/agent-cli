@@ -49,6 +49,16 @@ _TAIL_WAIT = (
 )
 
 
+#: 내가 사람에게 건 열린 질문의 꼬리 블록 머리 (6a) — 질문이 열린 턴에만 선다. 질문은 항목이 아니다: 모델이 닫지
+#: 않고(사람이 답하거나 닫는다) `complete` 를 되돌리지 않는다. 그래서 ``## Open Items`` 밖에 선다 — 머리·꼬리말의
+#: "닫는 순서"·"모두 닫힐 때까지" 가 질문에는 거짓이다. 묻고 나서 어디로 가나(기다리지 말고 할 수 있는 데까지, 더
+#: 못 나아가면 `wait`)는 이 머리 한 곳에서만 말한다 — `ask` 의 관찰·설명·안내는 말하지 않는다.
+OPEN_QUESTIONS_HEAD = (
+    "## Your open questions (do not wait for the answer: do what you can without "
+    "it, and call `wait` only when you cannot go further)"
+)
+
+
 #: ``complete`` 절의 끝, 닫는 줄 바로 아래 (v10.75.0) — result 의 모양. 도구 설명의
 #: 같은 틀은 GLM 8/8 · 35B 0/8 이었다: 35B 는 머리의 형식을 고른 뒤에야 읽고,
 #: 꼬리는 complete 를 고르는 그 순간에 읽는다.
@@ -164,7 +174,7 @@ class Ledger:
         return [r for r in self.requests if str(r.get("id")) in claimed]
 
     def debts(self) -> list[dict]:
-        """아직 갚지 않은 회신·질문 빚 — 포트가 없거나 깨지면 빈 목록."""
+        """아직 갚지 않은 회신 빚(r-) — 포트가 없거나 깨지면 빈 목록."""
         from agent_cli.constants import open_debts
 
         return open_debts(self._port)
@@ -172,7 +182,20 @@ class Ledger:
     def awaited(self) -> list[dict]:
         """보내 놓고 아직 받지 못한 회신 ``[{"id", "from", "text"}]`` — 빚과 같은 질문 포트로
         읽는다. 포트가 없거나 깨지면 빈 목록."""
-        fn = getattr(self._port, "awaited", None) if self._port is not None else None
+        return self._from_port("awaited")
+
+    def questions_block(self, *, can_wait: bool) -> str:
+        """``## Your open questions`` (6a) — 이 주체가 사람에게 건 열린 질문, 연 순서. 없으면 빈 문자열. 머리가
+        `wait` 를 말하므로 `wait` 가 있는 루프에만(``can_wait`` — `block` 의 꼬리말과 같은 조건)."""
+        questions = self._from_port("open_questions") if can_wait else []
+        if not questions:
+            return ""
+        lines = [f'- "{qid}" · "{_head(text)}"' for qid, text in questions]
+        return "\n".join([OPEN_QUESTIONS_HEAD, *lines])
+
+    def _from_port(self, name: str) -> list:
+        """질문 포트의 목록 하나 — 포트가 없거나, 그 이름이 없거나, 깨지면 빈 목록."""
+        fn = getattr(self._port, name, None) if self._port is not None else None
         try:
             return list(fn()) if callable(fn) else []
         except Exception:
@@ -231,15 +254,13 @@ class Ledger:
             did = str(d.get("id") or "")
             if not did:
                 continue
-            question = item_ids.prefix_of(did) == item_ids.QUESTION
             items.append(
                 {
                     "id": did,
-                    "source": "question" if question else "debt",
+                    "source": "debt",
                     "who": str(d.get("to") or "").split(":", 1)[-1],
                     "head": _head(d.get("text")),
-                    # q- 는 모델이 닫지 않는다 — 사람이 트레이에서 답한다
-                    "closer": "answer" if question else item_ids.closer_of(did),
+                    "closer": item_ids.closer_of(did),
                     "turns": None,
                     "hidx": None,
                 }

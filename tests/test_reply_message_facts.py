@@ -267,13 +267,6 @@ class TestMessageIsRecordedAsWhatHappened:
             reg.shutdown_all()
 
 
-_NOT_BLOCKED = (
-    "\nYou are not blocked. Continue with whatever does not depend "
-    "on the answer; it will arrive as a new message. If nothing else "
-    "can proceed, `complete` — you will be resumed when it arrives."
-)
-
-
 class TestResidentAskIsRecordedAsWhatHappened:
     """상주 에이전트의 막지 않는 ``ask`` — 질문이 전부 올라갔을 때만 성공.
 
@@ -306,7 +299,7 @@ class TestResidentAskIsRecordedAsWhatHappened:
             q1, q2 = self._qid(reg, "first?"), self._qid(reg, "second?")
             assert obs["content"] == (
                 f'Observation: question "{q1}" sent — "first?"\n'
-                f'question "{q2}" sent — "second?"' + _NOT_BLOCKED
+                f'question "{q2}" sent — "second?"'
             )
         finally:
             door.set()
@@ -321,7 +314,7 @@ class TestResidentAskIsRecordedAsWhatHappened:
             q1 = self._qid(reg, "first?")
             assert obs["content"] == (
                 f'Observation: question "{q1}" sent — "first?"\n'
-                "could not ask: empty question" + _NOT_BLOCKED
+                "could not ask: empty question"
             )
         finally:
             door.set()

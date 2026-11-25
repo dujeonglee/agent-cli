@@ -245,7 +245,10 @@ class LLMCaller:
         # 합쳐진 런에서만 걸려 90% 런의 턴·각주는 안 는다.
         # `wait` 는 깨울 길이 있는 루프에만 광고된다(`requires_handler="wake"`) —
         # 그 루프에서만 "못 닫으면 wait" 를 꼬리말에 붙인다 (v10.67.1).
-        items = self.state.ledger.block(can_wait="wait" in self.cfg.tools_list)
+        can_wait = "wait" in self.cfg.tools_list
+        items = self.state.ledger.block(can_wait=can_wait)
+        # 내가 사람에게 건 열린 질문 (6a) — 질문이 열린 턴에만 선다
+        questions = self.state.ledger.questions_block(can_wait=can_wait)
         used = self.ctx.get_estimated_tokens() if self.ctx else 0
         notice, self._compaction_armed = compaction_notice_due(
             used, budget, self._compaction_armed
@@ -274,6 +277,7 @@ class LLMCaller:
             web_sources=web,
             items=items,
             jobs=jobs,
+            questions=questions,
             guidelines=TASK_GUIDELINES,
             reports_to_caller=self.cfg.kind.prompt_profile().reports_to_caller,
         )

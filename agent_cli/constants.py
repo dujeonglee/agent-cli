@@ -95,7 +95,7 @@ RESTART_NOTICE = (
 
 
 def open_debts(port) -> list[dict]:
-    """The run's unpaid message/ask debts through its question port — ``[]``
+    """The run's unpaid reply debts (r-) through its question port — ``[]``
     without a port (v9.22.0 ledger; one reader for the ``complete`` refusal
     and the per-turn tail)."""
     fn = getattr(port, "debts", None) if port is not None else None

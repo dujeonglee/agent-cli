@@ -42,7 +42,6 @@ class _Port:
 
 
 _REPLY = {"kind": "reply", "to": "agent:agt-a", "id": "r-4", "text": "검토해 줘"}
-_QUESTION = {"kind": "answer", "to": "agt-b", "id": "q-7a3f", "text": "할인 상한은?"}
 
 
 def _events(conn) -> list[tuple[str, dict]]:
@@ -106,11 +105,11 @@ class TestSnapshot:
 
     def test_debts_come_first_like_the_tail(self):
         lg = Ledger()
-        lg.bind_questions(_Port([_REPLY, _QUESTION]))
+        lg.bind_questions(_Port([_REPLY]))
         lg.add_request("u-1", "dj", "A")
         items = lg.snapshot(1)["items"]
-        assert [i["id"] for i in items] == ["r-4", "q-7a3f", "u-1"]
-        r, q = items[0], items[1]
+        assert [i["id"] for i in items] == ["r-4", "u-1"]
+        r = items[0]
         assert (r["source"], r["who"], r["closer"], r["turns"]) == (
             "debt",
             "agt-a",
@@ -118,7 +117,6 @@ class TestSnapshot:
             None,
         )
         assert r["head"] == "검토해 줘"
-        assert (q["source"], q["closer"]) == ("question", "answer")
 
     def test_budget_follows_spend_and_settle_closes(self):
         lg = Ledger()
