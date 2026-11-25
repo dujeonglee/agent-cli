@@ -8,7 +8,7 @@ f44cf539(v10.143.0) 에서 만든 기대값이 그 뒤의 구조 교체(우편�
 조회도 쓰지 않는다(f44cf539 에 없는 표면). 가드 테스트(`test_oracle.py`)가 import 목록을 고정한다.
 
 담는 것: 배우(main·에이전트)마다 provider 호출의 마지막 메시지(꼬리의 `## Open Items` 가 여기 있다),
-세션 폴더의 `history.jsonl`(모델 레코드 — content·source·tool·request_id·answers)과 `conversation.jsonl`,
+세션 폴더의 `history.jsonl`(모델 레코드 — content·source·tool·request_id)과 `conversation.jsonl`,
 렌더러 이벤트(스레드별 열), 시나리오가 직접 본 결과(도구 결과·재시작 뒤 사실). `agents.json` 바이트는
 담지 않는다.
 
@@ -70,7 +70,6 @@ EVENTS = frozenset(
         "note_request",
         "note_items_closed_after",
         "push_user_message",
-        "set_run_authors",
     }
 )
 
@@ -560,7 +559,6 @@ class Session:
                             "source",
                             "tool",
                             "request_id",
-                            "answers",
                             "success",
                         )
                         if k in r

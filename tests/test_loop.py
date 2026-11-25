@@ -4720,11 +4720,9 @@ class TestPR3Collaborators:
         assert loop._dispatch.tools is loop._tools
 
 
-class TestRunAuthors:
-    """v8.2.0 complete-attribution: ``run_authors`` = the USERS whose asks this
-    run services (starter + injected plain chat). The loop owns the set and
-    mirrors it to the web renderer (``set_run_authors``) so the final's
-    ``answers`` field is stamped at the origin of the fact."""
+class TestUserMessageRecords:
+    """사람의 말이 레코드가 되는 모양 — ``[닉]: 글`` 라벨·``author``·사람이 아닌 발신의
+    ``author_is_user: False`` 표시(재생이 말풍선으로 그리지 않는 근거), 라우팅된 명령은 레코드 없음."""
 
     def _loop(self, caps, **kw):
         from tests.loopkit import make_loop
@@ -4737,18 +4735,10 @@ class TestRunAuthors:
             **split_ports(kw),
         )
 
-    def test_user_author_accumulates_and_dedupes(self, caps):
-        loop = self._loop(caps)
-        loop._add_user_message("q1", "Bob")
-        loop._add_user_message("q2", "두정")
-        loop._add_user_message("q3", "Bob")  # repeat → no dup
-        assert loop.run_authors == ["Bob", "두정"]
-
     def test_non_user_author_is_excluded_and_flagged(self, caps):
         # 🤝 agent-report starter: label kept, attribution + history flagged.
         loop = self._loop(caps)
         loop._add_user_message("reply arrived", "🤝 agent", is_user=False)
-        assert loop.run_authors == []
         rec = loop.messages[-1]
         assert rec["content"].startswith("[🤝 agent]:")
         assert rec["author"] == "🤝 agent"
@@ -4763,20 +4753,15 @@ class TestRunAuthors:
     def test_authorless_message_stays_raw(self, caps):
         loop = self._loop(caps)
         loop._add_user_message("plain")
-        assert loop.run_authors == []
         assert loop.messages[-1] == {"role": "user", "content": "plain"}
 
     def _with_stub_renderer(self):
-        """Swap in a renderer stub recording set_run_authors calls."""
+        """Swap in a renderer stub recording push_user_message calls."""
         from agent_cli import render
 
         class _Stub:
             def __init__(self):
-                self.author_sets = []
                 self.pushed = []
-
-            def set_run_authors(self, authors):
-                self.author_sets.append(list(authors))
 
             def push_user_message(self, content, author="", hidx=None, images=None):
                 self.pushed.append((content, author))
@@ -4786,32 +4771,7 @@ class TestRunAuthors:
         render.set_renderer(stub)
         return stub, prev
 
-    def test_web_loop_mirrors_authors_to_renderer(self, caps):
-        from agent_cli import render
-
-        stub, prev = self._with_stub_renderer()
-        try:
-            loop = self._loop(caps, inbox=queue_inbox(lambda: None))
-            loop._add_user_message("q1", "Bob")
-            loop._add_user_message("q2", "두정")
-            assert stub.author_sets == [["Bob"], ["Bob", "두정"]]
-        finally:
-            render.set_renderer(prev)
-
-    def test_sub_loop_never_touches_renderer_attribution(self, caps):
-        # No dequeue (CLI main / every sub-loop) → no set_run_authors calls,
-        # so a skill/delegate loop can't clobber the main run's attribution.
-        from agent_cli import render
-
-        stub, prev = self._with_stub_renderer()
-        try:
-            loop = self._loop(caps)  # inbox=queue_inbox(None)
-            loop._add_user_message("task prompt", "Bob")
-            assert stub.author_sets == []
-        finally:
-            render.set_renderer(prev)
-
-    def test_injected_chat_echoes_author_and_accumulates(self, caps):
+    def test_injected_chat_echoes_author_and_is_recorded(self, caps):
         from agent_cli import render
 
         stub, prev = self._with_stub_renderer()
@@ -4820,9 +4780,7 @@ class TestRunAuthors:
             loop = self._loop(
                 caps, inbox=queue_inbox(lambda: items.pop() if items else None)
             )
-            loop.run_authors.append("Bob")  # as the starter would have
             loop._intake()
-            assert loop.run_authors == ["Bob", "두정"]
             assert stub.pushed == [("[두정]: steer it", "두정")]
             rec = loop.messages[-1]
             assert (rec["role"], rec["content"], rec["author"]) == (
@@ -4831,7 +4789,6 @@ class TestRunAuthors:
                 "두정",
             )
             assert "author_is_user" not in rec
-            assert stub.author_sets[-1] == ["Bob", "두정"]
         finally:
             render.set_renderer(prev)
 
@@ -4849,9 +4806,8 @@ class TestRunAuthors:
         )
         assert any(legacy.startswith(p) for p in all_system_user_prefixes())
 
-    def test_injected_routed_command_does_not_attribute(self, caps):
-        # A routed command (/sh, @agent…) executes — it is not an ask the
-        # final answers, and it writes no user record (replay parity).
+    def test_injected_routed_command_writes_no_user_record(self, caps):
+        # A routed command (/sh, @agent…) executes — it writes no user record (replay parity).
         from agent_cli import render
 
         stub, prev = self._with_stub_renderer()
@@ -4863,149 +4819,34 @@ class TestRunAuthors:
                 route_message=lambda text, item: True,
             )
             loop._intake()
-            assert loop.run_authors == []
             assert not any("/compact" in str(m.get("content")) for m in loop.messages)
             # …but the echo still shows who sent it (user lane mark).
             assert stub.pushed == [("[두정]: /compact", "두정")]
         finally:
             render.set_renderer(prev)
 
-    def test_query_author_is_user_false_excludes_starter(self, caps):
+    def test_query_author_is_user_false_flags_the_starter(self, caps):
         loop = self._loop(caps, query_author="🤝 agent", query_author_is_user=False)
         loop._add_user_message(loop.query, loop.query_author, is_user=False)
-        assert loop.run_authors == []
         assert loop.messages[-1]["author_is_user"] is False
 
 
-class TestMailAnswersInheritance:
-    """귀속 승계 소비측 (v8.5.0) — 회신이 실어온 원 요청자들이 회신을 접는
-    런의 run_authors 에 합류한다. 🤝 웨이크 런(시작 authors 빈)과 실행 중
-    턴경계 배달이 같은 지점(_deliver_agent_mail)으로 커버."""
-
-    class _StubRegistry:
-        def __init__(self, replies):
-            self._replies = replies
-            self.author_sets = []
-
-        def absorb_main(self):
-            out, self._replies = self._replies, []
-            return [{"mail": r} for r in out]
-
-        def set_current_run_authors(self, authors):
-            self.author_sets.append(list(authors))
-
-        def get(self, key):
-            return None  # build_reply_record 의 배달-시점 상태 줄 생략 경로
-
-    def _reply(self, answers, key="w1", output="done"):
-        return {
-            "kind": "reply",
-            "key": key,
-            "profile": "code-writer",
-            "run": "r-1",
-            "success": True,
-            "output": output,
-            "duration_s": 0.1,
-            "reply_path": "",
-            "answers": answers,
-        }
-
-    def _loop(self, caps, registry, **kw):
-        from tests.loopkit import make_loop
-
-        return make_loop(
-            query="Q",
-            provider=MagicMock(),
-            capabilities=caps,
-            model="m",
-            **split_ports({"agent_registry": registry, **kw}),
-        )
-
-    def test_wake_run_inherits_reply_answers(self, caps):
-        # 🤝 런: 시작 authors 빈 상태에서 배달이 원 요청자를 채운다.
-        from agent_cli import render
-
-        class _Stub:
-            def __init__(self):
-                self.author_sets = []
-
-            def set_run_authors(self, authors):
-                self.author_sets.append(list(authors))
-
-            def push_user_message(self, content, author="", hidx=None, images=None):
-                pass
-
-        stub = _Stub()
-        prev = render.get_renderer()
-        render.set_renderer(stub)
-        try:
-            reg = self._StubRegistry([self._reply(["Bob"])])
-            loop = self._loop(caps, reg, inbox=queue_inbox(lambda: None))
-            loop._intake()
-            assert loop.run_authors == ["Bob"]
-            assert stub.author_sets[-1] == ["Bob"]
-            assert reg.author_sets[-1] == ["Bob"]
-        finally:
-            render.set_renderer(prev)
-
-    def test_midrun_delivery_merges_into_existing_authors(self, caps):
-        # 두정 런 실행 중 Bob 요청의 회신이 배달 → 합집합 (교차 오염이 아니라
-        # 그 런의 답이 실제로 두 사람 건을 다루게 된 것).
-        reg = self._StubRegistry([self._reply(["Bob"])])
-        loop = self._loop(caps, reg)
-        loop.run_authors.append("두정")
-        loop._intake()
-        assert loop.run_authors == ["두정", "Bob"]
-
-    def test_multiple_replies_union_dedup(self, caps):
-        reg = self._StubRegistry(
-            [self._reply(["Bob"]), self._reply(["Bob", "Ann"], key="w2")]
-        )
-        loop = self._loop(caps, reg)
-        loop._intake()
-        assert loop.run_authors == ["Bob", "Ann"]
-
-    def test_delivery_persists_answers_on_ctx_record(self, caps, tmp_path):
-        # resume 파리티: 합류한 answers 가 관찰 레코드에 additive 로 실려
-        # 히스토리에 남는다 (재생이 같은 집합을 재도출하는 근거).
-        from agent_cli.context.manager import ContextManager
-
-        ctx = ContextManager(session_dir=tmp_path)
-        reg = self._StubRegistry([self._reply(["Bob"])])
-        loop = self._loop(caps, reg, ctx=ctx)
-        loop._intake()
-        recs = ctx.get_raw_messages()
-        obs = [r for r in recs if r.get("tool") == "agent"]
-        assert obs and obs[-1]["answers"] == ["Bob"]
-
-    def test_answerless_reply_is_noop(self, caps):
-        # 구버전 회신(answers 키 없음 — resume 하위호환)도 안전.
-        r = self._reply([])
-        del r["answers"]
-        reg = self._StubRegistry([r])
-        loop = self._loop(caps, reg)
-        loop._intake()
-        assert loop.run_authors == []
-
-
 class TestRendererAbcPromotion:
-    """v8.6.0 — push_user_message/set_run_authors 의 ABC 승격: 코어는 ABC
-    표면만 알고 무조건 호출한다(hasattr 게이트 제거). CLI(minimal)는 no-op
-    기본을 상속하므로 web 전용 의미론이 흘러 들어와도 안전해야 한다."""
+    """v8.6.0 — push_user_message 의 ABC 승격: 코어는 ABC 표면만 알고 무조건
+    호출한다(hasattr 게이트 제거). CLI(minimal)는 no-op 기본을 상속하므로 web 전용
+    의미론이 흘러 들어와도 안전해야 한다."""
 
-    def test_abc_defines_both_as_noop_defaults(self):
+    def test_abc_defines_push_user_message_as_noop_default(self):
         from rich.console import Console
 
         from agent_cli.render.base import Renderer
         from agent_cli.render.minimal import MinimalRenderer
 
         assert hasattr(Renderer, "push_user_message")
-        assert hasattr(Renderer, "set_run_authors")
         r = MinimalRenderer(Console())
         r.push_user_message("[Bob]: hi", author="Bob")  # no-op, 예외 없음
-        r.set_run_authors(["Bob"])
 
-    def test_mirror_and_injection_safe_on_cli_renderer(self, caps):
+    def test_injection_safe_on_cli_renderer(self, caps):
         # CLI 렌더러가 활성인 채로 web 경로 코드가 돌아도 (이론상 조합)
         # 게이트 없이 그대로 통과해야 한다.
         from rich.console import Console
@@ -5028,7 +4869,6 @@ class TestRendererAbcPromotion:
                 ),
             )
             loop._intake()  # push_user_message → no-op
-            assert loop.run_authors == ["Bob"]
             assert loop.messages[-1]["content"] == "[Bob]: steer"
         finally:
             render.set_renderer(prev)

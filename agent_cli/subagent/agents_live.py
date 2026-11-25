@@ -372,12 +372,6 @@ class AgentRegistry(QuestionsMixin):
         #: 백그라운드 작업 레지스트리 (v10.47.0) — `wire_job_delivery` 가 꽂는다;
         #: 워커 종료가 `_drop_monitors` 와 같은 자리에서 그 에이전트의 작업을 죽인다
         self.jobs = None
-        # 귀속 승계 (v8.5.0): 현재 런이 서비스 중인 USER 들 — worker 가 런
-        # 시작에, main 루프가 조향 주입마다 갱신. main 발신 request 가 이
-        # 스냅샷을 아이템에 실어 보내고, 그 회신이 그대로 되가져와 회신을
-        # 소비한 런의 ``answers`` 에 합류한다(🤝 웨이크 런 포함). 시간이
-        # 아니라 요청↔회신 쌍에 묶이므로 인터리빙에 안전.
-        self._current_run_authors: list[str] = []
         # 열린 질문(비동기 ask/answer, DESIGN.md §3)은 우편 장부의 q 줄이다 — ``meta`` 가 `Question`(v10.145.0).
         # 답은 줄을 닫는 것과 배달이 한 락 구간이라(`PostOffice.answer`) 동시 답변자 둘 중 하나만 답이 된다.
         # 빚·보낸 쪽 기록·받은편지함·main 메일함은 우편 하나다(`self._post` — 약속 장부와 상자, v10.145.0).
@@ -392,11 +386,6 @@ class AgentRegistry(QuestionsMixin):
         self.checkin_timer_factory: Callable[..., threading.Timer] = threading.Timer
 
     # ── 조회 ────────────────────────────────────
-
-    def set_current_run_authors(self, authors: list[str]) -> None:
-        """현재 런의 요청자 목록 갱신 (귀속 승계 — ``_current_run_authors``
-        주석 참조). worker(런 시작)와 main 루프(조향 주입)가 호출한다."""
-        self._current_run_authors = list(authors)
 
     def get(self, key: str) -> AgentInstance | None:
         return self._agents.get(key)
@@ -1379,12 +1368,6 @@ class AgentRegistry(QuestionsMixin):
             item["images"] = [dict(r) for r in images]
         if answers is not None:
             item["answers"] = list(answers)
-        elif author == "main":
-            # 귀속 승계: 이 요청을 만든 런의 USER 들을 요청에 스냅샷 —
-            # 회신이 그대로 되가져와, 회신을 접는 런(🤝 웨이크 포함)의
-            # 최종답이 원 요청자에게 귀속된다. peer/user 발신은 회신이
-            # main mailbox 로 안 가므로 스냅샷 불필요.
-            item["answers"] = list(self._current_run_authors)
         # 답이든 일감이든 **항상** 창·로그·로스터에 남긴다 — 답만 건너뛰면
         # 🤝 창과 conversation.jsonl(=resume 재생 소스)에서 사라진다. 기록은 넣기와 한 구간(`_enqueue`).
         payload = {

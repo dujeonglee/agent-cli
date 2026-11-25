@@ -125,11 +125,9 @@ class AgentLoop:
         # 어디서 받을지는 종류가 정한다(`kind.intake`, v10.88.0); 라우팅은 엔진의 것.
         self.route_message = ports.route_message
         # ``query_author_is_user`` — False for a 🤝 agent-report wake-up: its
-        # "author" is a display label, not a user, so it must not enter the
-        # run's ``answers`` attribution. ``run_authors`` = the users whose asks
-        # this run services (starter + injected plain chat, first-seen order);
-        # mirrored to the web renderer via ``set_run_authors`` so the final's
-        # ``answers`` field is stamped by whoever owns the fact (this loop).
+        # "author" is a display label, not a user — the ledger does not take it
+        # as a request and the record is flagged (``author_is_user``) so replay
+        # does not draw it as a user bubble.
         self.query_author_is_user = start.author_is_user
         #: 시작 메시지에 딸린 이미지 참조 (v10.59.0, `run --image`).
         self.query_images = list(start.images)
@@ -141,7 +139,6 @@ class AgentLoop:
         # 유형별 일관성: 사용자 요청은 어디로 오든 `complete` 과 짝이다.
         self.user_requests = list(start.user_requests)
         self._opening = start.opening
-        self.run_authors: list[str] = []
         self.provider = binding.provider  # 엔드포인트 객체는 세션 수명 — 모델만 바뀐다
         self.ctx = ctx
 
@@ -668,9 +665,9 @@ class AgentLoop:
         (a nickname) is prefixed only when truthy — CLI / single-user stays raw.
 
         ``is_user=False`` marks an author that is a display label, not a user
-        (the 🤝 agent-report starter): it keeps the ``[author]:`` label but is
-        excluded from ``run_authors`` (the final's ``answers`` attribution)
-        and flagged in the history record so resume replay excludes it too.
+        (the 🤝 agent-report starter): it keeps the ``[author]:`` label and is
+        flagged in the history record so resume replay does not draw it as a
+        user bubble.
 
         ``request_id`` (v9.19.0) stamps the queue id this message came in
         with — the **missing link** in the accounting. The id reached
@@ -708,9 +705,6 @@ class AgentLoop:
                 self._note_request_record(request_id)
         else:
             self.messages.append(record)
-        if author and is_user and author not in self.run_authors:
-            self.run_authors.append(author)
-        self._mirror_run_authors()
 
     def _note_request_record(self, request_id: str) -> None:
         """방금 기록한 레코드가 장부 항목 ``request_id`` 의 원문이다 — 렌더러가 그
@@ -724,21 +718,6 @@ class AgentLoop:
         from agent_cli.render import get_renderer
 
         get_renderer().note_request(request_id, hidx)
-
-    def _mirror_run_authors(self) -> None:
-        """Web main loop only (sub-loops have no queue): keep the renderer's
-        attribution AND the registry's request-snapshot source current, so
-        (a) the final this run renders carries ``answers`` and (b) an agent
-        request made anywhere inside this run inherits the same set."""
-        if not self._config.kind.tracks_run_authors:
-            return
-        from agent_cli.render import get_renderer
-
-        # ABC 표면 (v8.6.0 승격) — CLI 는 no-op 기본, web 이 override.
-        get_renderer().set_run_authors(self.run_authors)
-        registry = self._config.kind.ports.agent_registry
-        if registry is not None:
-            registry.set_current_run_authors(self.run_authors)
 
     def _should_continue(self) -> bool:
         if self.stop_event and self.stop_event.is_set():
@@ -760,16 +739,13 @@ class AgentLoop:
 
     def _absorb(self, items: list[dict]) -> None:
         """흡수 항목들을 넣는다 — 턴 경계(`_intake`)와 메일이 연 런의 시작(`_setup`)이 같은 길."""
-        merged_authors = False
         for it in items:
             if "message" in it:
                 self._inject_message(it["message"])
             elif "mail" in it:
-                merged_authors = self._inject_mail(it["mail"]) or merged_authors
+                self._inject_mail(it["mail"])
             else:
                 self._inject_item(it)
-        if merged_authors:
-            self._mirror_run_authors()
 
     def _inject_message(self, item: dict) -> None:
         """main 앞 사람의 말 하나 — 런 시작 메시지와 **같은 길**로 (v8.16.1: 경계마다 줄 선 것을 전부
@@ -807,11 +783,10 @@ class AgentLoop:
             self._state.ledger.add_request(rid, author or "", text, turn=self.turn)
         self._add_user_message(text, author, request_id=rid, images=images)
 
-    def _inject_mail(self, reply: dict) -> bool:
+    def _inject_mail(self, reply: dict) -> None:
         """레지스트리 회신 한 통을 관찰 레코드로 (teammate P1, D2) — LLM 폴링 없이 하니스가
         배달. 레코드는 tool="agent" + source="agent_reply"(tool="" 는 형식-개입 마커라 금지).
-        over-cap 회신은 `build_reply_record` 가 디스크 포인터로 치환. 돌려주는 값: 귀속
-        승계로 ``run_authors`` 가 바뀌었는가."""
+        over-cap 회신은 `build_reply_record` 가 디스크 포인터로 치환."""
         registry = self._config.kind.ports.agent_registry
         from agent_cli.subagent.agent_mail import build_reply_record, mail_queue_item
 
@@ -844,11 +819,6 @@ class AgentLoop:
                 nid, who, mail_queue_item(reply)["text"], turn=self.turn
             )
             record["request_id"] = nid
-        # 귀속 승계 (v8.5.0): 회신이 실어온 원 요청자들을 이 런의 answers 에 합류 — 🤝
-        # 웨이크 런(시작 authors 빈)과 실행 중 배달 양쪽이 이 한 지점으로 커버된다.
-        inherited = [a for a in (reply.get("answers") or []) if a]
-        if inherited:
-            record["answers"] = list(inherited)
         self.messages.append({"role": "user", "content": record["content"]})
         if self.ctx:
             self.ctx.add(dict(record))
@@ -864,12 +834,6 @@ class AgentLoop:
             tool_name=record["tool"],
             success=bool(reply.get("success")),
         )
-        merged = False
-        for a in inherited:
-            if a not in self.run_authors:
-                self.run_authors.append(a)
-                merged = True
-        return merged
 
     def _inject_item(self, it: dict) -> None:
         """받은편지함·메일함 항목 하나 (상주 v9.25.0, private v10.84.0). ``user_request``

@@ -58,7 +58,6 @@ class FakeSurface:
 
 class FakeRegistry:
     def __init__(self):
-        self.authors: list[list[str]] = []
         self.ended: list[tuple] = []  # run_ended 호출 (owner, output)
 
     def has_agent_work(self):
@@ -66,9 +65,6 @@ class FakeRegistry:
 
     def open_human_questions(self):
         return []
-
-    def set_current_run_authors(self, authors):
-        self.authors.append(list(authors))
 
     def run_ended(self, owner, output="", **kw):
         self.ended.append((owner, output))

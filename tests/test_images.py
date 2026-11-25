@@ -376,7 +376,6 @@ def _bare_loop():
     loop._state = LoopState()
     loop._config = SimpleNamespace(kind=make_kind())
     loop.ctx = None
-    loop.run_authors = []
     return loop
 
 
@@ -535,9 +534,6 @@ class TestInjectedMessageImages:
 
             def push_user_message(self, content, author="", hidx=None, images=None):
                 self.pushed.append((content, author, images))
-
-            def set_run_authors(self, authors):
-                pass
 
         stub = _Stub()
         prev = render.get_renderer()

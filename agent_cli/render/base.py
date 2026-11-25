@@ -690,15 +690,6 @@ class Renderer(ABC):
         레인 라우팅), 비-사용자 발신(🤝 스타터)·CLI 는 빈값.
         """
 
-    def set_run_authors(self, authors: list[str]) -> None:
-        """현재 런이 서비스 중인 USER 목록 미러 (v8.6.0 ABC 승격 — 종전
-        web 전용+hasattr 게이트).
-
-        Web 은 main-레벨 final 의 ``answers`` 귀속에 소비하도록 override;
-        CLI 는 no-op 기본(단일 사용자 — 귀속 표시 대상 없음). main 루프가
-        런 시작 + 조향 주입 + 회신 승계 합류마다 호출한다.
-        """
-
     @abstractmethod
     def status(self, state: str, message: str, turn: int = 0) -> None:
         """Status update (running/done/error)."""

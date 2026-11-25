@@ -86,15 +86,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -229,15 +220,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -352,15 +334,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -424,15 +397,6 @@
     [
      "u-115",
      13
-    ],
-    {}
-   ],
-   [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
     ],
     {}
    ],
@@ -563,15 +527,6 @@
     [
      "u-118",
      19
-    ],
-    {}
-   ],
-   [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
     ],
     {}
    ],
@@ -879,9 +834,6 @@
     "tool": "interrupt"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-114] from agt-59b77851 re [r-110] ──\nH done",
     "role": "user",
     "source": "agent_message",

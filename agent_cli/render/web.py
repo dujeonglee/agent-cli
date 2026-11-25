@@ -276,24 +276,9 @@ class WebRenderer(Renderer):
         # ``_replay_ts``, because replay runs on the MAIN thread (so the usual
         # per-thread routing cannot know the original scope).
         self._replay_task_id: str | None = None
-        # ── complete-attribution (team view user lane, v8.2.0) ──
-        # ``answers`` on a MAIN-timeline final = the users whose asks this run
-        # serviced (run starter + turn-boundary steering injections). Two
-        # sources, one field:
-        #  · live — the main loop owns the set (it knows which injections were
-        #    plain chat vs routed commands) and hands it over via
-        #    ``set_run_authors`` at run start + every injection. ``worker_busy``
-        #    clears it so a command-dispatch run (no ``run_loop``) can never
-        #    inherit the PREVIOUS run's attribution.
-        #  · replay — derived from the history user records' ``author`` field
-        #    (same set: routed commands write no user record), accumulated per
-        #    record and consumed at each main-level final.
-        self._run_authors: list[str] | None = None
-        self._replay_authors: list[str] = []
         # 재생용 id → 요청 맵 (v9.19.0). `_add_user_message` 가 user 레코드에
         # 찍어 둔 `request_id` 로 채우고, 터미널 레코드의 `answers` id 를
-        # 여기서 풀어 final 카드에 실어 준다 — `_replay_authors` 와 같은 모양
-        # (레코드를 훑으며 모으고 final 에서 소비). 라이브는 장부(`state.ledger`)
+        # 여기서 풀어 final 카드에 실어 준다(레코드를 훑으며 모으고 final 에서 소비). 라이브는 장부(`state.ledger`)
         # 에서 바로 풀므로 이 맵을 쓰지 않는다.
         self._replay_requests: dict[str, dict] = {}
         # 장부 항목 id → 그 원문 레코드의 history 서수 (v10.119.0, 장부 P4) — 📋 띠의
@@ -1015,14 +1000,7 @@ class WebRenderer(Renderer):
                 # live ``observation()`` call would emit.
                 prefix = "Observation: "
                 content = content.removeprefix(prefix)
-                # 귀속 승계 재생 (v8.5.0): 에이전트 회신 관찰이 실어온 원
-                # 요청자들(``answers`` additive) — 라이브의 턴경계 합류와
-                # 같은 집합을 재생에서도 재도출해, 🤝 웨이크 런의 회신
-                # 화살표가 resume 후에도 유지된다.
                 if not sub:
-                    for a in msg.get("answers") or []:
-                        if a and a not in self._replay_authors:
-                            self._replay_authors.append(a)
                     # 메일·회신 빚 관찰은 그 항목 id 를 `request_id` 로 싣는다
                     rid = str(msg.get("request_id") or "")
                     if rid and hidx is not None:
@@ -1045,9 +1023,8 @@ class WebRenderer(Renderer):
                 content = msg.get("content", "")
                 if content:
                     # ``author`` + ``author_is_user`` (additive, see
-                    # ``_add_user_message``): a USER author feeds the replayed
-                    # ``answers`` attribution.
-                    # The literal "🤝 agent" check covers records written
+                    # ``_add_user_message``): only a USER author is drawn as a
+                    # user bubble. The literal "🤝 agent" check covers records written
                     # before the ``author_is_user`` flag existed — legacy-data
                     # hygiene only, live code never compares that string.
                     author = msg.get("author") or ""
@@ -1067,8 +1044,6 @@ class WebRenderer(Renderer):
                         }
                     images = msg.get("images") or None  # v10.60.0 썸네일 재생
                     if author and is_user:
-                        if author not in self._replay_authors:
-                            self._replay_authors.append(author)
                         self.push_user_message(content, author=author, images=images)
                     elif author and not is_user:
                         # 사람이 아닌 발신자 = 에이전트 메일 깨우기. 라이브처럼
@@ -1401,8 +1376,7 @@ class WebRenderer(Renderer):
         }
         # ``requests`` (v9.19.0, additive) — 이 최종답이 답한다고 주장한 요청
         # ``{id, author, text}``. 합쳐진 런에서는 카드 위치만 봐선 무엇에 대한
-        # 답인지 알 수 없다. ``answers``(닉네임 귀속)와 **다른 필드**다 — 이름이
-        # 겹치면 `complete` 의 `answers`(요청 id)까지 셋이 된다.
+        # 답인지 알 수 없다. `complete` 의 `answers`(요청 id)를 푼 것이다.
         if requests:
             payload["requests"] = [
                 {
@@ -1412,20 +1386,6 @@ class WebRenderer(Renderer):
                 }
                 for r in requests
             ]
-        # ``answers`` (additive) — only on MAIN-timeline finals: a scope's
-        # final answers its caller, not a user. Empty list = a run with no
-        # user attribution (🤝 agent-report run); missing = pre-attribution
-        # session or CLI. See the ``_run_authors`` init comment for the
-        # live/replay split.
-        in_scope = (
-            self._thread_to_task.get(threading.get_ident()) or self._replay_task_id
-        )
-        if in_scope is None:
-            if self._replay_ts is not None:
-                payload["answers"] = list(self._replay_authors)
-                self._replay_authors = []
-            elif self._run_authors is not None:
-                payload["answers"] = list(self._run_authors)
         self._emit("assistant_turn", payload, persistent=True)
         self._pending_thoughts.pop(threading.get_ident(), None)
 
@@ -1805,11 +1765,6 @@ class WebRenderer(Renderer):
         replay, without waiting for the next transition.
         """
         self._worker_busy = True
-        # New run pickup: drop the previous run's attribution so a final
-        # rendered outside ``run_loop`` (e.g. a routed command dispatch) can
-        # never carry a stale ``answers`` list. ``run_loop`` re-sets it via
-        # ``set_run_authors``.
-        self._run_authors = None
         self.set_sticky("worker_state", "worker_state", {"busy": True})
 
     def worker_idle(self) -> None:
@@ -2388,14 +2343,6 @@ class WebRenderer(Renderer):
         if hidx is not None:
             self.note_record(hidx)
         self._emit("user_message", payload, persistent=True)
-
-    def set_run_authors(self, authors: list[str]) -> None:
-        """Main loop → renderer: the users whose asks the CURRENT run is
-        servicing (starter + turn-boundary chat injections so far). Called at
-        run start and again after every injection; consumed by ``final`` on
-        the main timeline as the ``answers`` attribution. Sub-loops never
-        call this (they do not take the main box)."""
-        self._run_authors = list(authors)
 
     def push_abort(self) -> None:
         """Unblock a pending ``prompt_user`` / ``confirm`` call by

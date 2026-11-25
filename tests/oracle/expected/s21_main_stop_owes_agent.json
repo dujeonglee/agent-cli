@@ -175,15 +175,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -412,15 +403,6 @@
      "to": "agt-A",
      "ts": "<t>"
     }
-   ],
-   [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
    ],
    [
     "open_items",
@@ -733,9 +715,6 @@
     "tool": "interrupt"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-2] from agt-A re [r-1] ──\n(no explicit reply — this is the agent's run summary)\nread the answer\n(agent status: idle — ready for new requests.)",
     "role": "user",
     "source": "agent_reply",

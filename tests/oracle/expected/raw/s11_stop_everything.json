@@ -103,15 +103,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -263,15 +254,6 @@
     [
      "u-54",
      6
-    ],
-    {}
-   ],
-   [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
     ],
     {}
    ],
@@ -480,9 +462,6 @@
     "role": "user"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-53] from agt-1646e42e re [r-52] · stopped by user ──\nThe user stopped agt-1646e42e while it was working on your request [r-52] (\"TASK-L slow work\").\nDecide whether to continue another way or report back to the user.",
     "role": "user",
     "source": "agent_message",

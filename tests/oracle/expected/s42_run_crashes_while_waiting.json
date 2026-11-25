@@ -356,15 +356,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -888,9 +879,6 @@
     "tool": "wait"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-2] from agt-B re [r-2] ──\n(the run ended with an error)\n(no explicit reply — this is the agent's run summary)\nagent internal error: RuntimeError: oracle: the run failed while waiting\n(agent status: idle — ready for new requests.)",
     "role": "user",
     "source": "agent_reply",
@@ -916,9 +904,6 @@
     "tool": "wait"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-3] from agt-B (aa) re [r-3] ──\nyes, still here",
     "role": "user",
     "source": "agent_message",

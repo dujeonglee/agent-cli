@@ -125,15 +125,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -441,9 +432,6 @@
     "tool": "message"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-121] from agt-cb10f456 re [r-120] ──\nQ1 done",
     "role": "user",
     "source": "agent_message",

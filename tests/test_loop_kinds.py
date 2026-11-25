@@ -411,7 +411,6 @@ class TestEngineAsksTheKind:
         loop.ctx = None
         loop.messages = []
         loop.task_log = []
-        loop.run_authors = []
         loop.route_message = None
         loop.turn = 0
         loop._intake()

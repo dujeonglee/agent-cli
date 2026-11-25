@@ -163,15 +163,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -494,9 +485,6 @@
     "tool": "wait"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-209] from agt-3a9fc704 (helper) re [r-206] ──\nassumed v1",
     "role": "user",
     "source": "agent_message",
