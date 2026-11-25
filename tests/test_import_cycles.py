@@ -46,6 +46,9 @@ COLD_START_ENTRY_POINTS = [
     "agent_cli.instance_file",
     "agent_cli.skills",
     "agent_cli.tools.tool_help",
+    # 확인(6d) — 도구·루프·레지스트리·명령이 함께 쓰는 맨 아래 층
+    "agent_cli.confirm",
+    "agent_cli.subagent.confirms",
 ]
 
 

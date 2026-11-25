@@ -15,7 +15,7 @@ from rich.markup import escape
 from rich.text import Text
 
 from agent_cli.images import is_placeholder_line
-from agent_cli.render.base import ConfirmOption, Renderer
+from agent_cli.render.base import Renderer
 from agent_cli.token_estimator import estimate_tokens
 
 _MUTED = "grey46"
@@ -416,7 +416,7 @@ class MinimalRenderer(Renderer):
             self._p(f"     {line}", highlight=False)
 
     def thought(self, content: str, turn: int) -> None:
-        # Record for an interactive prompt header (who/why behind a confirm).
+        # 확인의 출처(웹 트레이의 메타 블록 — who/why)로 남긴다
         self.note_thought(content)
         # Update live status (first line of thought, shown in parallel progress panel)
         first_line = content.strip().split("\n", 1)[0]
@@ -896,7 +896,7 @@ class MinimalRenderer(Renderer):
     def prompt_user(self, prompt: str, *, default: str = "") -> str:
         """한 줄 읽기 — 부팅 마법사(방언·모델 능력)만 쓴다. ``EOFError`` /
         ``KeyboardInterrupt`` 는 부르는 쪽으로 올린다. 빈 입력이면 ``default``. 디코딩이 깨진 붙여 넣기는 빈 입력으로.
-        읽기는 ``_guarded_read`` 를 지난다 — 다른 프롬프트(확인 대화)와 차례를 지키고, 떠 있는 Live 패널을 잠시 멈춘다."""
+        읽기는 ``_guarded_read`` 를 지난다 — 터미널을 읽는 잠금을 쥐고, 떠 있는 Live 패널을 잠시 멈춘다."""
 
         try:
             value = self._guarded_read(lambda: input(prompt)).strip()
@@ -904,21 +904,8 @@ class MinimalRenderer(Renderer):
             value = ""
         return value if value else default
 
-    def _emit_prompt_meta_header(self) -> None:
-        """Print the who/why header for a delegate-originated confirm (no-op
-        for the main agent or when there's nothing to show). ``markup=False``
-        so a bracketed agent label like ``[code-analyst]`` isn't parsed as Rich
-        markup."""
-        header = self._format_prompt_meta()
-        if header:
-            self.con.print(header, markup=False, highlight=False)
-
     def can_prompt(self) -> bool:
-        """A CLI prompt needs a real terminal on both ends. The active
-        Live region is paused by ``_prompt_display_guard`` and reads are
-        serialized by the shared lock, so a TTY is the only precondition —
-        Live state and worker-thread origin are handled at read time, not
-        gated here."""
+        """답이 올 수 있는가 — 터미널 양쪽이 다 터미널이어야 한다(확인 줄을 보이고, 친 명령을 읽는다)."""
         try:
             return bool(sys.stdin.isatty() and sys.stdout.isatty())
         except Exception:
@@ -929,8 +916,7 @@ class MinimalRenderer(Renderer):
         """Pause an active Live region (the spinner)
         for the duration of a user read, then resume — otherwise Rich's
         repaint loop overwrites the prompt and the user sees a frozen panel
-        with no question. Used by both ``confirm`` and ``prompt_user`` via
-        ``_guarded_read``."""
+        with no question. Used by ``prompt_user`` via ``_guarded_read``."""
         live = self._live
         paused = False
         if live is not None:
@@ -965,61 +951,6 @@ class MinimalRenderer(Renderer):
             text.stylize("bold red", base + start, base + end)
             pos = end
         return text
-
-    def confirm(
-        self,
-        prompt: str,
-        options: list[ConfirmOption],
-        *,
-        default_key: str,
-        command: str | None = None,
-        danger_spans: list[tuple[int, int]] | None = None,
-    ) -> tuple[str, str]:
-        """CLI implementation — read one line and match the first token
-        case-insensitively against each option's ``key`` and aliases.
-
-        Empty / EOF / Ctrl+C → ``(default_key, "")``. Unrecognized first
-        token → ``(default_key, full_raw_line)`` so the user's typed
-        intent is preserved as a comment (e.g. shell danger prompt
-        surfaces "I don't trust this" as a comment alongside the
-        implicit deny).
-
-        The read goes through ``_guarded_read`` → serialized against other
-        prompts and wrapped in ``_prompt_display_guard`` so an active Live
-        panel (parallel-delegate worker context) doesn't paint over it. A
-        provenance header (agent + reasoning + action) prints first for
-        delegate-originated confirms, and when ``command`` is supplied it is
-        printed on its own line with the dangerous tokens highlighted.
-        """
-
-        def _read():
-            self._emit_prompt_meta_header()
-            if command is not None:
-                self.con.print(
-                    self._danger_command_text(command, danger_spans),
-                    highlight=False,
-                )
-            return input(prompt)
-
-        try:
-            raw = self._guarded_read(_read).strip()
-        except (EOFError, KeyboardInterrupt):
-            return (default_key, "")
-        if not raw:
-            return (default_key, "")
-
-        parts = raw.split(maxsplit=1)
-        first_lower = parts[0].lower()
-        comment = parts[1].strip() if len(parts) > 1 else ""
-
-        for opt in options:
-            candidates = (opt.key.lower(), *(a.lower() for a in opt.aliases))
-            if first_lower in candidates:
-                return (opt.key, comment)
-
-        # Unrecognized — preserve the full raw input as comment so the
-        # user's intent surfaces upstream (e.g. tool result observation).
-        return (default_key, raw)
 
     # ── 에이전트 줄 (docs/agent-engine/DESIGN.md §6) ─────────────
     # 에이전트(run·상주)는 자기 스레드에서 main 과 동시에 돈다. 그 스레드의 평소 출력은
@@ -1141,3 +1072,20 @@ class MinimalRenderer(Renderer):
             style=_MUTED,
             markup=False,
         )
+
+    def confirm_line(self, asker: str, item) -> None:
+        """사람에게 건 확인 한 줄 (6d) — 질문 줄과 같은 틀: 머리(묻는 쪽·번호·무엇), 명령(위험 낱말 강조)·자세히, 답하는
+        법. 답은 그 번호를 적은 명령(`/approve`·`/allow`·`/deny`)뿐이다."""
+        self.con.print(
+            f"\n⚠ [{asker} → user] {item.id}  {item.title}",
+            style="bold cyan",
+            markup=False,
+        )
+        if item.command is not None:
+            self.con.print(
+                self._danger_command_text(item.command, item.danger_spans),
+                highlight=False,
+            )
+        if item.detail:
+            self.con.print(item.detail, highlight=False, markup=False)
+        self.con.print(f"  {item.answer_hint()}", style=_MUTED, markup=False)

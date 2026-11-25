@@ -18,6 +18,7 @@ from agent_cli.tools.read_file import (
 from agent_cli.tools.registry import extract_file_paths
 from agent_cli.tools.shell import tool_shell
 from agent_cli.tools.write_file import tool_write_file
+from tests.confirm_support import answer_confirms
 from tests.loop_ports import TEST_PORTS
 
 
@@ -290,10 +291,10 @@ class TestShellTool:
 
 
 class TestShellDangerousCommandConfirmation:
-    """`rm` / `rmdir` / `mv` trigger an interactive confirmation prompt
-    by default. Three decisions are accepted: y (run once), n (deny —
-    surfaces back to the LLM as an error so it can pick a different
-    path), and a (allow this keyword for the rest of the process). The
+    """`rm` / `rmdir` / `mv` open a confirmation (`c-N`, 6d) by default.
+    Three answers are accepted: approve (run once), deny (surfaces back to
+    the LLM as an error so it can pick a different path), and allow (this
+    keyword for the rest of the process). The
     AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 escape hatch exists for batch
     runs where there is no human to answer."""
 
@@ -312,20 +313,11 @@ class TestShellDangerousCommandConfirmation:
 
         shell_mod._session_allowlist.clear()
 
-    def _force_tty(self, monkeypatch):
-        """Tests run under pytest which is not a TTY, so the renderer
-        reports it can't prompt and the guard refuses early. For tests of
-        the prompt flow itself, force the active renderer to say it can
-        confirm (the gate is now a renderer capability, not a raw TTY
-        check)."""
-        from agent_cli.render import get_renderer
-
-        monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: True)
-
     def test_disabled_via_env_var_runs_without_prompt(self, monkeypatch):
         """AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 — bypass entirely."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "0")
-        # No `input` patched → if confirm fired, the test would hang.
+        # 답을 두지 않았다 — 물었으면 이 테스트는 실패한다.
+        answer_confirms(monkeypatch)
         result = tool_shell({"command": "rm /nonexistent/path/xyz"})
         # Command itself fails (file doesn't exist) but it RAN — no
         # prompt was triggered.
@@ -342,111 +334,62 @@ class TestShellDangerousCommandConfirmation:
         assert "confirm" in (result.error or "")
         assert "rm" in (result.error or "")
 
-    def test_dangerous_user_says_yes_once(self, monkeypatch):
-        """y → run this command, but next dangerous command prompts again."""
+    def test_dangerous_user_approves_once(self, monkeypatch):
+        """approve → run this command, but the next dangerous command asks again."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
-
-        from unittest.mock import patch
-
-        with patch("builtins.input", return_value="y"):
-            result = tool_shell({"command": "rm /nonexistent/xyz"})
+        asked = answer_confirms(monkeypatch, "approve")
+        result = tool_shell({"command": "rm /nonexistent/xyz"})
         # `rm` ran (and failed naturally because the path doesn't exist).
         assert "exit code:" in (result.output or "") or result.success
-
-        # Second `rm` should prompt AGAIN — y did not add to allowlist.
-        from agent_cli.tools import shell as shell_mod
-
-        assert "rm" not in shell_mod._session_allowlist
-
-    def test_allow_alias_maps_to_always(self, monkeypatch):
-        """Typing "allow" (a natural affirmative) must NOT collapse to the
-        safe-default deny — it maps to "always" (the option the prompt
-        labels "always allow")."""
-        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
-
-        from unittest.mock import patch
+        assert asked[0].title == "Dangerous command detected (`rm`)"
+        assert [c.action for c in asked[0].choices] == ["approve", "deny", "allow"]
 
         from agent_cli.tools import shell as shell_mod
 
-        with patch("builtins.input", return_value="allow"):
-            tool_shell({"command": "rm /nonexistent/foo"})
-        assert "rm" in shell_mod._session_allowlist
-
-    def test_affirmative_alias_runs_once(self, monkeypatch):
-        """ "ok" runs the command once without allowlisting."""
-        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
-
-        from unittest.mock import patch
-
-        from agent_cli.tools import shell as shell_mod
-
-        with patch("builtins.input", return_value="ok"):
-            result = tool_shell({"command": "rm /nonexistent/xyz"})
-        assert "exit code:" in (result.output or "") or result.success
         assert "rm" not in shell_mod._session_allowlist
 
     def test_dangerous_user_says_no_returns_denial(self, monkeypatch):
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
-
-        from unittest.mock import patch
-
-        with patch("builtins.input", return_value="n"):
-            result = tool_shell({"command": "rm important.txt"})
+        answer_confirms(monkeypatch, "deny")
+        result = tool_shell({"command": "rm important.txt"})
         assert not result.success
         assert "User denied" in (result.error or "")
         assert "rm" in (result.error or "")
 
     def test_dangerous_user_says_always_adds_to_session_allowlist(self, monkeypatch):
-        """`a` greenlights the matched keyword for the rest of the
+        """allow greenlights the matched keyword for the rest of the
         process. The next command containing the same keyword runs
-        without re-prompting."""
+        without asking."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
-
-        from unittest.mock import patch
-
         from agent_cli.tools import shell as shell_mod
 
-        with patch("builtins.input", return_value="a"):
-            tool_shell({"command": "rm /nonexistent/foo"})
+        answer_confirms(monkeypatch, "allow")
+        tool_shell({"command": "rm /nonexistent/foo"})
         assert "rm" in shell_mod._session_allowlist
-
-        # Second `rm` runs straight through — `input` is patched to
-        # raise so we'd notice if the prompt fired.
-        with patch("builtins.input", side_effect=AssertionError("should not prompt")):
-            result = tool_shell({"command": "rm /nonexistent/bar"})
-        # No exception means no prompt happened. Command itself may
-        # still fail because the path doesn't exist.
+        # 둘째 `rm` 은 묻지 않는다 — 답이 남아 있지 않아 물으면 실패한다
+        result = tool_shell({"command": "rm /nonexistent/bar"})
         assert "exit code:" in (result.output or "") or result.success
 
-    def test_eof_during_prompt_treated_as_deny(self, monkeypatch):
-        """Ctrl+D / EOF on the confirmation prompt is "n" — never run
-        a dangerous command on input failure."""
+    def test_stopped_while_waiting_does_not_run(self, monkeypatch, tmp_path):
+        """기다리는 동안 런이 멈추면 명령은 돌지 않는다 — 결과는 정지 문장(6d)."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
-
-        from unittest.mock import patch
-
-        with patch("builtins.input", side_effect=EOFError):
-            result = tool_shell({"command": "rm something"})
+        answer_confirms(monkeypatch, "stopped")
+        (tmp_path / "keep").write_text("x")
+        result = tool_shell({"command": "rm keep"})
         assert not result.success
-        assert "User denied" in (result.error or "")
+        assert result.error == (
+            "This run was stopped while this call was waiting for approval [c-1] — it did not run."
+        )
+        assert (tmp_path / "keep").exists()
 
     def test_safe_command_never_prompts(self, monkeypatch):
         """Commands without `rm` / `rmdir` / `mv` keywords go through
         unchanged. `input` is rigged to raise so any prompt attempt
         aborts the test loudly."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
 
-        from unittest.mock import patch
-
-        with patch("builtins.input", side_effect=AssertionError("should not prompt")):
-            result = tool_shell({"command": "echo safe"})
+        answer_confirms(monkeypatch)  # 물으면 실패한다
+        result = tool_shell({"command": "echo safe"})
         assert result.success
         assert "safe" in (result.output or "")
 
@@ -456,38 +399,29 @@ class TestShellDangerousCommandConfirmation:
         command invocation. This is a known gap for `bash -c "rm x"`
         and similar shell-wrapper patterns; revisit if observed."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
 
-        from unittest.mock import patch
-
-        with patch("builtins.input", side_effect=AssertionError("should not prompt")):
-            result = tool_shell({"command": 'echo "rm files"'})
+        answer_confirms(monkeypatch)  # 물으면 실패한다
+        result = tool_shell({"command": 'echo "rm files"'})
         assert result.success
 
     def test_keyword_as_substring_does_not_match(self, monkeypatch):
         """`format` contains "mv" as a substring — but not as a whole
         token. Word-boundary regex must not flag it."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
 
-        from unittest.mock import patch
-
-        with patch("builtins.input", side_effect=AssertionError("should not prompt")):
-            # `format` and `firmware` are non-dangerous tokens that
-            # incidentally contain the letters of dangerous keywords.
-            result = tool_shell({"command": "echo firmware-format"})
+        answer_confirms(monkeypatch)  # 물으면 실패한다
+        # `format` and `firmware` are non-dangerous tokens that
+        # incidentally contain the letters of dangerous keywords.
+        result = tool_shell({"command": "echo firmware-format"})
         assert result.success
 
     def test_pipeline_with_xargs_rm_caught(self, monkeypatch):
         """`find . -name '*.tmp' | xargs rm` — rm is buried in a
         pipeline but is still a standalone token. Must catch it."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
 
-        from unittest.mock import patch
-
-        with patch("builtins.input", return_value="n"):
-            result = tool_shell({"command": "find . -name '*.tmp' | xargs rm"})
+        answer_confirms(monkeypatch, "deny")
+        result = tool_shell({"command": "find . -name '*.tmp' | xargs rm"})
         assert not result.success
         assert "User denied" in (result.error or "")
 
@@ -548,105 +482,32 @@ class TestDangerSpans:
 
 
 class TestShellConfirmationComments:
-    """y/n/a accepts an optional trailing comment that surfaces to the
-    LLM. For `n`, the comment becomes the denial reason so the model
-    knows why and can pick a different path. For `y`/`a`, the comment
-    is appended after the command output as an instruction the model
-    should fold into its next move."""
+    """확인의 답은 말을 남길 수 있다(``/deny c-N <이유>``·``/approve c-N <말>``·트레이의 말 칸) — 모델에게 간다. deny 면
+    그 말이 거절의 이유, approve·allow 면 명령의 출력 뒤 지시로."""
 
     def setup_method(self):
         from agent_cli.tools import shell as shell_mod
 
         shell_mod._session_allowlist.clear()
 
-    def _force_tty(self, monkeypatch):
-        from agent_cli.render import get_renderer
-
-        monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: True)
-
-    def test_ask_returns_decision_and_empty_comment(self):
-        from unittest.mock import patch
-
-        from agent_cli.tools.shell import _ask_confirmation
-
-        with patch("builtins.input", return_value="y"):
-            assert _ask_confirmation("rm x", "rm") == ("y", "")
-        with patch("builtins.input", return_value="n"):
-            assert _ask_confirmation("rm x", "rm") == ("n", "")
-        with patch("builtins.input", return_value="a"):
-            assert _ask_confirmation("rm x", "rm") == ("a", "")
-
-    def test_ask_parses_decision_and_comment(self):
-        from unittest.mock import patch
-
-        from agent_cli.tools.shell import _ask_confirmation
-
-        with patch("builtins.input", return_value="y and also try foo"):
-            assert _ask_confirmation("rm x", "rm") == ("y", "and also try foo")
-        with patch("builtins.input", return_value="n the path is wrong"):
-            assert _ask_confirmation("rm x", "rm") == ("n", "the path is wrong")
-        with patch("builtins.input", return_value="a only in /tmp"):
-            assert _ask_confirmation("rm x", "rm") == ("a", "only in /tmp")
-
-    def test_ask_unrecognized_first_token_treated_as_deny_with_full_comment(self):
-        """If user types something other than y/n/a (e.g. they wrote a
-        sentence directly), treat as deny but preserve the entire input
-        as the comment so their reasoning still reaches the LLM."""
-        from unittest.mock import patch
-
-        from agent_cli.tools.shell import _ask_confirmation
-
-        with patch("builtins.input", return_value="actually let me check first"):
-            assert _ask_confirmation("rm x", "rm") == (
-                "n",
-                "actually let me check first",
-            )
-
-    def test_ask_forwards_command_and_danger_spans_out_of_prompt(self, monkeypatch):
-        """The command travels as structured data (``command`` +
-        ``danger_spans``) for highlighting — and is NOT baked into the prompt
-        string (which would double-render it in the CLI)."""
+    def test_command_and_danger_spans_travel_out_of_the_title(self, monkeypatch):
+        """명령은 구조로 간다(``command`` + ``danger_spans`` — 강조용) — 머리글에 들어가지 않는다(두 번 그리지 않게)."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        from agent_cli.tools import _confine
         from agent_cli.tools import shell as shell_mod
 
-        captured: dict = {}
-
-        class Spy:
-            def auto_approved(self, label):  # ⚡ 꺼짐 (v10.120.0 — 판정은 confirm 밖)
-                return False
-
-            def confirm(
-                self, prompt, options, *, default_key, command=None, danger_spans=None
-            ):
-                captured["prompt"] = prompt
-                captured["command"] = command
-                captured["danger_spans"] = danger_spans
-                return ("y", "")
-
-        monkeypatch.setattr("agent_cli.render.get_renderer", lambda: Spy())
-        assert shell_mod._ask_confirmation("rm -rf foo", "rm") == ("y", "")
-        assert captured["command"] == "rm -rf foo"
-        assert captured["danger_spans"] == [(0, 2)]
-        # command no longer embedded in the prompt text
-        assert "rm -rf foo" not in captured["prompt"]
-        assert "$ " not in captured["prompt"]
-
-    def test_ask_empty_input_is_deny_no_comment(self):
-        from unittest.mock import patch
-
-        from agent_cli.tools.shell import _ask_confirmation
-
-        with patch("builtins.input", return_value=""):
-            assert _ask_confirmation("rm x", "rm") == ("n", "")
+        monkeypatch.setattr(_confine, "temp_targets_only", lambda c, k: False)
+        asked = answer_confirms(monkeypatch, "deny")
+        assert shell_mod.confirm_dangerous("rm -rf foo").startswith("User denied")
+        assert asked[0].command == "rm -rf foo"
+        assert asked[0].danger_spans == [(0, 2)]
+        assert "rm -rf foo" not in asked[0].title and "$ " not in asked[0].title
 
     def test_deny_comment_appears_in_error_message(self, monkeypatch):
-        """`n` + comment → error string includes the user's reason so
-        the LLM observation explains why the command was rejected."""
+        """deny + 말 → 거절 글 끝에 사람의 이유가 붙는다."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
-        from unittest.mock import patch
-
-        with patch("builtins.input", return_value="n wrong directory, try /tmp"):
-            result = _shell_with_notes({"command": "rm /etc/passwd"})
+        answer_confirms(monkeypatch, ("deny", "wrong directory, try /tmp"))
+        result = _shell_with_notes({"command": "rm /etc/passwd"})
         assert not result.success
         assert "User denied" in (result.error or "")
         assert result.error.endswith(
@@ -654,28 +515,16 @@ class TestShellConfirmationComments:
         )
 
     def test_approve_comment_appears_after_output(self, monkeypatch):
-        """`y` + comment → command runs and the comment is appended
-        after stdout so the LLM sees both the result and the user's
-        follow-up instruction."""
+        """approve + 말 → 명령이 돌고 그 출력 뒤에 사람의 말이 붙는다."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
-        from unittest.mock import patch
-
-        # Use a `mv` invocation that's safe — operate inside tmp.
-        # Actually simpler: rm a non-existent path (fails harmlessly,
-        # but ran).
-        with patch("builtins.input", return_value="y also clean /tmp/y"):
-            result = _shell_with_notes({"command": "rm /nonexistent/path"})
-        # Output should contain the user's note line.
+        answer_confirms(monkeypatch, ("approve", "also clean /tmp/y"))
+        result = _shell_with_notes({"command": "rm /nonexistent/path"})
         assert "User note when approving: also clean /tmp/y" in (result.output or "")
 
     def test_always_comment_appears_after_output(self, monkeypatch):
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
-        from unittest.mock import patch
-
-        with patch("builtins.input", return_value="a but limit scope to build/"):
-            result = _shell_with_notes({"command": "rm /nonexistent/x"})
+        answer_confirms(monkeypatch, ("allow", "but limit scope to build/"))
+        result = _shell_with_notes({"command": "rm /nonexistent/x"})
         from agent_cli.tools import shell as shell_mod
 
         assert "rm" in shell_mod._session_allowlist
@@ -684,14 +533,10 @@ class TestShellConfirmationComments:
         )
 
     def test_no_comment_no_note_appended(self, monkeypatch):
-        """Bare `y` keeps the output clean — no `[User note...]`
-        suffix when the user didn't add anything."""
+        """말 없는 approve 는 출력을 그대로 둔다 — ``[User note...]`` 가 붙지 않는다."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        self._force_tty(monkeypatch)
-        from unittest.mock import patch
-
-        with patch("builtins.input", return_value="y"):
-            result = _shell_with_notes({"command": "rm /nonexistent/path"})
+        answer_confirms(monkeypatch, "approve")
+        result = _shell_with_notes({"command": "rm /nonexistent/path"})
         assert "User note" not in (result.output or "")
 
 

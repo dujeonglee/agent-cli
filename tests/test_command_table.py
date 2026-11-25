@@ -28,6 +28,10 @@ _WEB_HELP_BEFORE = (
     "  /answer <q-N> <text>     Answer an open question\n"
     # 6b: 답 없이 닫기
     "  /close <q-N>             Close an open question without an answer\n"
+    # 6d: 확인의 답 — 번호를 적은 명령 셋
+    "  /approve <c-N> [note]    Approve a confirmation once\n"
+    "  /allow <c-N> [note]      Approve, and do not ask again this session\n"
+    "  /deny <c-N> [reason]     Deny a confirmation\n"
     "  @agents                  List available agents\n"
     "  @<agent> <task>          Delegate a task to an agent\n"
     # v10.165.0: 상주 에이전트로 가는 두 꼴 — `main._try_dispatch_agent_command` 가 처리해 온 것을 표에 올렸다
@@ -114,11 +118,3 @@ def test_unknown_command_points_at_run_help(monkeypatch):
     assert "Unknown command: /nosuch" in text
     assert "agent-cli run /help" in text
     assert "Type /help" not in text
-
-
-@pytest.mark.parametrize("text", ["/approve c-1", "/allow c-1 ok", "/deny c-1 no"])
-def test_confirm_commands_are_not_commands_yet(text):
-    """6d-1 전의 값 — 확인의 답은 명령이 아니다(스킬 이름으로 보인다). 6d-1 이 뒤집는다."""
-    from agent_cli.command_table import command_kind
-
-    assert command_kind(text) == "skill"

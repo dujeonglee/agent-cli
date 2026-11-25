@@ -15,7 +15,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_cli.render.base import ConfirmOption
 from tests.browser.conftest import wait_held
 from tests.mail_support import absorbed_mail
 
@@ -102,7 +101,7 @@ class TestTypingSurvivesRosterUpdates:
         stack.start_confirm_loop(results)
         stack.emit_ready()
         page.goto(stack.url)
-        sel = ".ask-main .ask-answer"
+        sel = ".ask-confirm .ask-answer"
         page.wait_for_selector(sel, timeout=8000)
         page.click(sel)
         page.keyboard.type("only /tmp")
@@ -119,7 +118,7 @@ class TestItemsAreKeptByQuestion:
     def _texts(self, page):
         return page.evaluate(
             """() => Array.from(document.querySelectorAll('#ask-tray > .ask-item'))
-                 .map(i => i.classList.contains('ask-main') ? 'main' : i.dataset.qid)"""
+                 .map(i => i.dataset.cid ? 'confirm' : i.dataset.qid)"""
         )
 
     def test_closing_or_adding_a_question_keeps_the_other_answer(self, stack, page):
@@ -155,17 +154,17 @@ class TestItemsAreKeptByQuestion:
         page.wait_for_selector(sel, timeout=8000)
         page.click(sel)
         page.keyboard.type("abc")
-        stack.start_confirm(results)  # main 의 확인 대화가 뒤에 온다 — 맨 위에 선다
-        assert _wait(lambda: self._texts(page) == ["main", "q-1"])
+        stack.start_confirm(results)  # 확인이 뒤에 온다 — 맨 위에 선다
+        assert _wait(lambda: self._texts(page) == ["confirm", "q-1"])
         assert _typing_state(page, sel)["value"] == "abc"
         _publish(stack, [_row(AGT, [("q-1", "first?")], name="new")])
         label = _item(page, "q-1").locator(".ask-q")
         assert _wait(lambda: "new" in label.inner_text())
         assert "❓" in label.inner_text() and "asked" in label.inner_text()
         assert _typing_state(page, sel)["value"] == "abc"
-        page.fill(".ask-main .ask-answer", "go")
-        page.click(".ask-main .confirm-btn >> nth=0")
-        assert _wait(lambda: results == [("y", "go")])
+        page.fill(".ask-confirm .ask-answer", "go")
+        page.click(".ask-confirm .confirm-btn >> nth=0")
+        assert _wait(lambda: results == [("approve", "go")])
         assert _wait(lambda: self._texts(page) == ["q-1"])
         assert _typing_state(page, sel)["value"] == "abc"
 
@@ -347,64 +346,56 @@ class TestAgentAnswer:
         assert _wait(lambda: _item(page, q1).count() == 0)
 
 
-class TestMainAnswer:
+CONFIRMS = "**/api/confirms/**"
+
+
+def _open_confirm_ids(stack) -> list[str]:
+    return [c.id for c in stack.server.agent_registry.open_human_confirms()]
+
+
+class TestConfirmAnswer:
     def test_confirm_refusal_keeps_the_comment_with_a_reason(self, stack, page):
         results: list = []
         stack.start_confirm_loop(results)
         stack.emit_ready()
         page.goto(stack.url)
-        page.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
+        page.wait_for_selector(".ask-confirm .confirm-btn", timeout=8000)
         page.route(
-            "**/api/input",
+            CONFIRMS,
             lambda route: route.fulfill(status=500, body="Internal Server Error"),
         )
-        page.fill(".ask-main .ask-answer", "only /tmp")
-        page.click(".ask-main .confirm-btn >> nth=0")
-        assert _note(page, "#ask-tray .ask-main") == "⚠ Not sent — HTTP 500"
-        assert page.input_value(".ask-main .ask-answer") == "only /tmp"
+        page.fill(".ask-confirm .ask-answer", "only /tmp")
+        page.click(".ask-confirm .confirm-btn >> nth=0")
+        assert _note(page, "#ask-tray .ask-confirm") == "⚠ Not sent — HTTP 500"
+        assert page.input_value(".ask-confirm .ask-answer") == "only /tmp"
         assert results == []
-        page.unroute("**/api/input")
-        page.click(".ask-main .confirm-btn >> nth=0")
-        assert _wait(lambda: results and results[0] == ("y", "only /tmp"))
+        page.unroute(CONFIRMS)
+        page.click(".ask-confirm .confirm-btn >> nth=0")
+        assert _wait(lambda: results and results[0] == ("approve", "only /tmp"))
 
-    def test_confirm_already_answered_folds_with_a_notice(self, stack, page):
-        import threading
-
+    def test_confirm_already_answered_closes_with_a_notice(self, stack, page):
         import requests
 
-        from agent_cli.render.base import ConfirmOption
-
         results: list = []
-        opts = [
-            ConfirmOption(key="y", label="once"),
-            ConfirmOption(key="n", label="deny"),
-        ]
-
-        def once():
-            if stack.wait_connected():
-                results.append(stack.renderer.confirm("Allow?", opts, default_key="n"))
-
-        t = threading.Thread(target=once, daemon=True)
-        t.start()
+        stack.start_confirm(results, "Allow?")
         stack.emit_ready()
         page.goto(stack.url)
-        page.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
+        page.wait_for_selector(".ask-confirm .confirm-btn", timeout=8000)
+        (cid,) = _open_confirm_ids(stack)
 
         def other_viewer_first(route):
             r = requests.post(
-                f"{stack.base}/api/input?token={stack.token}",
-                json={"kind": "confirm", "key": "n", "comment": ""},
+                f"{stack.base}/api/confirms/{cid}/deny?token={stack.token}", json={}
             )
             assert r.status_code == 200
             assert _wait(lambda: bool(results))
             route.continue_()
 
-        page.route("**/api/input", other_viewer_first)
-        page.click(".ask-main .confirm-btn >> nth=0")
+        page.route(CONFIRMS, other_viewer_first)
+        page.click(".ask-confirm .confirm-btn >> nth=0")
         assert _bar_notice(page) == CLOSED
-        assert _wait(lambda: page.locator(".ask-main").count() == 0)
-        assert results == [("n", "")]
-        t.join(5)
+        assert _wait(lambda: page.locator(".ask-confirm").count() == 0)
+        assert results == [("deny", "")]
 
 
 def _drop_sse(stack, page) -> str:
@@ -427,29 +418,29 @@ def _wait_reconnected(page, before):
 
 def _reconnect(stack, page):
     _wait_reconnected(page, _drop_sse(stack, page))
-    page.wait_for_function("() => !!document.querySelector('.ask-main')")
+    page.wait_for_function("() => !!document.querySelector('.ask-confirm')")
 
 
 def _pending_confirm(stack, results, question):
-    """main 의 확인 대화 하나를 띄운다 — 화면 연결을 기다리지 않는다(끊긴 사이·첫 접속 전에 떠 있게)."""
-    opts = [ConfirmOption(key="y", label="once"), ConfirmOption(key="n", label="deny")]
-
-    def ask():
-        results.append(stack.renderer.confirm(question, opts, default_key="n"))
-
-    t = threading.Thread(target=ask, daemon=True)
+    """확인 하나를 연다 — 화면 연결을 기다리지 않는다(끊긴 사이·첫 접속 전에 떠 있게). 열린 번호를 돌려준다."""
+    before = set(_open_confirm_ids(stack))
+    t = threading.Thread(
+        target=lambda: results.append(stack.ask(question)), daemon=True
+    )
+    stack._workers.append(t)
     t.start()
-    assert _wait(lambda: stack.renderer.is_awaiting_input())
-    return t
+    assert _wait(lambda: set(_open_confirm_ids(stack)) - before)
+    (cid,) = set(_open_confirm_ids(stack)) - before
+    return cid
 
 
-class TestSameAskAcrossReconnect:
-    def test_typing_survives_a_reconnect_replay_of_the_same_ask(self, stack, page):
+class TestSameConfirmAcrossReconnect:
+    def test_typing_survives_a_reconnect_replay_of_the_same_confirm(self, stack, page):
         results: list = []
         stack.start_confirm(results)
         stack.emit_ready()
         page.goto(stack.url)
-        sel = ".ask-main .ask-answer"
+        sel = ".ask-confirm .ask-answer"
         page.wait_for_selector(sel, timeout=8000)
         page.click(sel)
         page.keyboard.type("Pyth")
@@ -460,106 +451,67 @@ class TestSameAskAcrossReconnect:
             "caret": 4,
         }
 
-    def test_ask_resolved_while_disconnected_folds_after_the_snapshot(
-        self, stack, page
-    ):
-        """끊긴 사이 다른 뷰어가 답했다 — 재접속 스냅샷에 물음이 없으면 남은 항목을 접는다(알림 없음)."""
+    def test_answered_while_disconnected_leaves_after_the_snapshot(self, stack, page):
+        """끊긴 사이 다른 뷰어가 답했다 — 재접속 스냅샷의 목록에 없으니 항목이 빠진다(알림 없음)."""
         import requests
 
         results: list = []
-        stack.start_confirm(results)
+        cid = _pending_confirm(stack, results, "which?")
         stack.emit_ready()
         page.goto(stack.url)
-        page.wait_for_selector(".ask-main .ask-answer", timeout=8000)
-        page.fill(".ask-main .ask-answer", "Pyth")
+        page.wait_for_selector(".ask-confirm .ask-answer", timeout=8000)
+        page.fill(".ask-confirm .ask-answer", "Pyth")
         before = _drop_sse(stack, page)
         r = requests.post(
-            f"{stack.base}/api/input?token={stack.token}",
-            json={"kind": "confirm", "key": "n", "comment": ""},
+            f"{stack.base}/api/confirms/{cid}/deny?token={stack.token}", json={}
         )
-        assert r.status_code == 200 and _wait(lambda: results == [("n", "")])
-        # 풀림 알림(input_resolved)은 아무에게도 가지 않았다
+        assert r.status_code == 200 and _wait(lambda: results == [("deny", "")])
         assert not stack.renderer.hub.has_live_connections()
         _wait_reconnected(page, before)
-        assert _wait(lambda: page.locator(".ask-main").count() == 0)
+        assert _wait(lambda: page.locator(".ask-confirm").count() == 0)
         assert page.locator("#attach-strip .attach-msg").count() == 0
 
-    def test_a_different_ask_in_the_snapshot_replaces_the_item(self, stack, page):
-        """끊긴 사이 물음이 풀리고 새 물음이 떴다 — 다른 ``ask_id`` 라 새 항목이다(쓰던 글은 버려진다)."""
+    def test_a_different_confirm_in_the_snapshot_replaces_the_item(self, stack, page):
+        """끊긴 사이 확인이 닫히고 새 확인이 열렸다 — 다른 번호라 새 항목이다(쓰던 글은 버려진다)."""
         import requests
 
         results: list = []
         first = _pending_confirm(stack, results, "first?")
         stack.emit_ready()
         page.goto(stack.url)
-        page.wait_for_selector(".ask-main .ask-answer", timeout=8000)
-        assert "first?" in page.inner_text(".ask-main")
-        page.fill(".ask-main .ask-answer", "Pyth")
+        page.wait_for_selector(".ask-confirm .ask-answer", timeout=8000)
+        assert "first?" in page.inner_text(".ask-confirm")
+        page.fill(".ask-confirm .ask-answer", "Pyth")
         page.evaluate(
-            "() => { window.__oldAsk = document.querySelector('.ask-main'); }"
+            "() => { window.__oldAsk = document.querySelector('.ask-confirm'); }"
         )
         before = _drop_sse(stack, page)
         r = requests.post(
-            f"{stack.base}/api/input?token={stack.token}",
-            json={"kind": "confirm", "key": "n", "comment": ""},
+            f"{stack.base}/api/confirms/{first}/deny?token={stack.token}", json={}
         )
-        assert r.status_code == 200 and _wait(lambda: results == [("n", "")])
-        first.join(5)
+        assert r.status_code == 200 and _wait(lambda: results == [("deny", "")])
         second = _pending_confirm(stack, results, "second?")
         _wait_reconnected(page, before)
         assert _wait(lambda: "second?" in page.inner_text("#ask-tray"))
-        assert page.locator(".ask-main").count() == 1
+        assert page.locator(".ask-confirm").count() == 1
         assert page.evaluate(
-            "() => document.querySelector('.ask-main') !== window.__oldAsk"
+            "() => document.querySelector('.ask-confirm') !== window.__oldAsk"
         )
-        assert page.input_value(".ask-main .ask-answer") == ""
-        stack.renderer.push_abort()
-        second.join(5)
+        assert page.input_value(".ask-confirm .ask-answer") == ""
+        stack.server.agent_registry.answer_confirm(second, "deny", "", by="user")
 
-    def test_an_ask_pending_at_first_connect_stays(self, stack, page):
-        """첫 접속에 물음이 이미 떠 있다 — 스냅샷 안에 있으니 접지 않는다."""
+    def test_a_confirm_open_at_first_connect_stays(self, stack, page):
+        """첫 접속에 확인이 이미 떠 있다 — 스냅샷 안에 있으니 그대로 선다."""
         results: list = []
-        t = _pending_confirm(stack, results, "which language?")
+        cid = _pending_confirm(stack, results, "which language?")
         stack.emit_ready()
         page.goto(stack.url)
-        page.wait_for_selector(".ask-main .ask-answer", timeout=8000)
+        page.wait_for_selector(".ask-confirm .ask-answer", timeout=8000)
         # 라이브 이벤트 하나가 그려지면 그 앞의 snapshot_end 는 이미 처리됐다
         _publish(stack, [_row(AGT, [])])
         assert _wait(lambda: page.locator(f".ov-ch[data-key='{AGT}']").count() == 1)
-        assert page.locator(".ask-main").count() == 1
-        stack.renderer.push_abort()
-        t.join(5)
-
-
-class TestConfirmStall:
-    def test_click_again_clears_the_stall_and_a_refusal_leaves_only_the_reason(
-        self, stack, page
-    ):
-        results: list = []
-        page.clock.install()
-        stack.start_confirm_loop(results)
-        stack.emit_ready()
-        page.goto(stack.url)
-        page.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
-        held: list = []
-        page.route("**/api/input", lambda route: held.append(route))
-        stall = page.locator(".ask-main > .confirm-stall")
-        page.click(".ask-main .confirm-btn >> nth=0")
-        assert wait_held(page, held, 1)
-        page.clock.run_for(3_100)
-        assert _wait(lambda: stall.count() == 1)
-        page.click(".ask-main .confirm-btn >> nth=0")  # 다시 누른다 — 경고는 지워진다
-        assert wait_held(page, held, 2)
-        assert stall.count() == 0
-        page.clock.run_for(3_100)  # 다시 3초 뒤에만 선다
-        assert _wait(lambda: stall.count() == 1)
-        for r in held:
-            r.fulfill(status=500, body="Internal Server Error")
-        assert _note(page, "#ask-tray .ask-main") == "⚠ Not sent — HTTP 500"
-        assert stall.count() == 0
-        page.clock.run_for(3_100)
-        assert stall.count() == 0  # 답이 왔다 — 경고가 다시 서지 않는다
-        assert results == []
+        assert page.locator(".ask-confirm").count() == 1
+        stack.server.agent_registry.answer_confirm(cid, "deny", "", by="user")
 
 
 class TestItemLeftWhileSending:

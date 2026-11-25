@@ -9,7 +9,6 @@ export const $send = document.getElementById("send");
 export const $chatStop = document.getElementById("chat-stop");
 export const $chatStopMore = document.getElementById("chat-stop-more");
 export const $stopMenu = document.getElementById("stop-menu");
-export const $abort = document.getElementById("abort");
 export const $tokenUsage = document.getElementById("token-usage");
 export const $status = document.getElementById("conn-status");
 export const $inputArea = document.getElementById("input-area");

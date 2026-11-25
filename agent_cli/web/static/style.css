@@ -939,7 +939,7 @@ footer {
 .ask-answer:disabled { background: var(--surface-2); color: var(--muted); }
 
 /* 채팅 입력줄 — primary/danger 클래스에 크기만 가산 */
-#send, #abort, #chat-stop { padding: 8px 16px; font-size: 14px; }
+#send, #chat-stop { padding: 8px 16px; font-size: 14px; }
 /* Stop ▾ (v10.142.0) — 본체(#chat-stop)는 main 만, ▾ 는 범위 메뉴. 메뉴는 입력줄 오른쪽 위로 뜬다. */
 #chat-stop-more { padding: 8px 10px; font-size: 13px; margin-left: -6px; }
 #stop-menu { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 20; display: flex; flex-direction: column; min-width: 260px; padding: 4px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--surface); box-shadow: 0 6px 18px rgba(0,0,0,.18); }
@@ -1129,14 +1129,7 @@ footer {
   border-color: var(--ghost-border);
 }
 .confirm-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-2); }
-.confirm-btn.default {
-  background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600;
-}
-.confirm-btn.default:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-/* 클릭 후 일정 시간 무응답(연결 정체 등) 시 버튼 줄 아래에 나타나는 경고 —
-   조용한 실패를 보이는 실패로 (v7.2.0 ⓔ) */
-/* 항목 안 맨 아래의 알림 줄 — 확인 지연 경고(`.confirm-stall`)와 보내지 못한 답의 사유(`.ask-failed`, v10.147.4) */
-.confirm-stall,
+/* 항목 안 맨 아래의 알림 줄 — 보내지 못한 답의 사유(`.ask-failed`, v10.147.4) */
 .ask-failed {
   flex-basis: 100%;
   font-size: 12px;
@@ -1146,7 +1139,7 @@ footer {
   border-radius: 4px;
   padding: 4px 8px;
 }
-/* The command under review, shown full-width above the y/n/a buttons so the
+/* The command under review, shown full-width above the answer buttons so the
    decision is anchored to what will actually run. */
 .confirm-cmd {
   flex-basis: 100%;

@@ -1,5 +1,6 @@
 """WebRenderer — emits Renderer events as Server-Sent Events to every
-connected web client, and waits on POST /api/input for user input.
+connected web client. 사람의 입력은 렌더러를 거치지 않는다 — 채팅은 main 의 상자로, 질문·확인의 답은 그 번호의 길로
+(`/api/questions/…`·`/api/confirms/…`) 간다.
 
 Architecture::
 
@@ -12,11 +13,9 @@ Architecture::
                                         ↓
                                        SSE endpoint pulls and yields
 
-    renderer.prompt_user(...)
-      → _emit("input_required") ────→ (same path, SSE pushes form to client)
-      → input_queue.get() (blocks worker thread)
-                                          ↑
-                                      POST /api/input puts here
+    renderer.open_confirms([...])
+      → set_sticky("open_confirms") ─→ (same path — the ❓ tray item; the answer
+                                        comes back through POST /api/confirms/…)
 
 Multi-viewer, all equal: every authenticated connection is kept in the
 connection hub (``self.hub`` — :class:`agent_cli.render.web_hub.EventHub`),
@@ -39,26 +38,18 @@ replayed — they are runtime UX, not state.
 from __future__ import annotations
 
 import hashlib
-import itertools
 import json
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from queue import Empty, SimpleQueue
 from typing import Any, ClassVar
 
 from agent_cli.fsio import atomic_write_json
 from agent_cli.instance_file import write_status_file
-from agent_cli.render.base import ConfirmOption, Renderer
+from agent_cli.render.base import Renderer
 from agent_cli.render.web_hub import EventHub, _JsonReady
 from agent_cli.token_estimator import estimate_tokens
-
-#: 사람에게 묻는 물음 하나마다 새 id (v10.147.4) — ``input_required``·``input_resolved`` 에만 실린다.
-#: 재접속 스냅샷은 스티키의 날 payload 를 재생하고 라이브 송출은 ``ts`` 를 덧붙여, 둘의 모양이 다르다 —
-#: 프런트는 이 id 로 "같은 물음" 을 안다(쓰던 답이 재접속에 지워지지 않게). 장부 id(`item_ids`)와는
-#: 번호 공간이 다르다 — 모델이 읽는 id 의 번호를 밀지 않는다.
-_ASK_IDS = itertools.count(1)
 
 # 모델 시점(v10.6.0): history 레코드 하나를 그리는 이벤트 — ``note_record`` 의
 # ``hidx`` 가 이들에만 붙는다.
@@ -89,7 +80,7 @@ def _iso_to_epoch(ts) -> float | None:
 
 
 # Sticky slots whose change flips a field of ``status.json``: ``worker_state``
-# → busy, ``input_required``·``open_questions`` → awaiting_input (6b), ``agent_roster`` → agents,
+# → busy, ``open_confirms``·``open_questions`` → awaiting_input (6b·6d), ``agent_roster`` → agents,
 # ``open_items`` → open_items (v10.119.0), ``stuck`` → stuck (v10.120.0),
 # ``jobs`` → jobs (v10.121.0), ``waiting_in_place`` → waiting (v10.165.0), and every ``knob:<name>`` → knobs
 # (+ grammar). A set_sticky/clear_sticky on any of them republishes the status sidecar (viewers republish on
@@ -97,7 +88,7 @@ def _iso_to_epoch(ts) -> float | None:
 _STATUS_STICKY_KEYS = frozenset(
     {
         "worker_state",
-        "input_required",
+        "open_confirms",
         "open_questions",
         "agent_roster",
         "open_items",
@@ -109,9 +100,12 @@ _STATUS_STICKY_KEYS = frozenset(
 
 
 def _needs_answer(sticky: dict) -> bool:
-    """확인 대화가 떠 있다 or 사람에게 온 열린 질문이 있다 (6b 결정 G)."""
+    """사람에게 건 열린 확인이나 열린 질문이 있다 (6b 결정 G·6d)."""
+    confirms = sticky.get("open_confirms")
     questions = sticky.get("open_questions")
-    return "input_required" in sticky or bool(questions and questions.get("questions"))
+    return bool(confirms and confirms.get("confirms")) or bool(
+        questions and questions.get("questions")
+    )
 
 
 def _flips_status(name: str) -> bool:
@@ -133,7 +127,7 @@ class WebRenderer(Renderer):
     """Renderer for ``agent-cli web``.
 
     Thread-safe: emit methods are called from the AgentLoop worker
-    thread; ``push_confirm`` (and ``hub.register``) are called from the
+    thread; ``hub.register`` and the sticky reads are called from the
     FastAPI request handlers (async, but the calls themselves are
     synchronous from the renderer's POV). The renderer's own state (scope
     maps, pending notes, prompt snapshots, …) is guarded by ``self._lock``;
@@ -189,8 +183,6 @@ class WebRenderer(Renderer):
         # Set when DIRECTIVE.md is edited via the Prompt Inspector; the loop
         # consumes it each LLM call to rebuild its system prompt.
         self._directives_dirty = False
-        # input queue feeds prompt_user / confirm
-        self._input_queue: SimpleQueue = SimpleQueue()
         # Pending assistant emission: thought() arrives before action() /
         # final(), so the thought is held until the second call so we can
         # emit a single ``assistant_turn`` event per LLM emission.
@@ -286,9 +278,6 @@ class WebRenderer(Renderer):
         # 재생이 레코드의 `request_id` 로 채운다. 장부는 history 를 모르므로 스냅샷의
         # `hidx` 는 여기서 채운다.
         self._request_hidx: dict[str, int] = {}
-        # 스레드 → 방금 받은 confirm 답의 뷰어 닉네임 (v10.120.0, `confirm_author`).
-        # 답은 큐로 오고 confirm 은 스레드마다 하나라 스레드로 짝짓는다(`_pending_hidx` 와 같다).
-        self._confirm_authors: dict[int, str] = {}
 
     # ─── Event distribution ─────────────────────────
 
@@ -337,7 +326,7 @@ class WebRenderer(Renderer):
         attachment for events that already carry an explicit
         ``task_id`` (the ``scope_start``/``scope_end`` lifecycle markers fill
         it in themselves) and for events whose data shape is
-        deliberately bare (e.g. ``input_resolved``).
+        deliberately bare.
         """
         tid = threading.get_ident()
         task_id = self._current_task_id()
@@ -413,8 +402,8 @@ class WebRenderer(Renderer):
 
     def clear_sticky(self, name: str) -> None:
         """Drop a sticky slot so new connections no longer replay it — e.g.
-        once a pending ``input_required`` is answered, a late/reconnecting
-        client must NOT be handed the already-resolved prompt."""
+        once a band is gone, a late/reconnecting client must NOT be handed
+        the stale state."""
         self.hub.clear_sticky(name)
         if _flips_status(name):  # awaiting cleared → refresh file
             self._publish_status()
@@ -733,6 +722,11 @@ class WebRenderer(Renderer):
         """사람에게 온 열린 질문 sticky (6b) — ❓ 트레이의 출처 하나(main·에이전트·스킬 런). 라이브 브로드캐스트 +
         재접속 snapshot 복원. 묻는 쪽의 이름표는 명단에서 푼다(명단이 바뀌면 트레이도 다시 그린다)."""
         self.set_sticky("open_questions", "open_questions", {"questions": questions})
+
+    def open_confirms(self, confirms: list) -> None:
+        """사람에게 건 열린 확인 sticky (6d) — ❓ 트레이의 확인 항목들(main·에이전트). 라이브 브로드캐스트 + 재접속
+        snapshot 복원, status.json ``awaiting_input`` 의 한 출처."""
+        self.set_sticky("open_confirms", "open_confirms", {"confirms": confirms})
 
     def broadcast_knob(self, state: dict) -> None:
         """노브 상태 한 장(`knobs.web_state`)을 sticky ``knob:<name>`` 으로 — 칩
@@ -1781,26 +1775,10 @@ class WebRenderer(Renderer):
         never reaped mid-task."""
         return self._worker_busy
 
-    def is_awaiting_input(self) -> bool:
-        """Whether a ``confirm`` is currently pending a user reply (the
-        ``input_required`` sticky is set between emit and resolve). The board's
-        "needs your answer" also counts open questions — `needs_answer`."""
-        return self.hub.sticky_payload("input_required") is not None
-
     def needs_answer(self) -> bool:
-        """보드의 "답변 필요" (status.json·health 의 ``awaiting_input``, 6b 결정 G) — 확인 대화가 떠 있거나 사람에게 온
-        열린 질문이 있다. 막는 물음만 보는 `is_awaiting_input`(Ctrl+C·확인 대화 게이트)과 다르다."""
+        """보드의 "답변 필요" (status.json·health 의 ``awaiting_input``, 6b 결정 G·6d) — 사람에게 건 열린 확인이나 열린
+        질문이 있다."""
         return _needs_answer(dict(self.hub.sticky_items()))
-
-    def awaiting_input_kind(self) -> str | None:
-        """Kind (``"confirm"`` — the only blocking prompt) of the pending input wait, or
-        ``None`` when nothing is waiting. Read by POST /api/input's gate: an
-        answer with no matching wait is refused (409) instead of landing in
-        ``_input_queue`` and auto-answering the NEXT prompt — the stale-click
-        poisoning seen when a connection-starved browser flushes queued
-        confirm clicks, or when two viewers race to answer the same prompt."""
-        payload = self.hub.sticky_payload("input_required")
-        return payload.get("kind") if payload is not None else None
 
     def mark_directives_dirty(self) -> None:
         """A web edit wrote DIRECTIVE.md → ask the loop to rebuild its system
@@ -2212,8 +2190,8 @@ class WebRenderer(Renderer):
 
     def can_prompt(self) -> bool:
         """Always ``True``: the web channel can ALWAYS deliver an answer —
-        an open question stays in the ❓ tray and a pending confirm's
-        ``input_required`` sticky replays into the next client's snapshot,
+        an open question or confirmation stays in the ❓ tray (its sticky
+        replays into the next client's snapshot),
         the status file flags ``awaiting_input`` (agent-board shows "답변
         필요"), and the answer comes whenever someone shows up.
 
@@ -2232,80 +2210,7 @@ class WebRenderer(Renderer):
         발화가 묻는 근거다."""
         return True
 
-    def confirm_author(self) -> str:
-        return self._confirm_authors.pop(threading.get_ident(), "")
-
-    def confirm(
-        self,
-        prompt: str,
-        options: list[ConfirmOption],
-        *,
-        default_key: str,
-        command: str | None = None,
-        danger_spans: list[tuple[int, int]] | None = None,
-    ) -> tuple[str, str]:
-        """Push an ``input_required`` event with the option list, block
-        until POST /api/input arrives with a ``(key, comment)`` payload.
-
-        On abort, returns ``(default_key, "")`` — matches MinimalRenderer
-        so callers see the same "safe default" semantics regardless of
-        where the user disconnected. ``command`` / ``danger_spans`` (when
-        given) ride along in the payload so the dialog can show the command
-        with its dangerous tokens highlighted.
-        """
-
-        # ⚡ 자동 승인은 여기서 보지 않는다 (v10.120.0) — 안전 확인의 호출자가 먼저
-        # `auto_approved` 를 부른다. confirm 은 언제나 묻는다(StaleGuard 의 멈춤 질문).
-        meta = self.prompt_meta()
-        try:
-            value = self._await_human(
-                "confirm",
-                {
-                    "prompt": prompt,
-                    "options": [{"key": o.key, "label": o.label} for o in options],
-                    "default_key": default_key,
-                    # The command to display + the dangerous-token ranges to
-                    # highlight (None/[] for a non-command confirm like the
-                    # workspace path-escape guard, which shows prompt-only).
-                    "command": command,
-                    "danger_spans": [[s, e] for s, e in (danger_spans or [])],
-                    # Who/why/what: which delegate agent + its reasoning +
-                    # the action it wants to run, surfaced in the dialog.
-                    "agent": meta["agent"],
-                    "reasoning": meta["reasoning"],
-                    "action": meta["action"],
-                },
-            )
-        except EOFError:
-            # Mirror MinimalRenderer: confirm is "pick or default" — abort
-            # collapses to the safe default rather than propagating (the
-            # caller passed a default_key precisely so confirm can always
-            # answer).
-            return (default_key, "")
-        if isinstance(value, tuple) and len(value) == 3:
-            # 큐는 (key, comment, 답한 뷰어) — 뷰어는 `confirm_author` 로 (v10.120.0)
-            key, comment, author = value
-            self._confirm_authors[threading.get_ident()] = str(author or "")
-            return (key, comment)
-        if isinstance(value, tuple) and len(value) == 2:
-            return value  # type: ignore[return-value]
-        # Malformed payload — fall back to default.
-        return (default_key, "")
-
     # ─── External hooks ─────────────────────────────
-
-    def push_confirm(self, payload: dict[str, Any]) -> None:
-        """POST /api/input 의 확인 대화 답 — 막는 물음은 확인 대화뿐이다. ``payload``: ``{"key": "...", "comment": "...",
-        "conn_id": …}``."""
-        # 답한 뷰어 (v10.120.0): 확인의 코멘트를 그 사람의 메시지로 넣을 때(Hint) 쓴다
-        nick = self.hub.nickname_for(payload.get("conn_id"))
-        self._input_queue.put(
-            (
-                payload.get("key", ""),
-                payload.get("comment", ""),
-                "" if nick == "?" else nick,
-            )
-        )
 
     def push_user_message(
         self,
@@ -2343,81 +2248,3 @@ class WebRenderer(Renderer):
         if hidx is not None:
             self.note_record(hidx)
         self._emit("user_message", payload, persistent=True)
-
-    def push_abort(self) -> None:
-        """Unblock a pending ``prompt_user`` / ``confirm`` call by
-        injecting a sentinel that the wait helper treats as EOF.
-        Called by POST /api/abort.
-        """
-        self._input_queue.put(_ABORT_SENTINEL)
-
-    # ─── Helpers ────────────────────────────────────
-
-    def _await_human(self, kind: str, fields: dict[str, Any]) -> Any:
-        """ask·confirm 공통 뼈대 (v10.120.1): 사람에게 묻는 ``input_required`` 를 띄우고
-        POST /api/input 의 답을 기다린다. 돌려주는 것은 큐에 들어온 날것 그대로 —
-        해석(기본값·tuple 모양)은 공개 메서드 몫. 중단이면 ``EOFError`` 가 그대로 오른다.
-
-        띄우기와 기다리기는 ``_guarded_read`` 의 공유 락 아래 함께 돈다 — 한 번에
-        ``input_required`` 하나만 떠 있어야 두 위임 에이전트의 질문이 하나뿐인
-        ``_input_queue`` 에서 서로의 답을 가로채지 않는다."""
-
-        def _do() -> Any:
-            # 띄우기 전에 큐에 있던 것은 정의상 옛 질문의 답 — 이 질문에 자동으로
-            # 답하면 안 된다 (``_drain_stale_input``).
-            self._drain_stale_input()
-            ask_id = f"ask-{next(_ASK_IDS)}"
-            # Sticky (not bare emit): a pending prompt must replay into a
-            # late/reconnecting client's snapshot, else the worker waits for an
-            # answer the UI never offered (the prompt is invisible). Cleared on
-            # resolve so a fresh connection doesn't see the stale question.
-            self.set_sticky(
-                "input_required",
-                "input_required",
-                {"kind": kind, "ask_id": ask_id, **fields},
-            )
-            try:
-                return self._wait_for_input()
-            finally:
-                self.clear_sticky("input_required")
-                self._emit("input_resolved", {"ask_id": ask_id}, persistent=False)
-
-        return self._guarded_read(_do)
-
-    def _drain_stale_input(self) -> None:
-        """Empty ``_input_queue`` before a new prompt is announced.
-
-        Anything queued at this point predates the announce, so it can only
-        be aimed at an EARLIER (already-resolved) prompt: e.g. a burst of
-        confirm clicks flushed by a connection-starved browser, or the loser
-        of a two-viewers-answer race. The /api/input gate (409) blocks these
-        at the endpoint; this drain is the belt-and-suspenders for answers
-        that slipped in during the resolve window. Stale ``_ABORT_SENTINEL``
-        is dropped too — the abort affordance targets the prompt that was on
-        screen, never one that hasn't been announced yet. Callers run under
-        ``_guarded_read``'s lock, so no prompt is concurrently waiting."""
-        while True:
-            try:
-                self._input_queue.get_nowait()
-            except Empty:
-                return
-
-    def _wait_for_input(self) -> Any:
-        """Block worker thread until POST /api/input arrives.
-
-        Polls with a small timeout so future interrupt mechanisms can
-        slot in without rewriting the wait loop.
-        """
-        while True:
-            try:
-                value = self._input_queue.get(timeout=0.5)
-            except Empty:
-                continue
-            if value is _ABORT_SENTINEL:
-                raise EOFError("Input aborted by user")
-            return value
-
-
-# Sentinel object used to distinguish "abort" from a legitimate empty
-# string input. Module-private — never crosses the renderer boundary.
-_ABORT_SENTINEL = object()

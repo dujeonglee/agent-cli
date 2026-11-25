@@ -250,7 +250,10 @@ class ToolBridge:
         human_note.clear()  # 단건 경로와 같다 (v10.120.2)
         started = time.monotonic()
         try:
-            result, parts = apply_edits_batch_parts(path, processed)
+            run_ctx = self._run_ctx()
+            result, parts = apply_edits_batch_parts(
+                path, processed, owner=run_ctx.owner, stopped=run_ctx.stopped
+            )
         except Exception as e:  # 단건 경로와 동일 안전망 (KeyboardInterrupt 전파)
             import traceback as _tb
 

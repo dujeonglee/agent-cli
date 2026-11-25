@@ -181,8 +181,8 @@ class EventHub:
 
     def clear_sticky(self, name: str) -> None:
         """Drop a sticky slot so new connections no longer replay it — e.g.
-        once a pending ``input_required`` is answered, a late/reconnecting
-        client must NOT be handed the already-resolved prompt."""
+        once a band is gone, a late/reconnecting client must NOT be handed
+        the stale state."""
         with self._lock:
             self._sticky.pop(name, None)
 

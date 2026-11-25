@@ -12,7 +12,6 @@ from agent_cli.render import (
     render_run_ended,
     set_renderer,
 )
-from agent_cli.render.base import ConfirmOption
 from agent_cli.render.minimal import MinimalRenderer
 
 
@@ -52,8 +51,8 @@ class TestMinimalCanPrompt:
         assert r.can_prompt() is False
 
     def test_true_even_with_active_live(self, monkeypatch):
-        """An active Live region does NOT make ``can_prompt`` False —
-        ``confirm`` pauses the Live, so a TTY is the only precondition."""
+        """An active Live region does NOT make ``can_prompt`` False — a TTY
+        is the only precondition (확인은 줄을 찍고 친 명령을 읽는다)."""
         r = MinimalRenderer(Console())
         r._parallel_live = MagicMock()
         monkeypatch.setattr(minimal_mod.sys, "stdin", _FakeStream(True))
@@ -61,54 +60,9 @@ class TestMinimalCanPrompt:
         assert r.can_prompt() is True
 
 
-class TestMinimalConfirmPausesLive:
-    """Inside a Live region (the spinner) the prompt would be painted
-    over; ``confirm`` must stop the Live for the read and restart it."""
-
-    def test_active_live_paused_and_resumed(self, monkeypatch):
-        r = MinimalRenderer(Console())
-        live = MagicMock()
-        r._live = live
-        monkeypatch.setattr("builtins.input", lambda prompt="": "y do it")
-
-        key, comment = r.confirm(
-            "ok? ", [ConfirmOption(key="y", label="yes")], default_key="n"
-        )
-
-        assert key == "y"
-        assert comment == "do it"
-        live.stop.assert_called_once()
-        live.start.assert_called_once()
-
-    def test_live_resumed_even_on_eof(self, monkeypatch):
-        """EOF returns the default deny, but the Live must still resume."""
-
-        def _raise(prompt=""):
-            raise EOFError
-
-        r = MinimalRenderer(Console())
-        live = MagicMock()
-        r._live = live
-        monkeypatch.setattr("builtins.input", _raise)
-
-        key, _ = r.confirm(
-            "ok? ", [ConfirmOption(key="y", label="yes")], default_key="n"
-        )
-
-        assert key == "n"
-        live.stop.assert_called_once()
-        live.start.assert_called_once()
-
-    def test_no_live_reads_directly(self, monkeypatch):
-        """No active Live (main loop / single delegate) → plain read."""
-        r = MinimalRenderer(Console())
-        monkeypatch.setattr("builtins.input", lambda prompt="": "n")
-        key, _ = r.confirm(
-            "ok? ",
-            [ConfirmOption(key="y", label="yes"), ConfirmOption(key="n", label="no")],
-            default_key="y",
-        )
-        assert key == "n"
+class TestMinimalPromptPausesLive:
+    """Inside a Live region (the spinner) the boot prompt would be painted
+    over; ``prompt_user`` must stop the Live for the read and restart it."""
 
     def test_prompt_user_pauses_active_live(self, monkeypatch):
         """``ask`` shares the same guard — prompt_user must also pause the
@@ -144,64 +98,18 @@ class TestMinimalConfirmPausesLive:
         live.start.assert_called_once()
 
 
-class TestInteractivePromptSerialization:
-    """confirm and ask share one re-entrant lock so they serialize against
-    each other across delegate worker threads."""
+class TestTerminalReadLock:
+    """터미널을 읽는 이는 한 번에 하나 — 재진입 가능한 잠금 하나(6d)."""
 
     def test_shared_lock_is_reentrant(self):
-        # The dangerous-shell guard holds the lock then calls confirm,
-        # which re-acquires it on the same thread — must not deadlock.
-        from agent_cli.render import interactive_lock
+        from agent_cli.render.base import interactive_lock
 
         with interactive_lock, interactive_lock:
             assert True
 
 
 class TestPromptProvenance:
-    """confirm/ask surface who (delegate agent) + why (reasoning) + what
-    (action) so the user can attribute an out-of-context prompt."""
-
-    def test_meta_empty_without_agent(self):
-        # Main agent (no delegate label) → no header; its thought/action
-        # already print inline above the prompt.
-        r = MinimalRenderer(Console())
-        r.note_thought("some reasoning")
-        r.note_action("shell", "rm x")
-        assert r._format_prompt_meta() == ""
-
-    def test_meta_with_agent_first_line_only(self):
-        r = MinimalRenderer(Console())
-        r.set_thread_agent("explorer")
-        r.note_thought("first line\nsecond line")
-        r.note_action("shell", "rm -rf build")
-        header = r._format_prompt_meta()
-        assert "explorer" in header
-        assert "first line" in header and "second line" not in header
-        assert "rm -rf build" in header
-
-    def test_confirm_prints_header_for_delegate(self, monkeypatch):
-        from io import StringIO
-
-        buf = StringIO()
-        r = MinimalRenderer(Console(file=buf, force_terminal=False, width=100))
-        r.set_thread_agent("explorer")
-        r.note_thought("must delete the stale build dir")
-        r.note_action("shell", "rm -rf build")
-        monkeypatch.setattr("builtins.input", lambda prompt="": "y")
-        r.confirm("Allow? ", [ConfirmOption(key="y", label="yes")], default_key="n")
-        out = buf.getvalue()
-        assert "explorer" in out
-        assert "must delete the stale build dir" in out
-
-    def test_confirm_no_header_for_main_agent(self, monkeypatch):
-        from io import StringIO
-
-        buf = StringIO()
-        r = MinimalRenderer(Console(file=buf, force_terminal=False, width=100))
-        r.note_thought("main agent reasoning")  # no agent label set
-        monkeypatch.setattr("builtins.input", lambda prompt="": "y")
-        r.confirm("Allow? ", [ConfirmOption(key="y", label="yes")], default_key="n")
-        assert "main agent reasoning" not in buf.getvalue()
+    """확인은 누가(위임 에이전트)·왜(생각)·무엇(행동)을 싣는다 — 웹 트레이의 메타 블록(`prompt_meta`)."""
 
     def test_agent_work_sets_agent_end_clears(self):
         r = MinimalRenderer(Console(file=io.StringIO()))
@@ -409,14 +317,9 @@ class TestMinimalRendererContract:
             def status(self, state, message, turn=0):
                 self.statuses.append((state, message))
 
-            # ── 입력 계약 2 (안전상 abstract 유지 — 명시 구현 강제) ──
+            # ── 입력: 부팅 마법사의 한 줄 읽기(추상 아님 — 터미널 렌더러만) ──
             def prompt_user(self, prompt, context=None):
                 raise EOFError
-
-            def confirm(
-                self, prompt, options, default_key="n", command=None, danger_spans=None
-            ):
-                return (default_key, "")
 
         return NineMethodRenderer()
 
@@ -439,11 +342,12 @@ class TestMinimalRendererContract:
         assert any("model detected: m1" in m for _, m in r.statuses)
         assert any("model loaded: m1" in m for _, m in r.statuses)
 
-    def test_abstract_surface_is_exactly_eight(self):
-        """6b: `prompt_user` 는 추상 표면에서 빠졌다 — 막는 `ask` 가 없어져 부팅 마법사(터미널 렌더러)만 쓴다."""
+    def test_abstract_surface_is_exactly_seven(self):
+        """6b: `prompt_user` 는 추상 표면에서 빠졌다 — 막는 `ask` 가 없어져 부팅 마법사(터미널 렌더러)만 쓴다.
+        6d: `confirm` 도 빠졌다 — 확인은 장부의 번호 항목이고 렌더러는 그리기만 한다(`confirm_line`·`open_confirms`)."""
         from agent_cli.render.base import Renderer
 
-        assert len(Renderer.__abstractmethods__) == 8
+        assert len(Renderer.__abstractmethods__) == 7
         assert Renderer.__abstractmethods__ == frozenset(
             {
                 "header",
@@ -453,7 +357,6 @@ class TestMinimalRendererContract:
                 "final",
                 "error",
                 "status",
-                "confirm",
             }
         )
 

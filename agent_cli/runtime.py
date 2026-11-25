@@ -45,6 +45,7 @@ from agent_cli.session.records import record_restart
 from agent_cli.session_slots import (
     clear_session_slots,
     set_agent_registry,
+    set_confirm_wait_input,
     set_hook_runner,
     set_job_registry,
     set_monitor_registry,
@@ -690,6 +691,9 @@ def wire_session(
     set_nested_wait_input(
         commands_during_nested_wait(main_input, surface, read_line=on_idle_input)
     )
+    # 확인을 기다리는 호출이 터미널을 읽는 길 (6d) — 읽기만 한다: 확인 명령은 읽는 그 자리(`main.read_terminal_line`)에서
+    # 답이 되고, 그 밖의 말은 main 앞에 선다. 웹은 None(답은 웹 문이 받는다)
+    set_confirm_wait_input(on_idle_input)
     # 첫 정산이 꺼져 있던 동안 지난 발화를 질문으로 남긴다. 펌프가 돌기 전에 발화한
     # 예약은 main 상자에 줄 설 뿐이다 (v10.130.5).
     stores.schedules.start()

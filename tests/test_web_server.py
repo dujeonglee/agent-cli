@@ -8,11 +8,10 @@ Coverage axes:
    subscriber in order; the persistent buffer is replayed on connect.
 3. **Multi-viewer** — every connection is equal (all may input / queue);
    a second connection does not end the first's stream.
-4. **POST /api/input** — chat / prompt / confirm routes wire through
-   to the renderer (chat enqueues onto the pending message queue:
-   ``enqueue`` / ``main_input.wait_to_open`` / cancel).
-5. **POST /api/abort** — releases a blocked ``prompt_user`` /
-   ``confirm`` call.
+4. **POST /api/input** — chat enqueues onto the pending message queue
+   (``enqueue`` / ``main_input.wait_to_open`` / cancel); a confirmation
+   command is answered at the door (6d).
+5. **POST /api/confirms/<c-N>/<action>** — answers one open confirmation.
 
 The tests use FastAPI's ``TestClient`` for synchronous HTTP. The SSE
 stream is read as raw bytes with line iteration so we don't need a
@@ -27,7 +26,6 @@ import os
 import pathlib
 import re
 import threading
-import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -753,7 +751,7 @@ class TestStaticUI:
         # colorizeDiffBody(diff 색)/highlightDangerHtml(위험 강조) 콜사이트 존재.
         assert 'elHtml("div", ["bubble"], escapeAndFormat(' in js
         assert "colorizeDiffBody(" in js and 'elHtml("pre", ["obs-body"]' in js
-        assert "highlightDangerHtml(data.command" in js
+        assert "highlightDangerHtml(c.command" in js
         # v9.8.0: 거부된 응답 카드(renderFailedEmission)는 제거됐다 — 원문을
         # 화면에 그리는 경로가 없어져 이 지점의 이스케이프 계약도 함께 사라졌다.
         assert "renderFailedEmission" not in js
@@ -784,8 +782,8 @@ class TestStaticUI:
         html = client.get("/").text
 
         unstyled_ok = {
-            # 의미 훅 — 복합 선택자(.ask-item.ask-main)로만 쓰이거나 JS 가 찾는 표식
-            "ask-main",
+            # 의미 훅 — 트레이의 확인 항목(.ask-item 의 스타일을 그대로 쓴다, 6d)
+            "ask-confirm",
             "task-empty-note",
             # 마크다운 본문 래퍼 — 안의 h1/ul/pre 가 요소 선택자로 스타일된다
             "md",
@@ -1496,10 +1494,10 @@ class TestAuth:
     def test_health_reports_awaiting_input(self, server_and_client):
         _, renderer, client = server_and_client
         assert client.get("/api/health").json()["awaiting_input"] is False
-        # a pending ask/confirm sets the input_required sticky
-        renderer.set_sticky("input_required", "input_required", {"kind": "prompt"})
+        # 열린 확인(6d)이 있으면 답변 필요
+        renderer.open_confirms([{"id": "c-1"}])
         assert client.get("/api/health").json()["awaiting_input"] is True
-        renderer.clear_sticky("input_required")
+        renderer.open_confirms([])
         assert client.get("/api/health").json()["awaiting_input"] is False
 
     def test_health_reports_viewers(self, server_and_client):
@@ -1534,9 +1532,9 @@ class TestAuth:
         )
         assert resp.status_code == 401
 
-    def test_abort_with_wrong_token_is_401(self, server_and_client):
+    def test_confirm_answer_with_wrong_token_is_401(self, server_and_client):
         _, _, client = server_and_client
-        resp = client.post("/api/abort?token=nope")
+        resp = client.post("/api/confirms/c-1/approve?token=nope", json={})
         assert resp.status_code == 401
 
 
@@ -1588,7 +1586,7 @@ class TestCookieAuth:
     def test_no_bootstrap_no_cookie_still_401(self, server_and_client):
         # A bare /api call with neither cookie nor token is unauthenticated.
         _, _, client = server_and_client
-        assert client.post("/api/abort").status_code in (401, 422)
+        assert client.post("/api/stop").status_code in (401, 422)
 
 
 class TestShareUrl:
@@ -1680,37 +1678,16 @@ class TestInputEndpoint:
             json={"kind": "prompt", "content": "answer text", "conn_id": cid},
         )
         assert resp.status_code == 400
-        assert renderer._input_queue.qsize() == 0
 
-    def test_confirm_response_decodes_key_and_comment(self, server_and_client):
-        from agent_cli.render.base import ConfirmOption
-
+    def test_the_confirm_kind_is_gone(self, server_and_client):
+        """6d: 확인의 답은 그 번호의 길(`/api/confirms/<c-N>/…`)이나 입력창의 확인 명령 — ``kind: "confirm"`` 은 없다."""
         _, renderer, client = server_and_client
         cid = _register(renderer)
-        result: list[tuple[str, str]] = []
-
-        def worker():
-            result.append(
-                renderer.confirm(
-                    "?",
-                    [
-                        ConfirmOption("y", "yes"),
-                        ConfirmOption("n", "no"),
-                    ],
-                    default_key="n",
-                )
-            )
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-
-        client.post(
+        resp = client.post(
             "/api/input?token=testtoken",
-            json={"kind": "confirm", "key": "y", "comment": "go ahead", "conn_id": cid},
+            json={"kind": "confirm", "key": "y", "comment": "", "conn_id": cid},
         )
-        t.join(timeout=2.0)
-        assert result == [("y", "go ahead")]
+        assert resp.status_code == 400
 
     def test_unknown_kind_is_400(self, server_and_client):
         _, renderer, client = server_and_client
@@ -1743,75 +1720,6 @@ class TestInputEndpoint:
         assert resp.status_code == 400
 
 
-class TestInputGate:
-    """confirm/prompt 답변은 "대기 중 + kind 일치"일 때만 수용 (v7.2.0 ⓓ).
-
-    배경: 연결 정체(HTTP/1.1 origin 당 6연결 고갈)로 브라우저에 적체됐던
-    confirm 클릭들이 한꺼번에 flush 되면, 첫 발만 대기 중인 worker 에
-    소비되고 나머지는 ``_input_queue`` 에 잔류 → **다음** confirm/ask 가
-    뜨는 순간 stale 답변을 즉시 소비해 자동 승인/오답이 된다. 다중 뷰어
-    동시 클릭(둘 다 유효 커넥션)에서도 두 번째 답변이 같은 경로로 남는다.
-    게이트는 받아줄 wait 가 없는 답변을 409 로 거절해 적체 자체를 막는다.
-    """
-
-    def test_confirm_without_pending_wait_is_409_and_not_queued(
-        self, server_and_client
-    ):
-        _, renderer, client = server_and_client
-        cid = _register(renderer)
-        resp = client.post(
-            "/api/input?token=testtoken",
-            json={"kind": "confirm", "key": "y", "comment": "", "conn_id": cid},
-        )
-        assert resp.status_code == 409
-        assert renderer._input_queue.qsize() == 0
-
-    def test_kind_mismatch_is_409(self, server_and_client):
-        """confirm 대기 중에 다른 종류의 답은 거절 — 6b 뒤 ``prompt`` 는 없는 종류라 400."""
-        from agent_cli.render.base import ConfirmOption
-
-        _, renderer, client = server_and_client
-        cid = _register(renderer)
-        result: list[tuple[str, str]] = []
-
-        def worker():
-            result.append(
-                renderer.confirm(
-                    "?",
-                    [ConfirmOption("y", "yes"), ConfirmOption("n", "no")],
-                    default_key="n",
-                )
-            )
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-
-        resp = client.post(
-            "/api/input?token=testtoken",
-            json={"kind": "prompt", "content": "wrong kind", "conn_id": cid},
-        )
-        assert resp.status_code == 400
-
-        # 일치하는 kind 는 정상 수용 — worker 가 그 답으로 해제된다.
-        resp = client.post(
-            "/api/input?token=testtoken",
-            json={"kind": "confirm", "key": "y", "comment": "", "conn_id": cid},
-        )
-        assert resp.status_code == 200
-        t.join(timeout=2.0)
-        assert result == [("y", "")]
-
-    def test_chat_is_not_gated(self, server_and_client):
-        _, renderer, client = server_and_client
-        cid = _register(renderer)
-        resp = client.post(
-            "/api/input?token=testtoken",
-            json={"kind": "chat", "content": "hi", "conn_id": cid},
-        )
-        assert resp.status_code == 200
-
-
 class TestTabPresenceBeacon:
     """같은 origin 대시보드(agent-board)가 "연결 잡고 있는 탭 수"를 셀 수
     있도록 모든 web UI 탭이 BroadcastChannel ping 에 pong 으로 응답
@@ -1825,75 +1733,118 @@ class TestTabPresenceBeacon:
         assert '"pong"' in js
 
 
-class TestConfirmStallWarning:
-    """confirm 클릭 후 일정 시간 내 미해결이면 경고 표시 (v7.2.0 ⓔ) —
-    연결 정체 시 "버튼이 고장난" 조용한 실패를 보이는 실패로.
-    v7.11.4 감사: substring-전역 → 함수-스코프 동시출현으로 강화."""
+class TestConfirmRoutes:
+    """확인의 답(6d) — 트레이의 길 ``/api/confirms/<c-N>/<action>`` 과 입력창에 친 확인 명령. 둘 다 같은 레지스트리
+    함수로 간다. 번호가 기다리는 호출을 정하고, 먼저 닿은 답 하나만 답이다(뒤의 것은 409)."""
 
-    def test_stall_warning_wired_in_js_and_css(self, server_and_client):
-        _, _, client = server_and_client
-        js = js_text()
-        css = client.get("/static/style.css").text
-        assert "CONFIRM_STALL_MS" in js
-        assert ".confirm-stall" in css
-        # 타이머 arm 은 트레이의 main confirm 제출부에서 (3b).
-        body = js_fn_body(js, "ovSubmitMainConfirm")
-        assert "confirmStallTimer = setTimeout" in body
+    @pytest.fixture
+    def waiting(self, server_and_client, tmp_path, monkeypatch):
+        import agent_cli.render as render_mod
+        from agent_cli import confirm, session_slots
+        from tests.test_agents_live import make_registry
 
-    def test_stall_timer_cleared_on_transition(self, server_and_client):
-        """해결(input_resolved→ovFoldMainAsk)·새 프롬프트 진입(input_required)
-        시 타이머 정리 — 아니면 정상 해결 뒤 가짜 '연결 정체' 경고/타이머 누수."""
-        js = js_text()
-        assert "clearConfirmStall()" in js_fn_body(js, "ovFoldMainAsk")
-        ir = js.split('es.addEventListener("input_required"', 1)[1].split("\n  });", 1)[
-            0
+        server, renderer, client = server_and_client
+        reg = make_registry(tmp_path)
+        server.agent_registry = reg
+        session_slots.set_agent_registry(reg)
+        monkeypatch.setattr(render_mod, "get_renderer", lambda: renderer)
+        opened = threading.Event()
+        shown = renderer.open_confirms
+
+        def open_confirms(items):
+            shown(items)
+            if items:
+                opened.set()
+
+        renderer.open_confirms = open_confirms
+        out: list = []
+        t = threading.Thread(
+            target=lambda: out.append(
+                confirm.ask_person(
+                    "Dangerous command detected (`rm`)",
+                    "",
+                    confirm.safety_choices("once", "always"),
+                    owner="main",
+                    stopped=None,
+                )
+            ),
+            daemon=True,
+        )
+        t.start()
+        assert opened.wait(5)
+        (c,) = reg.open_human_confirms()
+        yield server, renderer, client, c, t, out
+        session_slots.set_agent_registry(None)
+        reg.shutdown_all()
+
+    def test_the_tray_route_answers_that_number(self, waiting):
+        _, renderer, client, c, t, out = waiting
+        cid = _register(renderer)
+        renderer.hub.set_nickname(cid, "dj")
+        resp = client.post(
+            f"/api/confirms/{c.id}/deny?token=testtoken",
+            json={"conn_id": cid, "note": "not now"},
+        )
+        assert resp.status_code == 200
+        t.join(5)
+        assert (out[0][1].action, out[0][1].note, out[0][1].by) == (
+            "deny",
+            "not now",
+            "user:dj",
+        )
+        again = client.post(f"/api/confirms/{c.id}/approve?token=testtoken", json={})
+        assert again.status_code == 409
+
+    def test_unknown_action_and_number(self, waiting):
+        _, _, client, c, t, _ = waiting
+        assert (
+            client.post(f"/api/confirms/{c.id}/frobnicate?token=testtoken", json={})
+        ).status_code == 404
+        assert (
+            client.post("/api/confirms/c-999/approve?token=testtoken", json={})
+        ).status_code == 409
+        client.post(f"/api/confirms/{c.id}/deny?token=testtoken", json={})
+        t.join(5)
+
+    def test_a_confirm_command_typed_in_the_chat_is_answered_at_the_door(self, waiting):
+        """입력창의 ``/approve c-N`` 은 줄 세우지 않고 그 자리에서 답한다 — 말풍선과 결과 카드는 다른 명령과 같다."""
+        server, renderer, client, c, t, out = waiting
+        cid = _register(renderer)
+        renderer.hub.set_nickname(cid, "dj")
+        resp = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "chat", "content": f"/approve {c.id} go", "conn_id": cid},
+        )
+        assert resp.status_code == 200
+        t.join(5)
+        assert (out[0][1].action, out[0][1].note, out[0][1].by) == (
+            "approve",
+            "go",
+            "user:dj",
+        )
+        assert server.queue_snapshot() == []
+        events = renderer.hub.events
+        assert ("user_message", f"[dj]: /approve {c.id} go") in [
+            (e, d.get("content")) for e, d in events
         ]
-        assert "clearConfirmStall()" in ir
+        assert any(
+            e == "observation" and d.get("content") == f"approved {c.id}"
+            for e, d in events
+        )
 
-    def test_frontend_handles_409_as_stale_ask(self, server_and_client):
-        """409(이미 해결된 ask) 응답이면 stale main-ask 트레이 항목을 접는다
-        (ovFoldMainAsk) — 확인 대화 제출부의 분기 안에서(6b: main 의 막는 물음은 확인 대화뿐이다). v10.147.4: 접기는
-        `mainAskAlreadyClosed(item)` 한 곳 — 그 항목의 물음이 지금의 것일 때만 접고 알린다."""
-        js = js_text()
-        confirm_body = js_fn_body(js, "ovSubmitMainConfirm")
-        assert "status === 409" in confirm_body
-        assert "mainAskAlreadyClosed(item)" in confirm_body
-        assert "ovSubmitMainPrompt" not in js and 'kind: "prompt"' not in js
-        closed = js_fn_body(js, "mainAskAlreadyClosed")
-        assert "session.mainAsk === item.askOf" in closed
-        assert "ovFoldMainAsk()" in closed
-        # 두 제출부 모두 postInput 이 raw fetch Response 를 반환한다는 전제.
-        assert "return fetch(" in js_fn_body(js, "postInput")
-
-    def test_main_ask_in_tray_input_box_chat_only(self, server_and_client):
-        """3b: main prompt/confirm 이 input box 가 아니라 글로벌 트레이 항목으로
-        렌더(session.mainAsk/ovBuildMainAskEl), input box 는 항상 chat(모드 전환 폐지).
-        v10.117.0: 옛 ``var ovMainAsk`` 는 state.js 의 ``session.mainAsk`` 필드다.
-        """
+    def test_the_frontend_posts_the_number_route_and_has_no_abort(
+        self, server_and_client
+    ):
         _, _, client = server_and_client
         html = client.get("/").text
         js = js_text()
-        # input box mode 머신 제거
-        assert "setInputMode" not in js
-        assert 'id="input-mode-badge"' not in html
-        # main ask 는 트레이로
-        assert (
-            "  mainAsk: null," in js_text("state")
-            and "function ovBuildMainAskEl(" in js
-        )
-        ir = js.split('es.addEventListener("input_required"', 1)[1].split("\n  });", 1)[
-            0
-        ]
-        assert "session.mainAsk = { kind: d.kind, data: d }" in ir
-        assert "ovRenderAskTray()" in ir
-        # input box 는 chat 전용 — prompt kind 제출 경로 없음
-        sc = js_fn_body(js, "submitChatOrPrompt")
-        assert '"prompt"' not in sc
-        # 트레이 main confirm 은 검증된 조각 재사용
-        bm = js_fn_body(js, "ovBuildMainAskEl")
-        assert "buildPromptMetaEl(" in bm and "highlightDangerHtml(" in bm
-        # main ask 대기 중엔 #chat-stop 숨김 — #abort 와 두 Stop 동시노출 방지.
-        assert "!session.mainAsk" in js_fn_body(js, "isBusyChat")
+        assert '"api/confirms/" + encodeURIComponent(cid) + "/" + action' in js
+        assert 'id="abort"' not in html and "api/abort" not in js
+        assert "input_required" not in js and "mainAsk" not in js
+        # 확인 중에도 Stop 이 보인다 — 그 정지가 기다리는 호출을 깨운다
+        assert "return session.workerBusy;" in js_fn_body(js, "isBusyChat")
+        # 기본값이 없다 — 말 칸의 Enter 도, 기본 버튼 강조도 없다
+        assert "default_key" not in js
 
 
 class TestWebResumeCli:
@@ -2008,30 +1959,6 @@ class TestMessageQueue:
         js = js_text()
         assert '"queue"' in js  # SSE handler
         assert "api/queue/cancel" in js
-
-
-class TestAbortEndpoint:
-    def test_abort_releases_a_blocked_confirm(self, server_and_client):
-        """6b 뒤 막는 물음은 확인 대화뿐 — 끊으면 기본값으로 풀린다."""
-        from agent_cli.render.base import ConfirmOption
-
-        _, renderer, client = server_and_client
-        result: list = []
-
-        def worker():
-            result.append(
-                renderer.confirm("?", [ConfirmOption("y", "yes")], default_key="n")
-            )
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-
-        resp = client.post("/api/abort?token=testtoken")
-        assert resp.status_code == 200
-
-        t.join(timeout=2.0)
-        assert result == [("n", "")]
 
 
 class TestStopEndpoint:

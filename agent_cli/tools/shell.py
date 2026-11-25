@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable
 from typing import ClassVar
 
-from agent_cli import jobs
+from agent_cli import confirm, jobs
 from agent_cli.session_slots import get_job_registry
 from agent_cli.tools._confine import _unquoted_mask
 from agent_cli.tools.base import Tool
@@ -90,73 +90,18 @@ def _danger_spans(cmd: str) -> list[tuple[int, int]]:
     return [(m.start(), m.end()) for m in _DANGER_RE.finditer(cmd)]
 
 
-def _ask_confirmation(cmd: str, keyword: str) -> tuple[str, str]:
-    """Prompt user for y / n / a, optionally followed by a comment.
-
-    Returns ``(decision, comment)``. ``decision`` is one of
-    ``"y"`` / ``"n"`` / ``"a"``. ``comment`` is whatever the user
-    typed after the decision token (may be empty).
-
-    Format: ``y do this next``, ``n wrong path``, ``a only in /tmp``.
-    Pure ``y`` / ``yes`` / ``n`` / ``a`` works as before with empty
-    comment. EOF/Ctrl+C → ``("n", "")`` (safe default — never run a
-    dangerous command on input failure). If the first token isn't
-    y/n/a we treat it as ``n`` and keep the full input as the comment
-    so the user's reasoning still surfaces to the LLM.
-    """
-    # The command itself is passed structured (``command`` + ``danger_spans``)
-    # so each renderer can DISPLAY it with the dangerous token highlighted —
-    # CLI in bold-red, web in a ``.danger`` span. The prompt string carries only
-    # the warning + question; keeping the command out of it avoids showing the
-    # command twice (once plain in the prompt, once highlighted).
-    prompt = (
-        f"\n⚠ Dangerous command detected (`{keyword}`). "
-        f"Allow? (y=once, n=deny, a=always allow `{keyword}` this session)\n"
-        f"  [y/n/a, optional comment after]: "
-    )
-    from agent_cli.render import get_renderer
-    from agent_cli.render.base import ConfirmOption
-
-    options = [
-        # Affirmative synonyms map to "once" so a natural yes doesn't
-        # collapse to the safe-default deny. ``allow`` maps to "always"
-        # because the prompt labels that option "always allow".
-        ConfirmOption(
-            key="y",
-            label="once (allow this command)",
-            aliases=("yes", "ok", "okay", "yep", "yeah", "sure"),
-        ),
-        ConfirmOption(key="n", label="deny", aliases=("no", "nope")),
-        ConfirmOption(
-            key="a",
-            label=f"always allow `{keyword}` this session",
-            aliases=("always", "allow"),
-        ),
-    ]
-    # ⚡ 자동 승인 (v10.120.0 부터 confirm 밖 — 정책은 안전 확인의 것): 묻지 않고 once.
-    renderer = get_renderer()
-    if renderer.auto_approved(cmd):
-        return ("y", "")
-    # Renderer guarantees ``key`` is one of the option keys (or default
-    # on EOF / empty / unrecognized) and preserves any free-text comment
-    # so the user's intent surfaces upstream to the LLM observation.
-    return renderer.confirm(
-        prompt,
-        options,
-        default_key="n",
-        command=cmd,
-        danger_spans=_danger_spans(cmd),
-    )
-
-
-def confirm_dangerous(cmd: str) -> str | None:
+def confirm_dangerous(
+    cmd: str, *, owner: str = "main", stopped: Callable[[], bool] | None = None
+) -> str | None:
     """위험 키워드 확인 — 거부 사유 | None. 답에 남긴 말은 ``human_note`` 에
     기록된다(v10.120.2 — 승인·거절 모두, 결과에 붙이는 건 tool_bridge 한 곳).
 
+    확인은 번호 항목 ``c-N`` 이고 그 호출은 그 자리에서 기다린다(6d — `agent_cli.confirm`). ``owner``·``stopped`` 는
+    묻는 루프의 소유자와 그 런의 정지(`RunContext`) — 기다리는 동안 런이 멈추면 명령을 돌리지 않고 그 사실을 돌려준다.
+
     `shell` 실행과 `monitor` **등록**이 공유한다 (v9.11.0). monitor 는 발화
     시점이 아니라 등록 시점에 이걸 부른다: 사람은 모니터를 거는 순간엔 있지만
-    새벽 3시 발화 때는 없고, 무엇보다 **폴링 스레드에서 `renderer.confirm` 을
-    부르면 `interactive_lock` 교착**이다. 같은 함수를 쓰므로 정책(키워드 게이트
+    새벽 3시 발화 때는 없다. 같은 함수를 쓰므로 정책(키워드 게이트
     + `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0` 우회)이 갈릴 수 없다 — 모니터만
     모든 명령에 확인을 요구하면 harbor/CI 에서 못 쓰게 되는데, 그 headless
     환경이 monitor 를 만드는 근거였다(docs/monitor/DESIGN.md §7.3).
@@ -174,56 +119,73 @@ def confirm_dangerous(cmd: str) -> str | None:
     if _confine.temp_targets_only(cmd, _DANGEROUS_KEYWORDS):
         return None
 
-    from agent_cli.render import get_renderer, interactive_lock
+    from agent_cli.render import get_renderer
 
     # "Can we ask the user?" is a renderer capability, not a TTY fact: the CLI
     # renderer needs a terminal, the web renderer needs a connected client (no
     # TTY). Gating on the renderer lets web prompt over SSE and stops the CLI
     # from trying when no prompt could be shown.
-    if not get_renderer().can_prompt():
+    if not confirm.answerable():
         return (
             f"Refused: command contains `{keyword}` but this interface can't "
             "prompt for confirmation right now (non-interactive shell, or no "
             "connected client). Set AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 to "
             "bypass for non-interactive runs."
         )
-    # Hold the shared interactive lock (re-entrant) across the allowlist
-    # re-check + prompt: it serializes against confirm AND ask everywhere, and
-    # ``renderer.confirm`` re-acquires it internally on this same thread.
-    # Re-check the allowlist inside — another worker may have been granted
-    # "always" while we waited.
-    with interactive_lock:
-        if keyword in _session_allowlist:
-            return None
-        decision, user_comment = _ask_confirmation(cmd, keyword)
-        from agent_cli.tools import human_note
-
-        human_note.record("denying" if decision == "n" else "approving", user_comment)
-        if decision == "n":
-            return f"User denied command containing `{keyword}`: {cmd}"
-        if decision == "a":
-            _session_allowlist.add(keyword)
-            # 세션 정책이 바뀌는 순간이라 **기록**한다 (v9.8.0). 이후 같은
-            # 키워드는 묻지도 않으므로, 대화에 흔적이 없으면 나중에 "이게 왜
-            # 확인 없이 돌았지" 를 알 수 없다. `y`(1회)는 안 남긴다 — 바로 위
-            # `⚡` 카드가 맥락을 준다. 거절은 이미 `ToolResult.error` 로 남는다.
-            get_renderer().note_next(
-                f"🔓 사용자가 `{keyword}` 포함 명령을 승인 — 이 세션 내내 재확인 없음"
-            )
+    # ⚡ 자동 승인 (v10.120.0 부터 확인 밖 — 정책은 안전 확인의 것): 묻지 않고 once.
+    if get_renderer().auto_approved(cmd):
         return None
+    cid, decision = confirm.ask_person(
+        f"Dangerous command detected (`{keyword}`)",
+        "",
+        confirm.safety_choices(
+            "once (allow this command)", f"always allow `{keyword}` this session"
+        ),
+        owner=owner,
+        stopped=stopped,
+        command=cmd,
+        danger_spans=_danger_spans(cmd),
+    )
+    if decision.action == confirm.STOPPED:
+        return confirm.stopped_while_waiting(cid)
+    from agent_cli.tools import human_note
+
+    human_note.record(
+        "denying" if decision.action == confirm.DENY else "approving", decision.note
+    )
+    if decision.action == confirm.DENY:
+        return f"User denied command containing `{keyword}`: {cmd}"
+    if decision.action == confirm.ALLOW:
+        _session_allowlist.add(keyword)
+        # 세션 정책이 바뀌는 순간이라 **기록**한다 (v9.8.0). 이후 같은
+        # 키워드는 묻지도 않으므로, 대화에 흔적이 없으면 나중에 "이게 왜
+        # 확인 없이 돌았지" 를 알 수 없다. once 는 안 남긴다 — 바로 위
+        # `⚡` 카드가 맥락을 준다. 거절은 이미 `ToolResult.error` 로 남는다.
+        get_renderer().note_next(
+            f"🔓 사용자가 `{keyword}` 포함 명령을 승인 — 이 세션 내내 재확인 없음"
+        )
+    return None
 
 
-def _guard(cmd: str) -> str | None:
+def _guard(
+    cmd: str, *, owner: str = "main", stopped: Callable[[], bool] | None = None
+) -> str | None:
     """위험 키워드 확인 + 워크스페이스 봉쇄 — 포그라운드·백그라운드가 같은 문.
     거부 사유 | None. 두 확인에서 남긴 말은 ``human_note`` 에 기록 순서대로 쌓이고
-    tool_bridge 가 결과 끝에 붙인다 (v10.120.2)."""
-    denied = confirm_dangerous(cmd)
+    tool_bridge 가 결과 끝에 붙인다 (v10.120.2). 첫 확인에서 런이 멈추면 둘째는 묻지 않는다."""
+    denied = confirm_dangerous(cmd, owner=owner, stopped=stopped)
     if denied:
         return denied
     from agent_cli.tools import _confine
 
     return (
-        _confine.guard(_confine.extract_shell_paths(cmd), "shell command", command=cmd)
+        _confine.guard(
+            _confine.extract_shell_paths(cmd),
+            "shell command",
+            command=cmd,
+            owner=owner,
+            stopped=stopped,
+        )
         or None
     )
 
@@ -273,7 +235,13 @@ def strip_detachers(cmd: str) -> tuple[str, list[str]]:
     return cmd.strip(), removed
 
 
-def tool_shell_background(args: dict, *, owner: str, note: str = "") -> ToolResult:
+def tool_shell_background(
+    args: dict,
+    *,
+    owner: str,
+    note: str = "",
+    stopped: Callable[[], bool] | None = None,
+) -> ToolResult:
     """``background: true`` (v10.47.0, docs/jobs/DESIGN.md) — 하니스가 자식으로
     띄우고 로그로 보낸 뒤 즉시 돌아온다. 끝나면 소유자에게 통지가 간다. ``note``
     는 결과 앞에 붙는 사정(전경 한도 초과로 여기 왔다)."""
@@ -287,7 +255,7 @@ def tool_shell_background(args: dict, *, owner: str, note: str = "") -> ToolResu
         )
     if not cmd:
         return ToolResult(False, error=f"{note}Nothing is left to run.")
-    denied = _guard(cmd)
+    denied = _guard(cmd, owner=owner, stopped=stopped)
     if denied:
         return ToolResult(False, error=denied)
     reg = get_job_registry()
@@ -355,7 +323,7 @@ def tool_shell(
             False, error="Empty command. Provide a shell command to execute."
         )
 
-    denied = _guard(cmd)
+    denied = _guard(cmd, owner=owner, stopped=stopped)
     if denied:
         return ToolResult(False, error=denied)
 
@@ -582,7 +550,9 @@ class ShellTool(Tool):
                 )
         if background:
             owner = getattr(ctx, "owner", None) or "main"
-            return tool_shell_background(args, owner=owner, note=note)
+            return tool_shell_background(
+                args, owner=owner, note=note, stopped=getattr(ctx, "stopped", None)
+            )
         return tool_shell(
             args,
             owner=getattr(ctx, "owner", None) or "main",

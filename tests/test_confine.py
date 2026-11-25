@@ -1,8 +1,8 @@
 """Workspace path confinement (agent_cli/tools/_confine.py).
 
 Gate write_file / edit_file / shell to the launch workspace: a path resolving
-OUTSIDE the workspace root prompts for confirmation, reusing the same
-confirm / allowlist infra as the dangerous-command guard. read_file is NOT
+OUTSIDE the workspace root opens a confirmation (`c-N`, 6d), the same one the
+dangerous-command guard uses. read_file is NOT
 gated (driver/kernel work reads outside by the dozen — a prompt storm). Shell
 path extraction is best-effort and has a documented blind spot ($(...),
 python -c, variables).
@@ -11,7 +11,6 @@ python -c, variables).
 from __future__ import annotations
 
 import pathlib
-from unittest.mock import patch
 
 import pytest
 
@@ -19,6 +18,7 @@ from agent_cli.tools import _confine
 from agent_cli.tools.edit_file import tool_edit_file
 from agent_cli.tools.shell import tool_shell
 from agent_cli.tools.write_file import tool_write_file
+from tests.confirm_support import answer_confirms
 
 
 @pytest.fixture(autouse=True)
@@ -48,20 +48,6 @@ def confined(tmp_path, monkeypatch):
     systmp.mkdir()
     monkeypatch.setattr(_confine, "temp_roots", lambda: frozenset({systmp.resolve()}))
     return ws, outside
-
-
-def _get_renderer():
-    from agent_cli.render import get_renderer
-
-    return get_renderer()
-
-
-def _allow_prompt(monkeypatch):
-    """Under pytest there is no TTY, so the renderer refuses early. Force the
-    active renderer to report it can prompt so the confirm flow runs."""
-    from agent_cli.render import get_renderer
-
-    monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: True)
 
 
 # ── resolve_within ─────────────────────────────────────────
@@ -141,13 +127,7 @@ class TestTildeIsExpanded:
     )
     def test_home_writes_are_gated(self, confined, monkeypatch, cmd):
         """실제 사고 재현 — 이 셋은 전부 확인 없이 통과했다."""
-        _allow_prompt(monkeypatch)
-        seen = []
-        monkeypatch.setattr(
-            type(_get_renderer()),
-            "confirm",
-            lambda self, *a, **k: (seen.append(1), ("n", ""))[1],
-        )
+        seen = answer_confirms(monkeypatch, "deny")
         paths = _confine.extract_shell_paths(cmd)
         err = _confine.guard(paths, "shell", command=cmd)
         assert seen, f"{cmd}: 확인을 묻지 않았다"
@@ -310,20 +290,22 @@ class TestSystemTempDirs:
 class TestGuardPromptFlow:
     def test_outside_yes_allows(self, confined, monkeypatch):
         _, outside = confined
-        _allow_prompt(monkeypatch)
-        with patch("builtins.input", return_value="y"):
-            assert _confine.guard([str(outside / "x")], "write_file") is None
-        # `y` does NOT allowlist — a second op prompts again.
+        asked = answer_confirms(monkeypatch, "approve")
+        assert _confine.guard([str(outside / "x")], "write_file") is None
+        assert asked[0].title == "write_file touches path(s) outside the workspace"
+        assert asked[0].detail.endswith(
+            f"  {outside / 'x'}\n    ↳ outside the workspace"
+        )
+        # approve does NOT allowlist — a second op asks again.
         assert not _confine._session_root_allowlist
 
     def test_outside_no_denies(self, confined, monkeypatch):
         _, outside = confined
-        _allow_prompt(monkeypatch)
         from agent_cli.tools import human_note
 
         human_note.clear()
-        with patch("builtins.input", return_value="n wrong place"):
-            denial = _confine.guard([str(outside / "x")], "write_file")
+        answer_confirms(monkeypatch, ("deny", "wrong place"))
+        denial = _confine.guard([str(outside / "x")], "write_file")
         assert denial is not None
         assert "User denied" in denial
         # 말은 거절 문구가 아니라 보관함으로 — tool_bridge 가 결과 끝에 붙인다 (v10.120.2)
@@ -332,13 +314,11 @@ class TestGuardPromptFlow:
 
     def test_outside_always_allowlists_subtree(self, confined, monkeypatch):
         _, outside = confined
-        _allow_prompt(monkeypatch)
-        with patch("builtins.input", return_value="a"):
-            assert _confine.guard([str(outside / "hdr" / "a.h")], "shell") is None
-        # Sibling under the same dir passes WITHOUT a second prompt (input
-        # patched to raise → would fire if it prompted).
-        with patch("builtins.input", side_effect=AssertionError("should not prompt")):
-            assert _confine.guard([str(outside / "hdr" / "b.h")], "shell") is None
+        answer_confirms(monkeypatch, "allow")
+        assert _confine.guard([str(outside / "hdr" / "a.h")], "shell") is None
+        # Sibling under the same dir passes WITHOUT a second ask (no answer
+        # left → would fail if it asked).
+        assert _confine.guard([str(outside / "hdr" / "b.h")], "shell") is None
 
 
 # ── shell path extraction (best-effort) ────────────────────
@@ -413,10 +393,9 @@ class TestToolIntegration:
 
     def test_write_outside_denied_by_user(self, confined, monkeypatch):
         _, outside = confined
-        _allow_prompt(monkeypatch)
+        answer_confirms(monkeypatch, "deny")
         target = outside / "evil.txt"
-        with patch("builtins.input", return_value="n"):
-            r = tool_write_file({"path": str(target), "content": "x"})
+        r = tool_write_file({"path": str(target), "content": "x"})
         assert not r.success
         assert not target.exists()
 
@@ -443,44 +422,6 @@ class TestToolIntegration:
         r = tool_shell({"command": f"cat {ws / 'note.txt'}"})
         assert r.success
         assert "hello-inside" in (r.output or "")
-
-
-class TestConfineWaitsForLateViewer:
-    """v7.8.0 can_prompt=True(web) 의 confine 측 계약 — shell 과 같은
-    게이트인데 v7.8.0 당시 shell 만 검증했다(v7.11.1 보강). 뷰어가 없어도
-    워크스페이스 밖 접근 승인은 대기하고, 늦게 접속한 사용자의 답으로
-    해제된다."""
-
-    def test_confine_confirm_waits_and_accepts_late_answer(self, confined, monkeypatch):
-        import threading
-        import time
-
-        import agent_cli.render as render_mod
-        from agent_cli.render.web import WebRenderer
-        from agent_cli.render.web_hub import WebConnection
-
-        _ws, outside = confined
-        r = WebRenderer()
-        monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
-        results = []
-
-        def worker():
-            results.append(_confine.guard([str(outside / "x.txt")], "read_file"))
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.3)
-        assert t.is_alive(), "뷰어 0명이어도 confine 승인은 대기해야 한다"
-
-        conn = WebConnection(id="late")
-        snapshot = r.hub.register(conn)
-        kinds = [d.get("kind") for ev, d in snapshot if ev == "input_required"]
-        assert "confirm" in kinds
-
-        r.push_confirm({"key": "n", "comment": ""})
-        t.join(timeout=3.0)
-        assert results and results[0] is not None
-        assert "denied" in results[0]
 
 
 class TestOutsideSpans:
@@ -514,46 +455,25 @@ class TestOutsideSpans:
 
 class TestConfineHighlight:
     """The shell confine confirm passes the raw command + the offending path
-    spans so the dialog highlights them; write/edit_file (no command) stay
-    prompt-only."""
-
-    def _spy(self, monkeypatch, decision="y"):
-        captured = {}
-
-        class Spy:
-            def can_prompt(self):
-                return True
-
-            def auto_approved(self, label):  # ⚡ 꺼짐 (v10.120.0 — 판정은 confirm 밖)
-                return False
-
-            def confirm(
-                self, prompt, options, *, default_key, command=None, danger_spans=None
-            ):
-                captured["prompt"] = prompt
-                captured["command"] = command
-                captured["danger_spans"] = danger_spans
-                return (decision, "")
-
-        monkeypatch.setattr("agent_cli.render.get_renderer", lambda: Spy())
-        return captured
+    spans so the tray highlights them; write/edit_file (no command) carry
+    none."""
 
     def test_shell_command_highlights_outside_path(self, confined, monkeypatch):
         _, outside = confined
-        captured = self._spy(monkeypatch)
+        asked = answer_confirms(monkeypatch, "approve")
         p = str(outside / "a.c")
         cmd = f"cat > {p}"
         assert _confine.guard([p], "shell command", command=cmd) is None
-        assert captured["command"] == cmd
+        assert asked[0].command == cmd
         i = cmd.index(p)
-        assert captured["danger_spans"] == [(i, i + len(p))]
+        assert asked[0].danger_spans == [(i, i + len(p))]
 
     def test_write_file_prompt_only_no_command(self, confined, monkeypatch):
         _, outside = confined
-        captured = self._spy(monkeypatch)
+        asked = answer_confirms(monkeypatch, "approve")
         assert _confine.guard([str(outside / "x")], "write_file") is None
-        assert captured["command"] is None
-        assert captured["danger_spans"] is None
+        assert asked[0].command is None
+        assert asked[0].danger_spans == []
 
     def test_tool_shell_passes_command_to_guard(self, confined, monkeypatch):
         # shell wires the raw command through so the confine confirm can
@@ -562,7 +482,7 @@ class TestConfineHighlight:
 
         seen = {}
 
-        def fake_guard(paths, action, *, command=None):
+        def fake_guard(paths, action, *, command=None, owner="main", stopped=None):
             seen["command"] = command
             return "denied for test"
 

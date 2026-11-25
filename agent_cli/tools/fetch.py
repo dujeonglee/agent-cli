@@ -799,7 +799,9 @@ def _fetch_single(
     return markdown, None
 
 
-def tool_fetch(args: dict, *, stopped: Callable[[], bool] | None = None) -> ToolResult:
+def tool_fetch(
+    args: dict, *, stopped: Callable[[], bool] | None = None, owner: str = "main"
+) -> ToolResult:
     """Fetch a web page and return content as markdown.
 
     Args:
@@ -820,7 +822,7 @@ def tool_fetch(args: dict, *, stopped: Callable[[], bool] | None = None) -> Tool
             return ToolResult(False, error="download_to must be a file path")
         from agent_cli.tools import _confine
 
-        denial = _confine.guard([download_to], "fetch")
+        denial = _confine.guard([download_to], "fetch", owner=owner, stopped=stopped)
         if denial:
             return ToolResult(False, error=denial)
         content, error = _download(url, download_to, stopped)
@@ -898,4 +900,8 @@ class FetchTool(Tool):
         return [p] if isinstance(p, str) and p else []
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        return tool_fetch(args, stopped=getattr(ctx, "stopped", None))
+        return tool_fetch(
+            args,
+            stopped=getattr(ctx, "stopped", None),
+            owner=getattr(ctx, "owner", None) or "main",
+        )

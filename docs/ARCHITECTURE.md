@@ -62,6 +62,7 @@ agent_cli/
 ├── pump.py                  세션 펌프 — main 상자에서 런을 열 것(줄 선 첫 깨우는 봉투 하나, 도착 순서)을 꺼내 라우팅·런·정지 판정. 수명 정책과 표면만 호스트가 꽂는다 (docs/pump/DESIGN.md)
 ├── actor.py                 런을 여는 루프 하나 `run_actor` — 기다림·열기·런·끝 판정, main(`pump.MainActor`)과 에이전트 워커(`resident_loop.AgentActor`)가 같은 루프를 돈다
 ├── command_table.py         사용자 명령 표 하나 — 웹 `/help` 와 `run "/help"` 가 여기서 나온다
+├── confirm.py               사람에게 건 확인 `c-N` — 항목(`Confirm`)·답의 어휘·도구가 여는 문(`ask_person`)·답하는 명령 하나(`answer_command`)
 ├── config.py                config.json 의 서버(endpoint) 표·고르는 순서·이 프로세스의 서버, 서버별 models.json 읽기·저장, 옛 모양 판정·`.v1` 이름 바꾸기, 방언 바인딩(`bind_user_dialect`)
 ├── setup.py                 첫 실행 설정 마법사 `SetupWizard` (Rich TUI — 프로바이더·연결·모델)
 ├── model_check.py           부팅 때 모델 이름 검증 — "없는 모델"(`ModelNotFound`)과 "확인할 수 없음"을 가른다
@@ -216,6 +217,7 @@ agent_cli/
 │   ├── agent_modes.py       `agent` 도구의 실행 — 모드 표 `_MODE_HANDLERS`·`tool_agent`·모드 결과 문구
 │   ├── agent_mail.py        에이전트 메일의 글 — 봉투 `envelope`·main 관찰 레코드 `build_reply_record`·대기열 한 줄·조회의 불변 사본 `MailView`
 │   ├── question_port.py     루프의 질문·회신 seam `QuestionPort` — `reply(id)` 의 판정 하나(`judge_reply`, main·에이전트 공통)와 거절 글·`ReplyDebt`
+│   ├── confirms.py          사람에게 건 확인 — 열기·그 자리에서 기다리기·답·목록(`AgentRegistry` 가 받는 믹스인 `ConfirmsMixin`)
 │   ├── questions.py         사람에게 건 질문 — `Question`·등록·목록·답 배달·정리(`AgentRegistry` 가 받는 믹스인 `QuestionsMixin`)
 │   ├── conversation_log.py  🤝 창의 줄 — `conversation.jsonl` 쓰기·읽기와 창에 내기(규칙: 기록이 원본, 막히지 않는 표면만 배달 구간 안)
 │   └── agents_state.py      상태 어휘 `state_is_active`·`agents.json` 의 모양 — 명단만(항목 ↔ 에이전트), 버전·읽기

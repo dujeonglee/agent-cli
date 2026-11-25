@@ -2,9 +2,9 @@
 
 Gate the filesystem-MUTATING tools (write_file / edit_file) and shell to the
 launch workspace: an op whose path resolves OUTSIDE the workspace root asks the
-user for confirmation before proceeding. Reuses the same confirm / allowlist
-infrastructure the dangerous-command guard uses (``renderer.confirm``,
-``can_prompt``, ``interactive_lock``).
+user for confirmation before proceeding. Reuses the same confirmation the
+dangerous-command guard uses (a numbered ``c-N`` the call waits on —
+``agent_cli.confirm``).
 
 Threat model: accident prevention + a speed bump against an agent wandering out
 of its workspace. This is NOT a sandbox — shell path extraction is best-effort
@@ -47,6 +47,7 @@ import shlex
 import tempfile
 from pathlib import Path
 
+from agent_cli import confirm
 from agent_cli.tools._sensitive import sensitive_reason
 
 _ENABLE_ENV = "AGENT_CLI_WORKSPACE_CONFINE"
@@ -662,7 +663,13 @@ def _outside_spans(command: str, literals: list[str]) -> list[tuple[int, int]]:
 
 
 def guard(
-    paths, action: str, *, command: str | None = None, check_workspace: bool = True
+    paths,
+    action: str,
+    *,
+    command: str | None = None,
+    check_workspace: bool = True,
+    owner: str = "main",
+    stopped=None,
 ) -> str | None:
     """Gate ``paths`` for tool ``action`` (e.g. ``"write_file"``). Returns
     ``None`` when the gate is disabled, or every path is inside the workspace /
@@ -690,7 +697,10 @@ def guard(
     ``command`` (shell only): the raw command line. When given, the offending
     path tokens are highlighted within it in the confirm dialog — the same
     treatment the dangerous-keyword guard gives ``rm``. Omit it (write
-    /edit_file) for a prompt-only dialog."""
+    /edit_file) for a prompt-only dialog.
+
+    ``owner``·``stopped`` — 묻는 루프의 소유자와 그 런의 정지(`RunContext`, 6d). 확인을 기다리는 동안 런이 멈추면
+    그 호출은 돌지 않고 그 사실을 돌려준다."""
     if not enabled():
         return None
     root = workspace_root()
@@ -716,100 +726,74 @@ def guard(
         return None
 
     from agent_cli.render import get_renderer
-    from agent_cli.render.base import ConfirmOption, interactive_lock
 
-    # Hold the shared interactive lock across the re-check + prompt: it
-    # serializes against confirm/ask everywhere, and ``renderer.confirm``
-    # re-acquires it internally on this same thread (re-entrant).
-    with interactive_lock:
-        # Re-check under the lock — another worker may have allowlisted these
-        # while we waited.
-        outside = [p for p in outside if not _allowlisted(p)]
-        if not outside:
-            return None
-        renderer = get_renderer()
-        joined = ", ".join(str(p) for p in outside)
-        # 민감 경로가 섞여 있으면 그쪽이 헤드라인이다 — "워크스페이스 밖"보다
-        # 구체적이고, 사용자가 판단하는 데 실제로 쓰이는 정보다.
-        secrets = [p for p in outside if why[str(p)] != "outside the workspace"]
-        if not renderer.can_prompt():
-            what = (
-                f"reads/touches sensitive path(s) ({joined})"
-                if secrets
-                else f"touches path(s) outside the workspace ({joined})"
-            )
-            return (
-                f"Refused: {action} {what} and this interface can't prompt for "
-                f"confirmation right now (non-interactive shell, or no connected "
-                f"client). Set AGENT_CLI_WORKSPACE_CONFINE=0 to disable these "
-                f"path gates for non-interactive runs."
-            )
-        listing = "\n".join(f"  {p}\n    ↳ {why[str(p)]}" for p in outside)
-        head = (
-            "⚠ Touches sensitive path(s)"
+    renderer = get_renderer()
+    joined = ", ".join(str(p) for p in outside)
+    # 민감 경로가 섞여 있으면 그쪽이 헤드라인이다 — "워크스페이스 밖"보다
+    # 구체적이고, 사용자가 판단하는 데 실제로 쓰이는 정보다.
+    secrets = [p for p in outside if why[str(p)] != "outside the workspace"]
+    if not confirm.answerable():
+        what = (
+            f"reads/touches sensitive path(s) ({joined})"
             if secrets
-            else f"⚠ {action} touches path(s) outside the workspace"
+            else f"touches path(s) outside the workspace ({joined})"
         )
-        prompt = (
-            f"\n{head}\n"
-            f"  (workspace: {root}):\n{listing}\n"
-            f"Allow? (y=once, n=deny, a=always allow these locations this "
-            f"session)\n  [y/n/a, optional comment after]: "
+        return (
+            f"Refused: {action} {what} and this interface can't prompt for "
+            f"confirmation right now (non-interactive shell, or no connected "
+            f"client). Set AGENT_CLI_WORKSPACE_CONFINE=0 to disable these "
+            f"path gates for non-interactive runs."
         )
-        options = [
-            ConfirmOption(
-                key="y",
-                label="once (allow this op)",
-                aliases=("yes", "ok", "okay", "yep", "yeah", "sure"),
-            ),
-            ConfirmOption(key="n", label="deny", aliases=("no", "nope")),
-            ConfirmOption(
-                key="a",
-                label="always allow these locations this session",
-                aliases=("always", "allow"),
-            ),
-        ]
-        # Highlight the offending path tokens inside the command (shell only).
-        danger_spans = (
-            _outside_spans(
-                command, [lit_of[str(p)] for p in outside if str(p) in lit_of]
-            )
-            if command
-            else None
-        )
-        # ⚡ 자동 승인 (v10.120.0 부터 confirm 밖 — 정책은 안전 확인의 것): 묻지 않고 once.
-        # 기록 이름은 종전 confirm 안의 것과 같다(명령, 없으면 프롬프트 첫 줄).
-        if renderer.auto_approved(command or head):
-            decision, comment = "y", ""
-        else:
-            decision, comment = renderer.confirm(
-                prompt,
-                options,
-                default_key="n",
-                command=command,
-                danger_spans=danger_spans,
-            )
-        # 사람이 남긴 말은 이 호출의 결과 끝에 한 줄로 간다 (v10.120.2) — 붙이는 건
-        # `loop/tool_bridge.py` 한 곳(`human_note`), 도구가 실패해도.
-        from agent_cli.tools import human_note
+    listing = "\n".join(f"  {p}\n    ↳ {why[str(p)]}" for p in outside)
+    head = (
+        "⚠ Touches sensitive path(s)"
+        if secrets
+        else f"⚠ {action} touches path(s) outside the workspace"
+    )
+    # Highlight the offending path tokens inside the command (shell only).
+    danger_spans = (
+        _outside_spans(command, [lit_of[str(p)] for p in outside if str(p) in lit_of])
+        if command
+        else None
+    )
+    # ⚡ 자동 승인 (v10.120.0 부터 확인 밖 — 정책은 안전 확인의 것): 묻지 않고 once.
+    # 기록 이름은 종전과 같다(명령, 없으면 머리 한 줄).
+    if renderer.auto_approved(command or head):
+        return None
+    cid, decision = confirm.ask_person(
+        head.removeprefix("⚠ "),
+        f"  (workspace: {root}):\n{listing}",
+        confirm.safety_choices(
+            "once (allow this op)", "always allow these locations this session"
+        ),
+        owner=owner,
+        stopped=stopped,
+        command=command,
+        danger_spans=danger_spans,
+    )
+    if decision.action == confirm.STOPPED:
+        return confirm.stopped_while_waiting(cid)
+    # 사람이 남긴 말은 이 호출의 결과 끝에 한 줄로 간다 (v10.120.2) — 붙이는 건
+    # `loop/tool_bridge.py` 한 곳(`human_note`), 도구가 실패해도.
+    from agent_cli.tools import human_note
 
-        human_note.record("denying" if decision == "n" else "approving", comment)
-        if decision == "n":
-            kind = "sensitive path" if secrets else "outside workspace"
-            return f"User denied {action} — {kind}: {joined}"
-        if decision == "a":
-            for p in outside:
-                # Allowlist the directory subtree: a file → its parent dir, a
-                # directory → itself. Sibling ops there then pass without a
-                # re-prompt (the header-storm mitigation).
-                d = p if p.is_dir() else p.parent
-                _session_root_allowlist.add(str(d))
-            # 워크스페이스 경계가 세션 내내 열린다 — 기록한다 (v9.8.0, shell 과
-            # 같은 판단). 이후 그 서브트리는 재확인 없이 통과한다.
-            dirs = ", ".join(
-                sorted({str(p if p.is_dir() else p.parent) for p in outside})
-            )
-            renderer.note_next(
-                f"🔓 User approved paths outside the workspace — allowed for the rest of this session: {dirs}"
-            )
+    human_note.record(
+        "denying" if decision.action == confirm.DENY else "approving", decision.note
+    )
+    if decision.action == confirm.DENY:
+        kind = "sensitive path" if secrets else "outside workspace"
+        return f"User denied {action} — {kind}: {joined}"
+    if decision.action == confirm.ALLOW:
+        for p in outside:
+            # Allowlist the directory subtree: a file → its parent dir, a
+            # directory → itself. Sibling ops there then pass without a
+            # re-prompt (the header-storm mitigation).
+            d = p if p.is_dir() else p.parent
+            _session_root_allowlist.add(str(d))
+        # 워크스페이스 경계가 세션 내내 열린다 — 기록한다 (v9.8.0, shell 과
+        # 같은 판단). 이후 그 서브트리는 재확인 없이 통과한다.
+        dirs = ", ".join(sorted({str(p if p.is_dir() else p.parent) for p in outside}))
+        renderer.note_next(
+            f"🔓 User approved paths outside the workspace — allowed for the rest of this session: {dirs}"
+        )
     return None

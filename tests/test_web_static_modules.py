@@ -211,7 +211,7 @@ def test_session_state_is_one_object():
     assert not _imports("state")
     assert _exports("state") == {"session"}
     assert "export const session = {" in src
-    for field in ("mainAsk", "connId", "workerBusy", "stopRequested"):
+    for field in ("connId", "workerBusy", "stopRequested"):
         assert f"  {field}: " in src, field
     js = "\n".join(js_text(m) for m in module_order())
     for old in ("ovMainAsk", "myConnId", "workerBusy", "stopRequested"):
