@@ -20,6 +20,8 @@ import time
 
 import pytest
 
+from agent_cli.render.base import ConfirmOption
+
 pytestmark = pytest.mark.browser
 
 
@@ -59,7 +61,7 @@ def wait_held(page, held: list, n: int, timeout: float = 8.0) -> bool:
 class WebStack:
     """실 uvicorn 위의 WebRenderer+WebServer — 브라우저가 붙는 대상.
 
-    worker 는 테스트가 직접 건다 (``start_confirm_loop`` / ``start_ask``)
+    worker 는 테스트가 직접 건다 (``start_confirm_loop`` / ``start_confirm``)
     — 시나리오마다 필요한 대기 상대가 다르므로 픽스처는 전송층만 소유.
     """
 
@@ -157,8 +159,6 @@ class WebStack:
 
         ``command``/``danger_spans`` 를 주면 위험 명령 강조 경로를 구동한다
         (구조화 필드로 confirm 에 전달 → 다이얼로그가 명령을 강조 렌더)."""
-        from agent_cli.render.base import ConfirmOption
-
         options = [
             ConfirmOption(key="y", label="once", aliases=("yes",)),
             ConfirmOption(key="n", label="deny", aliases=("no",)),
@@ -186,20 +186,18 @@ class WebStack:
         self._workers.append(t)
         t.start()
 
-    def start_ask(self, results: list, question: str = "which language?"):
-        """ask(prompt_user) 1회 — 답을 results 에 적재."""
+    def start_confirm(self, results: list, question: str = "Allow this?"):
+        """확인 대화 1회 — ``(key, comment)`` 를 results 에 적재(6b: main 의 막는 물음은 확인 대화뿐이다)."""
+        options = [
+            ConfirmOption(key="y", label="once"),
+            ConfirmOption(key="n", label="deny"),
+        ]
 
         def worker():
-            if not self.wait_connected():
-                return
-            try:
+            if self.wait_connected():
                 results.append(
-                    self.renderer.prompt_user(
-                        "Your answer: ", context=f"Agent asks:\n  {question}"
-                    )
+                    self.renderer.confirm(question, options, default_key="n")
                 )
-            except EOFError:
-                return
 
         t = threading.Thread(target=worker, daemon=True)
         self._workers.append(t)

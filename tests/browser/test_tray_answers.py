@@ -1,6 +1,7 @@
-"""❓ 트레이의 답 — 실브라우저 (v10.147.4).
+"""❓ 트레이의 답 — 실브라우저 (v10.147.4, 6b).
 
-트레이는 명단(roster)이 올 때마다 갱신된다. 항목 단위로 맞추므로 열린 질문의 항목은 그대로 남는다 —
+트레이는 열린 질문 목록(sticky ``open_questions``)과 명단(roster, 이름표)이 올 때마다 갱신된다. 질문은 누가 물었든
+(main·에이전트·스킬 런) 한 목록이고, 답·닫기는 질문 번호의 길(``/api/questions/<q-N>/answer|close``)이다. 항목 단위로 맞추므로 열린 질문의 항목은 그대로 남는다 —
 쓰던 답·포커스·커서·사유 줄이 산다. 답 보내기는 입력창과 같은 규칙 하나다: 서버가 받았을 때만
 비우고, 실패하면 그 항목 안에 사유가 서고 글이 남는다. 409(이미 답함·닫힘)는 글을 버리고 입력창
 아래 줄에 알린다.
@@ -8,12 +9,15 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from types import SimpleNamespace
 
 import pytest
 
+from agent_cli.render.base import ConfirmOption
 from tests.browser.conftest import wait_held
+from tests.mail_support import absorbed_mail
 
 CLOSED = "Not sent — already answered or closed"  # 409·떨어져 나간 항목의 알림
 AGT = "agt-0000aaaa"
@@ -29,16 +33,31 @@ def _wait(cond, timeout=8.0, step=0.05):
     return False
 
 
+QUESTIONS = "**/api/questions/*/*"  # 트레이의 답·닫기 길
+
+
 def _row(key, questions, *, name="", state="idle"):
+    """명단 한 줄과 그 에이전트가 건 질문 — ``_publish`` 가 둘을 각자의 sticky 로 보낸다."""
     return {
         "key": key,
         "name": name or key,
         "profile": "rev",
         "state": state,
-        "open_questions": [
-            {"id": qid, "text": text, "to": "user", "ts": 0} for qid, text in questions
-        ],
+        "_qs": questions,
     }
+
+
+def _publish(stack, rows):
+    stack.renderer.agent_roster(
+        [{k: v for k, v in r.items() if k != "_qs"} for r in rows]
+    )
+    stack.renderer.open_questions(
+        [
+            {"id": qid, "asker": r["key"], "text": text, "ts": 0}
+            for r in rows
+            for qid, text in r["_qs"]
+        ]
+    )
 
 
 def _item(page, qid):
@@ -58,7 +77,7 @@ def _typing_state(page, selector):
 class TestTypingSurvivesRosterUpdates:
     def test_agent_question_answer(self, stack, page):
         stack.emit_ready()
-        stack.renderer.agent_roster([_row(AGT, [("q-1", "which file?")])])
+        _publish(stack, [_row(AGT, [("q-1", "which file?")])])
         page.goto(stack.url)
         sel = '#ask-tray .ask-item[data-qid="q-1"] .ask-answer'
         page.wait_for_selector(sel, timeout=8000)
@@ -66,7 +85,7 @@ class TestTypingSurvivesRosterUpdates:
         page.keyboard.type("src/ma")
         page.keyboard.press("ArrowLeft")
         # 같은 질문이 열린 채 명단이 다시 온다(상태가 바뀌었다)
-        stack.renderer.agent_roster([_row(AGT, [("q-1", "which file?")], state="busy")])
+        _publish(stack, [_row(AGT, [("q-1", "which file?")], state="busy")])
         assert _wait(
             lambda: (
                 page.locator(".ov-ch[data-key='" + AGT + "'] .ov-dot.b").count() == 1
@@ -78,23 +97,6 @@ class TestTypingSurvivesRosterUpdates:
             "caret": 5,
         }
 
-    def test_main_prompt_answer(self, stack, page):
-        results: list = []
-        stack.start_ask(results)
-        stack.emit_ready()
-        page.goto(stack.url)
-        sel = ".ask-main .ask-answer"
-        page.wait_for_selector(sel, timeout=8000)
-        page.click(sel)
-        page.keyboard.type("Pyth")
-        stack.renderer.agent_roster([_row(AGT, [])])
-        assert _wait(lambda: page.locator(f".ov-ch[data-key='{AGT}']").count() == 1)
-        assert _typing_state(page, sel) == {
-            "value": "Pyth",
-            "focused": True,
-            "caret": 4,
-        }
-
     def test_confirm_comment(self, stack, page):
         results: list = []
         stack.start_confirm_loop(results)
@@ -104,7 +106,7 @@ class TestTypingSurvivesRosterUpdates:
         page.wait_for_selector(sel, timeout=8000)
         page.click(sel)
         page.keyboard.type("only /tmp")
-        stack.renderer.agent_roster([_row(AGT, [])])
+        _publish(stack, [_row(AGT, [])])
         assert _wait(lambda: page.locator(f".ov-ch[data-key='{AGT}']").count() == 1)
         assert _typing_state(page, sel) == {
             "value": "only /tmp",
@@ -122,8 +124,8 @@ class TestItemsAreKeptByQuestion:
 
     def test_closing_or_adding_a_question_keeps_the_other_answer(self, stack, page):
         stack.emit_ready()
-        stack.renderer.agent_roster(
-            [_row(AGT, [("q-1", "first?")]), _row(PEER, [("q-2", "second?")])]
+        _publish(
+            stack, [_row(AGT, [("q-1", "first?")]), _row(PEER, [("q-2", "second?")])]
         )
         page.goto(stack.url)
         sel = '#ask-tray .ask-item[data-qid="q-2"] .ask-answer'
@@ -132,8 +134,8 @@ class TestItemsAreKeptByQuestion:
         page.click(sel)
         page.keyboard.type("half")
         # q-1 이 닫히고(다른 뷰어가 답했다) 새 질문 q-3 이 AGT 에 열린다
-        stack.renderer.agent_roster(
-            [_row(AGT, [("q-3", "third?")]), _row(PEER, [("q-2", "second?")])]
+        _publish(
+            stack, [_row(AGT, [("q-3", "third?")]), _row(PEER, [("q-2", "second?")])]
         )
         assert _wait(lambda: self._texts(page) == ["q-3", "q-2"])
         assert _typing_state(page, sel) == {
@@ -147,23 +149,23 @@ class TestItemsAreKeptByQuestion:
     ):
         results: list = []
         stack.emit_ready()
-        stack.renderer.agent_roster([_row(AGT, [("q-1", "first?")], name="old")])
+        _publish(stack, [_row(AGT, [("q-1", "first?")], name="old")])
         page.goto(stack.url)
         sel = '#ask-tray .ask-item[data-qid="q-1"] .ask-answer'
         page.wait_for_selector(sel, timeout=8000)
         page.click(sel)
         page.keyboard.type("abc")
-        stack.start_ask(results)  # main 의 물음이 뒤에 온다 — 맨 위에 선다
+        stack.start_confirm(results)  # main 의 확인 대화가 뒤에 온다 — 맨 위에 선다
         assert _wait(lambda: self._texts(page) == ["main", "q-1"])
         assert _typing_state(page, sel)["value"] == "abc"
-        stack.renderer.agent_roster([_row(AGT, [("q-1", "first?")], name="new")])
+        _publish(stack, [_row(AGT, [("q-1", "first?")], name="new")])
         label = _item(page, "q-1").locator(".ask-q")
         assert _wait(lambda: "new" in label.inner_text())
         assert "❓" in label.inner_text() and "asked" in label.inner_text()
         assert _typing_state(page, sel)["value"] == "abc"
-        page.fill(".ask-main .ask-answer", "Python")
-        page.press(".ask-main .ask-answer", "Enter")
-        assert _wait(lambda: results == ["Python"])
+        page.fill(".ask-main .ask-answer", "go")
+        page.click(".ask-main .confirm-btn >> nth=0")
+        assert _wait(lambda: results == [("y", "go")])
         assert _wait(lambda: self._texts(page) == ["q-1"])
         assert _typing_state(page, sel)["value"] == "abc"
 
@@ -228,14 +230,14 @@ class TestAgentAnswer:
     ):
         reg, key = live_registry
         qid, sel = _open_question(stack, page, reg, key)
-        page.route("**/api/agent/*/input", lambda route: route.abort())
+        page.route(QUESTIONS, lambda route: route.abort())
         page.fill(sel, "src/main.py")
         page.press(sel, "Enter")
         item = f'#ask-tray .ask-item[data-qid="{qid}"]'
         assert _note(page, item) == "⚠ Not sent — could not reach the server"
         assert page.input_value(sel) == "src/main.py"
         # 다시 보내기를 시작하면 사유 줄이 지워지고, 받으면 항목이 닫힌다
-        page.unroute("**/api/agent/*/input")
+        page.unroute(QUESTIONS)
         page.press(sel, "Enter")
         assert _wait(lambda: _item(page, qid).count() == 0)
 
@@ -246,7 +248,7 @@ class TestAgentAnswer:
         page.clock.install()
         qid, sel = _open_question(stack, page, reg, key)
         held: list = []
-        page.route("**/api/agent/*/input", lambda route: held.append(route))
+        page.route(QUESTIONS, lambda route: held.append(route))
         page.fill(sel, "src/main.py")
         page.press(sel, "Enter")
         assert wait_held(page, held, 1)
@@ -266,7 +268,7 @@ class TestAgentAnswer:
             held[0].fulfill(status=200, json={"accepted": True})
         except Exception:
             pass  # 끊긴 요청 — 페이지는 못 받는다
-        page.unroute("**/api/agent/*/input")
+        page.unroute(QUESTIONS)
         page.press(sel, "Enter")
         assert _wait(lambda: _item(page, qid).count() == 0)
 
@@ -288,8 +290,8 @@ class TestAgentAnswer:
     ):
         reg, key = live_registry
         qid, sel = _open_question(stack, page, reg, key)
-        # 다른 뷰어가 먼저 답했다 — 명단은 아직 이 화면에 오지 않았다
-        reg._notify_roster = lambda: None  # 인스턴스에만 — 아래에서 지운다
+        # 다른 뷰어가 먼저 답했다 — 질문 목록은 아직 이 화면에 오지 않았다
+        reg._notify_questions = lambda: None  # 인스턴스에만 — 아래에서 지운다
         assert reg.answer_question(qid, "other", by="user:other") == ""
         look = """(q) => { const b = document.querySelector(q + ' .ask-send');
                      const i = document.querySelector(q + ' .ask-answer');
@@ -304,13 +306,14 @@ class TestAgentAnswer:
         assert page.input_value(sel) == ""
         assert page.is_disabled(sel)
         assert page.is_disabled(f"{q} .ask-send")
+        assert page.is_disabled(f"{q} .ask-close")
         # 꺼져 보인다 — Send 는 disabled 의 흐림(전환이 끝난 값), 입력은 꺼진 입력의 바탕·안내
         assert _wait(lambda: page.evaluate(look, q)["send"] < 1)
         closed = page.evaluate(look, q)
         assert closed["bg"] != open_look["bg"]
         assert closed["ph"] == "Already answered or closed"
-        del reg._notify_roster  # 클래스의 것으로 돌아온다
-        reg._notify_roster()
+        del reg._notify_questions  # 클래스의 것으로 돌아온다
+        reg._notify_questions()
         assert _wait(lambda: _item(page, qid).count() == 0)
 
     def test_one_item_sending_does_not_block_another_or_the_input(
@@ -324,12 +327,12 @@ class TestAgentAnswer:
         held: list = []
 
         def hold_first(route):
-            if q1 in (route.request.post_data or ""):
+            if f"/api/questions/{q1}/" in route.request.url:
                 held.append(route)
             else:
                 route.continue_()
 
-        page.route("**/api/agent/*/input", hold_first)
+        page.route(QUESTIONS, hold_first)
         page.fill(sel1, "one")
         page.press(sel1, "Enter")
         assert wait_held(page, held, 1)
@@ -345,52 +348,6 @@ class TestAgentAnswer:
 
 
 class TestMainAnswer:
-    def test_prompt_network_error_keeps_the_answer(self, stack, page):
-        results: list = []
-        stack.start_ask(results)
-        stack.emit_ready()
-        page.goto(stack.url)
-        sel = ".ask-main .ask-answer"
-        page.wait_for_selector(sel, timeout=8000)
-        page.route("**/api/input", lambda route: route.abort())
-        page.fill(sel, "Python")
-        page.press(sel, "Enter")
-        assert _note(page, "#ask-tray .ask-main") == (
-            "⚠ Not sent — could not reach the server"
-        )
-        assert page.input_value(sel) == "Python"
-        page.unroute("**/api/input")
-        page.click(".ask-main .ask-send")
-        assert _wait(lambda: results == ["Python"])
-        assert _wait(lambda: page.locator(".ask-main").count() == 0)
-
-    def test_prompt_already_answered_folds_with_a_notice(self, stack, page):
-        import requests
-
-        results: list = []
-        stack.start_ask(results)
-        stack.emit_ready()
-        page.goto(stack.url)
-        sel = ".ask-main .ask-answer"
-        page.wait_for_selector(sel, timeout=8000)
-
-        def other_viewer_first(route):
-            # 이 요청이 서버에 닿기 전에 다른 뷰어가 답한다 — 서버의 진짜 409
-            r = requests.post(
-                f"{stack.base}/api/input?token={stack.token}",
-                json={"kind": "prompt", "content": "Rust"},
-            )
-            assert r.status_code == 200
-            assert _wait(lambda: results == ["Rust"])
-            route.continue_()
-
-        page.route("**/api/input", other_viewer_first)
-        page.fill(sel, "Python")
-        page.press(sel, "Enter")
-        assert _bar_notice(page) == CLOSED
-        assert _wait(lambda: page.locator(".ask-main").count() == 0)
-        assert results == ["Rust"]
-
     def test_confirm_refusal_keeps_the_comment_with_a_reason(self, stack, page):
         results: list = []
         stack.start_confirm_loop(results)
@@ -473,17 +430,12 @@ def _reconnect(stack, page):
     page.wait_for_function("() => !!document.querySelector('.ask-main')")
 
 
-def _pending_prompt(stack, results, question):
-    """main 의 물음 하나를 띄운다 — 화면 연결을 기다리지 않는다(끊긴 사이·첫 접속 전에 떠 있게)."""
-    import threading
+def _pending_confirm(stack, results, question):
+    """main 의 확인 대화 하나를 띄운다 — 화면 연결을 기다리지 않는다(끊긴 사이·첫 접속 전에 떠 있게)."""
+    opts = [ConfirmOption(key="y", label="once"), ConfirmOption(key="n", label="deny")]
 
     def ask():
-        try:
-            results.append(
-                stack.renderer.prompt_user("Your answer: ", context=question)
-            )
-        except EOFError:
-            pass
+        results.append(stack.renderer.confirm(question, opts, default_key="n"))
 
     t = threading.Thread(target=ask, daemon=True)
     t.start()
@@ -494,7 +446,7 @@ def _pending_prompt(stack, results, question):
 class TestSameAskAcrossReconnect:
     def test_typing_survives_a_reconnect_replay_of_the_same_ask(self, stack, page):
         results: list = []
-        stack.start_ask(results)
+        stack.start_confirm(results)
         stack.emit_ready()
         page.goto(stack.url)
         sel = ".ask-main .ask-answer"
@@ -515,7 +467,7 @@ class TestSameAskAcrossReconnect:
         import requests
 
         results: list = []
-        stack.start_ask(results)
+        stack.start_confirm(results)
         stack.emit_ready()
         page.goto(stack.url)
         page.wait_for_selector(".ask-main .ask-answer", timeout=8000)
@@ -523,9 +475,9 @@ class TestSameAskAcrossReconnect:
         before = _drop_sse(stack, page)
         r = requests.post(
             f"{stack.base}/api/input?token={stack.token}",
-            json={"kind": "prompt", "content": "Rust"},
+            json={"kind": "confirm", "key": "n", "comment": ""},
         )
-        assert r.status_code == 200 and _wait(lambda: results == ["Rust"])
+        assert r.status_code == 200 and _wait(lambda: results == [("n", "")])
         # 풀림 알림(input_resolved)은 아무에게도 가지 않았다
         assert not stack.renderer.hub.has_live_connections()
         _wait_reconnected(page, before)
@@ -537,7 +489,7 @@ class TestSameAskAcrossReconnect:
         import requests
 
         results: list = []
-        first = _pending_prompt(stack, results, "first?")
+        first = _pending_confirm(stack, results, "first?")
         stack.emit_ready()
         page.goto(stack.url)
         page.wait_for_selector(".ask-main .ask-answer", timeout=8000)
@@ -549,11 +501,11 @@ class TestSameAskAcrossReconnect:
         before = _drop_sse(stack, page)
         r = requests.post(
             f"{stack.base}/api/input?token={stack.token}",
-            json={"kind": "prompt", "content": "Rust"},
+            json={"kind": "confirm", "key": "n", "comment": ""},
         )
-        assert r.status_code == 200 and _wait(lambda: results == ["Rust"])
+        assert r.status_code == 200 and _wait(lambda: results == [("n", "")])
         first.join(5)
-        second = _pending_prompt(stack, results, "second?")
+        second = _pending_confirm(stack, results, "second?")
         _wait_reconnected(page, before)
         assert _wait(lambda: "second?" in page.inner_text("#ask-tray"))
         assert page.locator(".ask-main").count() == 1
@@ -567,12 +519,12 @@ class TestSameAskAcrossReconnect:
     def test_an_ask_pending_at_first_connect_stays(self, stack, page):
         """첫 접속에 물음이 이미 떠 있다 — 스냅샷 안에 있으니 접지 않는다."""
         results: list = []
-        t = _pending_prompt(stack, results, "which language?")
+        t = _pending_confirm(stack, results, "which language?")
         stack.emit_ready()
         page.goto(stack.url)
         page.wait_for_selector(".ask-main .ask-answer", timeout=8000)
         # 라이브 이벤트 하나가 그려지면 그 앞의 snapshot_end 는 이미 처리됐다
-        stack.renderer.agent_roster([_row(AGT, [])])
+        _publish(stack, [_row(AGT, [])])
         assert _wait(lambda: page.locator(f".ov-ch[data-key='{AGT}']").count() == 1)
         assert page.locator(".ask-main").count() == 1
         stack.renderer.push_abort()
@@ -617,7 +569,7 @@ class TestItemLeftWhileSending:
         reg, key = live_registry
         qid, sel = _open_question(stack, page, reg, key)
         held: list = []
-        page.route("**/api/agent/*/input", lambda route: held.append(route))
+        page.route(QUESTIONS, lambda route: held.append(route))
         page.fill(sel, "mine")
         page.press(sel, "Enter")
         assert wait_held(page, held, 1)
@@ -627,32 +579,6 @@ class TestItemLeftWhileSending:
         assert _wait(lambda: _item(page, qid).count() == 0)
         held[0].abort()
         assert _bar_notice(page) == CLOSED
-
-    def test_main_prompt_failure_after_the_item_left_notices_below_the_input(
-        self, stack, page
-    ):
-        import requests
-
-        results: list = []
-        stack.start_ask(results)
-        stack.emit_ready()
-        page.goto(stack.url)
-        sel = ".ask-main .ask-answer"
-        page.wait_for_selector(sel, timeout=8000)
-        held: list = []
-        page.route("**/api/input", lambda route: held.append(route))
-        page.fill(sel, "Python")
-        page.press(sel, "Enter")
-        assert wait_held(page, held, 1)
-        r = requests.post(
-            f"{stack.base}/api/input?token={stack.token}",
-            json={"kind": "prompt", "content": "Rust"},
-        )
-        assert r.status_code == 200
-        assert _wait(lambda: page.locator(".ask-main").count() == 0)
-        held[0].abort()
-        assert _bar_notice(page) == CLOSED
-        assert results == ["Rust"]
 
 
 @pytest.fixture
@@ -699,14 +625,67 @@ class TestKillClosesQuestions:
         reg, key = busy_agent
         qid, sel = _open_question(stack, page, reg, key)
         held: list = []
-        page.route("**/api/agent/*/input", lambda route: held.append(route))
+        page.route(QUESTIONS, lambda route: held.append(route))
         page.fill(sel, "src/main.py")
         page.press(sel, "Enter")
         assert wait_held(page, held, 1)
         reg.kill(key)  # 답이 서버에 닿기 전에 ✕
         assert _wait(lambda: _item(page, qid).count() == 0)
-        with page.expect_response(lambda r: "/input" in r.url) as info:
+        with page.expect_response(lambda r: "/api/questions/" in r.url) as info:
             held[0].continue_()
         assert info.value.status == 409
         assert _bar_notice(page) == CLOSED
         assert reg.queued_for(f"agent:{key}") == ()
+
+
+class TestQuestionPath:
+    """6b: 누가 물었든 한 트레이·한 길 — 답하거나 답 없이 닫는다. 묻는 쪽은 사실의 봉투(줄 없는 ``n-``)를 받는다."""
+
+    def test_close_without_answer_closes_the_agents_question(
+        self, stack, page, live_registry
+    ):
+        reg, key = live_registry
+        qid, sel = _open_question(stack, page, reg, key)
+        page.fill(sel, "half typed")
+        page.click(f'#ask-tray .ask-item[data-qid="{qid}"] .ask-close')
+        assert _wait(lambda: _item(page, qid).count() == 0)
+        assert reg.open_human_questions() == []
+        assert page.locator("#attach-strip .attach-msg").count() == 0
+
+    def _main_question(self, stack, page, reg):
+        qid, err = reg.question_port(None).ask("which language?")
+        assert not err
+        stack.emit_ready()
+        page.goto(stack.url)
+        item = f'#ask-tray .ask-item[data-qid="{qid}"]'
+        page.wait_for_selector(f"{item} .ask-answer", timeout=8000)
+        assert page.inner_text(f"{item} .ask-q") == "❓ main asked"
+        assert "which language?" in page.inner_text(item)
+        return qid, item
+
+    def test_mains_question_is_answered_from_the_tray(self, stack, page, live_registry):
+        reg, _ = live_registry
+        qid, item = self._main_question(stack, page, reg)
+        page.fill(f"{item} .ask-answer", "Python")
+        page.press(f"{item} .ask-answer", "Enter")
+        assert _wait(lambda: _item(page, qid).count() == 0)
+        (mail,) = absorbed_mail(reg)
+        assert mail["kind"] == "answer" and mail["re"] == qid
+        assert "Answer: Python" in mail["output"]
+
+    def test_mains_question_is_closed_from_the_tray(self, stack, page, live_registry):
+        reg, _ = live_registry
+        qid, item = self._main_question(stack, page, reg)
+        page.click(f"{item} .ask-close")
+        assert _wait(lambda: _item(page, qid).count() == 0)
+        (mail,) = absorbed_mail(reg)
+        assert mail["kind"] == "closed" and mail["re"] == qid
+
+    def test_a_skill_runs_question_is_labelled_skill(self, stack, page, live_registry):
+        reg, _ = live_registry
+        qid, _ = reg.question_port(address="skill:s-1", name="demo").ask("which name?")
+        stack.emit_ready()
+        page.goto(stack.url)
+        label = f'#ask-tray .ask-item[data-qid="{qid}"] .ask-q'
+        page.wait_for_selector(label, timeout=8000)
+        assert page.inner_text(label) == "❓ skill demo asked"

@@ -438,24 +438,13 @@ class AgentRegistry(QuestionsMixin):
         return hits[0] if len(hits) == 1 else None
 
     def roster_snapshot(self) -> list[dict]:
-        # ``AgentInstance.snapshot`` 은 인스턴스 메서드라 레지스트리의
-        # 우편에 닿지 못한다 — 열린 질문은 여기서 합류.
+        # 열린 질문은 명단에 싣지 않는다 — 질문 목록이 따로 간다(6b, `_notify_questions`).
 
         # Snapshot the values first: this runs on worker/web threads while the
         # main thread may spawn/resume/restore into ``_agents``. Iterating the
         # live view directly raises "dictionary changed size during iteration"
         # (AUDIT S-1); ``list(...)`` materialises atomically under the GIL.
-        by_asker: dict[str, list[dict]] = {}
-        for q in self.open_human_questions():
-            by_asker.setdefault(q.asker, []).append(
-                {"id": q.id, "text": q.text, "to": q.target, "ts": q.asked_at}
-            )
-        out = []
-        for tm in list(self._agents.values()):
-            snap = self._snapshot_of(tm)
-            snap["open_questions"] = by_asker.get(tm.key, [])
-            out.append(snap)
-        return out
+        return [self._snapshot_of(tm) for tm in list(self._agents.values())]
 
     def _notify_roster(self) -> None:
         """P4: 상태 변화를 대화 창 목록에 반영 — web sticky, CLI no-op. 명단을 뜨고 내는 것이 한 걸음이다

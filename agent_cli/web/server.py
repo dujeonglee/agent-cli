@@ -1438,11 +1438,9 @@ def create_app(server: WebServer) -> FastAPI:
     @app.post("/api/agent/{key}/input")
     async def agent_input(key: str, request: Request):
         """teammate 대화 창의 인간 개입 (P4, D8) — 해당 teammate 의 inbox 로
-        직접 전송 — 언제나 **새 일감**이다. 열린 질문의 답은 ``answer_id``
-        로만 들어온다(아래). 이 문답의 회신은 main 컨텍스트에 배달되지
-        않는다 (창에만 — 레지스트리의 화자 규칙).
-
-        ``answer_id`` 가 실려 오면 새 일감이 아니라 **그 질문의 답**이다."""
+        직접 전송 — 언제나 **새 일감**이다. 열린 질문의 답·닫기는 질문의 길
+        (``/api/questions/<q-N>/…``, 6b)로만 들어온다. 이 문답의 회신은 main
+        컨텍스트에 배달되지 않는다 (창에만 — 레지스트리의 화자 규칙)."""
         registry = server.agent_registry
         if registry is None:
             raise HTTPException(status_code=503, detail="agent registry not ready")
@@ -1450,27 +1448,12 @@ def create_app(server: WebServer) -> FastAPI:
         content = body.get("content", "")
         if not isinstance(content, str):
             raise HTTPException(status_code=400, detail="content must be a string")
-        # ``images`` (v10.61.0): main 과 같은 모양(`image_refs`) — 새 일감에만
-        # 실린다(답은 글). 이미지만 있는 일감도 된다(v10.147.2 — 그 전엔 레지스트리가
+        # ``images`` (v10.61.0): main 과 같은 모양(`image_refs`). 이미지만 있는 일감도 된다(v10.147.2 — 그 전엔 레지스트리가
         # "empty message" 로 거절해 404 였다).
         images = server.image_refs(body.get("images") or [])
         if is_blank_words(content, images):
             raise HTTPException(status_code=400, detail=EMPTY_WORDS)
         author = human_addr(server.renderer.hub.nickname_for(body.get("conn_id")))
-        answer_id = body.get("answer_id")
-        if answer_id:
-            if images:
-                raise HTTPException(
-                    status_code=400, detail="an answer cannot carry images"
-                )
-            # ❓ 트레이의 답 — 새 일감이 아니라 **특정 질문**에 짝짓는다
-            # (비동기 ask/answer, docs/agent-ask/DESIGN.md §3.6). 주소가
-            # 사람인 질문만 트레이에 뜨고, `user*` 는 하나의 주체라 어느
-            # 뷰어가 답하든 받는다 — 먼저 답한 쪽이 claim 한다.
-            error = registry.answer_question(str(answer_id), content, by=author)
-            if error:
-                raise HTTPException(status_code=409, detail=error)
-            return JSONResponse({"accepted": True, "answered": answer_id})
         error = registry.request(key, content, author=author, images=images or None)
         if error:
             raise HTTPException(status_code=404, detail=error)
@@ -1489,6 +1472,8 @@ def create_app(server: WebServer) -> FastAPI:
             content = body.get("content", "")
             if not isinstance(content, str):
                 raise HTTPException(status_code=400, detail="content must be a string")
+            if not content.strip():
+                raise HTTPException(status_code=400, detail=EMPTY_WORDS)
             error = registry.answer_question(qid, content, by=author)
         elif action == "close":
             error = registry.close_question(qid, by=author)

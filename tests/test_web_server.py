@@ -1082,30 +1082,28 @@ class TestStaticUI:
 
     def test_global_ask_tray_wired(self, server_and_client):
         """agent-channels 3단계: **주소가 사람인 열린 질문**을 채널 무관
-        글로벌 트레이로 노출·답변. 답은 그 asker 로 고정
-        (/api/agent/<key>/input + ``answer_id``), 질문이 닫히면 자동 제거
-        (roster 의 ``open_questions`` 가 진실원)."""
+        글로벌 트레이로 노출·답변·닫기. 답은 질문 번호의 길
+        (/api/questions/<q-N>/answer|close, 6b), 질문이 닫히면 자동 제거
+        (열린 질문 목록 sticky ``open_questions`` 가 진실원)."""
         _, _, client = server_and_client
         html = client.get("/").text
         js = js_text()
         css = client.get("/static/style.css").text
         assert 'id="ask-tray"' in html
-        # 트레이의 진실원은 roster 행의 ``open_questions`` 다 — 프런트가
-        # 질문을 따로 캐시하면 두 진실원이 생긴다.
+        # 트레이의 진실원은 열린 질문 목록 하나다(6b) — 명단 행에서 읽지 않는다.
         assert "var ovAskTray" not in js
-        assert "open_questions" in js
+        assert 'es.addEventListener("open_questions"' in js
         assert "function ovRenderAskTray(" in js and "function ovSubmitAsk(" in js
-        # roster 의 open_questions 가 표시 진실원 — 주소는 언제나 사람(v10.77.0)
         rt = js_fn_body(js, "ovRenderAskTray")
-        assert "t.open_questions" in rt
+        assert "ovQuestions" in rt and "t.open_questions" not in rt
         assert "waiting_ask" not in rt
-        # roster 갱신마다 재렌더
+        # 명단 갱신마다 재렌더(이름표)
         onr = js_fn_body(js, "ovOnRoster")
         assert "ovRenderAskTray()" in onr
-        # 답변 라우팅: 그 agent 로 고정 + 질문 id 로 짝짓기
-        sa = js_fn_body(js, "ovSubmitAsk")
-        assert '"api/agent/" + encodeURIComponent(key) + "/input"' in sa
-        assert "body.answer_id = qid" in sa
+        # 답·닫기 라우팅: 질문 번호의 길
+        pq = js_fn_body(js, "ovPostQuestion")
+        assert '"api/questions/" + encodeURIComponent(qid) + "/" + action' in pq
+        assert "answer_id" not in js
         assert ".ask-item" in css and ".ask-answer" in css
 
     def test_task_group_collapse_from_any_position_wired(self, server_and_client):
@@ -1854,15 +1852,13 @@ class TestConfirmStallWarning:
 
     def test_frontend_handles_409_as_stale_ask(self, server_and_client):
         """409(이미 해결된 ask) 응답이면 stale main-ask 트레이 항목을 접는다
-        (ovFoldMainAsk) — confirm/prompt 두 제출부 각각의 분기 안에서. v10.147.4: 접기는
+        (ovFoldMainAsk) — 확인 대화 제출부의 분기 안에서(6b: main 의 막는 물음은 확인 대화뿐이다). v10.147.4: 접기는
         `mainAskAlreadyClosed(item)` 한 곳 — 그 항목의 물음이 지금의 것일 때만 접고 알린다."""
         js = js_text()
         confirm_body = js_fn_body(js, "ovSubmitMainConfirm")
         assert "status === 409" in confirm_body
         assert "mainAskAlreadyClosed(item)" in confirm_body
-        prompt_body = js_fn_body(js, "ovSubmitMainPrompt")
-        assert "status === 409" in prompt_body
-        assert "mainAskAlreadyClosed(item)" in prompt_body
+        assert "ovSubmitMainPrompt" not in js and 'kind: "prompt"' not in js
         closed = js_fn_body(js, "mainAskAlreadyClosed")
         assert "session.mainAsk === item.askOf" in closed
         assert "ovFoldMainAsk()" in closed
@@ -3775,15 +3771,6 @@ class TestAgentInputImages:
             json={"content": "x", "images": ["missing.png"]},
         )
         assert r.status_code == 400
-        r = client.post(
-            f"/api/agent/agt-1/input?token={server.token}",
-            json={
-                "content": "x",
-                "answer_id": "q-1",
-                "images": [str(tmp_path / "a.png")],
-            },
-        )
-        assert r.status_code == 400 and "answer" in r.json()["detail"]
         assert reg.requests == []
 
 

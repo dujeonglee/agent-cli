@@ -30,8 +30,7 @@ def _registry(path, runner):
 
 
 def _open_qs(reg, key):
-    (row,) = [r for r in reg.roster_snapshot() if r["key"] == key]
-    return [q["id"] for q in row["open_questions"]]
+    return [q.id for q in reg.open_human_questions() if q.asker == key]
 
 
 def _busy_agent_with_a_question(tmp_path):

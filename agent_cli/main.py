@@ -996,7 +996,7 @@ def _dispatch_question(
     """``/questions`` — 열린 질문 목록, ``/answer <q-N> <글>`` — **그 번호의** 질문에 답한다(6c). 답은 웹 트레이와 같은
     함수(`AgentRegistry.answer_question`)로 간다 — 길은 하나, 입구가 둘이다. 번호가 없으면 사용법만 말한다: 질문이
     하나뿐이어도 짐작해 붙이지 않는다(답은 번호를 적은 명령이나 트레이로만 — 사용자 결정). 목록은 트레이와 같은
-    출처(명단 행의 ``open_questions``)를 읽고, 묻는 쪽은 질문 줄과 같은 이름으로 적는다."""
+    출처(레지스트리의 열린 질문)를 읽고, 묻는 쪽은 질문 줄과 같은 이름으로 적는다."""
     if agent_registry is None:
         output.agent_dispatch_result("(no agent registry in this mode)", False)
         return

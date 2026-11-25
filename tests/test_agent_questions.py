@@ -375,13 +375,13 @@ class TestSurfaces:
         assert rep["re"] == "r-1"
         assert (tmp_path / "agents" / b / "replies" / "reply-r-1.md").is_file()
 
-    def test_roster_carries_open_questions(self, mkreg, tmp_path, renderer):
+    def test_the_roster_does_not_carry_questions(self, mkreg, tmp_path, renderer):
+        """열린 질문은 질문 목록 하나로 간다(6b) — 명단 행에 두 번째 출처를 두지 않는다."""
         reg = mkreg()
         a = spawn_idle(reg)
-        qid, _ = reg.register_question(a, "배포?")
+        reg.register_question(a, "배포?")
         row = next(r for r in reg.roster_snapshot() if r["key"] == a)
-        assert [q["id"] for q in row["open_questions"]] == [qid]
-        assert row["open_questions"][0]["to"] == "user"
+        assert "open_questions" not in row
 
     def test_registering_notifies_the_question_list(self, mkreg, tmp_path, renderer):
         """트레이의 출처는 열린 질문 목록 하나다(6b) — 알리지 않으면 질문이 다음 알림까지 화면에 안 뜬다."""
@@ -405,45 +405,27 @@ class TestSurfaces:
 
 
 class TestWebAnswerEndpoint:
-    def _client(self):
+    """6b: 트레이의 답·닫기는 질문의 길(``/api/questions/<q-N>/…``) — `tests/test_ask_one_path.py` 가 그 길을 본다.
+    에이전트 창의 입력은 언제나 새 일감이다(``answer_id`` 갈래는 지웠다)."""
+
+    def test_an_answer_id_is_not_an_answer(self, mkreg, tmp_path, renderer):
         from fastapi.testclient import TestClient
 
         from agent_cli.render.web import WebRenderer
         from agent_cli.web.server import WebServer, create_app
 
-        renderer = WebRenderer()
-        server = WebServer(renderer, token="t")
-        return server, TestClient(create_app(server))
-
-    def test_answer_id_pairs_instead_of_queueing_work(self, mkreg, tmp_path, renderer):
-        """트레이 답은 **새 일감이 아니다** — 질문에 짝지어야 한다.
-        ``answer_id`` 없이 보내면 종전대로 inbox 로 들어간다."""
         reg = mkreg()
         a = spawn_idle(reg)
         qid, _ = reg.register_question(a, "덮어쓸까요?")
-        server, client = self._client()
+        server = WebServer(WebRenderer(), token="t")
         server.agent_registry = reg
-
+        client = TestClient(create_app(server))
         r = client.post(
             f"/api/agent/{a}/input?token=t",
             json={"content": "네 덮어쓰세요", "answer_id": qid},
         )
-        assert r.status_code == 200
-        assert r.json()["answered"] == qid
-        assert reg.open_human_questions() == []
-        assert reg.queued_for(f"agent:{a}") == ()  # 일감으로 들어가지 않았다
-
-    def test_stale_answer_id_is_rejected_not_queued(self, mkreg, tmp_path, renderer):
-        reg = mkreg()
-        a = spawn_idle(reg)
-        server, client = self._client()
-        server.agent_registry = reg
-        r = client.post(
-            f"/api/agent/{a}/input?token=t",
-            json={"content": "답", "answer_id": "q-gone"},
-        )
-        assert r.status_code == 409
-        assert reg.queued_for(f"agent:{a}") == ()
+        assert r.status_code == 200 and "answered" not in r.json()
+        assert [q.id for q in reg.open_human_questions()] == [qid]
 
 
 class Replies:
@@ -629,16 +611,14 @@ class TestPersistShape:
         assert not qid
         assert "unknown asker" in err
 
-    def test_roster_row_carries_text_and_time(self, mkreg, renderer):
-        """트레이가 이 세 필드로 그려진다."""
+    def test_the_question_list_carries_text_and_time(self, mkreg, renderer):
+        """트레이가 이 필드로 그려진다(6b — 질문 목록 sticky)."""
         reg = mkreg()
         a = spawn_idle(reg)
         qid, _ = reg.register_question(a, "덮어쓸까요?")
-        (row,) = [r for r in reg.roster_snapshot() if r["key"] == a]
-        (item,) = row["open_questions"]
-        assert item["id"] == qid
+        (item,) = renderer.named("open_questions")[-1][1]["questions"]
+        assert item["id"] == qid and item["asker"] == a
         assert item["text"] == "덮어쓸까요?"
-        assert item["to"] == "user"
         assert isinstance(item["ts"], float)
 
 

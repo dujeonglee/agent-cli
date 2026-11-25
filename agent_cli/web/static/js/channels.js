@@ -19,7 +19,6 @@ import {
   highlightDangerHtml,
   noteOnAnswer,
   ovSubmitMainConfirm,
-  ovSubmitMainPrompt,
 } from "./input.js";
 import { sendOnce } from "./send.js";
 import {
@@ -35,6 +34,8 @@ import {
 // ovSkills)는 선언만 남아 아무도 읽지 않았다 — ⑥ 에서 함께 걷어낸다. 남는
 // 것은 실제로 읽히는 둘: roster(채널 칩·점프 가능 판정의 진실원)와 활성 채널.
 export var ovRoster = []; // agent_roster
+// 사람에게 온 열린 질문 — main·에이전트·스킬 런의 것이 한 목록(6b, sticky ``open_questions``). ❓ 트레이의 출처다.
+var ovQuestions = [];
 // 일하는 에이전트인가 — 런 중이거나 일을 끝내지 않은 run (서버 `AgentRegistry.working_agents` 와 같은 판정).
 // 입력창 옆 Stop ▾ 와 채널 줄 끝 ■ all 이 이것을 본다 (v10.142.0).
 export function ovAgentWorking(t) {
@@ -45,7 +46,7 @@ export function ovAgentWorking(t) {
 // replay 버퍼가 그대로 복원한다.
 export var ovActiveChannel = "main";
 // 3단계: 글로벌 ask 트레이 — **주소가 사람인 열린 질문**을 채널 무관하게
-// 노출한다. 진실원은 roster 행의 `open_questions` 다(질문 단위).
+// 노출한다. 진실원은 열린 질문 목록(`ovQuestions`) 하나다(질문 단위, 6b).
 // 에이전트별 결정적 아이콘 — key 해시로 고정. 서버(agent_cli/agent_icon.py)와
 // 반드시 동일한 풀·순서·해시(test_app_markdown 이 대조). key 는 ASCII 라
 // charCodeAt == Python ord.
@@ -113,15 +114,18 @@ export function ovAgentLabelHtml(key) {
 export function ovOnRoster(d) {
   ovRoster = (d && d.roster) || [];
   ovSyncChannels(); // 채널 바(상태 dot 포함) 갱신(죽으면 main 복귀)
-  ovRenderAskTray(); // 진실원은 roster 의 open_questions
+  ovRenderAskTray(); // 이름표가 명단을 따른다
 }
-// 글로벌 ask 트레이: roster 행의 `open_questions` 중 사람 주소인 것을
-// 채널 무관하게 렌더. 답변은 그 agent 로 고정(api/agent/<key>/input), 서버
-// 공유 상태라 누가 먼저 답하면 질문이 닫혀 → 모든 뷰어에서 사라짐(선착순).
-// main 의 prompt/confirm 을 트레이 항목(DOM)으로 — 검증된 조각 재사용
-// (buildPromptMetaEl·highlightDangerHtml·confirm-btn·mode-context). 3b.
+// 열린 질문 목록이 바뀌었다(6b) — 질문이 열리고, 답·닫힘·묻는 쪽의 끝으로 닫힐 때마다.
+export function ovOnQuestions(d) {
+  ovQuestions = (d && d.questions) || [];
+  ovRenderAskTray();
+}
+// 글로벌 ask 트레이: 열린 질문 목록을 채널 무관하게 렌더. 답·닫기는 질문 번호의 길(api/questions/<q-N>/…) —
+// 서버 공유 상태라 누가 먼저 답하거나 닫으면 질문이 닫혀 → 모든 뷰어에서 사라짐(선착순).
+// main 의 확인 대화(confirm)를 트레이 항목(DOM)으로 — 검증된 조각 재사용
+// (buildPromptMetaEl·highlightDangerHtml·confirm-btn). 3b. 막는 물음은 확인 대화뿐이다.
 function ovBuildMainAskEl() {
-  var kind = session.mainAsk.kind;
   var data = session.mainAsk.data || {};
   var item = el("div", ["ask-item", "ask-main"]);
   // 이 항목이 맡은 물음 — 서버는 물음에 id 를 주지 않아 ``input_required`` 한 번이 만든 객체가 곧
@@ -129,76 +133,48 @@ function ovBuildMainAskEl() {
   item.askOf = session.mainAsk;
   item.sendSlot = { sending: false };
   var head = el("div", ["ask-q"]);
-  head.textContent =
-    kind === "confirm" ? "⚠ main — confirmation needed" : "❓ main asked";
+  head.textContent = "⚠ main — confirmation needed";
   item.appendChild(head);
-  var meta = buildPromptMetaEl(data, kind === "confirm");
+  var meta = buildPromptMetaEl(data);
   if (meta) item.appendChild(meta);
-  if (kind === "confirm") {
-    // **무엇을 승인하는지**를 먼저 보인다. 종전엔 이 줄이 없어서, 워크스페이스
-    // 밖 경로에 쓰려는 것을 승인할 때 화면에 남는 게 헤더+버튼뿐이었다 —
-    // 이게 이탈 가드라는 사실도, 어느 경로가 밖인지도, 루트가 뭔지도 없이
-    // `a` 버튼만 "always allow these locations" 라고 말했다(감사 발견).
-    // `shell` 은 `command` 를 따로 실어 강조 렌더가 되지만 edit/write_file 은
-    // 안 싣는다. `prompt` 는 그 사유의 유일한 전달자다.
-    if (typeof data.prompt === "string" && data.prompt.trim()) {
-      item.appendChild(el("div", ["confirm-why"], data.prompt.trim()));
-    }
-    if (typeof data.command === "string" && data.command) {
-      item.appendChild(
-        elHtml("pre", ["action-shell", "confirm-cmd"],
-          highlightDangerHtml(data.command, data.danger_spans))
-      );
-    }
-    var cmt = el("input", ["ask-answer"]);
-    cmt.type = "text";
-    cmt.placeholder = "Optional comment";
-    var btns = el("div", ["ask-confirm-btns"]);
-    (data.options || []).forEach(function (opt) {
-      var b = el("button", ["confirm-btn"]);
-      if (opt.key === data.default_key) b.classList.add("default");
-      b.textContent = opt.key + " — " + opt.label;
-      b.addEventListener("click", function () {
-        ovSubmitMainConfirm(item, opt.key, cmt.value.trim());
-      });
-      btns.appendChild(b);
-    });
-    cmt.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" && !e.isComposing) {
-        e.preventDefault();
-        ovSubmitMainConfirm(item, data.default_key, cmt.value.trim());
-      }
-    });
-    item.appendChild(btns);
-    var cw = el("div", ["ask-in"]);
-    cw.appendChild(cmt);
-    item.appendChild(cw);
-  } else {
-    var ctx = typeof data.context === "string" ? data.context : "";
-    if (ctx) {
-      var ce = el("div", ["mode-context"]);
-      ce.textContent = ctx;
-      item.appendChild(ce);
-    }
-    var ans = el("input", ["ask-answer"]);
-    ans.type = "text";
-    ans.placeholder = "Answer… (Enter to send)";
-    var send = el("button", ["ask-send", "btn-primary"]);
-    send.textContent = "Send";
-    send.addEventListener("click", function () {
-      ovSubmitMainPrompt(item, ans);
-    });
-    ans.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" && !e.isComposing) {
-        e.preventDefault();
-        ovSubmitMainPrompt(item, ans);
-      }
-    });
-    var iw = el("div", ["ask-in"]);
-    iw.appendChild(ans);
-    iw.appendChild(send);
-    item.appendChild(iw);
+  // **무엇을 승인하는지**를 먼저 보인다. 종전엔 이 줄이 없어서, 워크스페이스
+  // 밖 경로에 쓰려는 것을 승인할 때 화면에 남는 게 헤더+버튼뿐이었다 —
+  // 이게 이탈 가드라는 사실도, 어느 경로가 밖인지도, 루트가 뭔지도 없이
+  // `a` 버튼만 "always allow these locations" 라고 말했다(감사 발견).
+  // `shell` 은 `command` 를 따로 실어 강조 렌더가 되지만 edit/write_file 은
+  // 안 싣는다. `prompt` 는 그 사유의 유일한 전달자다.
+  if (typeof data.prompt === "string" && data.prompt.trim()) {
+    item.appendChild(el("div", ["confirm-why"], data.prompt.trim()));
   }
+  if (typeof data.command === "string" && data.command) {
+    item.appendChild(
+      elHtml("pre", ["action-shell", "confirm-cmd"],
+        highlightDangerHtml(data.command, data.danger_spans))
+    );
+  }
+  var cmt = el("input", ["ask-answer"]);
+  cmt.type = "text";
+  cmt.placeholder = "Optional comment";
+  var btns = el("div", ["ask-confirm-btns"]);
+  (data.options || []).forEach(function (opt) {
+    var b = el("button", ["confirm-btn"]);
+    if (opt.key === data.default_key) b.classList.add("default");
+    b.textContent = opt.key + " — " + opt.label;
+    b.addEventListener("click", function () {
+      ovSubmitMainConfirm(item, opt.key, cmt.value.trim());
+    });
+    btns.appendChild(b);
+  });
+  cmt.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.isComposing) {
+      e.preventDefault();
+      ovSubmitMainConfirm(item, data.default_key, cmt.value.trim());
+    }
+  });
+  item.appendChild(btns);
+  var cw = el("div", ["ask-in"]);
+  cw.appendChild(cmt);
+  item.appendChild(cw);
   return item;
 }
 // 에이전트 질문 항목 하나 — 질문은 id 로 불변이라 한 번 만든다. 이름표만 명단을 따라 바뀐다
@@ -221,15 +197,21 @@ function ovBuildQuestionEl(key, q) {
   inp.setAttribute("aria-label", "Answer");
   var send = el("button", ["ask-send", "btn-primary"], "Send");
   send.type = "button";
+  // 답 없이 닫기(6b) — 묻는 쪽은 "닫혔다" 는 사실의 봉투를 받는다
+  var close = el("button", ["ask-close"], "Close without answer");
+  close.type = "button";
   iw.appendChild(inp);
   iw.appendChild(send);
+  iw.appendChild(close);
   item.appendChild(iw);
   return item;
 }
-// 질문 항목의 이름표를 지금 명단의 이름으로 — 바뀐 때만 쓴다(입력은 건드리지 않는다).
-function ovLabelQuestionEl(item, key) {
+// 질문 항목의 이름표 — 바뀐 때만 쓴다(입력은 건드리지 않는다). 에이전트는 지금 명단의 이름(이름이 바뀌면 따라간다),
+// 명단에 없는 묻는 쪽(main·스킬 런)은 서버의 이름표(`asker_label` — "main"·"skill <이름>", 6b)를 그대로 쓴다.
+function ovLabelQuestionEl(item, key, q) {
   var b = item.querySelector(".ask-q > b");
-  var html = ovAgentLabelHtml(key);
+  var agent = ovRoster.some(function (t) { return t.key === key; });
+  var html = agent ? ovAgentLabelHtml(key) : escapeHtml(q.label || key);
   if (b.innerHTML !== html) b.innerHTML = html;
 }
 // 트레이를 **항목 단위로** 맞춘다 (v10.147.4): 여전히 열린 질문의 항목은 그대로 두고(쓰던 답·포커스·
@@ -243,11 +225,8 @@ export function ovRenderAskTray() {
   // 언제나 사람이다(v10.77.0). 상대가 막혀 있지 않으므로 state 로는 알 수
   // 없고 질문 자체가 진실이다 — 한 에이전트가 동시에 여럿 물을 수 있어 항목도
   // 질문 단위.
-  var open = [];
-  ovRoster.forEach(function (t) {
-    (t.open_questions || []).forEach(function (q) {
-      open.push({ key: t.key, q: q });
-    });
+  var open = ovQuestions.map(function (q) {
+    return { key: q.asker, q: q };
   });
   var have = {};
   var mainEl = null;
@@ -263,7 +242,7 @@ export function ovRenderAskTray() {
   }
   open.forEach(function (it) {
     var item = have[it.q.id] || ovBuildQuestionEl(it.key, it.q);
-    ovLabelQuestionEl(item, it.key);
+    ovLabelQuestionEl(item, it.key, it.q);
     want.push(item);
   });
   Array.prototype.slice.call(tray.children).forEach(function (c) {
@@ -274,10 +253,10 @@ export function ovRenderAskTray() {
   });
   tray.hidden = !want.length;
 }
-// 에이전트 질문의 답 — 그 asker 로 고정(드롭박스 채널과 무관). ``answer_id`` 로 **그 질문의 답**으로 짝짓는다.
-// 입력창과 같은 규칙: 받았을 때만 비우고(항목은 명단이 닫는다), 실패면 항목 안에 사유·글 남김. 409 는
+// 질문의 답 — 질문 번호의 길(``api/questions/<q-N>/answer``, 6b)로 **그 질문의 답**으로 짝짓는다(묻는 쪽은 번호가 정한다).
+// 입력창과 같은 규칙: 받았을 때만 비우고(항목은 목록이 닫는다), 실패면 항목 안에 사유·글 남김. 409 는
 // 이미 답했거나 닫힌 질문(상태 코드로만 읽는다) — 글을 버리고 입력창 아래 줄에 알리며,
-// 명단이 항목을 거둘 때까지 그 항목의 입력을 닫아 둔다.
+// 목록이 항목을 거둘 때까지 그 항목의 입력을 닫아 둔다.
 function ovSubmitAsk(item) {
   var inp = item.querySelector(".ask-answer");
   var text = inp.value;
@@ -287,14 +266,27 @@ function ovSubmitAsk(item) {
     return;
   }
   clearAnswerNote(item);
-  var key = item.getAttribute("data-key");
+  ovPostQuestion(item, "answer", { content: text }, function () {
+    if (inp.value === text) inp.value = "";
+  });
+}
+// 답 없이 닫기(6b) — 같은 길의 ``close``. 받으면 목록이 항목을 거둔다.
+function ovCloseAsk(item) {
+  if (item.sendSlot.sending) {
+    noteOnAnswer(item, "Still sending the previous answer");
+    return;
+  }
+  clearAnswerNote(item);
+  ovPostQuestion(item, "close", {}, function () {});
+}
+// 질문 하나에 보내기 — 답·닫기 공용. 409(이미 답했거나 닫힌 질문)는 항목의 입력을 닫고 알린다.
+function ovPostQuestion(item, action, extra, onDone) {
   var qid = item.getAttribute("data-qid");
-  var body = { content: text, conn_id: session.connId };
-  body.answer_id = qid;
+  var body = Object.assign({ conn_id: session.connId }, extra);
   sendOnce(
     item.sendSlot,
     function (signal) {
-      return fetch("api/agent/" + encodeURIComponent(key) + "/input", {
+      return fetch("api/questions/" + encodeURIComponent(qid) + "/" + action, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -302,19 +294,18 @@ function ovSubmitAsk(item) {
       });
     },
     function (failure, status) {
-      if (!failure) {
-        if (inp.value === text) inp.value = "";
-        return;
-      }
+      if (!failure) return onDone();
+      var inp = item.querySelector(".ask-answer");
       if (status === 409) {
         inp.value = "";
         inp.placeholder = "Already answered or closed";
         inp.disabled = true;
         item.querySelector(".ask-send").disabled = true;
+        item.querySelector(".ask-close").disabled = true;
         attachMessage(ALREADY_CLOSED_NOTICE);
         return;
       }
-      // 보내는 사이 항목이 빠졌다(명단이 질문을 닫았다) — 보이지 않는 곳에 사유를 세우지 않는다
+      // 보내는 사이 항목이 빠졌다(목록이 질문을 닫았다) — 보이지 않는 곳에 사유를 세우지 않는다
       if (!item.isConnected) return attachMessage(ALREADY_CLOSED_NOTICE);
       noteOnAnswer(item, "⚠ Not sent — " + failure);
     }
@@ -329,8 +320,10 @@ function ovSubmitAsk(item) {
     return item && item.hasAttribute("data-qid") ? item : null;
   }
   tray.addEventListener("click", function (e) {
-    var item = e.target.classList.contains("ask-send") && questionItemOf(e.target);
-    if (item) ovSubmitAsk(item);
+    var item = questionItemOf(e.target);
+    if (!item) return;
+    if (e.target.classList.contains("ask-send")) ovSubmitAsk(item);
+    else if (e.target.classList.contains("ask-close")) ovCloseAsk(item);
   });
   tray.addEventListener("keydown", function (e) {
     if (e.key !== "Enter" || e.isComposing || !e.target.classList.contains("ask-answer")) return;

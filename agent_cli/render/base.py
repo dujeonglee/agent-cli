@@ -270,10 +270,10 @@ class Renderer(ABC):
             "action": self._thread_action.get(tid, ""),
         }
 
-    def _format_prompt_meta(self, *, include_action: bool) -> str:
-        """One compact block naming the asking agent + its reasoning (and
-        action for confirm), or ``""`` when there's nothing to show. Used
-        by CLI renderers to print a header before the prompt.
+    def _format_prompt_meta(self) -> str:
+        """One compact block naming the asking agent + its reasoning and
+        action, or ``""`` when there's nothing to show. Used by CLI
+        renderers to print a header before a confirm.
 
         Gated on an agent label: the main agent already prints its
         thought/action inline right above the prompt, so a header would
@@ -287,12 +287,9 @@ class Renderer(ABC):
         if meta["reasoning"]:
             first = meta["reasoning"].split("\n", 1)[0]
             lines.append(f"  💭 {first}")
-        if include_action and meta["action"]:
+        if meta["action"]:
             lines.append(f"  ⚡ {meta['action']}")
         return "\n".join(lines)
-
-    # ── Ask-tool announcement ────────────────────────
-    #
 
     # ── Nested scope lifecycle ───────────────────────
     #

@@ -291,8 +291,8 @@ class QuestionsMixin:
         )
 
     def close_questions_of(self, asker: str) -> None:
-        """그가 건 질문을 닫고(받을 곳이 없다) 저장·명단 알림 — 영구 사망(✕·크래시, ``not revivable``)과 답이
-        거절됐을 때(`answer_question`)만 부른다. 세션 종료(``shutdown_all``)에서 지우면 직후의 ``_save_state`` 가
+        """그가 건 질문을 닫고(받을 곳이 없다) 질문 목록 알림 — 영구 사망(✕·크래시, ``not revivable``)·스킬 런의 끝·
+        답이 거절됐을 때(`answer_question`)만 부른다. 세션 종료(``shutdown_all``)에서 지우면 직후의 ``_save_state`` 가
         빈 목록을 저장해 resume 이 질문을 되살리지 못한다.
         """
         outgoing = self._post.forget_questions_of(asker_address(asker))

@@ -167,19 +167,17 @@ class TestPromptProvenance:
         r = MinimalRenderer(Console())
         r.note_thought("some reasoning")
         r.note_action("shell", "rm x")
-        assert r._format_prompt_meta(include_action=True) == ""
+        assert r._format_prompt_meta() == ""
 
     def test_meta_with_agent_first_line_only(self):
         r = MinimalRenderer(Console())
         r.set_thread_agent("explorer")
         r.note_thought("first line\nsecond line")
         r.note_action("shell", "rm -rf build")
-        header = r._format_prompt_meta(include_action=True)
+        header = r._format_prompt_meta()
         assert "explorer" in header
         assert "first line" in header and "second line" not in header
         assert "rm -rf build" in header
-        # ask form omits the action.
-        assert "rm -rf build" not in r._format_prompt_meta(include_action=False)
 
     def test_confirm_prints_header_for_delegate(self, monkeypatch):
         from io import StringIO

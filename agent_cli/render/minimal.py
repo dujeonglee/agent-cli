@@ -898,22 +898,18 @@ class MinimalRenderer(Renderer):
         ``KeyboardInterrupt`` 는 부르는 쪽으로 올린다. 빈 입력이면 ``default``. 디코딩이 깨진 붙여 넣기는 빈 입력으로.
         읽기는 ``_guarded_read`` 를 지난다 — 다른 프롬프트(확인 대화)와 차례를 지키고, 떠 있는 Live 패널을 잠시 멈춘다."""
 
-        def _read():
-            self._emit_prompt_meta_header(include_action=False)
-            return input(prompt)
-
         try:
-            value = self._guarded_read(_read).strip()
+            value = self._guarded_read(lambda: input(prompt)).strip()
         except UnicodeDecodeError:
             value = ""
         return value if value else default
 
-    def _emit_prompt_meta_header(self, *, include_action: bool) -> None:
-        """Print the who/why header for a delegate-originated prompt (no-op
+    def _emit_prompt_meta_header(self) -> None:
+        """Print the who/why header for a delegate-originated confirm (no-op
         for the main agent or when there's nothing to show). ``markup=False``
         so a bracketed agent label like ``[code-analyst]`` isn't parsed as Rich
         markup."""
-        header = self._format_prompt_meta(include_action=include_action)
+        header = self._format_prompt_meta()
         if header:
             self.con.print(header, markup=False, highlight=False)
 
@@ -997,7 +993,7 @@ class MinimalRenderer(Renderer):
         """
 
         def _read():
-            self._emit_prompt_meta_header(include_action=True)
+            self._emit_prompt_meta_header()
             if command is not None:
                 self.con.print(
                     self._danger_command_text(command, danger_spans),

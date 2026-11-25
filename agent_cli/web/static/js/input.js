@@ -27,7 +27,7 @@ import { ovSyncChannels } from "./runs.js";
 // available in chat mode now — typing while busy QUEUES the message
 // (injected at the next turn boundary), so Stop is a separate button.
 function isBusyChat() {
-  // main ask(prompt/confirm) 대기 중엔 #chat-stop 을 숨긴다 — 그땐 런을
+  // main 의 확인 대화 대기 중엔 #chat-stop 을 숨긴다 — 그땐 런을
   // 중단(#chat-stop)하는 게 아니라 입력 대기를 취소(#abort)하는 상황.
   // (예전 currentMode 게이트를 ovMainAsk 로 대체 — 두 Stop 동시노출 방지.)
   return session.workerBusy && !session.mainAsk;
@@ -51,10 +51,10 @@ function updateSendEnabled() {
 }
 
 // ── Input mode switching ───────────────────
-// Provenance block (who/why/what) shown with a confirm or ask prompt so
-// the user can tell which delegate agent is asking and about what.
-// Returns null when there's nothing to show (e.g. main-agent prompt).
-export function buildPromptMetaEl(data, includeAction) {
+// Provenance block (who/why/what) shown with a confirm so the user can
+// tell which delegate agent is asking and about what.
+// Returns null when there's nothing to show (e.g. main-agent confirm).
+export function buildPromptMetaEl(data) {
   if (!data) return null;
   const agent = typeof data.agent === "string" ? data.agent : "";
   const reasoning = typeof data.reasoning === "string" ? data.reasoning : "";
@@ -66,7 +66,7 @@ export function buildPromptMetaEl(data, includeAction) {
   // 💭/⚡ 두 줄을 그대로 반복했다. 서브에이전트 confirm 의 `↳ from` 은
   // agent 가 있으므로 그대로 산다 — 거기선 출처를 달리 알 방법이 없다.
   if (!agent) return null;
-  if (!reasoning && !(includeAction && action)) return null;
+  if (!reasoning && !action) return null;
   const box = el("div", ["prompt-meta"]);
   if (agent) {
     const a = el("div", ["prompt-meta-agent"]);
@@ -78,7 +78,7 @@ export function buildPromptMetaEl(data, includeAction) {
     r.textContent = "💭 " + reasoning.split("\n")[0];
     box.appendChild(r);
   }
-  if (includeAction && action) {
+  if (action) {
     const ac = el("div", ["prompt-meta-action"]);
     ac.textContent = "⚡ " + action;
     box.appendChild(ac);
@@ -140,7 +140,7 @@ export function clearAnswerNote(item) {
 }
 
 // 입력창은 항상 chat(3b): 활성 채널로 라우팅(main → /api/input, agent →
-// /api/agent/<key>/input). main 의 prompt/confirm 답변은 글로벌 트레이가 담당.
+// /api/agent/<key>/input). main 의 확인 대화 답은 글로벌 트레이가 담당.
 const chatSlot = { sending: false };
 function submitChatOrPrompt() {
   const text = $input.value.trim();
@@ -224,33 +224,6 @@ function clearConfirmStall(item) {
   }
   const w = item && item.querySelector(":scope > .confirm-stall");
   if (w) w.remove();
-}
-
-// main prompt(ask) 답변 — 트레이 항목(``item``·그 입력 ``input``)에서 호출. 입력창과 같은 규칙:
-// 받았을 때만 비우고(input_resolved 가 항목을 접는다), 실패면 항목 안에 사유·글 남김, 409 는 접고 알림.
-export function ovSubmitMainPrompt(item, input) {
-  const text = input.value;
-  if (!text.trim()) return;
-  const slot = item.sendSlot;
-  if (slot.sending) {
-    noteOnAnswer(item, "Still sending the previous answer");
-    return;
-  }
-  clearAnswerNote(item);
-  sendOnce(
-    slot,
-    function (signal) { return postInput({ kind: "prompt", content: text }, signal); },
-    function (failure, status) {
-      if (!failure) {
-        if (input.value === text) input.value = "";
-        return;
-      }
-      if (status === 409) return mainAskAlreadyClosed(item);
-      // 보내는 사이 항목이 빠졌다(물음이 풀렸다) — 보이지 않는 곳에 사유를 세우지 않는다
-      if (!item.isConnected) return attachMessage(ALREADY_CLOSED_NOTICE);
-      noteOnAnswer(item, "⚠ Not sent — " + failure);
-    }
-  );
 }
 
 // main confirm 결정 — 트레이 항목의 옵션 버튼에서 호출(key + 선택 코멘트). 지연·네트워크 오류는 상한도
@@ -398,14 +371,13 @@ es.addEventListener("input_required", function (e) {
   // 같은 물음이 다시 왔다(재접속 스냅샷의 재생) — 항목을 그대로 둔다(쓰던 답·지연 경고가 산다). 물음마다
   // 서버가 새 ``ask_id`` 를 싣는다(v10.147.4).
   if (session.mainAsk && session.mainAsk.data.ask_id === d.ask_id) return;
-  // 3b: main 의 prompt/confirm 을 글로벌 ask 트레이 항목으로(입력창은 chat 유지).
+  // 3b: main 의 확인 대화를 글로벌 ask 트레이 항목으로(입력창은 chat 유지).
   clearConfirmStall();
   session.mainAsk = { kind: d.kind, data: d };
   ovRenderAskTray();
   updateSendEnabled(); // ovMainAsk 반영 → #chat-stop 숨김(두 Stop 방지)
-  // Allow aborting a stuck prompt / confirm wait. Worker side
-  // surfaces this as EOFError → ``(no response)`` (ask) or
-  // ``(default_key, "")`` (confirm).
+  // Allow aborting a stuck confirm wait. Worker side surfaces this as
+  // ``(default_key, "")``.
   setAbortVisible(true);
 });
 

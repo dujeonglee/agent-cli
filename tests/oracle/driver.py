@@ -750,6 +750,14 @@ def _held_request_to(box, to: str, text: str, *, expects_reply: bool = True) -> 
     )
 
 
+def _open_questions(s: Session) -> list[dict]:
+    """사람에게 온 열린 질문 — 트레이가 읽는 목록과 같은 출처(6b: 명단 행에는 없다)."""
+    return [
+        {"id": q.id, "text": q.text, "to": q.target}
+        for q in s.reg.open_human_questions()
+    ]
+
+
 def _waits(s: Session, addr: str) -> bool:
     """``addr`` 가 받아들여진 `wait` 로 **제자리 대기에 들었는가** — 창구의 기다림 표시가 섰고, 그 주인의 스레드가 대기
     줄(`wait_in_place(True, …)`)을 그렸다. 대기 줄은 받아들인 값(`Mailbox.accept_wait` → `WaitingOn`)을 제품이 알린 첫
@@ -1153,16 +1161,12 @@ def s07_question_to_human(root: Path) -> dict:
         until(lambda: runs_ended(s) >= 1)
         key = s.agent_keys()[0]
         until(lambda: s.agent_state(key) == "idle")
-        (row,) = s.reg.roster_snapshot()
-        facts["open_questions"] = [
-            {"id": q["id"], "text": q["text"], "to": q["to"]}
-            for q in row["open_questions"]
-        ]
-        qid = row["open_questions"][0]["id"]
+        facts["open_questions"] = _open_questions(s)
+        qid = facts["open_questions"][0]["id"]
         facts["answer"] = s.reg.answer_question(qid, "v2", by="user:dj")
         until(lambda: s.reg.roster_snapshot()[0]["handled"] >= 2, "answer run")
         until(lambda: s.agent_state(key) == "idle")
-        facts["open_after"] = s.reg.roster_snapshot()[0]["open_questions"]
+        facts["open_after"] = _open_questions(s)
 
     drive(s, path="web", until_done=done)
     return s.collect(facts)
@@ -1218,16 +1222,13 @@ def s43_question_wakes_the_asker(root: Path) -> dict:
         until(lambda: _waits(s, "main"), "main waits in place")
         (row,) = s.reg.roster_snapshot()
         facts["waiting"] = row["waiting"]
-        facts["open_questions"] = [
-            {"id": q["id"], "text": q["text"], "to": q["to"]}
-            for q in row["open_questions"]
-        ]
+        facts["open_questions"] = _open_questions(s)
         facts["answer"] = s.reg.answer_question(
-            row["open_questions"][0]["id"], "v2", by="user:dj"
+            facts["open_questions"][0]["id"], "v2", by="user:dj"
         )
         until(lambda: runs_ended(s) >= 1, "main finished")
         until(lambda: s.agent_state(key) == "idle")
-        facts["open_after"] = s.reg.roster_snapshot()[0]["open_questions"]
+        facts["open_after"] = _open_questions(s)
 
     drive(s, path="web", until_done=done)
     return s.collect(facts)

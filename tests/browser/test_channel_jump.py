@@ -573,20 +573,15 @@ class TestRunBlock:
         어느 채널을 보고 있든 놓치지 않는 것이 트레이의 존재 이유다(§6)."""
         stack.emit_ready()
         stack.renderer.agent_roster(
+            [{"key": AGT, "name": AGT, "profile": "rev", "state": "idle"}]
+        )
+        stack.renderer.open_questions(
             [
                 {
-                    "key": AGT,
-                    "name": AGT,
-                    "profile": "rev",
-                    "state": "idle",
-                    "open_questions": [
-                        {
-                            "id": "q-ab12",
-                            "text": "제가 추가할까요, 지적만 할까요?",
-                            "to": "user",
-                            "ts": 0,
-                        },
-                    ],
+                    "id": "q-ab12",
+                    "asker": AGT,
+                    "text": "제가 추가할까요, 지적만 할까요?",
+                    "ts": 0,
                 }
             ]
         )

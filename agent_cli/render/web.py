@@ -737,6 +737,11 @@ class WebRenderer(Renderer):
             "agent_roster", "agent_roster", {"roster": roster}, position="prepend"
         )
 
+    def open_questions(self, questions: list) -> None:
+        """사람에게 온 열린 질문 sticky (6b) — ❓ 트레이의 출처 하나(main·에이전트·스킬 런). 라이브 브로드캐스트 +
+        재접속 snapshot 복원. 묻는 쪽의 이름표는 명단에서 푼다(명단이 바뀌면 트레이도 다시 그린다)."""
+        self.set_sticky("open_questions", "open_questions", {"questions": questions})
+
     def broadcast_knob(self, state: dict) -> None:
         """노브 상태 한 장(`knobs.web_state`)을 sticky ``knob:<name>`` 으로 — 칩
         동기화·재접속 snapshot·status.json(문법 ``active``)의 한 소스 (v10.43.0;
