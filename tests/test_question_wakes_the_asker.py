@@ -155,44 +155,45 @@ def _asks_then_waits(
 # ── 묻고 `wait` 한 뒤 ─────────────────────────────────────────
 
 
-def test_a_resident_holding_a_request_asks_then_waits(where):
-    """빚(r-)을 든 상주가 묻고 `wait` — 답할 것을 받기 전에 회신부터 하라고 거절된다. 답은 회신 뒤에 와서 새 구간을 연다."""
-    g = _asks_then_waits(where, owes=True)
-    assert g["wait_obs"].startswith(
-        "Observation: wait refused — nothing would wake you, and you still owe a `reply` [r-"
+def _accepted_on(g) -> str:
+    return (
+        f'Observation: waiting — will wake on: your question "{g["qid"]}" to the user.'
     )
-    assert not g["waiting_in_place"]
-    assert g["runs"] == 2
+
+
+def test_a_resident_holding_a_request_asks_then_waits(where):
+    """빚(r-)을 든 상주가 묻고 `wait` — 내 질문이 나를 깨우므로 받아들여진다. 답을 읽은 **뒤** 회신하고, 구간은 하나다."""
+    g = _asks_then_waits(where, owes=True)
+    assert g["wait_obs"] == _accepted_on(g)
+    assert g["waiting_in_place"]
+    assert g["runs"] == 1
 
 
 def test_a_resident_with_nothing_owed_asks_then_waits(where):
-    """빚 없이 묻고 `wait` — 기다릴 것이 없다며 런이 끝나고, 답이 새 구간을 연다."""
+    """빚 없이 묻고 `wait` — 받아들여지고 답이 같은 구간을 잇는다."""
     g = _asks_then_waits(where, owes=False)
-    assert g["wait_obs"] == (
-        "Observation: nothing to wait for: no job or monitor of yours is running, no agent owes you "
-        "a reply, and you owe none. This run has ended."
-    )
-    assert g["runs"] == 2
+    assert g["wait_obs"] == _accepted_on(g)
+    assert g["runs"] == 1
 
 
-def test_a_job_and_a_question_the_acceptance_names_only_the_job(where):
-    """작업도 함께 기다리면 받아들여진다 — 수락 문장은 작업만 말한다. 답은 같은 구간에서 읽힌다."""
+def test_a_job_and_a_question_the_acceptance_names_both(where):
+    """작업과 질문을 함께 기다린다 — 수락 문장이 둘 다 말하고, 타이머는 작업 때문에 건다."""
     g = _asks_then_waits(where, owes=False, job=True)
     assert g["wait_obs"] == (
-        "Observation: waiting — will wake on: job #1 (`sleep 600`), or in 5m if nothing has reported."
+        "Observation: waiting — will wake on: job #1 (`sleep 600`); "
+        f'your question "{g["qid"]}" to the user, or in 5m if nothing has reported.'
     )
     assert g["runs"] == 1
 
 
 def test_a_run_agent_asks_then_waits_while_main_waits_for_it(where):
-    """일회용(`mode` "run") 에이전트가 묻고 `wait` — 결과(회신)를 빚졌으므로 상주와 같은 거절이다. 답 없이 회신하고
-    내려오면 질문은 닫힌다 — main 은 답 없는 결과를 읽는다."""
+    """일회용(`mode` "run") 에이전트가 묻고 `wait` — 상주와 같은 규칙: 내려오지 않고 답을 기다린다. 그를 기다리는
+    main 도 받아들여지고(잠든 채무자를 질문이 깨운다), 답을 실은 결과가 main 을 깨운다."""
     g = _asks_then_waits(where, owes=True, mode="run")
-    assert g["wait_obs"].startswith(
-        "Observation: wait refused — nothing would wake you, and you still owe a `reply` [r-"
-    )
-    assert g["qid"] is None and not g["read_answer"]
-    assert any("done without the answer" in r for r in g["main_reads"])
+    assert g["wait_obs"] == _accepted_on(g)
+    assert g["main_waiting_in_place"]
+    assert g["read_answer"]
+    assert any(f"done: {ANSWER}" in r for r in g["main_reads"])
 
 
 # ── 질문이 열린 턴에 묻는 쪽이 읽는 글 ─────────────────────────

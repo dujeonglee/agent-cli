@@ -570,6 +570,7 @@ class AgentRegistry:
                     for r in rows
                     if r.state != "closed" and self._agent_alive(r.dst)
                 ),
+                asked=tuple((r.src, r.rid) for r in self._post.open_questions()),
             )
 
     def checkin_agent_lines(
@@ -664,8 +665,9 @@ class AgentRegistry:
             key = debtor.split(":", 1)[1]
             if not on:
                 continue  # 깨울 것이 없는 채무자는 깨울 근거가 아니다 (v10.77.0)
-            names = ", ".join(wake_name(wid) for wid, _ in on)
-            line = f"{_label(key)} · owes you a reply · itself waiting on {names}"
+            names = ", ".join(n for wid, _ in on if (n := wake_name(wid)))
+            tail = f" · itself waiting on {names}" if names else ""
+            line = f"{_label(key)} · owes you a reply{tail}"
             open_qs = [q for q in self.open_human_questions() if q.asker == key]
             if open_qs:
                 q = min(open_qs, key=lambda q: q.asked_at)

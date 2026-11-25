@@ -1036,7 +1036,9 @@ class TestAskToUser:
 
         assert "you will be reminded" not in g, "asker 는 독촉을 못 받는다"
         assert "nobody chases them" in g
-        assert "cannot reach a run that is still going" in g
+        assert "cannot reach a run that is still going" not in g, (
+            "6a — 답은 기다리는 런을 깨운다"
+        )
         assert "`ask` reaches only the person" in g and "`message`" in g
         assert "`to`" not in g
         assert not HANGUL.findall(g)

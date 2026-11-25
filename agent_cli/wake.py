@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 
 #: 예약의 깨울 것 id
 _SCHEDULE_ID = "schedule"
+#: 열린 질문의 깨울 것 id 머리 — ``"q:q-3"``
+_QUESTION = "q"
 
 
 # ── 에이전트 관계 — 장부·명단의 사본 하나에서 (v10.146.0, 단일 구조 3단계) ─────────────
@@ -58,7 +60,8 @@ class WakeFacts(NamedTuple):
     ``queued`` 는 줄 선(받는 쪽이 아직 집지 않은) r 줄의 ``(받는 쪽, 요청자)`` 장부 순서 — 받는 쪽은 main 일 수도 있다,
     ``awaited`` 는 닫히지 않은 r 줄의 ``(요청자, id)``, ``waiting`` 은 창구의 기다림 표시가 선 주소들
     (`PostOffice.waiting_addresses` — 받아들여진 `wait` 로 기다리는 쪽). ``replies`` 는 그중 받는 쪽이 살아 있는
-    줄의 ``(요청자, {"id", "from", "text"})`` — 기다리는 회신(`awaited_of`)의 원본이다."""
+    줄의 ``(요청자, {"id", "from", "text"})`` — 기다리는 회신(`awaited_of`)의 원본이다. ``asked`` 는 열린 질문(q 줄)의
+    ``(묻는 쪽, id)`` 연 순서 — 그 답이 묻는 쪽을 깨운다(6a)."""
 
     agents: tuple[AgentFact, ...]
     owing: tuple[tuple[str, str], ...]
@@ -66,6 +69,7 @@ class WakeFacts(NamedTuple):
     awaited: frozenset[tuple[str, str]]
     waiting: frozenset[str] = frozenset()
     replies: tuple[tuple[str, dict], ...] = ()
+    asked: tuple[tuple[str, str], ...] = ()
 
 
 def awaited_of(facts: WakeFacts, addr: str) -> list[dict]:
@@ -223,6 +227,12 @@ def wake_items(
                 out.append(
                     (debtor, f"{debtor} owes you a reply (it is waiting on others)")
                 )
+        # 내가 건 열린 질문 — 사람의 답이 봉투로 와서 깨운다(6a)
+        out.extend(
+            (f"{_QUESTION}:{qid}", f'your question "{qid}" to the user')
+            for asker, qid in facts.asked
+            if asker == owner
+        )
     sched = get_schedule_registry()
     if with_schedule and sched is not None and sched.has_active_work():
         out.append((_SCHEDULE_ID, "a schedule"))
@@ -287,7 +297,7 @@ def _short_wake_name(wake_id: str) -> str:
 def wake_name(wake_id: str) -> str:
     """`wake_items` 의 id 하나의 **이름** — 체크인이 "그 에이전트가 무엇을 기다리나" 를 말할 때 쓴다(v10.166.0):
     에이전트는 키(``agent:agt-5`` → "agt-5"), main 은 "main", 그 밖은 `_short_wake_name`("job #1"·"monitor m-2"·
-    "a schedule")."""
+    "a schedule"). 질문(``q:q-3``)은 이름이 없다("") — 체크인 줄의 "blocked on question" 이 따로 말한다(6a)."""
     if wake_id == "main":
         return "main"
     return (
@@ -318,9 +328,14 @@ class WaitingOn(NamedTuple):
 
     @property
     def checkin_ids(self) -> frozenset[str]:
-        """중간 깨우기의 **대상 집합** (v10.79.0, docs/wait/DESIGN.md §6) — 예약 없이. 예약만 기다리는 `wait` 는 빈
-        집합이라 타이머를 걸지 않고, 예약과 작업을 함께 기다리면 걸되 알림에는 작업·monitor·에이전트만 적힌다."""
-        return frozenset(wid for wid, _ in self.items if wid != _SCHEDULE_ID)
+        """중간 깨우기의 **대상 집합** (v10.79.0, docs/wait/DESIGN.md §6) — 예약·질문 없이. 둘은 돌고 있는 것이 아니라
+        알릴 진척이 없다. 예약·질문만 기다리는 `wait` 는 빈 집합이라 타이머를 걸지 않고, 작업과 함께 기다리면 걸되
+        알림에는 작업·monitor·에이전트만 적힌다."""
+        return frozenset(
+            wid
+            for wid, _ in self.items
+            if wid != _SCHEDULE_ID and not wid.startswith(f"{_QUESTION}:")
+        )
 
 
 # ── `wait` 중간 깨우기 알림 (v10.79.0, docs/wait/DESIGN.md §6) ─────────────

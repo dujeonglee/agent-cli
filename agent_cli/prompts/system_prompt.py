@@ -220,8 +220,7 @@ _ASK_INLINE_RESIDENT = """\
   - When nothing else can proceed, `complete` and report what you did.
     That is not giving up — if an answer comes, it arrives as a new
     message and you continue from there. It may never come: a person is
-    free not to answer, and nobody chases them. Do not wait for it and do
-    not poll — an answer cannot reach a run that is still going.
+    free not to answer, and nobody chases them.
   - Do not re-ask the same question while it is open (a repeat in the
     same run is folded into the original)."""
 

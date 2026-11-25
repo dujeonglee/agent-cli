@@ -13,7 +13,7 @@ from agent_cli.constants import ARRIVAL_NOTICE, ARRIVAL_USER, SCHEDULE_ADDR_PREF
 #: 누구에게나 한 문장이다
 NOTHING_TO_WAIT_FOR = (
     "nothing to wait for: no job or monitor of yours is running, no agent owes you "
-    "a reply, and you owe none. This run has ended."
+    "a reply, no question of yours is open, and you owe none. This run has ended."
 )
 
 
