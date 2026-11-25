@@ -114,3 +114,11 @@ def test_unknown_command_points_at_run_help(monkeypatch):
     assert "Unknown command: /nosuch" in text
     assert "agent-cli run /help" in text
     assert "Type /help" not in text
+
+
+@pytest.mark.parametrize("text", ["/approve c-1", "/allow c-1 ok", "/deny c-1 no"])
+def test_confirm_commands_are_not_commands_yet(text):
+    """6d-1 전의 값 — 확인의 답은 명령이 아니다(스킬 이름으로 보인다). 6d-1 이 뒤집는다."""
+    from agent_cli.command_table import command_kind
+
+    assert command_kind(text) == "skill"

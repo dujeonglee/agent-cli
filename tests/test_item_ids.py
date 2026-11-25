@@ -94,3 +94,17 @@ class TestMailIdsByKind:
         reply = {"kind": "job", "output": "x"}
         assert mail_item(reply) == ("n-1", "mail")
         assert mail_item(reply) == ("n-1", "mail")  # 같은 메일은 같은 id
+
+
+class TestConfirmPrefix:
+    """6d-1 전의 값 — 확인(`c-`)은 아직 장부의 접두가 아니다(6d-1 이 뒤집는다)."""
+
+    def test_c_is_not_a_prefix(self):
+        assert item_ids.prefix_of("c-3") == ""
+        with pytest.raises(ValueError):
+            item_ids.next_id("c")
+
+    def test_a_c_id_in_the_records_does_not_raise_the_numbers(self, tmp_path):
+        (tmp_path / "history.jsonl").write_text('{"content": "waiting [c-90]"}\n')
+        item_ids.observe_records(tmp_path)
+        assert item_ids.number_of(item_ids.next_id(item_ids.USER)) < 90
