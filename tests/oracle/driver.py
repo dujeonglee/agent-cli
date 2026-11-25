@@ -1168,6 +1168,71 @@ def s07_question_to_human(root: Path) -> dict:
     return s.collect(facts)
 
 
+def s43_question_wakes_the_asker(root: Path) -> dict:
+    """6a: 내가 건 열린 질문은 나를 깨운다 — main 의 요청(r-)을 든 상주가 사람에게 묻고 `wait` 하면 그 자리에서 답을
+    기다린다(종전엔 "회신부터" 로 거절). main 도 `wait` 하고 받아들여진다 — 잠든 채무자를 그의 질문이 깨운다. 사람이 트레이
+    길로 답하면 같은 구간에서 답을 읽고 회신하며, 그 회신이 main 을 깨운다. 동기 지점: helper 가 제자리 대기에 든 뒤 main 이
+    `wait` 하고(그래야 main 이 "잠든 채무자" 를 묻는다), main 도 제자리 대기에 든 뒤 사람이 답한다(`_waits`)."""
+    box: dict = {}
+
+    def after_helper_waits(msgs):
+        s = box["s"]
+        until(
+            lambda: s.agent_keys() and _waits(s, f"agent:{s.agent_keys()[0]}"),
+            "helper waits in place",
+        )
+        return call("wait")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call(
+                    "agent", mode="spawn", name="helper", task="TASK-W pick a version"
+                ),
+                after_helper_waits,
+                complete_all("main finished"),
+            ],
+            "TASK-W": [
+                # main 의 둘째 호출이 시작된(꼬리를 지은) 뒤에 묻는다 — 먼저 묻고 기다리면 그 꼬리가 helper 를
+                # [busy]·[waiting] 어느 쪽으로든 본다(부하 소크 20/320)
+                _after_main_calls(
+                    box, 2, lambda m: call("ask", question="TASK-W v1 or v2?")
+                ),
+                call("wait"),
+                lambda m: call("reply", id=owed_id(m), text="going with v2"),
+                # 회신으로 깬 main 의 다음 호출(셋째)이 시작될 때까지 내려오지 않는다 — s07 과 같다. 회신은 런 정리보다
+                # 먼저 배달되므로, 잡지 않으면 main 의 꼬리가 helper 를 [busy]·[idle] 어느 쪽으로든 본다(소크 5/750)
+                _after_main_calls(box, 3, complete_all("went with v2")),
+            ],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.close_answered_awaits_before_main_reads()
+    s.say("MAIN go", nickname="dj")
+    facts: dict = {}
+
+    def done(s):
+        until(lambda: s.agent_keys(), "helper spawned")
+        key = s.agent_keys()[0]
+        until(lambda: _waits(s, f"agent:{key}"), "helper waits in place")
+        until(lambda: _waits(s, "main"), "main waits in place")
+        (row,) = s.reg.roster_snapshot()
+        facts["waiting"] = row["waiting"]
+        facts["open_questions"] = [
+            {"id": q["id"], "text": q["text"], "to": q["to"]}
+            for q in row["open_questions"]
+        ]
+        facts["answer"] = s.reg.answer_question(
+            row["open_questions"][0]["id"], "v2", by="user:dj"
+        )
+        until(lambda: runs_ended(s) >= 1, "main finished")
+        until(lambda: s.agent_state(key) == "idle")
+        facts["open_after"] = s.reg.roster_snapshot()[0]["open_questions"]
+
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
 def s08_mid_run_absorption(root: Path) -> dict:
     """§4 런 도중 흡수: 바쁜 상주에게 온 둘째 요청은 그 런의 턴 경계가 흡수해 picked 가 되고, 같은 런이 둘 다
     갚는다. main 쪽은 기다리는 회신 둘."""
@@ -3313,6 +3378,8 @@ SCENARIOS = {
     "s40_close_while_main_is_in_a_call": s40_close_while_main_is_in_a_call,
     "s41_close_while_a_resident_is_in_a_call": s41_close_while_a_resident_is_in_a_call,
     "s42_run_crashes_while_waiting": s42_run_crashes_while_waiting,
+    # 묻고 기다리기 (6a)
+    "s43_question_wakes_the_asker": s43_question_wakes_the_asker,
 }
 
 
