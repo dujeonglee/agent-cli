@@ -67,6 +67,7 @@ from agent_cli.subagent.agent_mail import (
     envelope_of_main_mail,
     format_agent_label,
     is_human_addr,
+    is_human_request,
     mail_queue_item,
     owe_line,
     run_error_line,
@@ -1365,7 +1366,7 @@ class AgentRegistry(QuestionsMixin):
         # id 가 키다 (v10.77.0) — 전역 할당기라 동시 request() 에도 겹치지 않는다
         # (종전 에이전트별 순번은 P0-9a 의 락과 v8.5.1 의 키 덧붙이기가 필요했다).
         if not item_id:
-            if is_human_addr(author):
+            if is_human_addr(author) and not kind:
                 item_id = item_ids.next_id(item_ids.USER)
             elif expects_reply:
                 item_id = item_ids.next_id(item_ids.REPLY)
@@ -1534,7 +1535,7 @@ class AgentRegistry(QuestionsMixin):
                 "absorbed_into": tm.current_item,
             }
             self._record(tm, absorbed)
-            if is_human_addr(author):
+            if is_human_request(item):
                 # 빚은 아니지만 `reply` 거부 사유가 이걸 본다
                 uid = iid
                 self.note_owes(me, author, text, id=uid)

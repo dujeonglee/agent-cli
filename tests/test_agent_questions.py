@@ -249,7 +249,9 @@ class TestAnswer:
         (call,) = spy.calls
         assert call["key"] == a  # 답은 물어본 쪽으로
         assert call["author"] == "user"  # 주소 = 사람
-        assert call["expects_reply"] is True
+        assert (
+            call["expects_reply"] is False
+        )  # 6b — 답은 회신처럼 기다리던 것의 도착이다
         assert call["kind"] == "answer" and call["re"] == qid
         assert "왼쪽" in call["message"]
         assert "어느 쪽인가요?" in call["message"]  # 원 질문이 딸려간다
@@ -257,7 +259,7 @@ class TestAnswer:
 
     def test_answer_run_reads_the_answer_envelope(self, mkreg, tmp_path, renderer):
         """런을 여는 글은 봉투 한 모양 — 창·로그에는 본문만, 모델은 봉투를 본다.
-        사람 런이라 그 id 는 ``u-`` 이고 `complete` 의 `answers` 로 닫는다."""
+        답은 줄 없는 ``n-`` 봉투라 장부 항목(사람의 요청)이 되지 않는다(6b)."""
         seen = []
 
         def runner(kind, start, ctx):
@@ -272,11 +274,10 @@ class TestAnswer:
         assert wait_until(lambda: seen)
         query, user_requests = seen[0]
         head = query.split("\n")[0]
-        assert head.startswith("── answer [u-") and head.endswith(f"re [{qid}] ──")
+        assert head.startswith("── answer [n-") and head.endswith(f"re [{qid}] ──")
         assert "from the user" in head
         assert "Continue the work it was blocking." in query
-        (req,) = user_requests
-        assert req["id"].startswith("u-") and "왼쪽" in req["text"]
+        assert "왼쪽" in query and user_requests == []
         assert wait_run_done(reg, a)
         assert absorbed_mail(reg) == []  # 사람 런 — main 에게 가는 것은 없다
 

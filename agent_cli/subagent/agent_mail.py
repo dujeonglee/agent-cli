@@ -157,7 +157,10 @@ def envelope_of_item(item: dict, dst: str) -> Envelope:
         "payload": dict(item),
     }
     wakes = item.get("opens_run", True) is not False
-    if is_human_addr(author) and kind in ("", "answer"):
+    if kind == "answer":
+        # 사람의 답 (6b) — 회신과 같은 줄 없는 봉투: 질문 줄은 답의 배달이 닫는다
+        env = post_envelope.reply(**common, re=str(item.get("re") or ""), wakes=wakes)
+    elif is_human_addr(author) and not kind:
         env = post_envelope.human(
             **common, re=str(item.get("re") or ""), answers=item.get("answers") or ()
         )
@@ -180,6 +183,12 @@ def envelope_of_item(item: dict, dst: str) -> Envelope:
     else:
         env = post_envelope.system(**common, opens_row=False)
     return replace(env, wakes=wakes and env.wakes)
+
+
+def is_human_request(item: dict) -> bool:
+    """받은편지함 항목이 사람의 말(``u-`` — `complete` 의 ``answers`` 로 닫는 요청)인가 — 봉투 머리 하나로 판정한다
+    (`post.envelope.is_human_words`). 사람이 보낸 답은 사람의 말이 아니다(6b)."""
+    return post_envelope.is_human_words(envelope_of_item(item, ""))
 
 
 def envelope_of_main_mail(mail: dict, dst: str = "main") -> Envelope:

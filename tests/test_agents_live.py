@@ -1349,7 +1349,7 @@ class TestAskRouting:
         (qid,) = [q.id for q in reg.open_human_questions()]
         assert reg.answer_question(qid, "the blue one", by="user:bob") == ""
         assert wait_until(lambda: len(seen) == 2)
-        assert seen[1].startswith("── answer [u-")
+        assert seen[1].startswith("── answer [n-")
         assert f"from the user re [{qid}] ──" in seen[1]
         assert "Answer: the blue one" in seen[1]
         reg.shutdown_all()

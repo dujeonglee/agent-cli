@@ -160,16 +160,13 @@ class QuestionsMixin:
         return ""
 
     def _deliver_answer(self, q: Question, text: str) -> str:
-        """사람의 답을 asker 에게 — 새 배달(사람 발신이라 ``u-``)로. `request` 의 거절(묻는 쪽이 받지 못함) 또는 "".
-
-        사람이 보낸 것이므로 그 런은 사람 런이다: 결과는 창이 곧 배달이고, 닫는
-        법은 사람 요청과 같다(`complete` 의 `answers`). 봉투가 무엇에 대한
-        답인지(``re``) 적는다."""
+        """사람의 답을 asker 에게 — 줄 없는 봉투(``n-``, 회신과 같다: 기다리던 것의 도착이지 새 항목이 아니다, 6b). 질문 줄
+        닫기와 한 락 구간이다. `request` 의 거절(묻는 쪽이 받지 못함) 또는 "". 봉투가 무엇에 대한 답인지(``re``) 적는다."""
         return self.request(
             q.asker,
             f"Your question: {q.text}\nAnswer: {text}",
             author=q.target,
-            expects_reply=True,
+            expects_reply=False,
             kind="answer",
             re=q.id,
             todo="Continue the work it was blocking.",
