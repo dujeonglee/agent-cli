@@ -12,7 +12,8 @@ from __future__ import annotations
 import pytest
 
 import agent_cli.render as render_mod
-from agent_cli.subagent.agents_live import AgentRegistry, Question
+from agent_cli.subagent.agents_live import AgentRegistry
+from agent_cli.subagent.questions import Question
 from tests.test_agents_live import RecordingRenderer, make_registry
 
 
