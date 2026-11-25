@@ -411,6 +411,16 @@ class TestAgentLines:
             "A question to the user is answered by the user, not by you."
         )
 
+    def test_parked_debtor_blocked_only_on_a_human_question(self, reg):
+        """잠든 채무자가 사람의 답만 기다린다 — 그를 깨울 것이 없으므로 main 에게도 깨울 것이 아니다."""
+        _fake_agent(reg, "n", profile="reviewer")
+        reg.mark_waiting("agent:n")
+        reg.note_owes("agent:n", "main", "t", id="r-2")
+        _, err = reg.register_question("n", "?")
+        assert not err
+        assert checkin_ids("main") == set()
+        assert reg.checkin_agent_lines("main", {}) == ([], False, False)
+
     def test_busy_debtor_line(self, reg):
         _fake_agent(
             reg, "p", state="busy", current_author="agent:q", last_at=time.time() - 5
