@@ -101,17 +101,29 @@ def test_close_is_a_question_command():
 # ── 보드의 "답변 필요" ───────────────────────────────────────
 
 
-def test_the_board_does_not_see_an_agents_open_question(reg, tmp_path, monkeypatch):
-    """status.json 의 ``awaiting_input`` 은 막는 프롬프트가 떠 있을 때만 참이다 — 에이전트의 열린 질문은 세지 않는다."""
+@pytest.mark.parametrize("asker", ["main", "agent", "skill"])
+def test_the_board_sees_an_open_question(reg, tmp_path, monkeypatch, asker):
+    """status.json·health 의 ``awaiting_input`` ("답변 필요") 은 확인 대화가 떠 있거나 열린 질문이 있을 때 참이다(6b 결정
+    G) — 누가 물었든. 닫히면 내린다. 막는 물음만 보는 `is_awaiting_input` (Ctrl+C 의 갈래)은 그대로 거짓."""
     r = WebRenderer(session_dir=str(tmp_path))
     monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
-    key = spawn_idle(reg)
-    _, err = reg.question_port(key).ask("which directory?")
+    port = {
+        "main": lambda: reg.question_port(None),
+        "agent": lambda: reg.question_port(spawn_idle(reg)),
+        "skill": lambda: reg.question_port(address="skill:s-1"),
+    }[asker]()
+    qid, err = port.ask("which directory?")
     assert not err
-    r._publish_status()
-    status = json.loads((tmp_path / "status.json").read_text())
-    assert status["awaiting_input"] is False
+
+    def board():
+        return json.loads((tmp_path / "status.json").read_text())["awaiting_input"]
+
+    assert board() is True and r.needs_answer() is True
     assert r.is_awaiting_input() is False
+    server = WebServer(r, token="t")
+    assert TestClient(create_app(server)).get("/api/health").json()["awaiting_input"]
+    assert reg.close_question(qid, by="user:dj") == ""
+    assert board() is False and r.needs_answer() is False
 
 
 # ── `/close` 와 질문 길 ───────────────────────────────────────

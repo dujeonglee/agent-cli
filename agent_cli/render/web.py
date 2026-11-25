@@ -89,7 +89,7 @@ def _iso_to_epoch(ts) -> float | None:
 
 
 # Sticky slots whose change flips a field of ``status.json``: ``worker_state``
-# → busy, ``input_required`` → awaiting_input, ``agent_roster`` → agents,
+# → busy, ``input_required``·``open_questions`` → awaiting_input (6b), ``agent_roster`` → agents,
 # ``open_items`` → open_items (v10.119.0), ``stuck`` → stuck (v10.120.0),
 # ``jobs`` → jobs (v10.121.0), ``waiting_in_place`` → waiting (v10.165.0), and every ``knob:<name>`` → knobs
 # (+ grammar). A set_sticky/clear_sticky on any of them republishes the status sidecar (viewers republish on
@@ -98,6 +98,7 @@ _STATUS_STICKY_KEYS = frozenset(
     {
         "worker_state",
         "input_required",
+        "open_questions",
         "agent_roster",
         "open_items",
         "stuck",
@@ -105,6 +106,12 @@ _STATUS_STICKY_KEYS = frozenset(
         "waiting_in_place",
     }
 )
+
+
+def _needs_answer(sticky: dict) -> bool:
+    """확인 대화가 떠 있다 or 사람에게 온 열린 질문이 있다 (6b 결정 G)."""
+    questions = sticky.get("open_questions")
+    return "input_required" in sticky or bool(questions and questions.get("questions"))
 
 
 def _flips_status(name: str) -> bool:
@@ -1820,11 +1827,15 @@ class WebRenderer(Renderer):
         return self._worker_busy
 
     def is_awaiting_input(self) -> bool:
-        """Whether an ``ask``/``confirm`` prompt is currently pending a user
-        reply (the ``input_required`` sticky is set between emit and resolve).
-        Lets a front controller flag "needs your answer" distinctly from a
-        busy-generating turn."""
+        """Whether a ``confirm`` is currently pending a user reply (the
+        ``input_required`` sticky is set between emit and resolve). The board's
+        "needs your answer" also counts open questions — `needs_answer`."""
         return self.hub.sticky_payload("input_required") is not None
+
+    def needs_answer(self) -> bool:
+        """보드의 "답변 필요" (status.json·health 의 ``awaiting_input``, 6b 결정 G) — 확인 대화가 떠 있거나 사람에게 온
+        열린 질문이 있다. 막는 물음만 보는 `is_awaiting_input`(Ctrl+C·확인 대화 게이트)과 다르다."""
+        return _needs_answer(dict(self.hub.sticky_items()))
 
     def awaiting_input_kind(self) -> str | None:
         """Kind (``"confirm"`` — the only blocking prompt) of the pending input wait, or
@@ -1922,7 +1933,7 @@ class WebRenderer(Renderer):
                 auditing = self._auditing
             sticky = dict(self.hub.sticky_items())
             viewers = self.hub.viewer_count()
-            awaiting = "input_required" in sticky
+            awaiting = _needs_answer(sticky)
             roster_p = sticky.get("agent_roster")
             roster = roster_p.get("roster") if roster_p is not None else None
             grammar_p = sticky.get("knob:grammar")

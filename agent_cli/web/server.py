@@ -712,8 +712,8 @@ def create_app(server: WebServer) -> FastAPI:
         """Unauthenticated liveness probe.
 
         ``busy`` mirrors the worker state (True while the agent is processing a
-        turn / generating a response) and ``awaiting_input`` is True while an
-        ask/confirm prompt waits for a reply — so a front controller (e.g. a
+        turn / generating a response) and ``awaiting_input`` is True while a
+        confirm waits for a reply or a question to the person is open (6b) — so a front controller (e.g. a
         board that spawns instances) can show "working" vs "needs your answer"
         vs "idle" without subscribing to the SSE stream. ``viewers`` is the live
         browser-subscriber count, so the controller can tell 'someone is
@@ -721,7 +721,7 @@ def create_app(server: WebServer) -> FastAPI:
         return {
             "status": "ok",
             "busy": server.renderer.worker_is_busy(),
-            "awaiting_input": server.renderer.is_awaiting_input(),
+            "awaiting_input": server.renderer.needs_answer(),
             "viewers": server.renderer.hub.viewer_count(),
             # v9.24.0: 문법 제약이 실리는 세션인가 (board 📐 배지, status.json 동형) —
             # 노브 표의 같은 한 장(v10.45.0: 종전 `grammar_state` 중복 계산 삭제)
