@@ -31,7 +31,6 @@ How = Literal[
     "user_answered",
     "user_closed",
     "undeliverable",
-    "died",
 ]
 
 #: 봉투 머리 → 줄 종류. 표에 없는 조합은 줄을 열지 않는다(`RowError`).
@@ -42,11 +41,9 @@ ROW_KIND: dict[tuple[str, str], RowKind] = {
 
 #: (줄 종류, 상태) → 닫을 수 있는 방법. 없는 칸은 `RowError`.
 CLOSES: dict[tuple[RowKind, State], frozenset[str]] = {
-    ("r", "queued"): frozenset({"removed", "dropped", "died"}),
-    ("u", "queued"): frozenset({"dropped", "died"}),
-    ("r", "picked"): frozenset(
-        {"reply", "unsent", "fallback", "stopped", "dropped", "died"}
-    ),
+    ("r", "queued"): frozenset({"removed", "dropped"}),
+    ("u", "queued"): frozenset({"dropped"}),
+    ("r", "picked"): frozenset({"reply", "unsent", "fallback", "stopped", "dropped"}),
     ("u", "picked"): frozenset({"run_ended", "dropped"}),
     ("q", "picked"): frozenset({"user_answered", "user_closed", "undeliverable"}),
 }

@@ -14,7 +14,7 @@ from agent_cli.post.request_book import RequestBook, RowError
 
 HOWS = (
     "reply", "unsent", "fallback", "stopped", "removed", "dropped",
-    "run_ended", "user_answered", "undeliverable", "died",
+    "run_ended", "user_answered", "undeliverable",
 )  # fmt: skip
 OPS = ("pick",) + tuple(f"close:{h}" for h in HOWS)
 KINDS = ("r", "u", "q")
@@ -25,7 +25,6 @@ EXPECT = {
     **{(k, "queued", "pick"): "picked" for k in ("r", "u")},
     ("r", "queued", "close:removed"): "gone",
     **{(k, "queued", "close:dropped"): "gone" for k in ("r", "u")},
-    **{(k, "queued", "close:died"): "gone" for k in ("r", "u")},
     ("r", "picked", "close:reply"): "closed",
     (
         "r",
@@ -35,7 +34,6 @@ EXPECT = {
     ("r", "picked", "close:fallback"): "closed",
     ("r", "picked", "close:stopped"): "closed",
     ("r", "picked", "close:dropped"): "gone",
-    ("r", "picked", "close:died"): "gone",
     ("u", "picked", "close:run_ended"): "closed",
     ("u", "picked", "close:dropped"): "gone",
     ("q", "picked", "close:user_answered"): "gone",
@@ -96,8 +94,8 @@ def test_row_transition_table(kind, state, op):
 
 def test_table_size():
     """칸 수 — 보고용 숫자를 고정한다(허용 칸 + 금지 칸 = 전체)."""
-    assert len(CELLS) == 3 * 4 * 11 - 2 * 11
-    assert len([c for c in CELLS if c in EXPECT]) == len(EXPECT) == 17
+    assert len(CELLS) == 3 * 4 * 10 - 2 * 10
+    assert len([c for c in CELLS if c in EXPECT]) == len(EXPECT) == 14
 
 
 @pytest.mark.parametrize(

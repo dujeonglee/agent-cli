@@ -36,9 +36,7 @@ def _human(e: dict) -> bool:
 
 def _may_close(kind: str, state: str, how: str) -> bool:
     if state == "queued":
-        return how in (
-            {"removed", "dropped", "died"} if kind == "r" else {"dropped", "died"}
-        )
+        return how in ({"removed", "dropped"} if kind == "r" else {"dropped"})
     if state != "picked":
         return False
     if kind == "r":
@@ -48,7 +46,6 @@ def _may_close(kind: str, state: str, how: str) -> bool:
             "fallback",
             "stopped",
             "dropped",
-            "died",
         }
     if kind == "u":
         return how in {"run_ended", "dropped"}
