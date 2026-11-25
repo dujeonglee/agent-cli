@@ -253,7 +253,7 @@ agent-cli run "hello" --base-url http://127.0.0.1:8000/v1 -m Qwen3.6-35B-A3B-8bi
 |--------|------|---------|
 | 유저 | `~/.agent-cli/` | `config.json` · `models.json` — 이 컴퓨터의 환경 (모델 서버들·API 키·서버별 모델 capability 캐시) |
 | 프로젝트 | `.agent-cli/` (cwd 기준) | `mcp.json` · `skills/` · `agents/` · `hooks/` · `hooks.json` · `DIRECTIVE.md` — 이 저장소가 필요로 하는 것 |
-| 세션 | `sessions_dir()` | `sessions/` · `chat_history` — `AGENT_CLI_SESSIONS_DIR` 로 작업 트리 밖으로 뺄 수 있는 것 |
+| 세션 | `sessions_dir()` | `sessions/` — `AGENT_CLI_SESSIONS_DIR` 로 작업 트리 밖으로 뺄 수 있는 것 |
 
 **프로젝트는 git 루트가 아니라 cwd 기준**입니다. 하위 디렉토리에서 실행하면 프로젝트 설정이 비어 있습니다. 프로젝트 밖(`~/Downloads` 등)에서 실행하면 스킬·MCP·DIRECTIVE 없이 뜹니다 — agent-cli 는 프로젝트 안에서 쓰는 도구입니다.
 
@@ -321,7 +321,6 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_MODEL` | — | 모델 ID — 노브 `model` 의 부팅값 (v10.43.0; `--model`/`-m`, 웹 🤖 칩 v10.45.0). 세션 도중 바꾸면 다음 LLM 호출부터 실린다. 서버의 `default_model` 위에 선다 |
 | `ANTHROPIC_API_KEY` | — | Anthropic API 키 (기존 호환) |
 | `OPENAI_API_KEY` | — | OpenAI API 키 (기존 호환) |
-| `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
 | `AGENT_CLI_NO_INPUT` | — | 비어 있지 않으면 터미널에서도 묻지 않는다 — 비대화식으로 다룸(설정 마법사·모델 고르기·탐지 실패 질문·방언 질문 모두 건너뛰고 오류로). 테스트·자동화용 |
 | `AGENT_CLI_WORKSPACE_CONFINE` | — | 워크스페이스 경로 봉쇄 + 민감 경로 사전 (기본 on). `0` 으로 끄면 둘 다 없음. [아래 참고](#워크스페이스-경로-봉쇄) |
 | `AGENT_CLI_WORKSPACE_ROOT` | — | 봉쇄 기준 루트 경로 override (기본: 프로세스 실행 디렉토리) |
@@ -639,9 +638,9 @@ agent-cli run "task description" [options]
 | `2` | 설정·사용법 오류 — 모르는 provider, 읽지 못한 `config.json`, 규칙을 어긴 `extra_headers`, 방언 없는 모델, 잘못된 옵션, 빈 질의(글도 이미지도 없다 — `query is empty`, 세션을 만들지 않는다) |
 | `130` | 중단(Ctrl-C — 멈출 것이 없을 때, 또는 강제 종료) |
 
-**터미널에서 질문에 답하기 (v10.174.0)**: 에이전트가 사람에게 물으면 터미널에 `❓ [aa (agt-…) → user] q-3` · 질문 글 · `  answer with: /answer q-3 <text>` 세 줄이 찍힙니다. `/answer q-3 <글>` 로 답하고 `/questions` 로 열린 질문을 봅니다. 터미널 `run` 은 main 이 결과를 낸 뒤 한가한 동안에도 친 줄을 읽습니다(종전엔 main 이 제자리에서 기다릴 때만) — 보통의 말은 main 의 새 요청이고 질문의 답이 되지 않습니다. 남은 일이 열린 질문뿐이면 `run` 은 끝나지 않고 한 줄 `❓ Waiting for your answer to q-3 — type /answer <q-N> <text>, or press Ctrl-C to quit.` 을 찍고 기다립니다(같은 대기 동안 다시 찍지 않습니다). 확인 프롬프트(위험 셸 승인 등)가 떠 있는 동안 친 줄은 언제나 그 프롬프트가 받습니다 — 종전엔 프롬프트가 뜨는 사이 친 줄을 main 이 가져갈 수 있었습니다. 거꾸로 프롬프트(확인 대화·`ask`)가 **뜨기 전에** 친 줄은 그 프롬프트의 답이 되지 않습니다 — main 의 새 요청이 되고 `  ↪ typed before this prompt — sent to main as a new message: <그 줄>` 한 줄이 찍힙니다. 덜 친 줄(줄바꿈 전)은 버려집니다(v10.174.1).
+**터미널에서 질문에 답하기 (v10.174.0, v10.176.0)**: 누가 사람에게 물으면(main·에이전트·스킬) 터미널에 `❓ [main → user] q-2`(에이전트는 `❓ [aa (agt-…) → user] q-3`, 스킬 런은 `❓ [skill demo → user] q-4` — 대화 창이 없는 묻는 쪽은 터미널 줄) · 질문 글 · `  answer with: /answer q-3 <text> · close with: /close q-3` 세 줄이 찍힙니다. `/answer q-3 <글>` 로 답하고, `/close q-3` 으로 답 없이 닫고, `/questions` 로 열린 질문을 봅니다. 묻는 쪽은 기다리지 않습니다 — 답은 나중에 메일로 옵니다. 터미널 `run` 은 main 이 결과를 낸 뒤 한가한 동안에도 친 줄을 읽습니다 — 보통의 말은 main 의 새 요청이고 질문의 답이 되지 않습니다. 스킬이 묻고 `wait` 하는 동안에도 친 명령(`/answer`·`/close` 등)은 그 자리에서 처리되고, 보통의 말은 main 앞에 줄 섭니다. 남은 일이 열린 질문뿐이면 `run` 은 끝나지 않고 한 줄 `❓ Waiting for your answer to q-3 — type /answer <q-N> <text> or /close <q-N>, or press Ctrl-C to quit.` 을 찍고 기다립니다(같은 대기 동안 다시 찍지 않습니다). 확인 프롬프트(위험 셸 승인 등)가 떠 있는 동안 친 줄은 언제나 그 프롬프트가 받습니다. 거꾸로 확인 프롬프트가 **뜨기 전에** 친 줄은 그 프롬프트의 답이 되지 않습니다 — main 의 새 요청이 되고 `  ↪ typed before this prompt — sent to main as a new message: <그 줄>` 한 줄이 찍힙니다. 덜 친 줄(줄바꿈 전)은 버려집니다(v10.174.1).
 
-**Ctrl+C 와 `/stop` (v10.142.0)**: Ctrl+C **한 번은 main 의 런만** 멈춥니다(웹 Stop 과 같은 길 — 다음 턴 경계·도구 실행 직전, 돌고 있는 전경 `shell` 명령은 그 자리에서 끝남, 기록은 `[interrupt]`) — 에이전트는 계속 일하고, main 이 기다리던 회신은 다음 런에 메일로 옵니다. 터미널에 `■ main stopped (press Ctrl+C again within 2s to stop all agents)` 가 찍히고, **2초 안에 한 번 더** 누르면 main 과 일하는 에이전트 전부가 멈춥니다(`■ stopping everything — main and N working agents` — 웹의 Stop everything 과 같아 그 회신들은 main 을 깨우지 않고, `run` 은 조용해지면 끝납니다; 배달되지 않은 회신은 세션이 끝나면 버려집니다 — 아래 "재시작"). `ask`·확인 프롬프트가 답을 기다리는 중의 Ctrl+C 는 종전대로 그 입력을 끊습니다. main 이 한가하고 에이전트만 일하면 첫 누름은 `main is idle — press Ctrl+C again within 2s to stop all agents` 만 말합니다. 멈출 것이 없으면(main 한가·일하는 에이전트 없음) 종전처럼 중단(130), main 이 이미 멈추는 중인데 2초 밖에서 또 누르면 강제 종료(130 — `ask` 입력처럼 정지 검사에 닿지 못하는 도구의 탈출구; 그때 돌던 전경 `shell` 명령도 프로세스 그룹째 끝냅니다 — 종전엔 자기 세션이라 고아로 남았습니다)입니다. 제자리 대기(`⏳ waiting for …`) 중에 치는 `/stop <키|이름>` 은 그 에이전트의 런을, `/stop all` 은 일하는 에이전트 전부를 멈춥니다(main 은 계속 — `/help` 에도 있습니다). 멈춘 에이전트마다 한 줄 — `■ agt-3 │ stopped by user — reply sent to main (r-21)` · `■ agt-5 │ stopped by user — replies sent to main (r-30), agt-6 (r-31); 1 queued request kept`. 무엇이 누구에게 가는지는 아래 `agent` 절의 "정지".
+**Ctrl+C 와 `/stop` (v10.142.0)**: Ctrl+C **한 번은 main 의 런만** 멈춥니다(웹 Stop 과 같은 길 — 다음 턴 경계·도구 실행 직전, 돌고 있는 전경 `shell` 명령은 그 자리에서 끝남, 기록은 `[interrupt]`) — 에이전트는 계속 일하고, main 이 기다리던 회신은 다음 런에 메일로 옵니다. 터미널에 `■ main stopped (press Ctrl+C again within 2s to stop all agents)` 가 찍히고, **2초 안에 한 번 더** 누르면 main 과 일하는 에이전트 전부가 멈춥니다(`■ stopping everything — main and N working agents` — 웹의 Stop everything 과 같아 그 회신들은 main 을 깨우지 않고, `run` 은 조용해지면 끝납니다; 배달되지 않은 회신은 세션이 끝나면 버려집니다 — 아래 "재시작"). 확인 프롬프트가 답을 기다리는 중의 Ctrl+C 는 종전대로 그 입력을 끊습니다. main 이 한가하고 에이전트만 일하면 첫 누름은 `main is idle — press Ctrl+C again within 2s to stop all agents` 만 말합니다. 멈출 것이 없으면(main 한가·일하는 에이전트 없음) 종전처럼 중단(130), main 이 이미 멈추는 중인데 2초 밖에서 또 누르면 강제 종료(130 — 확인 프롬프트처럼 정지 검사에 닿지 못하는 입력의 탈출구; 그때 돌던 전경 `shell` 명령도 프로세스 그룹째 끝냅니다 — 종전엔 자기 세션이라 고아로 남았습니다)입니다. 제자리 대기(`⏳ waiting for …`) 중에 치는 `/stop <키|이름>` 은 그 에이전트의 런을, `/stop all` 은 일하는 에이전트 전부를 멈춥니다(main 은 계속 — `/help` 에도 있습니다). 멈춘 에이전트마다 한 줄 — `■ agt-3 │ stopped by user — reply sent to main (r-21)` · `■ agt-5 │ stopped by user — replies sent to main (r-30), agt-6 (r-31); 1 queued request kept`. 무엇이 누구에게 가는지는 아래 `agent` 절의 "정지".
 
 사슬 밖의 런(예약 발화, 사슬이 닫힌 뒤의 깨우기, 런 도중 합류한 명령)은 판정을 바꾸지 않습니다. `run "/sh <cmd>"` 는 그 명령의 종료 코드를 그대로 돌려줍니다(시간 초과 124). Harbor 벤치 어댑터는 0·1 을 흡수해 검증기로 보냅니다(`bench/harbor/README.md`).
 
@@ -759,7 +758,7 @@ UI 기능:
 - 도구 호출(action) / 결과(observation) 인라인 카드, ✓/✗ 상태 표시
 - 이미지 첨부 (v10.60.0): 입력창에 붙여넣기·끌어놓기·📎 → 칩 → 보내기; 사용자 말풍선·`view_image`·`browser screenshot`·MCP 결과에 썸네일. 에이전트 채널도 받음(v10.61.0). 상세는 아래 "이미지 입력" 절.
 - 보내기 실패 표시 (v10.147.3): 입력창의 글과 첨부 칩은 서버가 받았을 때만 비워집니다. 거절(죽은 에이전트, 사라진 첨부 파일 등)·네트워크 오류·20초 안에 응답이 없을 때(`no response from the server` — 그 요청은 끊습니다)면 첨부 줄에 `Not sent — <사유>` 가 서고 글·칩이 남습니다 — 종전엔 응답을 보지 않고 비워 거절된 말이 소리 없이 사라졌습니다. 보내는 중에 다시 보내면 `Still sending the previous message` 로 알리고 받지 않습니다.
-- ❓ 트레이의 답 (v10.147.4): 에이전트 질문·main 의 물음·확인 코멘트도 같은 규칙입니다 — 서버가 받았을 때만 비우고, 실패하면 그 항목 맨 아래에 `⚠ Not sent — <사유>` 가 서고 글이 남습니다(확인 클릭의 지연·네트워크 오류는 종전대로 3초 지연 경고만 — 늦게라도 닿으면 적용됩니다). 다른 뷰어가 먼저 답했거나 닫힌 물음(409)이면 글을 버리고 입력창 아래 줄에 `Not sent — already answered or closed` 가 섭니다 — 보내는 사이 항목이 트레이에서 빠진 뒤 실패해도 같은 알림입니다. 확인을 다시 누르면 지연 경고가 지워지고(3초 뒤에만 다시 섬), 답이 오면 경고가 끝납니다. 트레이는 명단이 올 때마다 항목 단위로 맞춰져, 쓰던 답·포커스·커서가 지워지지 않습니다(종전엔 통째로 다시 그려 지워졌습니다). SSE 가 다시 붙어 같은 물음이 재생돼도 그대로입니다 — 서버가 물음마다 새 `ask_id` 를 `input_required`·`input_resolved` 에 싣습니다(화면 전용, 모델·기록에는 없음). 끊긴 사이 물음이 풀렸으면(재접속 스냅샷에 물음이 없으면) 남은 main 물음 항목을 접습니다(v10.149.2 — 종전엔 낡은 항목이 남았습니다). 보내는 중인 항목은 그 항목만 막습니다(`Still sending the previous answer`). 에이전트를 ✕ 로 지우면 그가 건 질문이 트레이에서 바로 빠지고, 멈춘·사라진 에이전트의 질문에 간 답은 거절됩니다(409 — 같은 닫힘 알림; v10.149.1, 종전엔 200 으로 받은 척하고 답이 어디에도 가지 않았습니다).
+- ❓ 트레이의 답 (v10.147.4): 질문의 답·닫기·확인 코멘트도 같은 규칙입니다 — 서버가 받았을 때만 비우고, 실패하면 그 항목 맨 아래에 `⚠ Not sent — <사유>` 가 서고 글이 남습니다(확인 클릭의 지연·네트워크 오류는 종전대로 3초 지연 경고만 — 늦게라도 닿으면 적용됩니다). 다른 뷰어가 먼저 답했거나 닫힌 물음(409)이면 글을 버리고 입력창 아래 줄에 `Not sent — already answered or closed` 가 섭니다 — 보내는 사이 항목이 트레이에서 빠진 뒤 실패해도 같은 알림입니다. 확인을 다시 누르면 지연 경고가 지워지고(3초 뒤에만 다시 섬), 답이 오면 경고가 끝납니다. 트레이는 열린 질문 목록·명단이 올 때마다 항목 단위로 맞춰져, 쓰던 답·포커스·커서가 지워지지 않습니다(종전엔 통째로 다시 그려 지워졌습니다). SSE 가 다시 붙어 같은 물음이 재생돼도 그대로입니다 — 서버가 물음마다 새 `ask_id` 를 `input_required`·`input_resolved` 에 싣습니다(화면 전용, 모델·기록에는 없음). 끊긴 사이 물음이 풀렸으면(재접속 스냅샷에 물음이 없으면) 남은 main 물음 항목을 접습니다(v10.149.2 — 종전엔 낡은 항목이 남았습니다). 보내는 중인 항목은 그 항목만 막습니다(`Still sending the previous answer`). 에이전트를 ✕ 로 지우면 그가 건 질문이 트레이에서 바로 빠지고, 멈춘·사라진 에이전트의 질문에 간 답은 거절됩니다(409 — 같은 닫힘 알림; v10.149.1, 종전엔 200 으로 받은 척하고 답이 어디에도 가지 않았습니다).
 - 글 없는 버튼의 실패 (v10.155.0): 누른 것이 안 됐으면 입력창 아래 줄에 `Not <동사> — <사유>` 가 서고 그 버튼은 다시 누를 수 있습니다. 이 버튼들은 상한 없이 기다립니다 — 막힌 연결에서도 늦게라도 닿으면 적용됩니다.
   - 대기열 ✕: "Cancelled" 는 서버가 뺐다고 답한 뒤에만 섭니다. 그 사이 이미 보내졌으면 `Not cancelled — it was already sent` 와 함께 그 말은 "✓ My request applied" 로 갑니다(종전엔 누르는 즉시 "Cancelled" 로 확정해, 처리된 말도 취소된 것처럼 보였습니다).
   - 정지·지우기(입력창 옆 Stop·▾·stuck 띠의 Stop·채널 머리 ■/✕·■ all): `Not stopped — <사유>`·`Not removed — <사유>`, 버튼이 풀려 다시 누를 수 있습니다(종전엔 "Stopping…" 이 그 런이 끝날 때까지 잠겼습니다). 돌던 턴이 없었던 정지는 실패가 아닙니다.
@@ -769,12 +768,12 @@ UI 기능:
 - 실시간 스트리밍 (점선 카드로 토큰 누적 → 최종 카드로 교체)
 - 서브에이전트(delegate) 작업은 접히는 그룹 카드로 격리 — 헤더 아무 곳이나 클릭해 접기/펼치기, **긴 카드를 펼쳐 스크롤해도 헤더가 상단에 고정(sticky)돼 어느 위치에서든 접을 수 있고**, 본문 여백 클릭으로도 접힘 (중첩 카드·텍스트 선택은 방해 안 함)
 - 컨텍스트 동기화: 오래된 turn이 LLM 컨텍스트에서 밀려나거나 compaction으로 요약되면 UI에서도 제거
-- 여러 탭/PC가 접속하면 모두 동등하게 입력 가능 (접속자는 닉네임 로스터에 표시). 같은 승인(confirm)/질문(ask)에 두 명이 동시에 답하면 먼저 도착한 답만 수용 — 늦은 답은 거절(409)되어 다음 프롬프트를 오염시키지 않고, 해당 화면의 stale 다이얼로그는 자동으로 접힘
+- 여러 탭/PC가 접속하면 모두 동등하게 입력 가능 (접속자는 닉네임 로스터에 표시). 같은 승인(confirm)/질문(ask)에 두 명이 동시에 답하거나 닫으면 먼저 도착한 답만 수용 — 늦은 답은 거절(409)되어 다음 프롬프트를 오염시키지 않고, 해당 화면의 stale 다이얼로그는 자동으로 접힘
 - **연결 고갈 방어는 board 열기 게이트가 담당** (운용 전제: 방은 항상 board 를 통해 열기) — 각 탭은 board 카운트용 BroadcastChannel 비콘에만 응답. 페이지 자체 입장 게이트(v7.5~7.6 Web Locks 파킹)는 제거됨: Web Locks 는 secure context 전용이라 LAN http 배포에서 동작하지 않고, URL 직접 진입 케이스는 운용 정책상 범위 밖. **주의**: 브라우저 세션 복원으로 방 탭 5개 이상이 한꺼번에 재진입하면 origin 당 6연결 한도 포화가 재현될 수 있음 — 그때는 탭을 닫으면 됨
 - 승인(y/n/a) 버튼 클릭 후 3초 내 서버 응답이 없으면 "연결 정체" 경고를 표시 — 브라우저의 origin 당 동시연결 제한(HTTP/1.1, 6개)에 SSE 탭들이 몰려 클릭이 조용히 대기열에 갇히는 상황을 보이게 함 (안 쓰는 탭을 닫으면 회복)
 - 재접속/새로고침 시 트랜스크립트 재생은 **최근 5,000개 이벤트 윈도우**로 제한 — 아주 긴 세션은 맨 위에 "이전 N개 생략" 노티스가 표시됩니다 (전체 기록은 세션 히스토리에 보존, `--resume` 은 무관). 라이브로 보고 있던 탭은 영향 없음
-- ANSWERING 모드: `ask` 도구 호출 시 질문 텍스트가 입력창 위에 표시되어 스크롤 없이 답변
-- **부재 중 질문 대기 (v7.8.0)**: `ask`/위험 shell 승인/워크스페이스 밖 접근 승인은 **지금 보는 사람이 없어도 대기**합니다 — 즉시 "(no response)"로 포기하지 않고, 세션 상태가 `awaiting_input` 이 되어 board 목록에 "답변 필요"로 표시되며, 나중에 접속하면 대기 중이던 질문이 그대로 떠서(재접속 replay) 답할 수 있습니다. 다중 방 운용에서 다른 방을 보는 사이 도착한 질문을 놓치지 않음. CLI(터미널 없음=답 불가)는 즉시 폴백
+- ❓ 트레이: 열린 질문(main·에이전트·스킬)이 입력창 위에 서고 그 자리에서 `Send` 로 답하거나 `Close without answer` 로 닫습니다(v10.176.0)
+- **부재 중 질문 대기 (v7.8.0)**: 위험 shell 승인/워크스페이스 밖 접근 승인은 **지금 보는 사람이 없어도 대기**합니다 — 즉시 "(no response)"로 포기하지 않고, 세션 상태가 `awaiting_input` 이 되어 board 목록에 "답변 필요"로 표시되며, 나중에 접속하면 대기 중이던 질문이 그대로 떠서(재접속 replay) 답할 수 있습니다. 다중 방 운용에서 다른 방을 보는 사이 도착한 질문을 놓치지 않음. CLI(터미널 없음=답 불가)는 즉시 폴백
 - **칩 헤더 (v7.1.0)**: 상단 바가 의미 칩 3개로 수렴 — 모델 칩(max 28ch, hover=provider·전체 이름) · **ctx 게이지 칩**(사용률 % + 미니 게이지; 클릭하면 팝오버에 토큰 상세 `ctx 5.2K/256K (2%) · ↑5.2K ↓320 · Σ↓1.8K` + 컴팩션 임계 슬라이더 + Agents 상한이 열림) · **워크스페이스 칩**(`📋 …/마지막/2세그먼트`, hover=전체 경로, **클릭=경로 복사** — LAN http 에서도 동작, 복사 후 1초 ✓). 어떤 창 폭·모델명·경로에서도 헤더 한 줄 보장.
 - **토큰 현황**: ctx 칩과 팝오버가 매 turn 갱신, 새로고침 후에도 유지(SSE snapshot). CLI(`run`)도 동일 정보를 매 turn 한 줄로 표시(`in: … | out: … | ctx: … | Σin: … | Σout: …`). `usage.input_tokens`(서버 실측)를 받아 `renderer.token_usage` 로 추상화 → CLI/web 공통
 - **압축 임계 슬라이더 (5.14.0)**: 토큰 현황 옆 `압축 80%` 슬라이더로 컨텍스트 **compaction 목표 비율**을 **세션 한정**으로 조절합니다(50~95%, 5% 스텝). 가용 컨텍스트(context_window − system − output)가 이 %에 닿으면 압축이 걸립니다 — 낮출수록 일찍/자주 압축(컨텍스트 적게 유지, 오버플로 여유↑), 높일수록 늦게 압축(컨텍스트 많이 유지). web 과 loop 이 같은 `ContextManager` 를 공유하므로 슬라이더를 놓는 즉시 **다음 LLM 콜에 반영**되고, 여러 뷰어의 슬라이더는 sticky 브로드캐스트로 동기화됩니다. main 대화 전용이며, 서브에이전트는 **spawn/resume 시점의 값을 상속**합니다(이미 도는 서브에 새 값을 적용하려면 재spawn). `GET/POST /api/compaction`, 토큰 인증. (재시작하면 기본 80% 로 복귀 — 영속 아님.)
@@ -824,8 +823,9 @@ CLI parity 명령어 (웹 `/help` 와 `run /help` 는 같은 명령 표 하나�
 - `/skills` — 사용 가능한 스킬 목록
 - `/<skill> <args>` — 스킬 직접 실행 (예: `/plan add a login rate limit`)
   - **경로 오인 방지 (v4.51.1)**: `/Users/me/proj 분석해줘` 처럼 **경로로 시작하는 메시지는 명령이 아니라 일반 요청**으로 LLM 에 전달됩니다 — 첫 토큰에 두 번째 `/` 가 있거나, 실존 경로(`/etc`, `/tmp` 등)거나, 명령 문법(영숫자·`-`·`_`)이 아니면 스킬 디스패치를 건너뜁니다. 오타(`/no-such-skill`)는 여전히 not-found 안내.
-- `/questions` — 사람에게 물은 열린 질문 목록(`q-3  aa (agt-…)  질문 글`, 없으면 `no open questions`) (v10.174.0)
+- `/questions` — 사람에게 물은 열린 질문 목록(`q-3  aa (agt-…)  질문 글`, main 의 것은 `q-2  main  질문 글`, 스킬 런은 `q-4  skill demo  질문 글`, 없으면 `no open questions`) (v10.174.0)
 - `/answer <q-N> <text>` — 그 번호의 질문에 답합니다 — 웹 트레이와 같은 길입니다. 번호가 없으면 사용법(`usage: /answer <q-N> <text>`)만 말하고 아무 질문도 닫지 않습니다(질문이 하나뿐이어도 짐작하지 않습니다). 결과는 `answered q-3` 또는 `/answer: <사유>` (v10.174.0)
+- `/close <q-N>` — 그 번호의 질문을 답 없이 닫습니다 — 웹 트레이의 `Close without answer` 와 같은 길입니다. 묻는 쪽은 닫혔다는 사실을 메일로 받고 가진 것으로 계속합니다. 번호가 없으면 `usage: /close <q-N>` 만. 결과는 `closed q-3` 또는 `/close: unknown or already-closed question "q-9"` (v10.176.0)
 - `@agents` — 사용 가능한 에이전트 목록
 - `@<agent> <task>` — 에이전트에게 작업 위임
 - `@<profile>-spawn <task>` — 상주 에이전트를 띄우고 첫 과제를 건넴 (도움말에는 v10.165.0 부터)
@@ -1291,7 +1291,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `tool_help` | 한 줄로만 소개된 도구의 전문 — 그 도구가 프롬프트에 원래 실렸을 설명·인자 설명·안내를 결과로 준다. 지연 도구가 있는 루프에만 붙는다(v10.109.0 기반, v10.110.0 부터 지연 도구 11개 — docs/tool-help/DESIGN.md) |
 | `wait` | **닫지 않고 기다린다** (v10.65.0) — 띄운 작업·모니터·에이전트의 보고, 또는 내가 사람에게 건 질문의 답을 기다릴 때(v10.175.0 — 수락 문장 `waiting — will wake on: your question "q-3" to the user.`, 질문만 기다리면 중간 깨우기가 없다). 런을 끝내지 않는다: 받아들여지면 그 자리에서 기다리고, 깨면 같은 런이 같은 열린 항목으로 잇는다(v10.163.0 — 종전엔 런을 끝내고 열린 항목을 다음 깨우기 런으로 넘겼다). 기다리는 중 세션이 닫히면 그 자리에서 세션 종료로 끝난다 — 모델을 다시 부르지 않는다(v10.162.0·v10.164.0). 깨울 것이 없으면: 닫지 않은 것 — 갚지 않은 회신(`r-`)이나 답하지 않은 사람의 요청(`u-`) — 이 있을 때 그 번호를 말하며 거부(`wait refused — nothing would wake you, and [u-1] is still unanswered. Answer it with `complete`, or keep working. To hear from an agent, send it a request with `message` first.` · 회신이면 `… you still owe a `reply` [r-2]. Reply first, or keep working.`), 없을 때 받아들여 작업 구간을 끝낸다 — 관찰 `nothing to wait for: … This run has ended.` 이 기록에 남고 화면에 `Run ended — nothing to wait for.` 한 줄(5d). 그래서 사람의 질의를 든 런은 답하기 전에 `wait` 로 끝나지 않는다. 꼬리의 `## Open Items` 끝에 "못 닫는다면 `wait`" 한 줄이 붙는다(v10.67.1, wait 가 있는 루프에만). 깨우는 봉투(사람의 말·메일·알림)가 **이미 와 있으면** 역시 거부하되 무엇이 왔는지와 먼저 할 일을 알린다 — "the user wrote to you while you were thinking; their message is right below. Answer now with `complete`: …" / "1 notice arrived … Deal with it first, …"(v10.66.2, 문구 v10.159.0 — 런을 끝내 봐야 바로 다시 깨울 뿐; 거부 관찰과 그것은 같은 프롬프트에 연달아 들어간다). 설계: `docs/wait/DESIGN.md` |
 | `complete` | 작업 완료 신호 (최종 결과 반환). `result` 는 답으로 전달되는 유일한 글이라(사용자 또는 부른 에이전트) 답을 먼저 쓰고(사용자에게는 마크다운으로 그려진다는 것도 설명에 적는다 — v10.96.1), 한 일에 기대는 답이면 끝에 `Checked:`(무엇을 돌리거나 봤고 무엇이 나왔나)·`Not checked:`(실행 대신 읽어서 추론한 것·안 돌린 것) 두 줄을 붙이라고 설명에 적는다 — 확인할 것이 없는 답엔 두 줄 없음. 같은 틀을 꼬리 `## Open Items` 의 `complete` 줄 바로 아래에도 한 줄로 싣는다 — 35B 는 도구 설명만으로는 따르지 않았다(v10.75.0). 기다리는 용도가 아니다 — 그건 `wait` |
-| `ask` | 사용자에게 질문하고 대기 (대화형; 질문 하나=op 하나, 여러 질문은 ask op 여러 개로 배치 — read_file 식). 답이 올 수 없는 곳(터미널도 웹 뷰어도 없는 `run`)에서는 누가 묻든 거절합니다 — `ask refused — nobody can answer here: this session has no terminal and no viewer. Go on with what you have and say what you assumed in your result.`(v10.174.0, 종전 main 은 `A: (no response)` 를 답으로 받았습니다). 에이전트의 질문은 웹 ❓ 트레이나 `/answer q-N <글>` 로만 답합니다 — 그 밖의 말은 질문이 열려 있어도 main 의 요청입니다 |
+| `ask` | 사람에게 질문 하나를 올리고 **바로 돌아온다** (v10.176.0 — 누가 묻든 한 길: main·에이전트·스킬). 관찰은 `question "q-2" sent — "…"`, 질문은 ❓ 트레이와 터미널 질문 줄에 서고, 답·닫힘은 나중에 줄 없는 통지 봉투(`── answer [n-…] from the user re [q-2] ──` / `── closed [n-…] …`)로 온다 — 답을 기다려야 하면 `wait`. 같은 질문이 열려 있는 동안 다시 물으면 원래 질문으로 접힌다. 답이 올 수 없는 곳(터미널도 웹 뷰어도 없는 `run`)에서는 거절 — `ask refused — nobody can answer here: this session has no terminal and no viewer. Go on with what you have and say what you assumed in your result.`(v10.174.0). 질문은 웹 ❓ 트레이(`Send`·`Close without answer`)나 `/answer q-N <글>`·`/close q-N` 으로만 답하거나 닫는다 — 그 밖의 말은 질문이 열려 있어도 main 의 요청이다 |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
 
 ### action_input 키 네이밍 규칙
@@ -1649,22 +1649,26 @@ static void foo(int x)
 
 C/C++ 사용자도 시스템 `unifdef` 설치 선택 사항 — 번들된 pure-Python 으로 동일 동작. Python/JS/TS/Go/Rust/Java/Markdown 만 쓰는 사용자는 전처리 단계 자체가 no-op.
 
-### ask — 사용자에게 질문 (대화형 web 전용)
+### ask — 사람에게 질문 (v10.176.0: 누가 묻든 한 길)
 
-LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로 여러 질문을 한 번에 할 수 있습니다.
-
-```json
-{"action": "ask", "action_input": {"questions": ["어떤 파일을 수정할까요?"]}}
-{"action": "ask", "action_input": {"questions": ["파일 경로는?", "사용할 언어는?"]}}
-```
-
-**상주 에이전트의 `ask` 는 막지 않습니다** — 질문을 사람의 ❓ 트레이에 올리고 즉시 돌아오며, 어느 뷰어가 답하든 그 답이 에이전트에게 새 런으로 갑니다(`── answer [u-…] from the user re [q-…] ──` 봉투). **v10.77.0 부터 질문은 언제나 사람에게** 갑니다 — `to` 인자와 에이전트·main 에게 묻는 길, 그리고 그 질문에 답하던 `answer` 도구를 없앴습니다(실제 세션 312개에서 `answer` 11회가 전부 실패: 사용자 요청에 쓰거나 id 를 지어냄). main 이나 다른 에이전트에게 무언가 필요하면 `message` 를 보냅니다 — 그건 요청이고 상대가 `reply` 를 빚집니다.
+질문 하나에 호출 하나입니다. 여러 질문은 한 턴에 `ask` 를 여러 번 부릅니다.
 
 ```json
 {"action": "ask", "action_input": {"question": "legacy 컬럼은 버릴까요, 남길까요?"}}
 ```
 
-사람은 독촉받지 않습니다 — 답을 안 하면 질문은 트레이에 남고 에이전트는 다른 일감을 받습니다. 답은 도는 런에 닿을 수 없으므로 에이전트는 기다리지 않고 할 수 있는 일을 마친 뒤 `complete` 합니다.
+**`ask` 는 막지 않습니다** — main·상주·일회용 에이전트·스킬 모두, 질문을 사람의 ❓ 트레이(와 터미널 질문 줄)에 올리고 즉시 돌아옵니다(관찰 `question "q-2" sent — "…"`). 어느 뷰어가 답하든 그 답은 묻는 쪽에게 줄 없는 통지 봉투로 갑니다 — 장부 항목이 아니라 `complete` 의 `answers` 로 닫을 것이 없습니다:
+
+```
+── answer [n-3] from the user re [q-2] ──
+Your question: legacy 컬럼은 버릴까요, 남길까요?
+Answer: 버리세요
+(Continue the work it was blocking.)
+```
+
+사람이 답 없이 닫으면(`Close without answer`·`/close q-2`) `── closed [n-4] from the user re [q-2] ──` · `Your question: …` · `(The user closed it without an answer. Go on with what you have, and say what you assumed.)` 가 갑니다. 묻는 쪽이 한가하면 그 봉투가 새 작업을 열고, `wait` 로 기다리는 중이면 그 자리에서 깨웁니다. 질문이 열려 있는 동안 묻는 쪽의 꼬리에 `## Your open questions (…)` 가 섭니다(v10.175.0). 스킬 런은 자기 주소(`skill:…`)로 묻고 `wait` 로 답을 기다릴 수 있으며, 스킬 런이 끝나면 그 런이 건 질문은 닫힙니다. **v10.77.0 부터 질문은 언제나 사람에게** 갑니다 — main 이나 다른 에이전트에게 무언가 필요하면 `message` 를 보냅니다 — 그건 요청이고 상대가 `reply` 를 빚집니다.
+
+사람은 독촉받지 않습니다 — 답을 안 하면 질문은 트레이에 남습니다. 보드의 "답변 필요" 는 열린 질문이 있는 동안 섭니다(v10.176.0).
 
 ### shell — 셸 명령 실행
 
@@ -2031,7 +2035,7 @@ python -m agent_cli.prompts.inventory --html inventory.html   # 훑어보는 페
 - **웹 (v10.60.0)** — 입력창에 스크린샷을 붙여넣거나(클립보드 파일) 파일을 끌어다 놓거나 📎 로 고르면 즉시 `.agent-cli/tmp/uploads/<epoch>-<이름>` 에 올라가 입력창 위에 칩으로 섭니다(✕ 로 뺌). 보내면 그 경로가 메시지와 함께 가고(글 없이 이미지만도 됨), 에이전트가 바쁘면 다른 메시지처럼 대기열에 섰다가 턴 경계에 주입됩니다. 사용자 말풍선과 `view_image` 결과 행에 썸네일(최대 160px, 클릭하면 원본)이 붙고 `--resume` 재생에도 남습니다. 썸네일은 `GET /api/workspace/file?path=` 가 워크스페이스 안 **이미지만** 서빙합니다. 모델이 못 보는 것으로 확인되면(`supports_vision: false` 또는 첫 이미지 런의 프로브) 📎 가 숨고 붙여넣기에 한 줄로 알립니다 — 미확인이면 받되 그 런 시작에 `●` 한 줄로 알립니다. 에이전트 채널도 같은 📎 로 받습니다(아래).
 - **글 없이 이미지만 (v10.147.1)** — v10.142.0~v10.147.0 에서는 웹 main 에 글 없이 이미지만 보내면 명령 판정(`/stop` 인지 보는 자리)이 빈 글에서 예외를 내 main 워커가 죽었고(그 뒤의 말은 대기열에만 섰습니다), 런 도중 턴 경계에 오면 그 런이 오류로 끝났습니다. 이제 빈 글·공백만 있는 글은 명령이 아니고, 이미지만 든 말도 런을 열거나 주입됩니다.
 - **모델이 찍기 (v10.61.0)** — `browser` 의 `screenshot` 모드가 PNG 를 `.agent-cli/tmp/screenshots/` 에 두고 `read_file` 과 같은 모양(자리표시 줄 + 참조)으로 보여 줍니다. **MCP 도구가 돌려준 이미지 조각**도 `.agent-cli/tmp/mcp/` 에 파일로 두고 같은 길로 갑니다. PNG/JPEG/GIF/WebP 가 아니면 저장만 하고 사유를 적습니다.
-- **에이전트 채널 (v10.61.0)** — 상주 에이전트와의 대화창에서도 같은 📎·붙여넣기·끌어놓기로 보냅니다. 그 에이전트 런의 시작 메시지에 이미지가 실리고, ⏳ 대기 줄과 런 머리에 썸네일이 붙으며 `--resume` 재생에도 남습니다(답(`answer_id`)에는 못 붙입니다).
+- **에이전트 채널 (v10.61.0)** — 상주 에이전트와의 대화창에서도 같은 📎·붙여넣기·끌어놓기로 보냅니다. 그 에이전트 런의 시작 메시지에 이미지가 실리고, ⏳ 대기 줄과 런 머리에 썸네일이 붙으며 `--resume` 재생에도 남습니다(질문의 답에는 못 붙입니다).
 - **에이전트 채널에 이미지만 (v10.147.2)** — v10.61.0~v10.147.1 에서는 에이전트 채널에 글 없이 이미지만 보내면 레지스트리가 "empty message" 로 거절했고(404, 입력창은 비워져 아무 일도 없는 것처럼 보였습니다), 에이전트가 일하는 도중에 보낸 말은 턴 경계에 흡수될 때 이미지가 빠졌습니다. 이제 이미지만 든 말도 일감이고, 흡수된 말도 런 시작과 같이 자리표시 줄과 이미지를 싣습니다.
 - **명령에 붙인 이미지 (v10.149.3)** — 사람의 말에 딸린 이미지는 그 말이 가는 곳으로 갑니다. main 입력창에서 📎 와 함께 보낸 `@agt-<key> 글`·`@<profile>-spawn 과제`·`@<profile> 과제`·`/<skill> …` 은 그 에이전트·스킬 런의 시작 메시지에 이미지가 실립니다(에이전트 채널과 같은 모양). 종전엔 펌프가 연 차례·런 도중·제자리 대기 모두 이미지를 버렸습니다. 말이 갈 곳 없는 명령(`@agt-<key>` 상태·`@`·`@agents`·`/skills`·`/stop`·`/help`·`/compact`·`/sh`)은 그대로 돌고 `This command does not take images — the attachment was not sent` 한 줄이 섭니다.
 - **main 입력창 `@agt-…` 의 작성자 (v10.149.4)** — main 입력창에서 보낸 `@agt-<key> 글`·`@<profile>-spawn 과제` 는 에이전트 채널에 쓴 것과 같은 작성자(`user:<별명>`)로 갑니다 — 에이전트가 받는 시작 글이 `[user:<별명>]: …` 입니다(종전엔 늘 `[user]:`). 별명이 없는 `run` 의 argv 질의·터미널 줄은 `user` 그대로. 회신은 종전대로 그 에이전트의 채널 창으로 갑니다. 예약 발화도 같은 규칙입니다 — 예약이 낸 `@agt-<key> 글` 은 그 예약의 별명(기본 `Scheduler-<이름>`)으로 `[user:Scheduler-<이름>]: 글` 이 되고, 회신은 같은 채널 창으로 갑니다.
@@ -2109,7 +2113,6 @@ python -m agent_cli.prompts.inventory --html inventory.html   # 훑어보는 페
 ```
 {project}/.agent-cli/
   sessions/                             # AGENT_CLI_SESSIONS_DIR 로 통째 이전 가능
-    chat_history                        # CLI 입력 히스토리
     {session_id}/
       session.jsonl                     # 메타데이터 (1줄: id, workspace, updated_at, query)
       history.jsonl                     # 전체 대화 기록 (JSON Lines, append-only)
@@ -2249,7 +2252,6 @@ agent_cli/
 ├── constants.py         공유 상수 (타임아웃, 임계값)
 ├── hooks/               Hook 시스템 (Python + Shell 라이프사이클 훅 11개 이벤트)
 ├── render/              플러그인 렌더링 시스템 (minimal — 커스텀 추가 가능)
-├── input_history.py     readline 히스토리 영속화
 ├── providers/           LLM 프로바이더 (Anthropic, OpenAI)
 ├── dialects/        dialect 플러그인 (json_fc/xml_fc 내장, 추가 가능; 파서·복구·history 표현 self-contained)
 ├── tools/               도구 (read/write/edit/shell/agent/context)

@@ -14,14 +14,14 @@
 | `agents/` | 프로젝트 > 유저 > 내장 | **프로젝트 > 내장** |
 | `hooks/`, `hooks.json` | 둘 다 실행 (프로젝트 먼저) | **프로젝트** |
 | `DIRECTIVE.md` | 둘 다 연결 | **프로젝트** |
-| `chat_history` | 유저 | **`sessions_dir()`** |
+| `chat_history` | 유저 | **`sessions_dir()`** — v10.176.0 에서 없어짐(§4) |
 
 세 줄로 설명된다:
 
 ```
 유저 (~/.agent-cli)     config.json · models.json        ← 머신 사실
 프로젝트 (.agent-cli)   mcp · skills · agents · hooks · DIRECTIVE
-sessions_dir()          sessions · chat_history          ← 작업 트리 밖으로 뺄 수 있는 것
+sessions_dir()          sessions                         ← 작업 트리 밖으로 뺄 수 있는 것
 ```
 
 ## 2. 왜
@@ -63,6 +63,9 @@ sessions_dir()          sessions · chat_history          ← 작업 트리 밖�
 ```
 
 ## 4. `chat_history` 를 `.agent-cli/` 가 아니라 `sessions_dir()` 에 두는 이유
+
+> v10.176.0: `chat_history`(와 `input_history.py`)는 없어졌다 — 그 히스토리를 쓰던 것은 막는 `ask` 의 여러 줄
+> 읽기뿐이었고, 6b 가 그 길을 지웠다. 아래는 그때의 결정 기록이다.
 
 프로젝트별 히스토리는 의도가 맞다(↑ 에 다른 프로젝트 명령이 안 나온다).
 하지만 `.agent-cli/` 에 두면 **작업 트리 안으로 들어온다**. 채팅 히스토리는
