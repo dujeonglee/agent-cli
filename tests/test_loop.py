@@ -4824,6 +4824,13 @@ class TestRunAuthors:
             loop._intake()
             assert loop.run_authors == ["Bob", "두정"]
             assert stub.pushed == [("[두정]: steer it", "두정")]
+            rec = loop.messages[-1]
+            assert (rec["role"], rec["content"], rec["author"]) == (
+                "user",
+                "[두정]: steer it",
+                "두정",
+            )
+            assert "author_is_user" not in rec
             assert stub.author_sets[-1] == ["Bob", "두정"]
         finally:
             render.set_renderer(prev)
@@ -4857,6 +4864,7 @@ class TestRunAuthors:
             )
             loop._intake()
             assert loop.run_authors == []
+            assert not any("/compact" in str(m.get("content")) for m in loop.messages)
             # …but the echo still shows who sent it (user lane mark).
             assert stub.pushed == [("[두정]: /compact", "두정")]
         finally:
@@ -4866,6 +4874,7 @@ class TestRunAuthors:
         loop = self._loop(caps, query_author="🤝 agent", query_author_is_user=False)
         loop._add_user_message(loop.query, loop.query_author, is_user=False)
         assert loop.run_authors == []
+        assert loop.messages[-1]["author_is_user"] is False
 
 
 class TestMailAnswersInheritance:
@@ -5020,6 +5029,7 @@ class TestRendererAbcPromotion:
             )
             loop._intake()  # push_user_message → no-op
             assert loop.run_authors == ["Bob"]
+            assert loop.messages[-1]["content"] == "[Bob]: steer"
         finally:
             render.set_renderer(prev)
 
