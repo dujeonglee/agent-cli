@@ -5,7 +5,7 @@ main 의 답을 받을 사람이 기다림), q-(에이전트가 사람의 답을
 줄의 종류는 봉투 머리(``kind``·``closes_by``)에서만 정한다 — 주소·id 문자열을 해석하지 않는다.
 
 상태: ``queued``(봉투가 받는 쪽 상자에 줄 섰다) → ``picked``(빚으로 적혔다 — 런이 집었다) → 닫힘. 닫힌 줄은
-쌓지 않는다: 런 안에서 닫힌 것(:data:`IN_RUN` — 명시 회신·갚음·complete)만 그 빚진 쪽의 런이 끝날 때까지 남고
+쌓지 않는다: 런 안에서 닫힌 것(:data:`IN_RUN` — 명시 회신·갚음·폴백·정지·런 끝)만 그 빚진 쪽의 런이 끝날 때까지 남고
 (:meth:`RequestBook.purge_closed` — "이미 갚았다" 거부 문구가 읽는 구간), 런 밖에서 닫힌 것(removed·dropped·질문의 답 등)은 바로 지운다. 런이
 어떻게 끝나든(`wait` 로 끝나도) 그 런에서 닫힌 줄은 버린다 — 열린 빚(잠든 빚)만 다음 런으로 간다. 락이 없다 —
 `PostOffice` 의 조건변수 아래서만 바꾼다.
@@ -27,7 +27,6 @@ How = Literal[
     "stopped",
     "removed",
     "dropped",
-    "completed",
     "run_ended",
     "user_answered",
     "user_closed",
@@ -50,14 +49,14 @@ CLOSES: dict[tuple[RowKind, State], frozenset[str]] = {
     ("r", "picked"): frozenset(
         {"reply", "unsent", "fallback", "stopped", "dropped", "died"}
     ),
-    ("u", "picked"): frozenset({"completed", "run_ended", "dropped"}),
-    ("n", "picked"): frozenset({"completed", "run_ended", "dropped"}),
+    ("u", "picked"): frozenset({"run_ended", "dropped"}),
+    ("n", "picked"): frozenset({"run_ended", "dropped"}),
     ("q", "picked"): frozenset({"user_answered", "user_closed", "undeliverable"}),
 }
 
 #: 런 안에서 닫는 방법 — 닫힌 줄의 ``closed_in_run`` 이 비면 안 된다(불변식 I5)
 IN_RUN: frozenset[str] = frozenset(
-    {"reply", "unsent", "completed", "fallback", "stopped", "run_ended"}
+    {"reply", "unsent", "fallback", "stopped", "run_ended"}
 )
 
 #: 닫힌 뒤에도 그 빚진 쪽의 런 끝까지 남기는 방법 — 런 안에서 닫는 것 전부. "이미 갚았다" 거부 사유가
@@ -186,7 +185,7 @@ class RequestBook:
         )
 
     def open_requests(self, addr: str) -> tuple[Row, ...]:
-        """``addr`` 의 런이 `complete` 의 ``answers`` 로 닫을 집힌 u·n 줄 — 연 순서(Open Requests)."""
+        """``addr`` 앞의 집힌 u·n 줄 — 연 순서. 그 런의 끝(`PostOffice.end_run`)이 run_ended 로 닫는다."""
         return tuple(
             r
             for r in self._rows.values()

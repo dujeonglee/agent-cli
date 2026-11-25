@@ -14,7 +14,7 @@ from agent_cli.post.request_book import RequestBook, RowError
 
 HOWS = (
     "reply", "unsent", "fallback", "stopped", "removed", "dropped",
-    "completed", "run_ended", "user_answered", "undeliverable", "died",
+    "run_ended", "user_answered", "undeliverable", "died",
 )  # fmt: skip
 OPS = ("pick",) + tuple(f"close:{h}" for h in HOWS)
 KINDS = ("r", "u", "n", "q")
@@ -36,7 +36,6 @@ EXPECT = {
     ("r", "picked", "close:stopped"): "closed",
     ("r", "picked", "close:dropped"): "gone",
     ("r", "picked", "close:died"): "gone",
-    **{(k, "picked", "close:completed"): "closed" for k in ("u", "n")},
     **{(k, "picked", "close:run_ended"): "closed" for k in ("u", "n")},
     **{(k, "picked", "close:dropped"): "gone" for k in ("u", "n")},
     ("q", "picked", "close:user_answered"): "gone",
@@ -98,13 +97,13 @@ def test_row_transition_table(kind, state, op):
 
 def test_table_size():
     """칸 수 — 보고용 숫자를 고정한다(허용 칸 + 금지 칸 = 전체)."""
-    assert len(CELLS) == 4 * 4 * 12 - 2 * 12
-    assert len([c for c in CELLS if c in EXPECT]) == len(EXPECT) == 24
+    assert len(CELLS) == 4 * 4 * 11 - 2 * 11
+    assert len([c for c in CELLS if c in EXPECT]) == len(EXPECT) == 22
 
 
 @pytest.mark.parametrize(
     "how",
-    ["reply", "unsent", "completed", "fallback", "stopped", "run_ended"],
+    ["reply", "unsent", "fallback", "stopped", "run_ended"],
 )
 def test_closing_inside_a_run_needs_the_run(how):
     kind = "r" if how in ("reply", "unsent", "fallback", "stopped") else "u"

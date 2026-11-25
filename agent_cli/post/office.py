@@ -152,20 +152,6 @@ class PostOffice:
             self._book.close(rid, "unsent", in_run=run_id)
             self.cv.notify_all()
 
-    def complete(
-        self, addr: str, ids: Iterable[str], *, run_id: str
-    ) -> tuple[str, ...]:
-        """``addr`` 의 런이 `complete` 의 ``answers`` 로 닫은 u·n 줄 — 닫은 id(없는 id 는 건너뛴다). 줄은 저장
-        대상이 아니다(장부는 q- 만 저장 — 시안 §7)."""
-        with self.cv:
-            open_ids = {r.rid for r in self._book.open_requests(addr)}
-            done = tuple(i for i in ids if i in open_ids)
-            for rid in done:
-                self._book.close(rid, "completed", in_run=run_id)
-            if done:
-                self.cv.notify_all()
-            return done
-
     def end_run(
         self,
         addr: str,

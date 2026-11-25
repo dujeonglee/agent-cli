@@ -25,7 +25,6 @@ KIND = {
 IN_RUN = {
     "reply",
     "unsent",
-    "completed",
     "fallback",
     "stopped",
     "run_ended",
@@ -53,7 +52,7 @@ def _may_close(kind: str, state: str, how: str) -> bool:
             "died",
         }
     if kind in ("u", "n"):
-        return how in {"completed", "run_ended", "dropped"}
+        return how in {"run_ended", "dropped"}
     return how in {"user_answered", "undeliverable"}  # q
 
 
@@ -157,17 +156,6 @@ class Model:
             raise Refused("pay")
         self._close(rid, "reply", run_id)
         self._put(reply)
-
-    def complete(self, addr, ids, run_id):
-        for rid in ids:
-            r = self.rows.get(rid)
-            if (
-                r
-                and r["kind"] in ("u", "n")
-                and r["state"] == "picked"
-                and r["dst"] == addr
-            ):
-                self._close(rid, "completed", run_id)
 
     def end_run(self, addr, run_id, outcome, replies):
         closing = set(self._owed(addr)) if outcome in ("done", "stopped") else set()

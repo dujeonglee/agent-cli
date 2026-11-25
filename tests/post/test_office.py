@@ -105,12 +105,6 @@ class TestRuns:
             _rows(office) == [("r-1", "picked", None)] and office.queued("main") == ()
         )
 
-    def test_complete_closes_open_u_and_n(self, office):
-        office.deliver(E.human("u-1", "user:dj", A, "hi"))
-        office.next_run(A, timeout=0)
-        assert office.complete(A, ["u-1", "u-9"], run_id="u-1") == ("u-1",)
-        assert office.open_requests(A) == ()
-
     def test_open_human_has_no_envelope(self, office):
         office.open_human("u-1", "user:dj", "main", "hello", answers=["dj"])
         assert [r.rid for r in office.open_requests("main")] == ["u-1"]

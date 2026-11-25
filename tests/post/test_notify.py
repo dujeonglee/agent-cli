@@ -48,7 +48,6 @@ NOTHING_CHANGES = {
     "absorb": lambda o: o.absorb(A),
     "take": lambda o: o.take(A),
     "take_reply": lambda o: o.take_reply(A, "r-9"),
-    "complete": lambda o: o.complete(A, ["u-9"], run_id="u-1"),
     "end_run_done": lambda o: o.end_run(A, run_id="r-1", outcome="done"),
     "end_run_stopped": lambda o: o.end_run(A, run_id="r-1", outcome="stopped"),
     "end_run_session_end": lambda o: o.end_run(A, run_id="r-1", outcome="session_end"),
@@ -77,9 +76,6 @@ def test_a_call_that_changes_something_wakes(office):
     assert _notifies(office, lambda: office.take("harness:j")) >= 1
     office.deliver(E.reply("n-4", A, "main", "ans", re="r-7"))
     assert _notifies(office, lambda: office.take_reply("main", "r-7")) >= 1
-    office.deliver(E.human("u-5", "user:dj", A, "hi"))
-    office.next_run(A, timeout=0)
-    assert _notifies(office, lambda: office.complete(A, ["u-5"], run_id="u-5")) >= 1
     office.deliver(E.notice("n-6", "main", A, "x"))
     assert _notifies(office, lambda: office.remove_queued(A)) >= 1
     office.ask("q-7", A, "user:dj", "?")

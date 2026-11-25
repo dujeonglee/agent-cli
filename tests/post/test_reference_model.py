@@ -115,17 +115,6 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
             ops.append(
                 ("deliver", {"e": E.notice(nid("n"), addr, rnd.choice(ADDRS), "m")})
             )
-        elif k == 8:
-            ops.append(
-                (
-                    "complete",
-                    {
-                        "addr": addr,
-                        "ids": rnd.sample(ids, min(2, len(ids))),
-                        "run_id": run,
-                    },
-                )
-            )
         elif k == 9:
             outcome = rnd.choice(["done", "stopped", "session_end"])
             replies = {}
@@ -283,7 +272,7 @@ def test_the_generator_reaches_every_operation_and_both_verdicts():
             refused += impl_refused
             accepted += not impl_refused
     assert seen == {
-        "deliver", "next_run", "absorb", "pay", "complete", "end_run",
+        "deliver", "next_run", "absorb", "pay", "end_run",
         "remove_queued", "take_reply", "ask", "answer", "forget_questions_of",
         "owe", "take",
     }  # fmt: skip
