@@ -1,4 +1,4 @@
-"""질문의 답이 오는 길 (6c) — 답할 사람이 없는 곳의 `ask`, 터미널·웹의 명령, 질문 줄, 터미널 읽기와 프롬프트의 잠금.
+"""질문의 답이 오는 길 (6c) — 답할 사람이 없는 곳의 `ask`, 터미널·웹의 명령, 질문 줄, 터미널을 읽는 이 하나(잠금).
 
 규칙(사용자 결정): 질문의 답이 되는 길은 번호를 적은 명령(`/answer q-N <글>`)과 웹 트레이뿐이다. 그 밖의 입력은 열린
 질문이 있든 없든 main 에게 가는 보통의 요청이다 — 번호 없는 말을 답으로 짐작해 붙이지 않는다.
@@ -290,11 +290,11 @@ def test_the_terminal_question_line_carries_its_number_and_how_to_answer(
     )
 
 
-# ── 터미널 읽기와 프롬프트의 잠금 ───────────────────────────
+# ── 터미널을 읽는 이 하나 ───────────────────────────
 
 
 class _HeldPrompt:
-    """다른 스레드가 프롬프트처럼 `interactive_lock` 을 쥐고 있다 — 풀 때까지."""
+    """다른 스레드가 터미널을 읽는 중이다(`interactive_lock` 을 쥐었다) — 풀 때까지."""
 
     def __enter__(self):
         self._held, self._release = threading.Event(), threading.Event()
@@ -337,7 +337,8 @@ def _steer(monkeypatch, typed: str):
 def test_a_line_typed_while_a_prompt_holds_the_terminal_is_left_to_the_prompt(
     monkeypatch,
 ):
-    """프롬프트가 `interactive_lock` 을 쥔 동안 친 줄은 프롬프트의 것이다 — 제자리 대기 읽기는 가져가지 않는다."""
+    """다른 읽는 이가 `interactive_lock` 을 쥔 동안 친 줄은 그 이의 것이다 — 제자리 대기 읽기는 가져가지 않는다(한 줄은
+    한 스레드만 읽는다, 6d)."""
     q, stdin, wait = _steer(monkeypatch, "y\n")
     with _HeldPrompt():
         assert wait(0) is False

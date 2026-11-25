@@ -743,20 +743,12 @@ class Renderer(ABC):
         yield
 
     def _guarded_read(self, read):
-        """Run a blocking user read under the shared serialization lock and
-        the renderer's display guard. ``confirm`` and ``prompt_user`` both
-        route their read through here so they serialize against each other
-        (one outstanding prompt at a time → answers can't cross wires) and
-        share one display-quieting policy. ``read`` is a zero-arg callable
-        performing the actual blocking read; its return value is passed
-        through, its exceptions (EOF/abort) propagate to the caller."""
+        """막는 읽기 하나를 터미널을 읽는 잠금(`interactive_lock`)과 화면 가드 아래서 — 부팅 마법사의 ``prompt_user``
+        가 쓴다(세션의 터미널 읽기와 겹치지 않는다). ``read`` 는 인자 없는 막는 읽기, 그 값을 그대로 돌려주고 예외
+        (EOF·Ctrl+C)는 부르는 쪽으로 올린다."""
         with interactive_lock, self._prompt_display_guard():
             self._drop_typeahead()
-            self._reads_waiting = getattr(self, "_reads_waiting", 0) + 1
-            try:
-                return read()
-            finally:
-                self._reads_waiting -= 1
+            return read()
 
     def _drop_typeahead(self) -> None:
         """프롬프트는 뜬 뒤에 그 프롬프트에 친 것만 받는다(사람의 답은 명시적 UI 로만 — 사용자 결정). 프롬프트가 터미널을
@@ -772,8 +764,3 @@ class Renderer(ABC):
             termios.tcflush(fd, termios.TCIFLUSH)
         except (OSError, ValueError):
             return
-
-    def is_awaiting_input(self) -> bool:
-        """`ask`·확인 프롬프트가 사람의 입력을 기다리는 중인가 — `_guarded_read` 안 (v10.142.0). CLI 의 Ctrl+C
-        처리기(`ctrl_c.stop_for_ctrl_c`)가 그때는 종전대로 입력을 끊는다. 읽기만 한다. web 은 자기 것(sticky)."""
-        return getattr(self, "_reads_waiting", 0) > 0
