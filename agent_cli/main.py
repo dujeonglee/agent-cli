@@ -2172,6 +2172,10 @@ def run(
             # 한가한 동안에도 친 줄을 읽는다 — main 이 결과를 낸 뒤에도 `/answer`·새 말을 받는다(6c)
             on_idle_input=lambda t: read_terminal_line(main_input, t),
         )
+        # 프롬프트가 뜨기 전에 친 줄은 그 프롬프트의 답이 아니다 — main 의 요청으로(답은 명시적 UI 로만)
+        get_renderer().on_typeahead = lambda lines: hand_typeahead_to_main(
+            main_input, lines
+        )
 
         agent_registry = owners.agent_registry
         if wired.revived:
@@ -2416,6 +2420,25 @@ def _terminal_steer_input(main_input, surface):
         return queued(0) if took else False
 
     return wait
+
+
+#: 프롬프트가 뜨기 전에 친 줄을 main 에게 넘겼다는 한 줄 (사람이 읽는 글)
+TYPEAHEAD_SENT_TO_MAIN = (
+    "  ↪ typed before this prompt — sent to main as a new message: {line}"
+)
+
+
+def hand_typeahead_to_main(main_input, lines: list[str]) -> None:
+    """프롬프트가 뜨기 전에 터미널에 친 줄(`Renderer._hand_over_typeahead`)을 main 앞에 넣는다 — 그 밖의 입력처럼 보통의
+    요청이다(명령인가는 들어오는 문이 판정한다). 줄마다 한 줄 알린다 — 친 사람이 그 줄이 프롬프트의 답이 아님을 안다."""
+    for line in lines:
+        main_input.enqueue(None, line)
+        console.print(
+            TYPEAHEAD_SENT_TO_MAIN.format(line=line),
+            style=C["muted"],
+            markup=False,
+            highlight=False,
+        )
 
 
 def read_terminal_line(main_input, timeout: float) -> bool | None:

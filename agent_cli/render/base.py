@@ -9,6 +9,9 @@ over SSE and receiving form submissions, with no change to the loop.
 
 from __future__ import annotations
 
+import os
+import select
+import sys
 import threading
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -21,6 +24,13 @@ from dataclasses import dataclass, field
 # Re-entrant so a caller that already holds it (e.g. the dangerous-shell
 # guard re-checking its allowlist around ``confirm``) can nest the read.
 interactive_lock = threading.RLock()
+
+try:
+    import termios
+except (
+    ImportError
+):  # 터미널 제어가 없는 곳(Windows) — 먼저 친 입력을 거르지 않는다(종전 동작)
+    termios = None
 
 
 @dataclass(frozen=True)
@@ -851,11 +861,39 @@ class Renderer(ABC):
         performing the actual blocking read; its return value is passed
         through, its exceptions (EOF/abort) propagate to the caller."""
         with interactive_lock, self._prompt_display_guard():
+            self._hand_over_typeahead()
             self._reads_waiting = getattr(self, "_reads_waiting", 0) + 1
             try:
                 return read()
             finally:
                 self._reads_waiting -= 1
+
+    #: 프롬프트가 뜨기 전에 터미널에 친 완성된 줄을 받을 곳 ``(lines) -> None`` — `run` 이 건다(main 의 요청으로,
+    #: `main.hand_typeahead_to_main`). 없으면 버린다(웹·부트 질문 — 넘길 main 이 없다)
+    on_typeahead = None
+
+    def _hand_over_typeahead(self) -> None:
+        """프롬프트는 뜬 뒤에 그 프롬프트에 친 것만 받는다(사람의 답은 명시적 UI 로만 — 사용자 결정). 프롬프트가 터미널을
+        쥔 순간(`_guarded_read` 의 잠금 안, 프롬프트 글을 찍기 전) 그 전에 친 입력을 프롬프트에서 뗀다 — 완성된 줄은
+        `on_typeahead` 로 넘기고, 덜 친 줄(줄바꿈 전)은 버린다. 표준입력이 터미널이 아니거나 터미널 제어가 없으면 할 일이
+        없다."""
+        if termios is None or not sys.stdin.isatty():
+            return
+        data = b""
+        try:
+            fd = sys.stdin.fileno()
+            while select.select([fd], [], [], 0)[0]:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                data += chunk
+            termios.tcflush(fd, termios.TCIFLUSH)
+        except (OSError, ValueError):
+            return
+        lines = [ln.strip() for ln in data.decode(errors="replace").splitlines()]
+        lines = [ln for ln in lines if ln]
+        if lines and self.on_typeahead is not None:
+            self.on_typeahead(lines)
 
     def is_awaiting_input(self) -> bool:
         """`ask`·확인 프롬프트가 사람의 입력을 기다리는 중인가 — `_guarded_read` 안 (v10.142.0). CLI 의 Ctrl+C
