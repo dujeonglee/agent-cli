@@ -69,7 +69,6 @@ EVENTS = frozenset(
         "wait_in_place",
         "note_request",
         "note_items_closed_after",
-        "announce_ask",
         "push_user_message",
         "set_run_authors",
     }
@@ -1225,6 +1224,118 @@ def s43_question_wakes_the_asker(root: Path) -> dict:
         facts["open_questions"] = _open_questions(s)
         facts["answer"] = s.reg.answer_question(
             facts["open_questions"][0]["id"], "v2", by="user:dj"
+        )
+        until(lambda: runs_ended(s) >= 1, "main finished")
+        until(lambda: s.agent_state(key) == "idle")
+        facts["open_after"] = _open_questions(s)
+
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+def s44_main_asks_and_waits(root: Path) -> dict:
+    """6b: main 도 같은 길로 묻는다 — `ask` 는 질문을 올리고 돌아오고, main 이 `wait` 하면 그 자리에서 답을 기다린다.
+    사람이 트레이 길로 답하면 답 봉투(줄 없는 ``n-``)가 main 을 깨운다. 동기 지점: main 이 제자리 대기에 든 뒤 답한다."""
+    p = Provider(
+        {
+            "MAIN": [
+                call("ask", question="MAIN which directory?"),
+                call("wait"),
+                complete_all("used src/util"),
+            ],
+        }
+    )
+    s = Session(root, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    facts: dict = {}
+
+    def done(s):
+        until(lambda: _waits(s, "main"), "main waits in place")
+        facts["open_questions"] = _open_questions(s)
+        facts["answer"] = s.reg.answer_question(
+            facts["open_questions"][0]["id"], "src/util", by="user:dj"
+        )
+        until(lambda: runs_ended(s) >= 1, "main finished")
+        facts["open_after"] = _open_questions(s)
+
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+def s45_main_asks_then_completes(root: Path) -> dict:
+    """6b: main 이 묻고 기다리지 않고 런을 끝낸다 — 질문은 열린 채 남고, 늦게 온 답은 메일이라 한가한 main 의 새 런을
+    연다(사람의 말이 아니다)."""
+    p = Provider(
+        {
+            "MAIN": [
+                call("ask", question="MAIN json or yaml?"),
+                complete_all("went on with json"),
+                complete_all("switched to yaml"),
+            ],
+        }
+    )
+    s = Session(root, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    facts: dict = {}
+
+    def done(s):
+        until(lambda: runs_ended(s) >= 1, "main finished")
+        facts["open_questions"] = _open_questions(s)
+        facts["answer"] = s.reg.answer_question(
+            facts["open_questions"][0]["id"], "yaml", by="user:dj"
+        )
+        until(lambda: runs_ended(s) >= 2, "the answer opened a run")
+        facts["open_after"] = _open_questions(s)
+
+    drive(s, path="web", until_done=done)
+    return s.collect(facts)
+
+
+def s46_close_wakes_the_asker(root: Path) -> dict:
+    """6b: 사람이 질문을 답 없이 닫는다 — 묻는 쪽(상주)은 "닫혔다" 는 사실의 봉투로 깨어 가진 것으로 계속하고 회신한다.
+    s43 과 같은 동기 지점(답 대신 닫기)."""
+    box: dict = {}
+
+    def after_helper_waits(msgs):
+        s = box["s"]
+        until(
+            lambda: s.agent_keys() and _waits(s, f"agent:{s.agent_keys()[0]}"),
+            "helper waits in place",
+        )
+        return call("wait")
+
+    p = Provider(
+        {
+            "MAIN": [
+                call(
+                    "agent", mode="spawn", name="helper", task="TASK-C pick a version"
+                ),
+                after_helper_waits,
+                complete_all("main finished"),
+            ],
+            "TASK-C": [
+                _after_main_calls(
+                    box, 2, lambda m: call("ask", question="TASK-C v1 or v2?")
+                ),
+                call("wait"),
+                lambda m: call("reply", id=owed_id(m), text="assumed v1"),
+                _after_main_calls(box, 3, complete_all("went with v1")),
+            ],
+        }
+    )
+    s = box["s"] = Session(root, p, path="web")
+    s.close_answered_awaits_before_main_reads()
+    s.say("MAIN go", nickname="dj")
+    facts: dict = {}
+
+    def done(s):
+        until(lambda: s.agent_keys(), "helper spawned")
+        key = s.agent_keys()[0]
+        until(lambda: _waits(s, f"agent:{key}"), "helper waits in place")
+        until(lambda: _waits(s, "main"), "main waits in place")
+        facts["open_questions"] = _open_questions(s)
+        facts["close"] = s.reg.close_question(
+            facts["open_questions"][0]["id"], by="user:dj"
         )
         until(lambda: runs_ended(s) >= 1, "main finished")
         until(lambda: s.agent_state(key) == "idle")
@@ -3381,6 +3492,9 @@ SCENARIOS = {
     "s42_run_crashes_while_waiting": s42_run_crashes_while_waiting,
     # 묻고 기다리기 (6a)
     "s43_question_wakes_the_asker": s43_question_wakes_the_asker,
+    "s44_main_asks_and_waits": s44_main_asks_and_waits,
+    "s45_main_asks_then_completes": s45_main_asks_then_completes,
+    "s46_close_wakes_the_asker": s46_close_wakes_the_asker,
 }
 
 
