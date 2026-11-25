@@ -341,9 +341,11 @@ class TestConsistency:
     def test_a_row_closed_in_the_run_that_still_holds_its_envelope_is_fine(
         self, office
     ):
-        office.deliver(E.human("u-1", "user:dj", A, "hi"))
+        office.deliver(E.request("r-1", "agent:b", A, "do"))
         office.next_run(A, timeout=0)
-        office.complete(A, ["u-1"], run_id="u-1")
+        office.pay(
+            A, "r-1", E.reply("n-2", A, "agent:b", "done", re="r-1"), run_id="r-1"
+        )
         office.check_consistency()  # 봉투는 런이 아직 들고 있고, 줄은 그 런 안에서 닫혔다
 
 

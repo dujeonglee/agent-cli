@@ -63,7 +63,7 @@ def _book_with(kind: str, state: str) -> RequestBook:
     if state in ("picked", "closed"):
         book.pick("x-1")
     if state == "closed":
-        book.close("x-1", "reply" if kind == "r" else "completed", in_run="run-0")
+        book.close("x-1", "reply" if kind == "r" else "run_ended", in_run="run-0")
     return book
 
 
