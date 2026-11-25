@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 
 from agent_cli.context.manager import _OBS_COMPLETE_NUDGE, ContextManager
+from agent_cli.loop.ledger import OPEN_QUESTIONS_HEAD, Ledger
 from agent_cli.prompts.session_state import (
     COMPACTION_NOTICE,
     COMPACTION_NOTICE_STEPS,
@@ -754,3 +755,72 @@ class TestOpenItemsInTail:
         for port in (None, object(), _Broken()):
             caller, _ = _caller(tmp_path, questions=port)
             assert "Open Items" not in caller._build_session_state(10_000)
+
+
+class _AskerPort:
+    """묻는 쪽의 질문 포트 대역 — 열린 질문만 안다."""
+
+    nonblocking = True
+
+    def __init__(self, questions):
+        self.questions = questions
+
+    def open_questions(self):
+        return list(self.questions)
+
+
+class TestOpenQuestionsInTail:
+    """``## Your open questions`` (6a) — 내가 사람에게 건 열린 질문이 있는 턴에만, `wait` 가 있는 루프에만 선다."""
+
+    def test_the_block_names_each_open_question_in_order(self, tmp_path):
+        port = _AskerPort([("q-3", "which directory?"), ("q-5", "json or yaml?")])
+        caller, _ = _caller(tmp_path, questions=port, tools_list=["wait", "ask"])
+        out = caller._build_session_state(10_000)
+        assert (
+            f'{OPEN_QUESTIONS_HEAD}\n- "q-3" · "which directory?"\n- "q-5" · "json or yaml?"'
+            in out
+        )
+        assert "## Open Items" not in out  # 질문은 항목이 아니다
+
+    def test_no_open_question_no_block(self, tmp_path):
+        caller, _ = _caller(tmp_path, questions=_AskerPort([]), tools_list=["wait"])
+        assert "## Your open questions" not in caller._build_session_state(10_000)
+
+    def test_a_loop_without_wait_gets_no_block(self, tmp_path):
+        """머리가 `wait` 로 보내므로 — `wait` 가 없는 루프에는 갈 곳이 없다."""
+        port = _AskerPort([("q-3", "which directory?")])
+        caller, _ = _caller(tmp_path, questions=port, tools_list=["ask"])
+        assert "## Your open questions" not in caller._build_session_state(10_000)
+
+    def test_the_question_text_is_one_line_of_at_most_120(self):
+        led = Ledger()
+        led.bind_questions(
+            _AskerPort([("q-1", "first line\nsecond   line " + "x" * 200)])
+        )
+        (line,) = led.questions_block(can_wait=True).splitlines()[1:]
+        assert line.startswith('- "q-1" · "first line second line xxx')
+        assert len(line) == len('- "q-1" · ""') + 120
+
+    def test_a_missing_or_broken_port_is_silent(self):
+        class _Broken:
+            def open_questions(self):
+                raise RuntimeError("x")
+
+        for port in (None, object(), _Broken()):
+            led = Ledger()
+            led.bind_questions(port)
+            assert led.questions_block(can_wait=True) == ""
+
+    def test_the_block_sits_after_jobs_and_before_the_roster(self):
+        out = build_session_state(
+            items="## Open Items\n  x",
+            jobs="## Background jobs\n- job",
+            questions=f'{OPEN_QUESTIONS_HEAD}\n- "q-1" · "?"',
+            agents="## Live Agents\n- a",
+        )
+        assert (
+            out.index("## Open Items")
+            < out.index("## Background jobs")
+            < out.index("## Your open questions")
+            < out.index("## Live Agents")
+        )

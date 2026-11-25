@@ -11,7 +11,10 @@ import agent_cli.render as render_mod
 from agent_cli.loop.ledger import OPEN_QUESTIONS_HEAD
 from agent_cli.prompts.system_prompt import _ASK_INLINE_RESIDENT
 from agent_cli.tools.virtual import AskTool
+from agent_cli.wake import WaitingOn, wake_items
 from tests.oracle.driver import Provider, Session, call, complete_all, owed_id, until
+from tests.test_agents_live import make_registry
+from tests.test_wait_checkin import _fake_agent
 
 Q = "which directory should I use?"
 ANSWER = "use src/util"
@@ -40,23 +43,37 @@ def _content(m) -> str:
 
 
 def _asks_then_waits(
-    root, *, owes: bool, job: bool = False, mode: str = "spawn"
+    root,
+    *,
+    owes: bool,
+    job: bool = False,
+    mode: str = "spawn",
+    then: str = "wait",
+    interrupt: str | None = None,
 ) -> dict:
     """에이전트 aa 가 일을 받아 (작업을 띄우고) `ask` 한 뒤 `wait` 한다. 판정이 난 뒤 사람이 트레이 길로 답한다.
 
     ``owes`` — main 이 회신을 기다리는 요청으로 맡겼다(aa 가 r- 를 빚진다). ``mode`` "run" 은 일회용 에이전트이고
     main 은 그 결과를 `wait` 로 기다린다. 돌려주는 것: aa 가 `wait` 뒤 읽은 관찰, `ask` 바로 다음 호출의 마지막
-    메시지(관찰 + 꼬리), 작업 구간 수, 답을 읽었는가, main 이 읽은 것."""
+    메시지(관찰 + 꼬리), 작업 구간 수, 답을 읽었는가, main 이 읽은 것.
+
+    ``then`` "complete" — `wait` 대신 `complete`(빚을 든 채면 되묻기를 받는다). ``interrupt`` — 판정 뒤 답 대신
+    ■("stop": 런 정지, 그 뒤 답) 또는 ✕("kill": 에이전트를 끝냄, 답하지 않는다)."""
     got: dict = {"aa_after_wait": None, "read_answer": False, "main_reads": []}
 
     def waits(m):
         got["after_ask"] = _content(m[-1])
-        return WAIT_CALL
+        return (
+            WAIT_CALL
+            if then == "wait"
+            else call("complete", result="asked", answers=[])
+        )
 
     def rest(m):
         if got["aa_after_wait"] is None:
             got["aa_after_wait"] = m
         if any("── answer [" in _content(x) for x in m):
+            got.setdefault("after_answer", _content(m[-1]))
             got["read_answer"] = True
         try:
             said = (
@@ -126,6 +143,14 @@ def _asks_then_waits(
                 "main judged",
             )
             got["main_waiting_in_place"] = s.reg._post.is_waiting("main")
+        if interrupt == "stop":
+            assert not s.reg.stop_run(k)
+            until(lambda: s.agent_state(k) == "idle", "aa idle after the stop")
+        elif interrupt == "kill":
+            assert not s.reg.kill(k)
+            got["qid"] = None
+        got["open_after_interrupt"] = [q.id for q in s.reg.open_human_questions()]
+        got["state_after_interrupt"] = s.agent_state(k)
         if got["qid"]:
             assert not s.reg.answer_question(got["qid"], ANSWER, by="user:dj")
             until(lambda: got["read_answer"], "aa read the answer")
@@ -144,12 +169,16 @@ def _asks_then_waits(
         s.close()
         t.join(20)
     m = got["aa_after_wait"]
+    if m is None:  # ✕ — 그 뒤 호출이 없다
+        return got
     i = next(
         n
         for n, x in enumerate(m)
-        if x.get("role") == "assistant" and '"action": "wait"' in _content(x)
+        if x.get("role") == "assistant" and f'"action": "{then}"' in _content(x)
     )
-    got["wait_obs"] = _content(m[i + 1]).removeprefix("[wait]\n").split("\n\n", 1)[0]
+    obs = _content(m[i + 1])
+    got["wait_obs"] = obs.removeprefix(f"[{then}]\n").split("\n\n", 1)[0]
+    got["then_obs"] = obs.split("── end of message", 1)[0]
     return got
 
 
@@ -224,3 +253,57 @@ def test_the_resident_description_and_guide_no_longer_say_where_to_go():
         "  - The answer may never come: a person is free not to answer, and nobody\n"
         "    chases them.\n" in _ASK_INLINE_RESIDENT
     )
+
+
+def test_a_closed_question_leaves_the_tail_on_the_next_turn(where):
+    """답이 오면 질문이 닫힌다 — 답을 읽는 그 호출의 꼬리에는 블록이 없다."""
+    g = _asks_then_waits(where, owes=True)
+    assert "── end of message" in g["after_answer"]  # 꼬리가 붙은 메시지다
+    assert (
+        "## Your open questions"
+        not in g["after_answer"].split("── end of message", 1)[-1]
+    )
+
+
+def test_stop_while_waiting_on_a_question_keeps_it_open(where):
+    """■ — 제자리 대기가 정지로 깨고 런이 끝난다. 질문은 열린 채 남고, 답은 지금처럼 새 구간을 연다."""
+    g = _asks_then_waits(where, owes=False, interrupt="stop")
+    assert g["open_after_interrupt"] == [g["qid"]]
+    assert g["read_answer"] and g["runs"] == 2
+
+
+def test_kill_while_waiting_on_a_question_closes_it(where):
+    """✕ — 에이전트를 끝내면 그가 건 질문도 닫힌다."""
+    g = _asks_then_waits(where, owes=False, interrupt="kill")
+    assert g["open_after_interrupt"] == [] and g["state_after_interrupt"] == "dead"
+
+
+def test_complete_while_owing_now_hears_of_wait(where):
+    """빚을 든 채 묻고 `complete` — 되묻기에 `wait` 안내가 붙는다: 열린 질문이 깨울 것이기 때문이다(글은 그대로)."""
+    g = _asks_then_waits(where, owes=True, then="complete")
+    assert (
+        "If you are only waiting for something you started to report back, call `wait` "
+        "instead — it keeps these items open and the report wakes you."
+    ) in g["then_obs"]
+
+
+# ── 누구의 질문이 누구를 깨우나 (레지스트리) ─────────────────
+
+
+def test_only_my_own_question_wakes_me_and_it_sets_no_timer(tmp_path):
+    """남의 질문은 나를 깨우지 않고 내 꼬리에도 없다. 질문만 기다리는 `wait` 는 체크인 타이머를 걸지 않는다."""
+    reg = make_registry(tmp_path)
+    try:
+        _fake_agent(reg, "m")
+        _fake_agent(reg, "n")
+        qid, err = reg.register_question("n", "which directory?")
+        assert not err
+        mine = wake_items("agent:n", agents=reg, with_schedule=False)
+        assert mine == [(f"q:{qid}", f'your question "{qid}" to the user')]
+        assert wake_items("agent:m", agents=reg, with_schedule=False) == []
+        assert reg.question_port("n").open_questions() == [(qid, "which directory?")]
+        assert reg.question_port("m").open_questions() == []
+        assert WaitingOn(tuple(mine), ()).checkin_ids == frozenset()
+        assert reg.next_checkin_s("agent:n", frozenset()) is None
+    finally:
+        reg.shutdown_all()
