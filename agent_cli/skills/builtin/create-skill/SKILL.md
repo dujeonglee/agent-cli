@@ -26,9 +26,8 @@ absolute paths instead of the portable placeholder.
 
 1. The first word of $ARGUMENTS is the skill name. The rest is the
    description. If $ARGUMENTS is empty, ask for the name.
-2. Bundle all clarifying questions into one `ask` call (use the
-   `questions` array). Do not issue sequential `ask` calls — ask
-   everything at once:
+2. Ask each clarifying question with `ask` (one question per call),
+   then `wait` for the answers:
    - What should the skill do? (unless already clear from $ARGUMENTS)
    - Which tools does it need? (read_file, write_file, edit_file,
      shell, code_index, agent, ask)

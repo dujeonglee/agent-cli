@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from agent_cli.constants import SHELL_COMMAND_TIMEOUT
+from agent_cli.constants import SHELL_COMMAND_TIMEOUT, SKILL_OWNER_PREFIX
 from agent_cli.loop.kind import (
     Caller,
     LoopKind,
@@ -17,8 +17,9 @@ from agent_cli.loop.kind import (
     PromptProfile,
     Start,
 )
-from agent_cli.session_slots import get_agent_registry
+from agent_cli.session_slots import get_agent_registry, get_nested_wait_input
 from agent_cli.skills.models import Skill
+from agent_cli.subagent.agent_mail import build_reply_record
 from agent_cli.tools.result import ToolResult
 from agent_cli.wake import Mailbox
 
@@ -139,6 +140,18 @@ def generate_subdir_name(prefix: str, name: str) -> str:
     return f"{prefix}_{name}_{hash_part}_{ts}{ms}"
 
 
+def _skill_inbox(address: str):
+    """스킬 런의 상자를 턴 경계에 흡수 — 사람의 답·닫힘은 main·에이전트와 같은 봉투 글(`build_reply_record`)로."""
+
+    def absorb() -> list[dict]:
+        reg = get_agent_registry()
+        if reg is None:
+            return []
+        return [{"record": build_reply_record(m)} for m in reg.take_mail(address)]
+
+    return absorb
+
+
 class SkillLoop(LoopKind):
     """스킬 실행 — 호출마다 하나, ``SkillLoop(skill, arguments, caller).run()``.
 
@@ -202,10 +215,15 @@ class SkillLoop(LoopKind):
         self.skill_stack = list(caller.skill_stack)
         self.agent_stack = list(caller.agent_stack)
         self.agent_role = caller.agent_role
-        self.ports = self.make_ports(
-            agent_registry=caller.agent_registry, owner=self.owner
-        )
         self.scope_id = scope_id or f"skill-{name}-{_uuid.uuid4().hex[:8]}"
+        #: 이 스킬 런의 우편 주소 (6b) — 사람에게 물은 질문의 주인, 답·닫힘 봉투가 드는 상자
+        self.address = f"{SKILL_OWNER_PREFIX}{self.scope_id}"
+        self.ports = self.make_ports(
+            agent_registry=caller.agent_registry,
+            owner=self.owner,
+            address=self.address,
+            name=skill.name,
+        )
         # 디렉토리 이름은 스코프를 열 때 정해져 사이드카의 ``ctx_dir`` 과 같아야 한다 —
         # resume 이 카드 안의 턴을 거기서 다시 그린다.
         self.dir_name = session_subdir or generate_subdir_name(SKILL_PREFIX, name)
@@ -220,9 +238,16 @@ class SkillLoop(LoopKind):
         self.skill_ctx = None
 
     @staticmethod
-    def make_ports(*, agent_registry, owner: str) -> LoopPorts:
+    def make_ports(
+        *, agent_registry, owner: str, address: str, name: str = ""
+    ) -> LoopPorts:
         """스킬 루프의 포트. ``owner`` 는 호출자 것 — 상주 안에서 돈 스킬이 건 모니터는 그
-        에이전트에게 보고해야 한다(기본값 없음: 상속이 빠지면 조용히 main 으로 가므로)."""
+        에이전트에게 보고해야 한다(기본값 없음: 상속이 빠지면 조용히 main 으로 가므로).
+
+        ``address`` (6b) 는 이 스킬 런의 주소 — 질문 포트가 이 주소로 묻고, 메일함은 이 주소의 상자(답·닫힘)만
+        읽는다. 그래서 스킬의 `wait` 는 자기가 건 질문만 기다린다(작업·모니터는 ``owner`` 에게 보고한다). 기다리는
+        동안 사람의 명령은 호스트가 세운 길(`session_slots.get_nested_wait_input`)로 받는다. ``name`` 은 스킬 이름 —
+        질문의 묻는 쪽 이름표(`asker_label` — ``skill <name>``)."""
         from agent_cli.loop.ports import (
             _AS_BEFORE,
             _RESIDENT_ROSTER,
@@ -235,16 +260,27 @@ class SkillLoop(LoopKind):
         return LoopPorts(
             owner=owner,
             agent_registry=agent_registry,
-            questions=None,
+            questions=agent_registry.question_port(address=address, name=name)
+            if agent_registry is not None
+            else None,
             mcp_manager=None,
             message_handler=None,
             hook_runner=_hook_runner_port(),
             route_message=None,
             enqueue_user_message=None,
             peer_roster=None,
-            mailbox=Mailbox(get_agent_registry(), owner),
+            mailbox=Mailbox(
+                get_agent_registry(),
+                address,
+                take=_skill_inbox(address),
+                wait_input=get_nested_wait_input(),
+            ),
             unwired={
-                "questions": _AS_BEFORE,
+                **(
+                    {"questions": "레지스트리가 없는 세션 — 물을 곳이 없다"}
+                    if agent_registry is None
+                    else {}
+                ),
                 "mcp_manager": _AS_BEFORE,
                 "message_handler": _AS_BEFORE,
                 **_hook_unwired(),
@@ -256,15 +292,21 @@ class SkillLoop(LoopKind):
 
     # ── 엔진이 묻는 것 (v10.88.0) ──
     def intake(self) -> list[dict]:
-        # D1: 스킬은 호출자(main)의 레지스트리 메일을 흡수하지 않는다 — 스킬엔 `reply` 가
-        # 없고 빚이 main 이름으로 적혔다. 그 메일은 스킬이 끝난 뒤 main 의 다음 턴이 받는다.
-        return []
+        # D1: 스킬은 호출자(main)의 메일을 흡수하지 않는다 — 스킬엔 `reply` 가 없고 빚이 main 이름으로 적혔다. 그
+        # 메일은 스킬이 끝난 뒤 main 의 다음 턴이 받는다. 6b: 자기 주소의 상자(사람의 답·닫힘)만 읽는다
+        return list(self.ports.mailbox.take() or [])
+
+    def release(self) -> str:
+        """스킬 런이 끝나면 그 런이 건 열린 질문은 닫힌다 — 답을 받을 쪽이 없다(죽은 에이전트와 같은 규칙, 6b)."""
+        registry = self.caller.agent_registry
+        if registry is not None:
+            registry.close_questions_of(self.address)
+        return ""
 
     def prompt_profile(self) -> PromptProfile:
         return PromptProfile(
             role=self.agent_role,  # 호출자의 역할 (D3)
             peer_section="",
-            ask_blocking=True,
             reports_to_caller=True,
         )
 

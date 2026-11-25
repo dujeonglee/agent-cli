@@ -162,12 +162,10 @@ class LLMCaller:
         if getattr(self, "_function_schemas_cache", None) is None:
             from agent_cli.prompts.system_prompt import function_schemas_for
 
-            profile = self.cfg.kind.prompt_profile()
-            nonblocking_ask = not profile.ask_blocking
             self._function_schemas_cache = function_schemas_for(
                 self.cfg.tools_list,
                 self.cfg.dialect,
-                nonblocking_ask=nonblocking_ask,
+                ask_guide=self.cfg.kind.ports.ask_guide(),
             )
         return self._function_schemas_cache
 

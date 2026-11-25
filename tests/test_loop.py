@@ -1934,16 +1934,17 @@ class TestToolPolicyDeclarations:
         tools_list = active_tools or list(TOOLS.keys())
         if depth >= max_depth:
             tools_list = [t for t in tools_list if t not in ("run_skill", "agent")]
-        if not ctx and "ask" in tools_list:
+        # 6b: ``ask`` 는 질문 포트가 있는 루프에만(종전엔 ctx 가 있는 루프)
+        if questions is None and "ask" in tools_list:
             tools_list = [t for t in tools_list if t != "ask"]
-        if message_handler is not None:
-            if "message" not in tools_list:
-                tools_list = [*tools_list, "message"]
-        else:
-            tools_list = [t for t in tools_list if t != "message"]
-        # ``reply`` 는 v10.56.0(장부 P3)부터 ``answer`` 와 같은 선언 — 질문 포트가
-        # 있는 루프(main·상주)에 붙는다. 빚을 갚는 도구가 루프와 무관하게 하나다.
-        for name in ("reply", "answer"):
+        # ``reply`` 는 ``message`` 와 짝(6b — 종전엔 질문 포트) — 메시지를 주고받는 루프에 강제 탑재
+        for name in ("message", "reply"):
+            if message_handler is not None:
+                if name not in tools_list:
+                    tools_list = [*tools_list, name]
+            else:
+                tools_list = [t for t in tools_list if t != name]
+        for name in ("answer",):
             if questions is not None:
                 if name not in tools_list:
                     tools_list = [*tools_list, name]
@@ -2030,11 +2031,13 @@ class TestToolPolicyDeclarations:
                 "requires_handler": "skills",
             },
             "agent": {"depth_gated": True},
-            "ask": {"requires_handler": "ctx"},
+            # 6b: 질문 포트가 있는 루프(main·에이전트·스킬 런)에만
+            "ask": {"requires_handler": "questions"},
             "message": {"requires_handler": "message_handler", "force_mount": True},
             # ``message`` 의 짝 (v9.21.0) — 요청자에게 빚진 회신을 갚는다. 같은 선언.
-            # v10.56.0: main 에도 붙는다 — 빚을 갚는 도구는 하나(장부 P3)
-            "reply": {"requires_handler": "questions", "force_mount": True},
+            # v10.56.0: main 에도 붙는다 — 빚을 갚는 도구는 하나(장부 P3). 6b: `message` 와 같은 자원 — 질문
+            # 포트만 가진 스킬 런에는 갚을 빚이 없다
+            "reply": {"requires_handler": "message_handler", "force_mount": True},
             # 비동기 질문의 짝 — ``message`` 와 같은 선언(포트 없는 루프에선
             # 목록에서 제거, 있으면 강제 탑재). docs/agent-ask/DESIGN.md §3.1
             "answer": {"requires_handler": "questions", "force_mount": True},
@@ -2258,37 +2261,27 @@ class TestRunLoopHeadlessMode:
 
 
 class TestAskToolAvailability:
-    """Verify ask tool inclusion/exclusion based on ctx presence."""
+    """`ask` 는 질문 포트가 있는 루프에만 붙는다(6b — 종전엔 ctx 가 있는 루프)."""
 
-    def test_ask_available_with_ctx(self, caps, tmp_path):
-        """ctx present → ask included."""
+    def _loop(self, caps, tmp_path, questions):
         from tests.loopkit import make_loop
 
         ctx = MagicMock()
         ctx.session_dir = tmp_path
-        loop = make_loop(
-            ports=TEST_PORTS,
+        return make_loop(
+            ports=make_ports(questions=questions),
             query="Q",
             provider=MagicMock(),
             capabilities=caps,
             model="m",
             ctx=ctx,
         )
-        assert "ask" in loop.tools_list
 
-    def test_ask_hidden_without_ctx(self, caps):
-        """ctx=None → ask removed (non-interactive mode)."""
-        from tests.loopkit import make_loop
+    def test_ask_available_with_a_question_port(self, caps, tmp_path):
+        assert "ask" in self._loop(caps, tmp_path, object()).tools_list
 
-        loop = make_loop(
-            ports=TEST_PORTS,
-            query="Q",
-            provider=MagicMock(),
-            capabilities=caps,
-            model="m",
-            ctx=None,
-        )
-        assert "ask" not in loop.tools_list
+    def test_ask_hidden_without_a_question_port(self, caps, tmp_path):
+        assert "ask" not in self._loop(caps, tmp_path, None).tools_list
 
 
 class TestGracefulInterrupt:
@@ -2820,7 +2813,7 @@ class TestAskTool:
         self, caps, monkeypatch, tmp_path
     ):
         """The ask tool must emit ``render_step("action", ...)`` before
-        invoking ``_handle_ask``. Without it, the web renderer's
+        posting the question. Without it, the web renderer's
         streaming-text card (raw JSON) never gets replaced with a
         structured ``assistant_turn`` card — and the next turn's
         streaming chunks visually append to it. Same applies to
@@ -2865,74 +2858,6 @@ class TestAskTool:
         thought_idx = steps.index(("thought", None))
         action_idx = steps.index(("action", "ask"))
         assert thought_idx < action_idx
-
-    def test_ask_passes_question_block_as_context_to_renderer(self, monkeypatch):
-        """The ask tool builds a plain-text question block and forwards
-        it to ``prompt_user`` as ``context``. Out-of-band renderers
-        (web) read this to attach the question to their input form so
-        the user can see what they're answering without scrolling
-        back. CLI renderers ignore ``context`` because the colored
-        announcement above already covers them."""
-        from agent_cli.loop.dispatch import _handle_ask
-
-        captured: dict = {}
-
-        class RecordingRenderer:
-            _prefix = ""
-
-            def can_prompt(self):
-                return True
-
-            def announce_ask(self, questions, *, prefix=""):
-                # No-op stub — the announcement is what CLI renderers
-                # print before reading stdin; the test only cares
-                # about the prompt_user context arg.
-                pass
-
-            def prompt_user(self, prompt, **kwargs):
-                captured["prompt"] = prompt
-                captured["kwargs"] = kwargs
-                return "the answer"
-
-        monkeypatch.setattr(
-            "agent_cli.render.get_renderer", lambda: RecordingRenderer()
-        )
-
-        result = _handle_ask(["What's your name?", "What's your color?"])
-        assert "context" in captured["kwargs"]
-        ctx = captured["kwargs"]["context"]
-        assert ctx.startswith("Agent asks:")
-        assert "1. What's your name?" in ctx
-        assert "2. What's your color?" in ctx
-        assert "the answer" in result
-
-    def test_ask_context_single_question_drops_numbering(self, monkeypatch):
-        """Single-question shape mirrors the CLI's bullet form — no
-        ``1.`` prefix — so the displayed question reads naturally."""
-        from agent_cli.loop.dispatch import _handle_ask
-
-        captured: dict = {}
-
-        class RecordingRenderer:
-            _prefix = ""
-
-            def can_prompt(self):
-                return True
-
-            def announce_ask(self, questions, *, prefix=""):
-                pass
-
-            def prompt_user(self, prompt, **kwargs):
-                captured["kwargs"] = kwargs
-                return "ok"
-
-        monkeypatch.setattr(
-            "agent_cli.render.get_renderer", lambda: RecordingRenderer()
-        )
-        _handle_ask(["Should I continue?"])
-        ctx = captured["kwargs"]["context"]
-        assert "Should I continue?" in ctx
-        assert "1. Should I continue?" not in ctx
 
     def test_ask_single_question(self, caps, monkeypatch, tmp_path):
         """ask tool with single question in array."""
@@ -3320,35 +3245,6 @@ class TestContextContinuity:
             m.get("content", "") for m in msgs if m["role"] == "assistant"
         ]
         assert any("final answer" in c for c in assistant_msgs)
-
-    def test_ask_response_in_ctx(self, caps, tmp_path, monkeypatch):
-        """ask tool response is saved to ctx."""
-        from agent_cli.context.manager import ContextManager
-
-        provider = _make_provider(
-            json.dumps({"action": "ask", "questions": ["What file?"]}),
-            _complete("done"),
-        )
-        ctx = ContextManager(session_dir=tmp_path)
-        monkeypatch.setattr("builtins.input", lambda _: "test.py")
-        # No TTY under pytest → force the prompt capability so _handle_ask
-        # actually reads instead of substituting "(no response)".
-        monkeypatch.setattr(
-            "agent_cli.render.minimal.MinimalRenderer.can_prompt",
-            lambda self: True,
-        )
-        run_loop(
-            ports=TEST_PORTS,
-            query="Help",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            ctx=ctx,
-        )
-
-        msgs = ctx.get_messages()
-        all_content = " ".join(m.get("content", "") for m in msgs)
-        assert "test.py" in all_content  # user response saved
 
 
 class TestAppendObservationHelpers:

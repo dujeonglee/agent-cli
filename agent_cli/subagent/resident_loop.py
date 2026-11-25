@@ -32,7 +32,7 @@ from agent_cli.main_input import CLOSED
 from agent_cli.session.records import record_restart
 from agent_cli.session_slots import get_agent_registry
 from agent_cli.subagent import agent_stop
-from agent_cli.subagent.agent_mail import is_human_addr
+from agent_cli.subagent.agent_mail import is_human_addr, is_human_request
 from agent_cli.tools.result import ToolResult
 from agent_cli.wake import Mailbox
 
@@ -138,7 +138,6 @@ class ResidentLoop(LoopKind):
         return PromptProfile(
             role=self.tm.role_prompt,
             peer_section=self.peer_agents_section,
-            ask_blocking=False,  # 질문 포트로 비차단
             reports_to_caller=True,
         )
 
@@ -203,7 +202,7 @@ class ResidentLoop(LoopKind):
         tm.current_author = item.get("author", "main")
         tm.current_item = item["id"]
         author = item.get("author", "main")
-        human = is_human_addr(author)
+        human = is_human_request(item)
         expects = item.get("expects_reply", True)
         if expects:
             # 요청 항목은 빚이다 (v9.21.0 — `complete` 는 국소, 배달은 `reply`/`message` 뿐).

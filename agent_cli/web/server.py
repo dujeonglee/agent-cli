@@ -3,16 +3,18 @@
 Endpoints (not exhaustive — see the route decorators):
   - ``GET  /api/health`` — liveness probe (no auth)
   - ``GET  /api/stream`` — SSE event stream (auth via ``token`` query)
-  - ``POST /api/input``  — submit chat message / ask answer / confirm reply
+  - ``POST /api/input``  — submit chat message / confirm reply
     (``chat`` may carry ``images: [path]`` — workspace images, v10.60.0)
   - ``POST /api/images/upload?name=`` — stage one image under
     ``.agent-cli/tmp/uploads/`` and return its ``ImageRef`` (v10.60.0)
   - ``GET  /api/images/support`` — ``{supported: true|false|null}`` without probing
   - ``GET  /api/workspace/file?path=`` — serve one workspace **image** (thumbnails)
-  - ``POST /api/abort``  — interrupt the current ``prompt_user`` / ``confirm``
+  - ``POST /api/abort``  — interrupt the pending ``confirm``
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn; body ``{"scope"}`` (v10.142.0):
     ``"main"`` (default) · ``"agents"`` (every working agent's run) · ``"all"`` (both)
   - ``POST /api/agent/{key}/stop`` — ■ stop that agent's run (a run agent comes down, v10.142.0)
+  - ``POST /api/questions/{qid}/answer`` · ``POST /api/questions/{qid}/close`` — answer or close (without an answer)
+    one open question to the person (6b)
   - ``POST /api/jobs/stop`` — a viewer stops one background job (v10.121.0)
   - ``GET  /api/changes`` · ``GET /api/changes/diff?path=`` · ``POST /api/changes/clear``
     · ``POST /api/changes/undo`` · ``POST /api/changes/notices/dismiss`` — the Changes
@@ -710,8 +712,8 @@ def create_app(server: WebServer) -> FastAPI:
         """Unauthenticated liveness probe.
 
         ``busy`` mirrors the worker state (True while the agent is processing a
-        turn / generating a response) and ``awaiting_input`` is True while an
-        ask/confirm prompt waits for a reply — so a front controller (e.g. a
+        turn / generating a response) and ``awaiting_input`` is True while a
+        confirm waits for a reply or a question to the person is open (6b) — so a front controller (e.g. a
         board that spawns instances) can show "working" vs "needs your answer"
         vs "idle" without subscribing to the SSE stream. ``viewers`` is the live
         browser-subscriber count, so the controller can tell 'someone is
@@ -719,7 +721,7 @@ def create_app(server: WebServer) -> FastAPI:
         return {
             "status": "ok",
             "busy": server.renderer.worker_is_busy(),
-            "awaiting_input": server.renderer.is_awaiting_input(),
+            "awaiting_input": server.renderer.needs_answer(),
             "viewers": server.renderer.hub.viewer_count(),
             # v9.24.0: 문법 제약이 실리는 세션인가 (board 📐 배지, status.json 동형) —
             # 노브 표의 같은 한 장(v10.45.0: 종전 `grammar_state` 중복 계산 삭제)
@@ -1436,11 +1438,9 @@ def create_app(server: WebServer) -> FastAPI:
     @app.post("/api/agent/{key}/input")
     async def agent_input(key: str, request: Request):
         """teammate 대화 창의 인간 개입 (P4, D8) — 해당 teammate 의 inbox 로
-        직접 전송 — 언제나 **새 일감**이다. 열린 질문의 답은 ``answer_id``
-        로만 들어온다(아래). 이 문답의 회신은 main 컨텍스트에 배달되지
-        않는다 (창에만 — 레지스트리의 화자 규칙).
-
-        ``answer_id`` 가 실려 오면 새 일감이 아니라 **그 질문의 답**이다."""
+        직접 전송 — 언제나 **새 일감**이다. 열린 질문의 답·닫기는 질문의 길
+        (``/api/questions/<q-N>/…``, 6b)로만 들어온다. 이 문답의 회신은 main
+        컨텍스트에 배달되지 않는다 (창에만 — 레지스트리의 화자 규칙)."""
         registry = server.agent_registry
         if registry is None:
             raise HTTPException(status_code=503, detail="agent registry not ready")
@@ -1448,30 +1448,39 @@ def create_app(server: WebServer) -> FastAPI:
         content = body.get("content", "")
         if not isinstance(content, str):
             raise HTTPException(status_code=400, detail="content must be a string")
-        # ``images`` (v10.61.0): main 과 같은 모양(`image_refs`) — 새 일감에만
-        # 실린다(답은 글). 이미지만 있는 일감도 된다(v10.147.2 — 그 전엔 레지스트리가
+        # ``images`` (v10.61.0): main 과 같은 모양(`image_refs`). 이미지만 있는 일감도 된다(v10.147.2 — 그 전엔 레지스트리가
         # "empty message" 로 거절해 404 였다).
         images = server.image_refs(body.get("images") or [])
         if is_blank_words(content, images):
             raise HTTPException(status_code=400, detail=EMPTY_WORDS)
         author = human_addr(server.renderer.hub.nickname_for(body.get("conn_id")))
-        answer_id = body.get("answer_id")
-        if answer_id:
-            if images:
-                raise HTTPException(
-                    status_code=400, detail="an answer cannot carry images"
-                )
-            # ❓ 트레이의 답 — 새 일감이 아니라 **특정 질문**에 짝짓는다
-            # (비동기 ask/answer, docs/agent-ask/DESIGN.md §3.6). 주소가
-            # 사람인 질문만 트레이에 뜨고, `user*` 는 하나의 주체라 어느
-            # 뷰어가 답하든 받는다 — 먼저 답한 쪽이 claim 한다.
-            error = registry.answer_question(str(answer_id), content, by=author)
-            if error:
-                raise HTTPException(status_code=409, detail=error)
-            return JSONResponse({"accepted": True, "answered": answer_id})
         error = registry.request(key, content, author=author, images=images or None)
         if error:
             raise HTTPException(status_code=404, detail=error)
+        return JSONResponse({"accepted": True})
+
+    @app.post("/api/questions/{qid}/{action}")
+    async def question_action(qid: str, action: str, request: Request):
+        """❓ 트레이의 질문 하나 (6b) — ``answer`` (본문 ``content``) 또는 ``close`` (답 없이 닫기). 질문 번호가 묻는 쪽을
+        정한다. `user*` 는 하나의 주체라 어느 뷰어든 — 먼저 한 쪽이 닫는다(뒤의 것은 409)."""
+        registry = server.agent_registry
+        if registry is None:
+            raise HTTPException(status_code=503, detail="agent registry not ready")
+        body = await _json_object(request)
+        author = human_addr(server.renderer.hub.nickname_for(body.get("conn_id")))
+        if action == "answer":
+            content = body.get("content", "")
+            if not isinstance(content, str):
+                raise HTTPException(status_code=400, detail="content must be a string")
+            if not content.strip():
+                raise HTTPException(status_code=400, detail=EMPTY_WORDS)
+            error = registry.answer_question(qid, content, by=author)
+        elif action == "close":
+            error = registry.close_question(qid, by=author)
+        else:
+            raise HTTPException(status_code=404, detail=f"unknown action '{action}'")
+        if error:
+            raise HTTPException(status_code=409, detail=error)
         return JSONResponse({"accepted": True})
 
     @app.post("/api/agent/{key}/resume")
@@ -1519,7 +1528,6 @@ def create_app(server: WebServer) -> FastAPI:
 
         Body shape::
 
-            {"kind": "prompt", "content": "..."}
             {"kind": "confirm", "key": "y", "comment": "..."}
             {"kind": "chat", "content": "...", "images": ["path", ...]}
 
@@ -1551,10 +1559,7 @@ def create_app(server: WebServer) -> FastAPI:
             ) as e:  # 글도 이미지도 없다 — 말이 아니다(에이전트 창과 같은 글)
                 raise HTTPException(status_code=400, detail=str(e)) from None
             return JSONResponse({"accepted": True})
-        if (
-            kind in ("prompt", "confirm")
-            and server.renderer.awaiting_input_kind() != kind
-        ):
+        if kind == "confirm" and server.renderer.awaiting_input_kind() != kind:
             # Gate: accept an answer only while a wait of the SAME kind is
             # outstanding. A keyless answer (flushed stale clicks from a
             # connection-starved browser, the loser of a two-viewers race)
@@ -1565,26 +1570,8 @@ def create_app(server: WebServer) -> FastAPI:
                 status_code=409,
                 detail=f"no pending {kind} — already answered or aborted",
             )
-        if kind == "prompt":
-            # Echo prompt answers so the UI shows the user's reply
-            # immediately. Semantic note: the LLM gets the answer via
-            # the ask-tool's observation return (Q/A pair), NOT as a
-            # standalone user message — but for the user a silent
-            # textarea clear feels broken. The user_message card is a
-            # UI-only echo; doesn't change LLM context.
-            content = body.get("content", "")
-            if isinstance(content, str) and content:
-                # ``author`` puts the answer on the team view's user lane.
-                # UI-echo only (not in history), so it never feeds the
-                # ``answers`` attribution — that is loop-owned.
-                nick = server.renderer.hub.nickname_for(body.get("conn_id"))
-                server.renderer.push_user_message(
-                    content, author="" if nick == "?" else nick
-                )
-            server.renderer.push_user_input(kind, body)
-            return JSONResponse({"accepted": True})
         if kind == "confirm":
-            server.renderer.push_user_input(kind, body)
+            server.renderer.push_confirm(body)
             return JSONResponse({"accepted": True})
         raise HTTPException(status_code=400, detail=f"unknown kind '{kind}'")
 
@@ -1607,7 +1594,7 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.post("/api/abort")
     async def abort():
-        """Interrupt the current ``prompt_user`` / ``confirm`` wait."""
+        """Interrupt the pending ``confirm`` wait."""
         server.renderer.push_abort()
         return JSONResponse({"accepted": True})
 

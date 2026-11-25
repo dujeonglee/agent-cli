@@ -893,67 +893,23 @@ class MinimalRenderer(Renderer):
 
     # ── User input ──────────────────────────────────
 
-    def prompt_user(
-        self,
-        prompt: str,
-        *,
-        default: str = "",
-        multiline: bool = True,
-        continuation: str = "... ",
-        context: str = "",
-    ) -> str:
-        """CLI implementation — readline + paste detection for multi-line,
-        single ``input()`` call for one-line prompts.
+    def prompt_user(self, prompt: str, *, default: str = "") -> str:
+        """한 줄 읽기 — 부팅 마법사(방언·모델 능력)만 쓴다. ``EOFError`` /
+        ``KeyboardInterrupt`` 는 부르는 쪽으로 올린다. 빈 입력이면 ``default``. 디코딩이 깨진 붙여 넣기는 빈 입력으로.
+        읽기는 ``_guarded_read`` 를 지난다 — 다른 프롬프트(확인 대화)와 차례를 지키고, 떠 있는 Live 패널을 잠시 멈춘다."""
 
-        ``EOFError`` / ``KeyboardInterrupt`` propagate to the caller —
-        different consumers want different policy (the setup wizard
-        aborts back to caller, the ask tool substitutes
-        ``"(no response)"``), so the renderer doesn't impose one. Empty
-        input → ``default`` substitution.
-
-        Decode errors get swallowed by ``read_rich_input`` (one-shot
-        warning + empty) so the user can retype without aborting.
-
-        ``context`` is ignored — callers that announce pre-input text
-        (e.g. ``_handle_ask``'s coloured question block) print it
-        directly via ``console.print`` so Rich markup survives.
-        """
-        del context  # CLI prints announcements separately for color.
-        # Reads go through ``_guarded_read`` → serialized against other
-        # prompts (confirm / concurrent delegate asks) and wrapped in
-        # ``_prompt_display_guard`` so an active Live panel doesn't paint
-        # over the prompt. EOF / KbInt propagate (see docstring). The
-        # provenance header (who/why) prints inside the guard so it lands
-        # after the Live panel is paused.
-        if multiline:
-            from agent_cli.input_history import read_rich_input
-
-            def _read():
-                self._emit_prompt_meta_header(include_action=False)
-                return read_rich_input(prompt, continuation=continuation)
-
-            value = self._guarded_read(_read).strip()
-        else:
-
-            def _read():
-                self._emit_prompt_meta_header(include_action=False)
-                return input(prompt)
-
-            try:
-                value = self._guarded_read(_read).strip()
-            except UnicodeDecodeError:
-                # Mirror read_rich_input's behaviour: drop the broken
-                # paste and let the caller treat it as no input. EOF /
-                # KbInt deliberately not caught — see method docstring.
-                value = ""
+        try:
+            value = self._guarded_read(lambda: input(prompt)).strip()
+        except UnicodeDecodeError:
+            value = ""
         return value if value else default
 
-    def _emit_prompt_meta_header(self, *, include_action: bool) -> None:
-        """Print the who/why header for a delegate-originated prompt (no-op
+    def _emit_prompt_meta_header(self) -> None:
+        """Print the who/why header for a delegate-originated confirm (no-op
         for the main agent or when there's nothing to show). ``markup=False``
         so a bracketed agent label like ``[code-analyst]`` isn't parsed as Rich
         markup."""
-        header = self._format_prompt_meta(include_action=include_action)
+        header = self._format_prompt_meta()
         if header:
             self.con.print(header, markup=False, highlight=False)
 
@@ -1037,7 +993,7 @@ class MinimalRenderer(Renderer):
         """
 
         def _read():
-            self._emit_prompt_meta_header(include_action=True)
+            self._emit_prompt_meta_header()
             if command is not None:
                 self.con.print(
                     self._danger_command_text(command, danger_spans),
@@ -1162,46 +1118,26 @@ class MinimalRenderer(Renderer):
             return
         from agent_cli.agent_icon import agent_display_name, agent_icon
 
-        base_icon = agent_icon(key)
-        icon = (
-            "❓"
-            if direction == "question"
-            else (base_icon if success else base_icon + "✗")
-        )
         # 이름을 앞에, 주소(key)를 뒤에 — 웹 채널 칩과 같은 배치. 터미널엔
         # 흐리게 할 자리가 없으니 괄호로 눌러 둔다. v9.9.0.
-        # 질문은 번호와 답하는 법을 단다(6c) — 터미널의 답은 그 번호를 적은 `/answer` 하나다
-        number = f" {item}" if direction == "question" and item else ""
+        label = f"{agent_display_name(key, profile, instance_name)} ({key})"
+        if direction == "question":
+            self.question_line(label, item, text, to=to)
+            return
+        base_icon = agent_icon(key)
+        icon = base_icon if success else base_icon + "✗"
+        self.con.print(f"\n{icon} [{label} → {to}]", style="bold cyan", markup=False)
+        self.con.print(text, highlight=False, markup=False)
+
+    def question_line(
+        self, asker: str, qid: str, text: str, *, to: str = "user"
+    ) -> None:
+        """사람에게 건 질문 한 줄 — 번호와 답·닫는 법을 단다(6c·6b). 터미널의 답은 그 번호를 적은 `/answer`,
+        닫기는 `/close` 하나다. 에이전트의 질문(대화 창 줄)과 main 의 질문이 같은 모양이다."""
+        self.con.print(f"\n❓ [{asker} → {to}] {qid}", style="bold cyan", markup=False)
+        self.con.print(text, highlight=False, markup=False)
         self.con.print(
-            f"\n{icon} [{agent_display_name(key, profile, instance_name)} ({key}) → {to}]{number}",
-            style="bold cyan",
+            f"  answer with: /answer {qid} <text> · close with: /close {qid}",
+            style=_MUTED,
             markup=False,
         )
-        self.con.print(text, highlight=False, markup=False)
-        if number:
-            self.con.print(
-                f"  answer with: /answer {item} <text>", style=_MUTED, markup=False
-            )
-
-    # ── Ask-tool announcement ────────────────────────
-
-    def announce_ask(self, questions: list[str], *, prefix: str = "") -> None:
-        """Print the ``Agent asks:`` header + each question in colour.
-
-        Mirrors the plain-text version that ``loop.py`` passes to
-        ``prompt_user(context=...)`` for web surfaces; the CLI needs
-        the spelled-out version because terminals don't echo the
-        prompt context back to the user.
-        """
-        # Local import to keep `C` palette resolution lazy — the
-        # render/__init__ module sets up `_renderer` at import time
-        # and we don't want a hard circular dependency.
-        from agent_cli.render import C
-
-        accent = C["accent"]
-        self.con.print(f"{prefix}\n{prefix}[{accent}]Agent asks:[/]")
-        if len(questions) > 1:
-            for i, q in enumerate(questions, 1):
-                self.con.print(f"{prefix}  {i}. {q}")
-        else:
-            self.con.print(f"{prefix}  {questions[0]}")

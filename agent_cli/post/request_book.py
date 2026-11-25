@@ -30,6 +30,7 @@ How = Literal[
     "completed",
     "run_ended",
     "user_answered",
+    "user_closed",
     "undeliverable",
     "died",
 ]
@@ -51,7 +52,7 @@ CLOSES: dict[tuple[RowKind, State], frozenset[str]] = {
     ),
     ("u", "picked"): frozenset({"completed", "run_ended", "dropped"}),
     ("n", "picked"): frozenset({"completed", "run_ended", "dropped"}),
-    ("q", "picked"): frozenset({"user_answered", "undeliverable"}),
+    ("q", "picked"): frozenset({"user_answered", "user_closed", "undeliverable"}),
 }
 
 #: 런 안에서 닫는 방법 — 닫힌 줄의 ``closed_in_run`` 이 비면 안 된다(불변식 I5)

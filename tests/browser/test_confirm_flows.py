@@ -85,23 +85,6 @@ class TestDangerHighlight:
         assert page.locator(".ask-main .confirm-cmd").count() == 0
 
 
-class TestAnswering:
-    def test_ask_badge_and_answer_roundtrip(self, stack, page):
-        # 3b: main ask 는 글로벌 트레이 항목(.ask-main)으로 뜨고, 인라인
-        # 답변창에 입력·Enter → 해결 후 항목이 트레이에서 사라진다.
-        results: list = []
-        stack.start_ask(results, question="어떤 언어를 쓰시나요?")
-        page.goto(stack.url)
-        page.wait_for_selector(".ask-main", timeout=8000)
-        assert "어떤 언어" in page.inner_text(".ask-main")
-        page.fill(".ask-main .ask-answer", "Python 이요")
-        page.press(".ask-main .ask-answer", "Enter")
-        assert _wait(lambda: bool(results))
-        assert results[0] == "Python 이요"
-        # 해결 후 main ask 항목이 트레이에서 접힌다
-        assert _wait(lambda: page.locator(".ask-main").count() == 0)
-
-
 class TestReconnectReplay:
     def test_pending_confirm_replays_to_late_viewer(self, stack, browser):
         """뷰어 0명일 때 시작된 confirm(v7.8.0 부재 중 대기)이 늦게 접속한

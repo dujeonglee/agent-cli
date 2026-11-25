@@ -477,7 +477,7 @@ class TestConfineWaitsForLateViewer:
         kinds = [d.get("kind") for ev, d in snapshot if ev == "input_required"]
         assert "confirm" in kinds
 
-        r.push_user_input("confirm", {"key": "n", "comment": ""})
+        r.push_confirm({"key": "n", "comment": ""})
         t.join(timeout=3.0)
         assert results and results[0] is not None
         assert "denied" in results[0]

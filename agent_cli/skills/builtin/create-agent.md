@@ -123,8 +123,8 @@ file later changes).
 ## Task
 
 1. The first word of $ARGUMENTS is the profile name (`[a-zA-Z0-9_-]+`). The rest is the description. If $ARGUMENTS is empty, ask the user.
-2. Bundle all clarifying questions into one `ask` call (use the `questions` array).
-   Do not issue sequential `ask` calls — ask everything at once:
+2. Ask each clarifying question with `ask` (one question per call), then `wait`
+   for the answers:
    - What role should this agent have?
    - Is it mainly a one-shot task runner (run) or a persistent expert (spawn)?
    - What specific principles should it follow?

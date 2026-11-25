@@ -22,6 +22,7 @@ ALLOWED_USERS: frozenset[str] = frozenset(
     {
         "agent_cli/subagent/agents_live.py",  # 3a 그림자
         "agent_cli/subagent/agent_mail.py",  # 3a 그림자 — 옛 저장 모양 → 봉투
+        "agent_cli/subagent/questions.py",  # 질문 줄의 닫힘(`RowError`) — 6b ② 에 agents_live 에서 옮겨 옴
         "agent_cli/main_input.py",  # main 앞 사람의 입력 — main 상자의 봉투
         "agent_cli/wake.py",  # 도착한 봉투의 종류(`envelope.is_human_words`) — wait 의 문장(5b)
     }

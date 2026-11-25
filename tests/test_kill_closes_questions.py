@@ -30,8 +30,7 @@ def _registry(path, runner):
 
 
 def _open_qs(reg, key):
-    (row,) = [r for r in reg.roster_snapshot() if r["key"] == key]
-    return [q["id"] for q in row["open_questions"]]
+    return [q.id for q in reg.open_human_questions() if q.asker == key]
 
 
 def _busy_agent_with_a_question(tmp_path):
@@ -55,8 +54,7 @@ def test_kill_while_working_closes_its_questions_at_once(tmp_path, renderer):  #
         assert reg.get(key).state == "busy"  # 워커는 아직 런 안 — 그래도
         assert _open_qs(reg, key) == []  # 질문은 이미 닫혔다
         assert reg.open_human_questions() == []
-        last = renderer.named("agent_roster")[-1][1]["roster"]
-        assert [r["open_questions"] for r in last if r["key"] == key] == [[]]
+        assert renderer.named("open_questions")[-1][1]["questions"] == []
         assert "already-answered" in reg.answer_question(qid, "x", by="user:dj")
     finally:
         gate.set()
@@ -70,14 +68,16 @@ def test_answer_racing_the_kill_is_refused_and_closes_the_question(
     """답이 질문을 찾은 뒤·배달 전에 ✕ 가 끼어든다 — 배달이 거절되면 그 거절을 돌려주고 질문을 닫는다."""
     reg, key, qid, gate = _busy_agent_with_a_question(tmp_path)
     found, go = threading.Event(), threading.Event()
-    deliver = reg._deliver_answer
+    deliver = reg._deliver_to_asker
 
-    def deliver_after_the_kill(q, text):  # 질문을 찾은 뒤에 멈춘다 — ✕ 가 먼저 닿게
+    def deliver_after_the_kill(
+        q, body, **kw
+    ):  # 질문을 찾은 뒤에 멈춘다 — ✕ 가 먼저 닿게
         found.set()
         assert go.wait(5)
-        return deliver(q, text)
+        return deliver(q, body, **kw)
 
-    reg._deliver_answer = deliver_after_the_kill
+    reg._deliver_to_asker = deliver_after_the_kill
     out: dict = {}
     t = threading.Thread(
         target=lambda: out.setdefault(
@@ -117,8 +117,7 @@ def test_answer_to_a_stopping_asker_is_refused_even_without_the_kill(
         r = reg.answer_question(qid, "src/main.py", by="user:dj")
         assert r == f'the agent that asked "{qid}" has stopped — the question is closed'
         assert reg.open_human_questions() == []
-        last = renderer.named("agent_roster")[-1][1]["roster"]
-        assert [r["open_questions"] for r in last if r["key"] == key] == [[]]
+        assert renderer.named("open_questions")[-1][1]["questions"] == []
     finally:
         gate.set()
         reg.shutdown_all()

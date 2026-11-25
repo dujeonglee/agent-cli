@@ -31,7 +31,7 @@ def _wait(cond, timeout=8.0):
 
 
 def _row(key, *, profile, state, run, name=""):
-    """명단 한 줄 — `AgentInstance.snapshot` + `open_questions` 의 모양."""
+    """명단 한 줄 — `AgentInstance.snapshot` 의 모양."""
     return {
         "key": key,
         "profile": profile,
@@ -45,7 +45,6 @@ def _row(key, *, profile, state, run, name=""):
         "parent": "main",
         "task_id": f"r-{key[-3:]}" if run else "",
         "item": "",
-        "open_questions": [],
     }
 
 

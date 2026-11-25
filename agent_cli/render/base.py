@@ -270,10 +270,10 @@ class Renderer(ABC):
             "action": self._thread_action.get(tid, ""),
         }
 
-    def _format_prompt_meta(self, *, include_action: bool) -> str:
-        """One compact block naming the asking agent + its reasoning (and
-        action for confirm), or ``""`` when there's nothing to show. Used
-        by CLI renderers to print a header before the prompt.
+    def _format_prompt_meta(self) -> str:
+        """One compact block naming the asking agent + its reasoning and
+        action, or ``""`` when there's nothing to show. Used by CLI
+        renderers to print a header before a confirm.
 
         Gated on an agent label: the main agent already prints its
         thought/action inline right above the prompt, so a header would
@@ -287,27 +287,9 @@ class Renderer(ABC):
         if meta["reasoning"]:
             first = meta["reasoning"].split("\n", 1)[0]
             lines.append(f"  💭 {first}")
-        if include_action and meta["action"]:
+        if meta["action"]:
             lines.append(f"  ⚡ {meta['action']}")
         return "\n".join(lines)
-
-    # ── Ask-tool announcement ────────────────────────
-    #
-    # The ``ask`` tool's "Agent asks:" header + question list is a UI
-    # concern too. CLI surfaces need to print the questions before
-    # reading stdin (terminals don't echo the prompt context back).
-    # Web surfaces don't because ``prompt_user(context=...)`` already
-    # carries the question text into the form. The loop calls this
-    # before ``prompt_user``; the renderer decides what to draw.
-
-    def announce_ask(self, questions: list[str], *, prefix: str = "") -> None:
-        """Announce the ask-tool questions before the input prompt.
-
-        Default: no-op. WebRenderer keeps the default — the same text
-        already arrives at the UI via the ``context`` argument of
-        ``prompt_user``, so a duplicate emission would just be noise.
-        MinimalRenderer overrides to print a colored block.
-        """
 
     # ── Nested scope lifecycle ───────────────────────
     #
@@ -428,6 +410,15 @@ class Renderer(ABC):
     ) -> None:
         """teammate request 1건 처리 종료 — begin_agent_work 과 짝. ``stopped`` (v10.142.0): 사람(또는 모델)이
         멈춘 런 — 실패가 아니라 정지로 그린다. 기본 no-op."""
+
+    def open_questions(self, questions: list) -> None:
+        """사람에게 온 열린 질문 목록 (6b) — 질문이 열리고 닫힐 때마다 ``[{id, asker, text, ts}]``. web 은 sticky(❓
+        트레이의 출처), CLI 는 no-op."""
+
+    def question_line(
+        self, asker: str, qid: str, text: str, *, to: str = "user"
+    ) -> None:
+        """사람에게 건 질문 한 줄 (6b) — 터미널이 그린다(번호·답하는 법). web 은 no-op: 트레이와 `ask` 카드가 보인다."""
 
     def agent_roster(self, roster: list) -> None:
         """teammate 목록/상태 스냅샷 (P4) — spawn/kill/상태 전이마다 호출.
@@ -784,47 +775,6 @@ class Renderer(ABC):
         """Signal end of streaming. Default: no-op."""
 
     # ── User input ──────────────────────────────────
-
-    @abstractmethod
-    def prompt_user(
-        self,
-        prompt: str,
-        *,
-        default: str = "",
-        multiline: bool = True,
-        continuation: str = "... ",
-        context: str = "",
-    ) -> str:
-        """Read free-form text input from the user.
-
-        ``EOFError`` / ``KeyboardInterrupt`` propagate to the caller —
-        different consumers want different policy (the setup wizard
-        aborts, the ask tool substitutes a fallback). ``default`` covers
-        only the empty-submission case.
-
-        Args:
-            prompt: Prompt string shown to the user.
-            default: Returned when the user submits empty (whitespace-
-                only) input. Lets callers mirror the bracketed-default
-                pattern (``"  Size [4096]: "``) without inspecting
-                emptiness afterwards. NOT a fallback for EOF / Ctrl+C.
-            multiline: ``True`` enables multi-line submission (triple-
-                quote blocks, paste detection) — the ``ask`` tool answer
-                uses this. ``False`` reads a single line — setup wizard
-                prompts use this.
-            continuation: Prompt prefix shown for subsequent lines of
-                a multi-line block. Ignored when ``multiline=False``.
-            context: Optional pre-input announcement (e.g. the ``ask``
-                tool's question list) that the renderer may surface
-                alongside the input affordance. CLI renderers typically
-                ignore this — they already print such announcements
-                via ``console.print`` for color. Out-of-band UIs (web)
-                use it to attach the question to the input form so
-                the user doesn't have to scroll back.
-
-        Returns:
-            The stripped user input, or ``default`` on empty input.
-        """
 
     def can_prompt(self) -> bool:
         """Whether an interactive prompt — a ``confirm`` y/n/a or ``ask``'s

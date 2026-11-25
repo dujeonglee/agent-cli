@@ -89,7 +89,7 @@ def _iso_to_epoch(ts) -> float | None:
 
 
 # Sticky slots whose change flips a field of ``status.json``: ``worker_state``
-# → busy, ``input_required`` → awaiting_input, ``agent_roster`` → agents,
+# → busy, ``input_required``·``open_questions`` → awaiting_input (6b), ``agent_roster`` → agents,
 # ``open_items`` → open_items (v10.119.0), ``stuck`` → stuck (v10.120.0),
 # ``jobs`` → jobs (v10.121.0), ``waiting_in_place`` → waiting (v10.165.0), and every ``knob:<name>`` → knobs
 # (+ grammar). A set_sticky/clear_sticky on any of them republishes the status sidecar (viewers republish on
@@ -98,6 +98,7 @@ _STATUS_STICKY_KEYS = frozenset(
     {
         "worker_state",
         "input_required",
+        "open_questions",
         "agent_roster",
         "open_items",
         "stuck",
@@ -105,6 +106,12 @@ _STATUS_STICKY_KEYS = frozenset(
         "waiting_in_place",
     }
 )
+
+
+def _needs_answer(sticky: dict) -> bool:
+    """확인 대화가 떠 있다 or 사람에게 온 열린 질문이 있다 (6b 결정 G)."""
+    questions = sticky.get("open_questions")
+    return "input_required" in sticky or bool(questions and questions.get("questions"))
 
 
 def _flips_status(name: str) -> bool:
@@ -126,7 +133,7 @@ class WebRenderer(Renderer):
     """Renderer for ``agent-cli web``.
 
     Thread-safe: emit methods are called from the AgentLoop worker
-    thread; ``push_user_input`` (and ``hub.register``) are called from the
+    thread; ``push_confirm`` (and ``hub.register``) are called from the
     FastAPI request handlers (async, but the calls themselves are
     synchronous from the renderer's POV). The renderer's own state (scope
     maps, pending notes, prompt snapshots, …) is guarded by ``self._lock``;
@@ -736,6 +743,11 @@ class WebRenderer(Renderer):
         self.set_sticky(
             "agent_roster", "agent_roster", {"roster": roster}, position="prepend"
         )
+
+    def open_questions(self, questions: list) -> None:
+        """사람에게 온 열린 질문 sticky (6b) — ❓ 트레이의 출처 하나(main·에이전트·스킬 런). 라이브 브로드캐스트 +
+        재접속 snapshot 복원. 묻는 쪽의 이름표는 명단에서 푼다(명단이 바뀌면 트레이도 다시 그린다)."""
+        self.set_sticky("open_questions", "open_questions", {"questions": questions})
 
     def broadcast_knob(self, state: dict) -> None:
         """노브 상태 한 장(`knobs.web_state`)을 sticky ``knob:<name>`` 으로 — 칩
@@ -1815,21 +1827,23 @@ class WebRenderer(Renderer):
         return self._worker_busy
 
     def is_awaiting_input(self) -> bool:
-        """Whether an ``ask``/``confirm`` prompt is currently pending a user
-        reply (the ``input_required`` sticky is set between emit and resolve).
-        Lets a front controller flag "needs your answer" distinctly from a
-        busy-generating turn."""
+        """Whether a ``confirm`` is currently pending a user reply (the
+        ``input_required`` sticky is set between emit and resolve). The board's
+        "needs your answer" also counts open questions — `needs_answer`."""
         return self.hub.sticky_payload("input_required") is not None
 
+    def needs_answer(self) -> bool:
+        """보드의 "답변 필요" (status.json·health 의 ``awaiting_input``, 6b 결정 G) — 확인 대화가 떠 있거나 사람에게 온
+        열린 질문이 있다. 막는 물음만 보는 `is_awaiting_input`(Ctrl+C·확인 대화 게이트)과 다르다."""
+        return _needs_answer(dict(self.hub.sticky_items()))
+
     def awaiting_input_kind(self) -> str | None:
-        """Kind (``"prompt"`` | ``"confirm"``) of the pending input wait, or
+        """Kind (``"confirm"`` — the only blocking prompt) of the pending input wait, or
         ``None`` when nothing is waiting. Read by POST /api/input's gate: an
         answer with no matching wait is refused (409) instead of landing in
         ``_input_queue`` and auto-answering the NEXT prompt — the stale-click
         poisoning seen when a connection-starved browser flushes queued
-        confirm clicks, or when two viewers race to answer the same prompt.
-        The kind match also stops a confirm tuple from feeding a prompt wait
-        that expects a plain string (and vice versa)."""
+        confirm clicks, or when two viewers race to answer the same prompt."""
         payload = self.hub.sticky_payload("input_required")
         return payload.get("kind") if payload is not None else None
 
@@ -1919,7 +1933,7 @@ class WebRenderer(Renderer):
                 auditing = self._auditing
             sticky = dict(self.hub.sticky_items())
             viewers = self.hub.viewer_count()
-            awaiting = "input_required" in sticky
+            awaiting = _needs_answer(sticky)
             roster_p = sticky.get("agent_roster")
             roster = roster_p.get("roster") if roster_p is not None else None
             grammar_p = sticky.get("knob:grammar")
@@ -2241,57 +2255,16 @@ class WebRenderer(Renderer):
 
     # ─── Input methods (Renderer ABC) ───────────────
 
-    def prompt_user(
-        self,
-        prompt: str,
-        *,
-        default: str = "",
-        multiline: bool = True,
-        continuation: str = "... ",
-        context: str = "",
-    ) -> str:
-        """Push an ``input_required`` event and block the worker thread
-        until POST /api/input arrives with a chat / ask answer.
-
-        ``EOFError`` is raised if ``push_abort()`` was signalled while
-        waiting — gives the same propagation semantics as the CLI
-        renderer so interactive teardown logic stays consistent.
-
-        ``context`` (e.g. the ``ask`` tool's question block) is
-        forwarded as a separate field so the frontend can attach it
-        to the input affordance — the user doesn't have to scroll
-        back to the assistant card to see what they're answering.
-        """
-
-        meta = self.prompt_meta()
-        value = self._await_human(
-            "prompt",
-            {
-                "prompt": prompt,
-                "context": context,
-                # Who/why: which delegate agent is asking + its
-                # reasoning, so the user can attribute the prompt.
-                "agent": meta["agent"],
-                "reasoning": meta["reasoning"],
-            },
-        )
-        return value if value else default
-
     def can_prompt(self) -> bool:
         """Always ``True``: the web channel can ALWAYS deliver an answer —
-        if nobody is watching right now, the pending ``input_required``
-        sticky replays into the next client's snapshot, the status file
-        flags ``awaiting_input`` (agent-board shows "답변 필요"), and the
-        worker waits until someone shows up and answers (v7.8.0).
+        an open question stays in the ❓ tray and a pending confirm's
+        ``input_required`` sticky replays into the next client's snapshot,
+        the status file flags ``awaiting_input`` (agent-board shows "답변
+        필요"), and the answer comes whenever someone shows up.
 
         This is deliberately "can an answer EVER arrive", not "is someone
-        here NOW" (that's ``hub.has_live_connections``). The old now-based
-        gate made every ask/confirm fired while the user was viewing a
-        DIFFERENT board room collapse to "(no response)" in the same
-        millisecond — with resident multi-room use, "wait and surface on
-        the board" is the correct semantics. CLI renderers keep the
-        TTY-based gate: without a terminal an answer can truly never
-        arrive there."""
+        here NOW" (that's ``hub.has_live_connections``). Where no answer can
+        ever arrive (CLI renderers without a terminal), ``ask`` is refused."""
         return True
 
     def _note_auto_approved(self, text: str) -> None:
@@ -2366,25 +2339,18 @@ class WebRenderer(Renderer):
 
     # ─── External hooks ─────────────────────────────
 
-    def push_user_input(self, kind: str, payload: dict[str, Any]) -> None:
-        """Called by FastAPI POST /api/input handler.
-
-        ``kind``: ``"prompt"`` (chat / ask answer) or ``"confirm"``.
-        ``payload``: For prompt, ``{"content": "..."}``. For confirm,
-        ``{"key": "...", "comment": "..."}``.
-        """
-        if kind == "confirm":
-            # 답한 뷰어 (v10.120.0): 확인의 코멘트를 그 사람의 메시지로 넣을 때(Hint) 쓴다
-            nick = self.hub.nickname_for(payload.get("conn_id"))
-            self._input_queue.put(
-                (
-                    payload.get("key", ""),
-                    payload.get("comment", ""),
-                    "" if nick == "?" else nick,
-                )
+    def push_confirm(self, payload: dict[str, Any]) -> None:
+        """POST /api/input 의 확인 대화 답 — 막는 물음은 확인 대화뿐이다. ``payload``: ``{"key": "...", "comment": "...",
+        "conn_id": …}``."""
+        # 답한 뷰어 (v10.120.0): 확인의 코멘트를 그 사람의 메시지로 넣을 때(Hint) 쓴다
+        nick = self.hub.nickname_for(payload.get("conn_id"))
+        self._input_queue.put(
+            (
+                payload.get("key", ""),
+                payload.get("comment", ""),
+                "" if nick == "?" else nick,
             )
-        else:
-            self._input_queue.put(payload.get("content", ""))
+        )
 
     def push_user_message(
         self,

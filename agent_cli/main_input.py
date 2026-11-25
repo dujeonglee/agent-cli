@@ -120,6 +120,21 @@ class MainInput:
         self._changed()
         return self.item_of(env)
 
+    def take_command(self) -> dict | None:
+        """줄 선 사람의 말 가운데 처음 만나는 명령(들어올 때의 판정)을 꺼내 돌려준다, 없으면 None — 스킬 런이 제자리에서
+        기다리는 동안(6b) 그 앞의 보통의 말은 main 의 것이라 그대로 두고, 명령(`/answer`·`/close` 등)만 그 자리에서
+        라우팅하려고. main 의 제자리 대기는 `take_first_command`(맨 앞만 — 보통의 말이 main 을 깨운다)."""
+        first = next(
+            (e for e in self.post.words(MAIN) if e.payload.get(INPUT_IS_COMMAND)), None
+        )
+        if first is None:
+            return None
+        env = self.post.withdraw(MAIN, first.id)
+        if env is None:
+            return None  # 그 사이 취소됐다
+        self._changed()
+        return self.item_of(env)
+
     def cancel(self, conn_id: str | None, msg_id: str) -> bool:
         """대기 중인 말 하나를 뺀다 — 주인(``conn_id`` 일치)만. 이미 꺼낸 것은 못 뺀다. 뺐는가를 돌려준다."""
         mine = any(

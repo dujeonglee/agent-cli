@@ -414,7 +414,7 @@ export function ovOnAgentMsg(d) {
   }
   if (d.direction === "question") {
     // 대화 줄은 `→ ask` 도구 줄이 맡는다. 트레이는 **주소가 사람인 질문에만**
-    // 뜨고, 무엇을 띄울지는 roster 의 `open_questions` 가 정한다.
+    // 뜨고, 무엇을 띄울지는 열린 질문 목록(`open_questions`)이 정한다.
     ovRenderAskTray();
   }
 }

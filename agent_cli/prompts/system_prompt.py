@@ -205,7 +205,7 @@ def _build_agent_inline(dialect) -> str:
 # 두고 끝내는 것이 정상이고, 답이 오면 이어서 깨어난다. 잘못 고르는 비용도
 # 다르다: 여기서 진짜 위험은 군더더기 질문이 아니라 **묻지 않고 추측하는
 # 것**이다(막히지 않으니 물어도 비용이 거의 없다).
-_ASK_INLINE_RESIDENT = """\
+_ASK_INLINE = """\
 
   `ask` does not block you. It puts the question in the person's
   question tray and returns immediately; their answer arrives later as
@@ -214,20 +214,20 @@ _ASK_INLINE_RESIDENT = """\
     policy call, an ambiguous requirement, a destructive choice. Do
     not guess and paper over it with a TODO; guessing is the expensive
     mistake here, not asking.
-  - `ask` reaches only the person. For main or another agent, send a
-    `message` — it becomes a request they owe you a `reply` for.
+  - `ask` reaches only the person. For an agent, send a `message` — it
+    becomes a request they owe you a `reply` for.
   - Then keep going on everything that does not depend on the answer.
   - The answer may never come: a person is free not to answer, and nobody
     chases them.
-  - Do not re-ask the same question while it is open (a repeat in the
-    same run is folded into the original)."""
+  - Do not re-ask the same question while it is open (a repeat is folded
+    into the original)."""
 
 
 def _build_tool_inline_guides(
     active_tools: list[str],
     dialect,
     *,
-    nonblocking_ask: bool = False,
+    ask_guide: bool = False,
 ) -> dict[str, str]:
     """Build the tool→inline-guide map for the given active tools.
 
@@ -239,34 +239,16 @@ def _build_tool_inline_guides(
     guides = {
         "agent": _build_agent_inline(dialect),
     }
-    if nonblocking_ask:
-        guides["ask"] = _ASK_INLINE_RESIDENT
+    if ask_guide:
+        guides["ask"] = _ASK_INLINE
     return guides
-
-
-def description_overrides_for(
-    active_tools, *, nonblocking_ask: bool = False
-) -> dict[str, str]:
-    """루프별 도구 설명 교체 — ``## Available Tools`` 와 native 함수 스키마가
-    **같은** 설명을 싣도록 한 함수에서 나온다.
-
-    - 에이전트의 ``ask`` 는 막지 않는다 — 설명이 "WAIT for their reply"
-      라고 거짓말하면 모델이 그걸 믿고 추측으로 메운다.
-    (``agent`` 의 서브루프 축소판은 v10.141.0 에 지웠다 — 모든 루프가 같은 표면.)
-    """
-    overrides: dict[str, str] = {}
-    if nonblocking_ask and "ask" in active_tools:
-        from agent_cli.tools.virtual import AskTool
-
-        overrides["ask"] = AskTool.RESIDENT_DESCRIPTION
-    return overrides
 
 
 def function_schemas_for(
     active_tools: list[str],
     dialect,
     *,
-    nonblocking_ask: bool = False,
+    ask_guide: bool = False,
 ) -> list[dict]:
     """native_fc (v10.2.0): `## Available Tools` 와 같은 재료로 OpenAI 함수 스키마
     목록을 만든다 — 같은 도구 집합·같은 설명 오버라이드·같은 파라미터 오버라이드·
@@ -274,10 +256,7 @@ def function_schemas_for(
     싣는 것이 어긋나지 않게 한 함수에서 나온다."""
     from agent_cli.tools.registry import TOOLS, effective_tool_names, tool_view
 
-    overrides = description_overrides_for(active_tools, nonblocking_ask=nonblocking_ask)
-    guides = _build_tool_inline_guides(
-        active_tools, dialect, nonblocking_ask=nonblocking_ask
-    )
+    guides = _build_tool_inline_guides(active_tools, dialect, ask_guide=ask_guide)
     out: list[dict] = []
     for name in effective_tool_names(active_tools, dialect):
         if TOOLS.get(name) is None:
@@ -285,7 +264,6 @@ def function_schemas_for(
         # 프롬프트 절과 같은 판정 (v10.109.0) — 지연 도구는 한 줄 요약·뼈대·안내 없음.
         description, params, guide = tool_view(
             name,
-            description_overrides=overrides,
             inline_guides=guides,
         )
         guide = (guide or "").strip()
@@ -309,7 +287,7 @@ def tool_guide_text(
     active_tools: list[str],
     dialect,
     *,
-    nonblocking_ask: bool = False,
+    ask_guide: bool = False,
 ) -> str | None:
     """도구 하나의 **전문** — 이 루프의 ``## Available Tools`` 에 지연 없이 실렸을 블록
     그대로 (v10.109.0). `tool_help` 의 결과와 A5 자동 전문의 출처(루프가
@@ -321,11 +299,8 @@ def tool_guide_text(
     line, guide = render_tool_block(
         name,
         dialect=dialect,
-        description_overrides=description_overrides_for(
-            active_tools, nonblocking_ask=nonblocking_ask
-        ),
         inline_guides=_build_tool_inline_guides(
-            active_tools, dialect, nonblocking_ask=nonblocking_ask
+            active_tools, dialect, ask_guide=ask_guide
         ),
         full=True,
     )
@@ -336,20 +311,18 @@ def _build_tools_section(
     active_tools: list[str],
     dialect,
     *,
-    nonblocking_ask: bool = False,
+    ask_guide: bool = False,
 ) -> str:
     """Build Available Tools section with inline guides.
 
     Order comes from ``effective_tool_names`` — related tools together.
     """
-    overrides = description_overrides_for(active_tools, nonblocking_ask=nonblocking_ask)
     tool_block = get_tool_descriptions(
         active_tools,
         inline_guides=_build_tool_inline_guides(
-            active_tools, dialect, nonblocking_ask=nonblocking_ask
+            active_tools, dialect, ask_guide=ask_guide
         ),
         dialect=dialect,
-        description_overrides=overrides or None,
     )
     return f"## Available Tools\n{tool_block}"
 
@@ -524,7 +497,7 @@ def build_system_prompt_sections(
     depth: int = 0,
     max_depth: int = 0,
     peer_agents_section: str = "",
-    nonblocking_ask: bool = False,
+    ask_guide: bool = False,
 ) -> list[tuple[str, str]]:
     """Build the system prompt as an ordered list of ``(name, text)`` sections.
 
@@ -580,7 +553,7 @@ def build_system_prompt_sections(
                 _build_tools_section(
                     active_tools,
                     dialect,
-                    nonblocking_ask=nonblocking_ask,
+                    ask_guide=ask_guide,
                 ),
             )
         )

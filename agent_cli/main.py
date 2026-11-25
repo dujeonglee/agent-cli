@@ -16,7 +16,6 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
-from agent_cli.agent_icon import agent_display_name
 from agent_cli.command_table import (
     IMAGES_NOT_TAKEN,
     command_kind,
@@ -541,14 +540,16 @@ class _ConsoleSurface:
     def route(self, text: str, *, item: dict | None = None) -> bool:
         if text.startswith("/sh"):
             return False
-        # argv 질의였던 명령만 판정·결과 파일이 된다 — 그 말의 번호로 안다
+        # argv 질의였던 명령만 판정·결과 파일이 된다 — 그 말의 번호로 안다. 라우팅은 겹칠 수 있다: 질의였던 스킬이
+        # 묻고 기다리는 동안 친 명령이 그 안에서 라우팅된다(6b) — 끝나면 바깥 명령의 판정으로 돌려 놓는다
+        outer = self._routing_query
         self._routing_query = (
             bool(self.query_id) and (item or {}).get("id") == self.query_id
         )
         try:
             handled = self._dispatch(text, self._stop, item)
         finally:
-            self._routing_query = False
+            self._routing_query = outer
         if handled and (item or {}).get("images") and not command_takes_images(text):
             console.print(
                 IMAGES_NOT_TAKEN, style=C["error"], markup=False
@@ -985,6 +986,7 @@ def _dispatch_stop(message: str, output: DispatchOutput, agent_registry) -> None
 
 
 ANSWER_USAGE = "usage: /answer <q-N> <text>"
+CLOSE_USAGE = "usage: /close <q-N>"
 NO_OPEN_QUESTIONS = "no open questions"
 
 
@@ -994,22 +996,30 @@ def _dispatch_question(
     """``/questions`` — 열린 질문 목록, ``/answer <q-N> <글>`` — **그 번호의** 질문에 답한다(6c). 답은 웹 트레이와 같은
     함수(`AgentRegistry.answer_question`)로 간다 — 길은 하나, 입구가 둘이다. 번호가 없으면 사용법만 말한다: 질문이
     하나뿐이어도 짐작해 붙이지 않는다(답은 번호를 적은 명령이나 트레이로만 — 사용자 결정). 목록은 트레이와 같은
-    출처(명단 행의 ``open_questions``)를 읽고, 묻는 쪽은 질문 줄과 같은 이름으로 적는다."""
+    출처(레지스트리의 열린 질문)를 읽고, 묻는 쪽은 질문 줄과 같은 이름으로 적는다."""
     if agent_registry is None:
         output.agent_dispatch_result("(no agent registry in this mode)", False)
         return
     parts = message.split(maxsplit=2)
     if parts[0] == "/questions":
         lines = [
-            f"{q['id']}  {agent_display_name(row['key'], row['profile'], row['name'])}"
-            f" ({row['key']})  {q['text']}"
-            for row in agent_registry.roster_snapshot()
-            for q in row["open_questions"]
+            f"{q.id}  {agent_registry.asker_label(q)}  {q.text}"
+            for q in agent_registry.open_human_questions()
         ]
         if not lines:
             output.agent_dispatch_result(NO_OPEN_QUESTIONS, True)
             return
         output.agent_dispatch_result("\n".join(["Open questions:", *lines]), True)
+        return
+    if parts[0] == "/close":
+        # 번호 하나만 — 질문이 하나뿐이어도 짐작해 닫지 않는다(답과 같은 규칙)
+        if len(parts) != 2:
+            output.agent_dispatch_result(CLOSE_USAGE, False)
+            return
+        error = agent_registry.close_question(parts[1], by=author)
+        output.agent_dispatch_result(
+            f"/close: {error}" if error else f"closed {parts[1]}", not error
+        )
         return
     if len(parts) < 3:
         output.agent_dispatch_result(ANSWER_USAGE, False)
@@ -1317,7 +1327,7 @@ def _ask_dialect(renderer) -> str:
             soft_wrap=True,
         )
     prompt = f"  Dialect ({' / '.join(names)}): "
-    answer = renderer.prompt_user(prompt, multiline=False).strip().lower()
+    answer = renderer.prompt_user(prompt).strip().lower()
     while answer not in names:
         console.print(
             f"  Unknown dialect '{answer}'. Available: {', '.join(names)}",
@@ -1325,7 +1335,7 @@ def _ask_dialect(renderer) -> str:
             markup=False,
             highlight=False,
         )
-        answer = renderer.prompt_user(prompt, multiline=False).strip().lower()
+        answer = renderer.prompt_user(prompt).strip().lower()
     return answer
 
 
@@ -1352,18 +1362,16 @@ def _prompt_model_capabilities(model: str):
         # 빈 입력의 기본값 = 탐지 실패 때 실제로 쓰이는 값 (v10.126.0; 종전 질문은
         # [4096] 이라 적고 빈 입력도 4096 이었는데, 묻지 않은 길은 256K 였다)
         default_window = DEFAULT_CAPABILITIES.context_window
-        ctx_input = renderer.prompt_user(
-            f"  Context window size [{default_window}]: ", multiline=False
-        )
+        ctx_input = renderer.prompt_user(f"  Context window size [{default_window}]: ")
         context_window = int(ctx_input) if ctx_input else default_window
 
         thinking_input = renderer.prompt_user(
-            "  Supports thinking? (y/n) [n]: ", multiline=False
+            "  Supports thinking? (y/n) [n]: "
         ).lower()
         supports_thinking = thinking_input in ("y", "yes")
 
         vision_input = renderer.prompt_user(
-            "  Can view images (vision)? (y/n) [n]: ", multiline=False
+            "  Can view images (vision)? (y/n) [n]: "
         ).lower()
         supports_vision = vision_input in ("y", "yes")
 
@@ -2346,7 +2354,7 @@ _HARNESS_WAIT_NOTICE = "🔎 Waiting for the audit to finish — its result goes
 def _questions_wait_notice(registry) -> str:
     """`run` 이 열린 사람 질문 때문에 끝나지 않고 기다릴 때의 한 줄(6c) — 번호·답하는 법·끝내는 법."""
     ids = ", ".join(q.id for q in registry.open_human_questions())
-    return f"❓ Waiting for your answer to {ids} — type /answer <q-N> <text>, or press Ctrl-C to quit."
+    return f"❓ Waiting for your answer to {ids} — type /answer <q-N> <text> or /close <q-N>, or press Ctrl-C to quit."
 
 
 def _auditor_boot_line(auditor) -> str:

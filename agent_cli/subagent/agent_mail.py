@@ -53,6 +53,10 @@ def owe_line(who: str, rid: str) -> str:
 _NO_REPLY_LABEL = "(no explicit reply — this is the agent's run summary)"
 
 
+#: 질문을 닫는 봉투의 종류 (6b) — 사람의 답, 사람이 답 없이 닫음. 둘 다 줄 없는 봉투(회신과 같다)
+QUESTION_CLOSERS = ("answer", "closed")
+
+
 def is_human_addr(addr: str) -> bool:
     """``user`` / ``user:<nick>`` — 사람 주소인가 (§0: 하나의 주체)."""
     return addr == "user" or addr.startswith("user:")
@@ -134,7 +138,7 @@ def view_of_inbox_item(item: dict) -> MailView:
 #
 # 규칙은 지금 동작에서 정했다:
 # - 에이전트 항목: 사람 author(답 ``kind: "answer"`` 포함) → `human` — 런 시작과 흡수가 사람 주소의 빚을 적는다
-#   (`_deliver_answer` 는 author=사람·expects_reply=True). 봉투 재료 없는 회신 기대 요청 → `request` — `_enqueue` 가
+#   (6b: 사람의 답·닫힘은 줄 없는 봉투 — `QuestionsMixin._deliver_to_asker`). 봉투 재료 없는 회신 기대 요청 → `request` — `_enqueue` 가
 #   보낸 쪽 기록을, 시작·흡수가 빚을 적는다. ``kind`` reply → `reply`, notice 또는 회신 기대 없음 → `notice`, 그 밖의
 #   종류(job·monitor·checkin) → `system`(줄 없음 — 하니스 통지는 에이전트에서 항목이 아니다).
 #   ``opens_run`` 거짓 → 깨우지 않음.
@@ -157,7 +161,10 @@ def envelope_of_item(item: dict, dst: str) -> Envelope:
         "payload": dict(item),
     }
     wakes = item.get("opens_run", True) is not False
-    if is_human_addr(author) and kind in ("", "answer"):
+    if kind in QUESTION_CLOSERS:
+        # 사람의 답·닫힘 (6b) — 회신과 같은 줄 없는 봉투: 질문 줄은 그 배달이 닫는다
+        env = post_envelope.reply(**common, re=str(item.get("re") or ""), wakes=wakes)
+    elif is_human_addr(author) and not kind:
         env = post_envelope.human(
             **common, re=str(item.get("re") or ""), answers=item.get("answers") or ()
         )
@@ -182,6 +189,12 @@ def envelope_of_item(item: dict, dst: str) -> Envelope:
     return replace(env, wakes=wakes and env.wakes)
 
 
+def is_human_request(item: dict) -> bool:
+    """받은편지함 항목이 사람의 말(``u-`` — `complete` 의 ``answers`` 로 닫는 요청)인가 — 봉투 머리 하나로 판정한다
+    (`post.envelope.is_human_words`). 사람이 보낸 답은 사람의 말이 아니다(6b)."""
+    return post_envelope.is_human_words(envelope_of_item(item, ""))
+
+
 def envelope_of_main_mail(mail: dict, dst: str = "main") -> Envelope:
     """main(또는 private) 메일함의 메일 → 봉투. 읽기만 한다 — ``item_id`` 가 찍힌 뒤에 부른다."""
     key = str(mail.get("key") or "")
@@ -194,7 +207,10 @@ def envelope_of_main_mail(mail: dict, dst: str = "main") -> Envelope:
         "payload": dict(mail),
     }
     wakes = bool(mail.get("wakes_main", True))
-    if kind == "peer_message" and mail.get("expects_reply"):
+    if kind in QUESTION_CLOSERS:
+        # 사람의 답·닫힘 (6b) — 에이전트의 받은편지함과 같은 줄 없는 봉투
+        env = post_envelope.reply(**common, re=str(mail.get("re") or ""))
+    elif kind == "peer_message" and mail.get("expects_reply"):
         env = post_envelope.request(**common, answers=mail.get("answers") or ())
     elif kind == "peer_message" and mail.get("notice"):
         env = post_envelope.notice(**common)
@@ -279,6 +295,22 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         # **같은 함수**(v10.89.0). 모니터의 `tool="monitor"` 는 빈 문자열이 아니어야 한다:
         # `is_format_intervention` 이 `tool == ""` 를 형식 개입으로 읽는다.
         return harness
+
+    if reply.get("kind") in QUESTION_CLOSERS:
+        # 사람의 답·닫힘 (6b) — 에이전트가 받은편지함에서 읽는 것과 같은 봉투·같은 글
+        return {
+            "role": "user",
+            "tool": "ask",
+            "success": True,
+            "content": envelope(
+                str(reply.get("kind")),
+                mid,
+                "the user",
+                str(reply.get("output") or ""),
+                re=str(reply.get("re") or ""),
+                todo=str(reply.get("todo") or ""),
+            ),
+        }
 
     if reply.get("kind") == "died":
         # worker 사망 통지 (Q4): kill/세션종료가 아닌 비정상 종료 — main 이

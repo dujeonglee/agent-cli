@@ -414,7 +414,6 @@ def deferred_schema(schema):
 def tool_view(
     name: str,
     *,
-    description_overrides: dict[str, str] | None = None,
     inline_guides: dict[str, str] | None = None,
     full: bool = False,
 ) -> tuple[str, dict, str]:
@@ -427,7 +426,7 @@ def tool_view(
     v10.110.0: 인자 설명을 남긴 V1 은 정답·선택률이 같고 더 비쌌다; DESIGN §7).
     ``full=True`` 는 지연을 무시한 전문(`tool_help` 의 결과)."""
     tool = TOOLS[name]
-    description = (description_overrides or {}).get(name, tool.description)
+    description = tool.description
     params = tool.parameters
     guide = (inline_guides or {}).get(name, "")
     if tool.deferred and not full:
@@ -440,7 +439,6 @@ def render_tool_block(
     name: str,
     *,
     dialect=None,
-    description_overrides: dict[str, str] | None = None,
     inline_guides: dict[str, str] | None = None,
     full: bool = False,
 ) -> tuple[str, str]:
@@ -449,7 +447,6 @@ def render_tool_block(
     같은 글을 얻는다(따로 쓴 두 벌이 생기지 않는다)."""
     description, params_schema, guide = tool_view(
         name,
-        description_overrides=description_overrides,
         inline_guides=inline_guides,
         full=full,
     )
@@ -472,7 +469,6 @@ def get_tool_descriptions(
     tool_names: list[str] | None = None,
     inline_guides: dict[str, str] | None = None,
     dialect=None,
-    description_overrides: dict[str, str] | None = None,
 ) -> str:
     """Generate tool description text for system prompt.
 
@@ -505,7 +501,6 @@ def get_tool_descriptions(
         line, guide = render_tool_block(
             name,
             dialect=dialect,
-            description_overrides=description_overrides,
             inline_guides=inline_guides,
         )
         roster.append(line)

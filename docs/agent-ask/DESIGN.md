@@ -118,6 +118,10 @@ If nothing else can proceed, `complete` — you will be resumed when it arrives.
 `AskTool.RESIDENT_DESCRIPTION` 을 `description_overrides` 로 갈아끼운다.
 `_ASK_INLINE`(`system_prompt.py:547-575`)도 같은 분기가 필요하다.
 
+> 6b(v10.176.0) 에서 바뀜: 막는 `ask` 가 없어졌다 — 설명은 모든 루프에 하나(`AskTool.description`), 갈아끼우는
+> `description_overrides` 사슬과 `RESIDENT_DESCRIPTION` 은 지웠다. 안내 `_ASK_INLINE` 은 에이전트(상주·일회용)에만
+> 실린다 — 술어 하나 `LoopPorts.ask_guide`(질문 포트가 에이전트 키로 묻는가). main·스킬 런은 받지 않는다(결정 C). §13.
+
 ### 3.2 질문 목록 — 런 스코프가 핵심
 
 ```python
@@ -439,6 +443,9 @@ class QuestionPort:            # 레지스트리가 에이전트별로 만든다
 **표면은 둘뿐이다.** 독촉은 하네스가 런 경계에서 걸므로(§3.4) 루프가
 미답 목록을 조회할 일이 없다 — 조회 메서드를 두면 호출자 없는 표면이 된다.
 
+> 6b(v10.176.0) 에서 바뀜: main 도 포트로 묻는다(아래 거부는 지웠다). 질문은 ❓ 트레이와 터미널 질문 줄에 보이고,
+> `/answer`·`/close`·트레이로 닫히며, 세션이 끝나면 저장하지 않는다(§3.9 의 부활은 이미 없다). §13.
+
 **main 의 `ask` 는 거부한다.** main 이 사람에게 묻는 것은 기존 블로킹
 경로(`renderer.prompt_user`)다. 포트로 오면 주소가 `user` 인 질문이
 생기는데, 로스터에도 창에도 안 뜨고(둘 다 asker 를 에이전트 키로 찾는다)
@@ -696,7 +703,7 @@ message → r-)이었다.
   `A: (no response)` 를 답으로 받았고(답이 아닌 것을 답의 자리에), 에이전트의 질문은 답할 길 없이 올라갔다.
 - **§⑧ "CLI 에는 사람이 답할 루프가 없다" 가 바뀌었다.** `/answer <q-N> <글>` 이 웹 트레이와 같은
   `AgentRegistry.answer_question` 을 부른다(웹·run 두 표면). `/questions` 는 트레이와 같은 출처(명단의
-  `open_questions`). 터미널 `run` 은 한가한 동안에도 친 줄을 읽는다(`main.read_terminal_line` — 제자리 대기와 같은
+  `open_questions` — 6b 부터는 레지스트리의 열린 질문 목록, 명단 행에서는 뺐다). 터미널 `run` 은 한가한 동안에도 친 줄을 읽는다(`main.read_terminal_line` — 제자리 대기와 같은
   함수, 프롬프트의 `interactive_lock` 안에서).
 - **답은 번호를 적은 명령과 트레이로만(사용자 결정).** 그 밖의 입력(터미널·웹 채팅의 보통의 말·예약 발화)은 질문이
   열려 있든 없든 main 의 요청이다. `/answer` 에 번호가 없으면 사용법만 — 질문이 하나뿐이어도 짐작해 붙이지 않는다.
@@ -704,3 +711,27 @@ message → r-)이었다.
   열리지 않으므로 열린 질문은 곧 답이 올 수 있는 질문이다. 웹만의 항이 없어졌고 터미널 `run` 도 질문이 열려 있는 동안
   끝나지 않는다.
 
+## 13. v10.176.0 — 누가 묻든 한 길 (6b)
+
+`ask` 는 누가 묻든(main·상주·일회용·스킬) 질문을 올리고 바로 돌아온다. 사람이 답하거나 닫아서 닫힌다. 결정(사용자,
+2026-11-25)과 그 자리:
+
+- **A — 답·닫힘은 줄 없는 `n-` 봉투.** 장부 항목이 없다 — `complete` 의 `answers` 로 닫을 것이 아니다. 에이전트의 답도
+  같다(종전 `u-` 항목·런 도중 `[user]: ` 머리). 봉투 머리 `── answer [n-3] from the user re [q-2] ──` / `── closed [n-4] …`.
+  "사람의 말인가" 는 봉투 머리 하나로 판정한다(`is_human_request` — 종류 없는 사람 주소의 봉투만).
+- **B 라 — 스킬 런은 자기 주소(`skill:<scope_id>`)로 묻고 `wait` 할 수 있다.** 답·닫힘은 그 주소의 private 상자로 온다
+  (하니스와 같은 길). 특례 ① 스킬의 `wait` 는 자기가 건 질문만 기다린다(작업·모니터는 호출자에게 보고한다). 특례 ② 스킬은
+  main 의 차례 안에서 돌므로, 기다리는 동안 친 명령은 호스트가 세운 길(`runtime.commands_during_nested_wait`)로 그 자리에서
+  라우팅한다 — 보통의 말은 main 앞에 그대로 둔다. 스킬 런이 끝나면 그 런이 건 질문은 닫힌다(`close_questions_of`). 묻는 쪽 이름표는 `asker_label` 하나 — 스킬 런은 `skill <스킬 이름>`(이름은 주소를 세울 때 함께 넘긴다), 대화 창이 없는
+  묻는 쪽(main·스킬)은 터미널 질문 줄을 낸다.
+- **C 나 — `ask` 안내는 에이전트만.** main·스킬 런은 받지 않는다(스킬에는 `message` 가 없어 안내의 "For an agent, send a
+  `message`" 가 거짓이다). 술어는 `LoopPorts.ask_guide` 하나. 에이전트 안내는 두 줄만 고쳤다(`For an agent`, `a repeat is folded`).
+- **D — `/close q-N`**, 웹 `Close without answer`, `POST /api/questions/<q-N>/answer|close`(트레이의 길 하나; 에이전트
+  입력의 `answer_id` 갈래는 지웠다 — 결정 H).
+- **E1 — 닫힘의 글** `(The user closed it without an answer. Go on with what you have, and say what you assumed.)`
+- **F 가 — 같은 질문은 열려 있는 동안 접는다**(묻는 쪽·런과 무관). 접힌 질문의 런에도 "열린 질문" 알림이 선다.
+- **G 가 — 보드의 "답변 필요"**(`awaiting_input`)는 확인 대화 또는 열린 질문. `is_awaiting_input`(Ctrl+C 갈래)은 그대로.
+- **지운 것** — 막는 `ask` 의 길 전부: `dispatch._handle_ask`, `Renderer.announce_ask`·추상 `prompt_user`(터미널의 한 줄
+  읽기만 부팅 마법사용으로 남는다), `WebRenderer.prompt_user`, `/api/input` 의 `prompt` 종류, 트레이의 main prompt 항목,
+  `input_history.py`(여러 줄 읽기·readline 히스토리 — 막는 `ask` 만 썼다)와 `AGENT_CLI_NO_READLINE`.
+- **웹 트레이의 출처는 하나** — sticky `open_questions`(`WebRenderer.open_questions`); 명단 행의 `open_questions` 는 지웠다.

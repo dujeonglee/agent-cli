@@ -56,10 +56,6 @@ def _confirm(renderer):
     return renderer.confirm("go? ", _OPTIONS, default_key="n")
 
 
-def _answer(renderer):
-    return renderer.prompt_user("Your answer: ", multiline=True)
-
-
 def test_a_line_typed_before_the_confirm_does_not_decide_it(terminal):
     """먼저 친 `y` 는 승인이 아니다 — main 에게 넘어가고, 결정은 뜬 뒤에 친 `n` 이다."""
     master, renderer = terminal
@@ -67,26 +63,6 @@ def test_a_line_typed_before_the_confirm_does_not_decide_it(terminal):
     renderer.on_typeahead = handed.extend
     assert _prompt(renderer, master, _confirm, ahead=b"y\n", after=b"n\n") == ("n", "")
     assert handed == ["y"]
-
-
-def test_lines_typed_before_the_ask_prompt_are_not_its_answer(terminal):
-    master, renderer = terminal
-    handed: list[str] = []
-    renderer.on_typeahead = handed.extend
-    got = _prompt(
-        renderer, master, _answer, ahead=b"use the old dir\n", after=b"use src/util\n"
-    )
-    assert got == "use src/util"
-    assert handed == ["use the old dir"]
-
-
-def test_a_paste_after_the_prompt_is_kept_whole(terminal):
-    master, renderer = terminal
-    handed: list[str] = []
-    renderer.on_typeahead = handed.extend
-    got = _prompt(renderer, master, _answer, ahead=b"", after=b"line one\nline two\n")
-    assert got == "line one\nline two"
-    assert handed == []
 
 
 def test_an_unfinished_line_is_dropped(terminal):

@@ -12,7 +12,8 @@ from __future__ import annotations
 import pytest
 
 import agent_cli.render as render_mod
-from agent_cli.subagent.agents_live import AgentRegistry, Question
+from agent_cli.subagent.agents_live import AgentRegistry
+from agent_cli.subagent.questions import Question
 from tests.test_agents_live import RecordingRenderer, make_registry
 
 
@@ -70,9 +71,15 @@ def _q(**kw) -> Question:
 
 class TestDeliverAnswer:
     def test_human_answer_goes_to_the_asker_as_an_answer_envelope(self, reg, calls):
-        """사람 발신이라 답 런은 사람 런이다(`expects_reply=True` — 닫는 법이 사람
-        요청과 같다). 봉투가 무엇에 대한 답인지(``re``) 적는다."""
-        reg._deliver_answer(_q(asker="a1", target="user"), "42")
+        """답은 회신처럼 기다리던 것의 도착이다(`expects_reply=False` — 줄 없는 ``n-`` 봉투, 6b). 봉투가 무엇에 대한
+        답인지(``re``) 적는다."""
+        reg._deliver_to_asker(
+            _q(asker="a1", target="user"),
+            "Your question: T?\nAnswer: 42",
+            kind="answer",
+            todo="Continue the work it was blocking.",
+            closes_as="user_answered",
+        )
         # settles — 이 배달이 그 질문을 닫는다(v10.145.0 — 갚음은 호출자가 말한다)
         assert calls.mail == ()
         assert calls.requests == [
@@ -81,11 +88,12 @@ class TestDeliverAnswer:
                 "Your question: T?\nAnswer: 42",
                 {
                     "author": "user",
-                    "expects_reply": True,
+                    "expects_reply": False,
                     "kind": "answer",
                     "re": "q1",
                     "todo": "Continue the work it was blocking.",
                     "settles": "q1",
+                    "closes_as": "user_answered",
                 },
             )
         ]

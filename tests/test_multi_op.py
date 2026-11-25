@@ -30,7 +30,7 @@ from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.render import get_renderer
 from agent_cli.tools.registry import TOOLS
-from tests.loop_ports import TEST_PORTS
+from tests.loop_ports import TEST_PORTS, make_ports
 
 # ─── Tool.wrap_single_op ────────────────────────────
 
@@ -214,7 +214,20 @@ def _finish(thought="done"):
     return [_turn(thought=thought, ops=[{"action": "complete", "result": thought}])]
 
 
-def _run(responses, tmp_path, max_turns=5, dialect=None):
+class _Questions:
+    """질문 포트 대역 — 올린 질문을 적고 번호를 차례로 준다(6b: `ask` 는 올리고 돌아온다)."""
+
+    key = None
+
+    def __init__(self):
+        self.asked: list[str] = []
+
+    def ask(self, text):
+        self.asked.append(text)
+        return f"q-{len(self.asked)}", ""
+
+
+def _run(responses, tmp_path, max_turns=5, dialect=None, questions=None):
     from agent_cli.context.manager import ContextManager
     from tests.loopkit import make_loop
 
@@ -222,7 +235,7 @@ def _run(responses, tmp_path, max_turns=5, dialect=None):
     provider.call.side_effect = [LLMResponse(content=r) for r in responses]
     ctx = ContextManager(session_dir=tmp_path)
     loop = make_loop(
-        ports=TEST_PORTS,
+        ports=make_ports(questions=questions) if questions is not None else TEST_PORTS,
         query="Q",
         provider=provider,
         capabilities=_caps(),
@@ -483,10 +496,7 @@ class TestMultiOpDispatch:
 
     def test_ask_is_not_turn_ending_accumulates(self, tmp_path, monkeypatch):
         # ask is NOT terminal — [read, ask] both accumulate into ONE combined
-        # observation (read=[1/2], ask=[2/2]), like a normal tool batch.
-        import agent_cli.loop.dispatch as loop_mod
-
-        monkeypatch.setattr(loop_mod, "_handle_ask", lambda qs: "yes")
+        # observation (read=[1/2], ask=[2/2]), like a normal tool batch. 6b: `ask` 는 질문을 올리고 돌아온다.
         _answerable(monkeypatch)
         f1 = tmp_path / "a.txt"
         f1.write_text("alpha")
@@ -501,6 +511,7 @@ class TestMultiOpDispatch:
                 *_finish(),
             ],
             tmp_path,
+            questions=_Questions(),
         )
         combined = [
             m["content"]
@@ -509,21 +520,11 @@ class TestMultiOpDispatch:
         ]
         assert len(combined) == 1
         assert "[1/2] read_file — OK" in combined[0] and "alpha" in combined[0]
-        assert "User responded:\nyes" in combined[0]
+        assert 'question "q-1" sent — "continue?"' in combined[0]
 
     def test_multiple_ask_ops_batch_sequentially(self, tmp_path, monkeypatch):
-        # several ask ops in one turn each prompt in sequence → ONE combined obs
-        # (the read_file-style batch, applied to ask).
-        import agent_cli.loop.dispatch as loop_mod
-
-        asked: list[list[str]] = []
-        answers = iter(["A1", "A2"])
-
-        def fake_ask(qs):
-            asked.append(list(qs))
-            return next(answers)
-
-        monkeypatch.setattr(loop_mod, "_handle_ask", fake_ask)
+        # several ask ops in one turn each post their question in order → ONE combined obs
+        port = _Questions()
         _answerable(monkeypatch)
         _result, ctx, _ = _run(
             [
@@ -536,16 +537,16 @@ class TestMultiOpDispatch:
                 *_finish(),
             ],
             tmp_path,
+            questions=port,
         )
-        assert asked == [["q1?"], ["q2?"]]  # one question per op, in order
+        assert port.asked == ["q1?", "q2?"]  # one question per op, in order
         combined = [
             m["content"]
             for m in ctx.get_raw_messages()
             if m.get("role") == "user" and "[1/2] ask — OK" in m.get("content", "")
         ]
         assert len(combined) == 1
-        assert "A1" in combined[0] and "A2" in combined[0]
-        assert "[2/2] ask — OK" in combined[0]
+        assert 'question "q-2" sent — "q2?"' in combined[0]
 
 
 class TestMultiOpDelegateParallel:

@@ -42,7 +42,7 @@ class SystemPromptSvc:
             depth=self.cfg.kind.depth,
             max_depth=self.cfg.kind.max_depth,
             peer_agents_section=profile.peer_section,
-            nonblocking_ask=not profile.ask_blocking,
+            ask_guide=self.cfg.kind.ports.ask_guide(),
         )
         self.sections += hook_sections
         self.system = "\n\n".join(t for _, t in self.sections)

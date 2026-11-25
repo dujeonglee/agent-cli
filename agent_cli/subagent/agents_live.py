@@ -67,6 +67,7 @@ from agent_cli.subagent.agent_mail import (
     envelope_of_main_mail,
     format_agent_label,
     is_human_addr,
+    is_human_request,
     mail_queue_item,
     owe_line,
     run_error_line,
@@ -77,10 +78,10 @@ from agent_cli.subagent.agents_state import WAITING
 from agent_cli.subagent.delegation_checks import depth_or_recursion_refusal
 from agent_cli.subagent.question_port import (
     REPLY_REQUESTER_GONE,
-    QuestionPort,
     ReplyDebt,
     ReplyFacts,
 )
+from agent_cli.subagent.questions import QuestionsMixin
 from agent_cli.terminate import wait_left
 from agent_cli.tools.result import ToolResult
 from agent_cli.wake import (
@@ -121,39 +122,6 @@ def clamp_max_agents(value) -> int:
 _MAX_PEER_HOPS = 6
 
 
-# ── 비동기 ask (docs/agent-ask/DESIGN.md) ──────────────
-#
-# 질문은 **아무것도 블록하지 않는다**: ``ask`` 가 여기에 등록하고 즉시
-# 반환한다. v10.77.0 (B): 질문은 **사람에게만** 간다 — ❓ 트레이가 표면이고
-# 사람이 답하면 asker 에게 새 배달로 온다. 에이전트·main 에게 묻는 길은
-# `message`(요청 → 상대가 `reply` 를 빚진다) 하나다. 그래서 `answer` 도구도,
-# 에이전트가 빚지는 질문(q-)도 없다. ``user*`` 는 하나의 주체로 본다 — CLI 는
-# ``user``, 웹은 ``user:{nickname}`` 이고 뷰어가 여럿이면 닉이 다르다.
-
-
-@dataclass
-class Question:
-    """열린 질문 하나 — 우편 장부의 질문 줄(q-)의 ``meta``. 주소는 언제나 사람
-    (v10.77.0, B) — ❓ 트레이가 보여 주고 사람이 답한다.
-
-    ``asked_in`` = asker 가 이 질문을 건 런(을 연 배달의 id) — 그 런의 결과에
-    "사람에게 물은 것이 열려 있다" 알림을 붙이고(`_with_human_notice`), 같은 런
-    안의 같은 질문을 접는다. 다른 런에서 걸어 둔(영영 열릴 수 있는) 질문이
-    섞이면 안 되므로 런으로 좁힌다.
-    """
-
-    id: str
-    asker: str  # "<agent key>" — 답이 돌아갈 곳
-    target: str  # "user" — 사람(트레이)
-    text: str
-    asked_at: float = field(default_factory=time.time)
-    asked_in: str = ""  # asker 가 이 질문을 건 런(을 연 배달의 id)
-
-    @property
-    def to_human(self) -> bool:
-        return is_human_addr(self.target)
-
-
 def _debt_view(row) -> ReplyDebt:
     """장부의 빚 줄 → 옛 공개 모양(`ReplyDebt`). 갚은 줄(런 안에서 닫혀 남은 것)은 ``settled``."""
     return ReplyDebt(
@@ -165,10 +133,6 @@ def _debt_view(row) -> ReplyDebt:
         id=row.rid,
         closed_by=row.how or "",
     )
-
-
-def _new_question_id() -> str:
-    return item_ids.next_id(item_ids.QUESTION)
 
 
 # ── Live Teammates 시스템 프롬프트 리로드 플래그 ──
@@ -358,7 +322,7 @@ class AgentInstance:
         }
 
 
-class AgentRegistry:
+class AgentRegistry(QuestionsMixin):
     """main 루프 수명의 teammate 소유자 + 회신 mailbox.
 
     ``runner`` 는 종류(`ResidentLoop`)의 엔진 — 기본 `run_loop`; 테스트가 가짜
@@ -474,24 +438,13 @@ class AgentRegistry:
         return hits[0] if len(hits) == 1 else None
 
     def roster_snapshot(self) -> list[dict]:
-        # ``AgentInstance.snapshot`` 은 인스턴스 메서드라 레지스트리의
-        # 우편에 닿지 못한다 — 열린 질문은 여기서 합류.
+        # 열린 질문은 명단에 싣지 않는다 — 질문 목록이 따로 간다(6b, `_notify_questions`).
 
         # Snapshot the values first: this runs on worker/web threads while the
         # main thread may spawn/resume/restore into ``_agents``. Iterating the
         # live view directly raises "dictionary changed size during iteration"
         # (AUDIT S-1); ``list(...)`` materialises atomically under the GIL.
-        by_asker: dict[str, list[dict]] = {}
-        for q in self.open_human_questions():
-            by_asker.setdefault(q.asker, []).append(
-                {"id": q.id, "text": q.text, "to": q.target, "ts": q.asked_at}
-            )
-        out = []
-        for tm in list(self._agents.values()):
-            snap = self._snapshot_of(tm)
-            snap["open_questions"] = by_asker.get(tm.key, [])
-            out.append(snap)
-        return out
+        return [self._snapshot_of(tm) for tm in list(self._agents.values())]
 
     def _notify_roster(self) -> None:
         """P4: 상태 변화를 대화 창 목록에 반영 — web sticky, CLI no-op. 명단을 뜨고 내는 것이 한 걸음이다
@@ -699,9 +652,12 @@ class AgentRegistry:
     # 말한다 — 같은 모양의 봉투라도 위임·`message`·removed 회신·재배달은 갚지 않으므로 호출자가 아는 사실이다(갚는
     # 것은 `reply` 와 그 대신인 폴백·정지 회신, v10.145.1). 배달 지시라 봉투·저장 파일·모델이 읽는 글에 실리지 않는다.
 
-    def _post_deliver(self, env, *, settles: str = "") -> None:
+    def _post_deliver(
+        self, env, *, settles: str = "", closes_as: str = "user_answered"
+    ) -> None:
         """봉투를 우편에 넣는다 — ``_cv`` 안에서 부른다. 닫는 연산은 배달과 한 락 구간이다: 없음 → `deliver`, 줄 id →
-        q 줄은 `answer`·r 줄은 `pay`. 없는 줄·r/q 가 아닌 줄은 `RowError`(닫힌 줄은 그 연산이 거절 — "already replied")."""
+        q 줄은 `answer`(``closes_as`` — 답 또는 사람이 닫음)·r 줄은 `pay`. 없는 줄·r/q 가 아닌 줄은 `RowError`(닫힌 줄은
+        그 연산이 거절 — "already replied")."""
         if not settles:
             self._post.deliver(env)
             return
@@ -709,7 +665,7 @@ class AgentRegistry:
         if row is None or row.kind not in ("q", "r"):
             raise RowError(f"{settles}: no request or question to settle")
         if row.kind == "q":
-            self._post.answer(settles, env)
+            self._post.answer(settles, env, how=closes_as)
         else:
             self._post.pay(env.src, settles, env, run_id=self._run_of(env.src))
 
@@ -780,109 +736,6 @@ class AgentRegistry:
 
     def arrived_for(self, addr: str, *, waking_only: bool, words: bool) -> int:
         return len(self.arrivals_for(addr, waking_only=waking_only, words=words))
-
-    def open_human_question_keys(self) -> list[str]:
-        """사람 답을 기다리는 열린 질문의 asker — 종료 시 경고 표시용."""
-        return sorted({q.asker for q in self.open_human_questions()})
-
-    # ── 질문 목록 (비동기 ask/answer, DESIGN.md §3) ──────────────
-
-    def question_port(self, key: str | None = None) -> QuestionPort:
-        """루프에 넘길 seam. ``key=None`` 이면 main 용."""
-        return QuestionPort(self, key)
-
-    def register_question(self, asker: str, text: str) -> tuple[str, str]:
-        """사람에게 질문 등록 — ``(id, err)``. 아무것도 블록하지 않는다.
-
-        표면은 ❓ 트레이(로스터의 ``open_questions``)와 asker 의 대화 창이다 —
-        배달할 inbox 가 없다. 사람이 답하면 :meth:`answer_question` 이 asker 에게
-        새 배달로 보낸다."""
-        text = (text or "").strip()
-        if not text:
-            return "", "empty question"
-        tm = self._agents.get(asker)
-        if tm is None:
-            return "", f'unknown asker "{asker}"'
-        asked_in = tm.current_item
-        with self._cv:
-            # 중복 접기 — **같은 런 안에서만**. ``_op_ask`` 는 루프 탐지기
-            # 앞에서 반환하므로(dispatch.py) 한 런이 같은 질문을 반복해도
-            # 구조적으로 안 잡힌다. 런 경계를 넘으면 접지 않는다.
-            for q in self.open_human_questions():
-                if q.asker == asker and q.text == text and q.asked_in == asked_in:
-                    return q.id, ""
-            q = Question(
-                id=_new_question_id(),
-                asker=asker,
-                target="user",
-                text=text,
-                asked_in=asked_in,
-            )
-            self._post.ask(q.id, f"agent:{asker}", q.target, text, meta=q)
-            # 질문 줄은 질문을 여는 구간에서 적는다 — 답의 in 이 앞서지 않게 (v10.146.4)
-            lines = self._question_line(q)
-            self._lines_in_section(lines)
-        self._lines_after_section(lines)
-        # 트레이는 로스터의 ``open_questions`` 를 읽는다 — 알리지 않으면
-        # 질문이 다음 로스터 브로드캐스트까지 화면에 안 뜬다.
-        self._notify_roster()
-        return q.id, ""
-
-    def _question_line(self, q: Question) -> list[tuple[AgentInstance, dict]]:
-        """묻는 쪽 창의 질문 줄 — 사람이 먼저 보는 자리. 만들기만 한다. 묻는 쪽이 없으면 빈 목록."""
-        tm = self._agents.get(q.asker)
-        if tm is None:
-            return []
-        payload = {
-            "key": tm.key,
-            "direction": "question",
-            "item": q.id,
-            "author": tm.key,
-            "text": q.text,
-            "to": q.target,
-            "ts": q.asked_at,
-            "profile": tm.profile_name,
-            "instance_name": tm.instance_name,
-        }
-        return [(tm, payload)]
-
-    def questions_asked_in(self, asker: str, run_item: str) -> list[Question]:
-        """``asker`` 가 ``run_item`` 런에서 건 열린 질문 (런 결과의 알림)."""
-        return [
-            q
-            for q in self.open_human_questions()
-            if q.asker == asker and q.asked_in == run_item
-        ]
-
-    def open_human_questions(self) -> list[Question]:
-        """열린 질문 — ❓ 트레이와 idle-reap 가드가 읽는다(주소는 전부 사람). 질문 줄의 ``meta`` 가 `Question` 이다."""
-        return [r.meta for r in self._post.open_questions()]
-
-    def answer_question(self, qid: str, text: str, *, by: str) -> str:
-        """사람이 트레이에서 ``qid`` 에 답한다 — 에러 또는 빈 문자열.
-
-        ``user*`` 는 하나의 주체로 본다 — CLI 는 ``user``, 웹은 ``user:{nick}``
-        이고 뷰어마다 닉이 달라, 문자열 동치로 검사하면 두 번째 뷰어의 트레이
-        답이 거부된다.
-        """
-        text = (text or "").strip()
-        if not text:
-            return "empty answer"
-        unknown = f'unknown or already-answered question "{qid}"'
-        row = self._post.row(qid)
-        q = row.meta if row is not None and row.kind == "q" else None
-        if q is None:
-            return unknown
-        if not is_human_addr(by):
-            return f'question "{qid}" is addressed to the person, not "{by}"'
-        try:  # 답의 배달이 곧 질문 줄 닫기(``settles`` — 한 락 구간)
-            refused = self._deliver_answer(q, text)
-        except RowError:
-            return unknown  # 다른 답변자가 먼저 답했다 — 줄이 이미 닫혔다
-        if refused:  # 묻는 쪽이 멈췄거나 사라져 받지 못한다 — 그 질문들을 닫고 명단에 알린다 (v10.149.1)
-            self._purge_questions_for(q.asker)
-            return f'the agent that asked "{qid}" has stopped — the question is closed'
-        return ""
 
     # ── 회신 빚 장부 (v9.22.1 — main·상주 공통) ──────
     # 요청(`expects_reply=True` 항목 / main 에 배달된 `message`)은 빚이다.
@@ -1221,23 +1074,6 @@ class AgentRegistry:
             )
         return 1
 
-    def _deliver_answer(self, q: Question, text: str) -> str:
-        """사람의 답을 asker 에게 — 새 배달(사람 발신이라 ``u-``)로. `request` 의 거절(묻는 쪽이 받지 못함) 또는 "".
-
-        사람이 보낸 것이므로 그 런은 사람 런이다: 결과는 창이 곧 배달이고, 닫는
-        법은 사람 요청과 같다(`complete` 의 `answers`). 봉투가 무엇에 대한
-        답인지(``re``) 적는다."""
-        return self.request(
-            q.asker,
-            f"Your question: {q.text}\nAnswer: {text}",
-            author=q.target,
-            expects_reply=True,
-            kind="answer",
-            re=q.id,
-            todo="Continue the work it was blocking.",
-            settles=q.id,
-        )
-
     def _drop_monitors(self, key: str) -> int:
         """이 에이전트가 건 감시·띄운 백그라운드 작업을 폐기 — private 종류와 같은
         함수(`wake.release_owner`, v10.89.0). 메일함·체크인은 부르는 쪽이 따로(kill·종료는
@@ -1245,15 +1081,6 @@ class AgentRegistry:
         return release_owner(
             f"agent:{key}", jobs=self.jobs, monitors=self.monitors
         ).count
-
-    def _purge_questions_for(self, key: str) -> None:
-        """그가 건 질문을 닫고(받을 곳이 없다) 저장·명단 알림 — 영구 사망(✕·크래시, ``not revivable``)과 답이
-        거절됐을 때(`answer_question`)만 부른다. 세션 종료(``shutdown_all``)에서 지우면 직후의 ``_save_state`` 가
-        빈 목록을 저장해 resume 이 질문을 되살리지 못한다.
-        """
-        outgoing = self._post.forget_questions_of(f"agent:{key}")
-        if outgoing:
-            self._notify_roster()
 
     # ── spawn ───────────────────────────────────
 
@@ -1470,6 +1297,7 @@ class AgentRegistry:
         mark: str = "",
         opens_run: bool = True,
         settles: str = "",
+        closes_as: str = "user_answered",
         lines=(),
     ) -> str:
         """request 큐잉 — 에러 메시지 또는 빈 문자열.
@@ -1531,7 +1359,7 @@ class AgentRegistry:
         # id 가 키다 (v10.77.0) — 전역 할당기라 동시 request() 에도 겹치지 않는다
         # (종전 에이전트별 순번은 P0-9a 의 락과 v8.5.1 의 키 덧붙이기가 필요했다).
         if not item_id:
-            if is_human_addr(author):
+            if is_human_addr(author) and not kind:
                 item_id = item_ids.next_id(item_ids.USER)
             elif expects_reply:
                 item_id = item_ids.next_id(item_ids.REPLY)
@@ -1590,19 +1418,33 @@ class AgentRegistry:
         }
         if images:
             payload["images"] = [dict(r) for r in images]  # 창의 썸네일 (v10.61.0)
-        self._enqueue(tm, item, settles=settles, lines=[(tm, payload), *lines])
+        self._enqueue(
+            tm,
+            item,
+            settles=settles,
+            closes_as=closes_as,
+            lines=[(tm, payload), *lines],
+        )
         self._notify_roster()
         return ""
 
     def _enqueue(
-        self, tm: AgentInstance, item: dict, *, settles: str = "", lines=()
+        self,
+        tm: AgentInstance,
+        item: dict,
+        *,
+        settles: str = "",
+        closes_as: str = "user_answered",
+        lines=(),
     ) -> None:
         """받은편지함(우편의 그 주소 상자)에 넣는다. 회신을 기다리는 요청이면
         그 줄이 보낸 쪽의 "기다리는 회신" 이다(v10.141.0 — 넣는 것과 한 락 구간). ``lines`` 는 이 배달의 대화
         줄(받는 쪽 in·보낸 쪽 out) — 넣기가 성공한 같은 구간에서 `_lines_in_section`, 그 뒤 `_lines_after_section`."""
         with self._cv:
             self._post_deliver(
-                envelope_of_item(item, f"agent:{tm.key}"), settles=settles
+                envelope_of_item(item, f"agent:{tm.key}"),
+                settles=settles,
+                closes_as=closes_as,
             )
             self._lines_in_section(lines)
         self._lines_after_section(lines)
@@ -1700,7 +1542,7 @@ class AgentRegistry:
                 "absorbed_into": tm.current_item,
             }
             self._record(tm, absorbed)
-            if is_human_addr(author):
+            if is_human_request(item):
                 # 빚은 아니지만 `reply` 거부 사유가 이걸 본다
                 uid = iid
                 self.note_owes(me, author, text, id=uid)
@@ -1810,10 +1652,19 @@ class AgentRegistry:
             return f"{type(exc).__name__}: {exc}"
         return f'unroutable address "{addr}"'
 
-    def _push_reply(self, reply: dict, *, settles: str = "", lines=()) -> None:
+    def _push_reply(
+        self,
+        reply: dict,
+        *,
+        settles: str = "",
+        closes_as: str = "user_answered",
+        lines=(),
+    ) -> None:
         with self._cv:  # 배달 순간의 한가함은 배달 구간에서 읽는다 — 락을 놓으면 펌프가 이 메일로 런을 열 수 있다
             self._stamp_mail(reply)
-            self._post_deliver(envelope_of_main_mail(reply), settles=settles)
+            self._post_deliver(
+                envelope_of_main_mail(reply), settles=settles, closes_as=closes_as
+            )
             idle_at_delivery = self._post.idle("main")
             self._lines_in_section(lines)
         self._lines_after_section(lines)
@@ -2055,12 +1906,21 @@ class AgentRegistry:
 
     # ── private 메일함 (v10.84.0, docs/wait/DESIGN.md §7) ─────────────────
 
-    def _push_private(self, addr: str, mail: dict) -> None:
-        """``run:``·``harness:`` 주소로 온 메일 — 그 루프가 읽는 목록에 넣고 깨운다.
-        main 메일함과 달리 디스크·UI·대기열 콜백이 없다(프로세스 수명)."""
+    def _push_private(
+        self,
+        addr: str,
+        mail: dict,
+        *,
+        settles: str = "",
+        closes_as: str = "user_answered",
+    ) -> None:
+        """``harness:``·``skill:`` 주소로 온 메일 — 그 루프가 읽는 목록에 넣고 깨운다. main 메일함과 달리
+        디스크·UI·대기열 콜백이 없다(프로세스 수명). ``settles``·``closes_as`` 는 질문을 닫는 봉투(6b — 스킬 런의 답)."""
         with self._cv:
             self._stamp_mail(mail)
-            self._post_deliver(envelope_of_main_mail(mail, addr))
+            self._post_deliver(
+                envelope_of_main_mail(mail, addr), settles=settles, closes_as=closes_as
+            )
 
     def take_mail(self, addr: str) -> list[dict]:
         """private 메일함을 비우며 전부 돌려준다 — 루프의 메일함 포트(``mailbox.take``)가 턴
@@ -2226,7 +2086,7 @@ class AgentRegistry:
         (`_answer_after_stop`)가 원인(``stop_cause``)을 보고 한다."""
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
         # 건 질문은 지금 닫는다 (v10.149.1) — 워커의 정리(다음 턴 경계)까지 미루면 그 사이 트레이에 남아 답이 갈 곳이 없다
-        self._purge_questions_for(tm.key)
+        self.close_questions_of(tm.key)
         self.cancel_checkin(f"agent:{tm.key}")  # 죽은 에이전트에게 알림이 가지 않게
         # 감시 폐기는 `stop_event.set()` **앞**이다. busy 에이전트는 stop 뒤에도
         # 현재 턴을 마저 돌고(join 은 best-effort), 그 창에 발화하면 항목이
@@ -2738,7 +2598,7 @@ class AgentRegistry:
                 # 세션 종료(shutdown_all)는 revivable 을 유지하므로 여기
                 # 들어오지 않는다 — 들어오면 직후의 _save_state 가 빈 목록을
                 # 저장해 resume 이 알릴 열린 질문이 항상 0건이 된다.
-                self._purge_questions_for(tm.key)
+                self.close_questions_of(tm.key)
             # 감시 폐기의 **정본 위치** — kill·크래시·세션 종료가 모두
             # 여기로 수렴하고, 여기가 죽음이 확정되는 곳이다. kill/
             # shutdown_all 의 조기 드롭은 그 앞 창을 좁힐 뿐이다.
@@ -2768,26 +2628,6 @@ class AgentRegistry:
         것이 있어도 런을 열지 않는다). 순서: 정지 먼저 — 깬 워커가 런 도중이면 다음 흡수가 정지를 본다."""
         tm.stop_event.set()
         self._post.close(f"agent:{tm.key}")
-
-    def _with_human_notice(self, tm: AgentInstance, run_item: str, output: str) -> str:
-        """이 런이 **사람에게** 물어 둔 미답 질문을 결과에 실어 알린다.
-
-        사람에게는 강제를 못 건다 — 우리 루프가 아니다. 대신 결과에 실어
-        "내가 답을 안 해서 끝났구나" 를 알린다. 이 문구는 **하네스가** 붙인다:
-        dispatch 에서 붙이면 ``serialize_terminal_for_history`` 를 타고 모델
-        자신이 쓴 최종답으로 ctx 에 남아, 다음 런에서 모델이 하네스 문구를
-        모방한다.
-        """
-        human_open = [
-            q for q in self.questions_asked_in(tm.key, run_item) if q.to_human
-        ]
-        if not human_open:
-            return output
-        lines = "\n".join(f'   [{q.id}] "{q.text}"' for q in human_open)
-        return (
-            f"{output}\n\n⏳ {len(human_open)} question(s) still unanswered — "
-            f"answering lets this continue:\n{lines}"
-        )
 
 
 # ── 레지스트리가 짓는 도구 결과·거절 문구 (v10.85.0, agent 검토 PR B) ──────────────────────

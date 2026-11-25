@@ -26,7 +26,7 @@
 // second click can't fire a redundant /api/stop. Reset on the next
 // worker_state event (idle = the turn ended; busy = a fresh turn).
 export const session = {
-  mainAsk: null, // null | {kind:"prompt"|"confirm", data}
+  mainAsk: null, // null | {kind:"confirm", data}
   connId: null,
   workerBusy: false,
   stopRequested: false,

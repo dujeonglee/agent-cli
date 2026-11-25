@@ -181,14 +181,18 @@ class TestCanPrompt:
         assert r.can_prompt() is True
 
     def test_late_viewer_gets_pending_prompt_and_can_answer(self):
-        """핵심 시나리오: 뷰어 0명 상태에서 ask 대기 시작 → 나중에 접속한
+        """핵심 시나리오: 뷰어 0명 상태에서 확인 대화 대기 시작 → 나중에 접속한
         클라이언트의 snapshot 에 pending input_required 가 replay → 답을
-        밀어넣으면 worker 가 그 답으로 해제."""
+        밀어넣으면 worker 가 그 답으로 해제. (6b: 남은 막는 물음은 확인 대화뿐이다)"""
         r = WebRenderer()
-        result: list[str] = []
+        result: list = []
 
         def worker():
-            result.append(r.prompt_user("Q: ", context="Agent asks:\n  질문"))
+            result.append(
+                r.confirm(
+                    "Allow?", [ConfirmOption(key="y", label="yes")], default_key="n"
+                )
+            )
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
@@ -200,9 +204,9 @@ class TestCanPrompt:
         pending = [ev for ev, data in snapshot if ev == "input_required"]
         assert pending, "늦게 온 뷰어의 snapshot 에 pending 질문이 있어야 한다"
 
-        r.push_user_input("prompt", {"content": "늦은 답"})
+        r.push_confirm({"key": "y"})
         t.join(timeout=2.0)
-        assert result == ["늦은 답"]
+        assert result == [("y", "")]
 
 
 class TestWebInstanceIsActive:
@@ -299,7 +303,7 @@ class TestDangerousShellWaitsForViewer:
         kinds = [d.get("kind") for ev, d in snapshot if ev == "input_required"]
         assert "confirm" in kinds
 
-        r.push_user_input("confirm", {"key": "n", "comment": "위험해서 거부"})
+        r.push_confirm({"key": "n", "comment": "위험해서 거부"})
         t.join(timeout=3.0)
         assert results and results[0].success is False
         assert "denied" in (results[0].error or "").lower() or "거부" in (
@@ -369,7 +373,7 @@ class TestDangerousShellWaitsForViewer:
             assert payload["command"] == "rm -rf ./agentcli-test-x"
             assert [tuple(s) for s in payload["danger_spans"]] == [(0, 2)]
         finally:
-            r.push_user_input("confirm", {"key": "n", "comment": ""})
+            r.push_confirm({"key": "n", "comment": ""})
             t.join(timeout=3.0)
 
 
@@ -593,7 +597,7 @@ class TestConnectionLifecycle:
         assert snapshot[-1][0] == "snapshot_end"  # v10.8.1: 스냅샷의 끝 표시
 
     def test_pending_prompt_replays_to_reconnecting_client(self):
-        # A pending ``ask``/prompt must be sticky: a client that connects WHILE
+        # A pending confirm must be sticky: a client that connects WHILE
         # the worker waits (reconnect, second browser, board proxy) replays the
         # prompt — else the worker blocks on an answer the UI never offered.
         r = WebRenderer()
@@ -603,11 +607,13 @@ class TestConnectionLifecycle:
         def fake_wait():
             late = WebConnection(id="late")
             seen["events"] = [e for e, _ in r.hub.register(late)]
-            return "answer"
+            return ("y", "")
 
         r._wait_for_input = fake_wait
-        out = r.prompt_user("Q?", context="Agent asks:\n  무엇을?")
-        assert out == "answer"
+        out = r.confirm(
+            "Allow?", [ConfirmOption(key="y", label="yes")], default_key="n"
+        )
+        assert out == ("y", "")
         assert "input_required" in seen["events"]  # replayed while pending
 
         # Resolved → a freshly connecting client must NOT replay the stale prompt.
@@ -854,143 +860,6 @@ class TestUserMessageEcho:
 # ── Input flow ─────────────────────────────────────
 
 
-class TestPromptUserInput:
-    def test_prompt_user_blocks_until_input_pushed(self):
-        r = WebRenderer()
-        result: list[str] = []
-
-        def worker():
-            result.append(r.prompt_user("Q: ", multiline=False))
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-
-        # Give the worker a moment to enter the wait — then push input.
-        # Polling loop avoids a race on slow CI without arbitrary sleeps.
-        deadline = time.time() + 2.0
-        while t.is_alive() and r._input_queue.qsize() != 0 and time.time() < deadline:
-            time.sleep(0.05)
-
-        r.push_user_input("prompt", {"content": "hello"})
-        t.join(timeout=2.0)
-        assert not t.is_alive()
-        assert result == ["hello"]
-
-    def test_prompt_user_forwards_context_field_to_event(self):
-        """``context`` kwarg (used by the ``ask`` tool to ship its
-        question list alongside the input affordance) must land on the
-        ``input_required`` event so the frontend can render it next to
-        the ANSWERING badge."""
-        r = WebRenderer()
-        conn = WebConnection(id="c1")
-        r.hub.register(conn)
-
-        def worker():
-            r.prompt_user(
-                "Your answer: ",
-                multiline=True,
-                context="Agent asks:\n  1. What's your name?",
-            )
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-        try:
-            event, data = conn.queue.get(timeout=1.0)
-            assert event == "input_required"
-            assert data["kind"] == "prompt"
-            assert data["context"] == "Agent asks:\n  1. What's your name?"
-        finally:
-            r.push_user_input("prompt", {"content": ""})
-            t.join(timeout=2.0)
-
-    def test_prompt_user_forwards_provenance_fields(self):
-        """ask over web carries the delegate agent + reasoning so the user
-        can attribute it. Set on the worker thread (mirrors production:
-        the delegate worker registers itself and reasons on its own
-        thread before prompting)."""
-        r = WebRenderer()
-        conn = WebConnection(id="c1")
-        r.hub.register(conn)
-
-        def worker():
-            r.set_thread_agent("explorer")
-            r.note_thought("need the user to pick a path")
-            r.prompt_user("Your answer: ", multiline=True)
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-        try:
-            event, data = conn.queue.get(timeout=1.0)
-            assert event == "input_required"
-            assert data["agent"] == "explorer"
-            assert "pick a path" in data["reasoning"]
-        finally:
-            r.push_user_input("prompt", {"content": ""})
-            t.join(timeout=2.0)
-
-    def test_confirm_forwards_provenance_fields(self):
-        """confirm over web carries agent + reasoning + the action it wants
-        to run."""
-        from agent_cli.render.base import ConfirmOption
-
-        r = WebRenderer()
-        conn = WebConnection(id="c1")
-        r.hub.register(conn)
-
-        def worker():
-            r.set_thread_agent("explorer")
-            r.note_thought("the stale build must go")
-            r.note_action("shell", "rm -rf build")
-            r.confirm("Allow?", [ConfirmOption(key="y", label="yes")], default_key="n")
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-        try:
-            event, data = conn.queue.get(timeout=1.0)
-            assert event == "input_required"
-            assert data["kind"] == "confirm"
-            assert data["agent"] == "explorer"
-            assert "stale build" in data["reasoning"]
-            assert "rm -rf build" in data["action"]
-        finally:
-            r.push_user_input("confirm", {"key": "n", "comment": ""})
-            t.join(timeout=2.0)
-
-    def test_prompt_user_returns_default_on_empty(self):
-        r = WebRenderer()
-        result: list[str] = []
-
-        def worker():
-            result.append(r.prompt_user("Q: ", default="fallback"))
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-        r.push_user_input("prompt", {"content": ""})
-        t.join(timeout=2.0)
-        assert result == ["fallback"]
-
-    def test_prompt_user_abort_raises_eof(self):
-        r = WebRenderer()
-        exc: list[BaseException] = []
-
-        def worker():
-            try:
-                r.prompt_user("Q: ")
-            except BaseException as e:
-                exc.append(e)
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-        r.push_abort()
-        t.join(timeout=2.0)
-        assert exc and isinstance(exc[0], EOFError)
-
-
 class TestConfirmInput:
     options: ClassVar[list] = [
         ConfirmOption(key="y", label="yes", aliases=("yes",)),
@@ -1013,25 +882,9 @@ class TestConfirmInput:
         time.sleep(0.2)
         # stale 답변으로 즉시 리턴했으면 안 된다 — 아직 대기 중이어야.
         assert t.is_alive(), f"confirm consumed a stale answer: {result}"
-        r.push_user_input("confirm", {"key": "n", "comment": "fresh"})
+        r.push_confirm({"key": "n", "comment": "fresh"})
         t.join(timeout=2.0)
         assert result == [("n", "fresh")]
-
-    def test_prompt_user_drains_stale_queue_before_announcing(self):
-        r = WebRenderer()
-        r._input_queue.put("stale text")
-        result: list[str] = []
-
-        def worker():
-            result.append(r.prompt_user("Q: "))
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.2)
-        assert t.is_alive(), f"prompt_user consumed a stale answer: {result}"
-        r.push_user_input("prompt", {"content": "fresh"})
-        t.join(timeout=2.0)
-        assert result == ["fresh"]
 
     def test_awaiting_input_kind_reflects_pending_prompt(self):
         """서버 /api/input 게이트가 읽는 표면: 대기 중인 프롬프트의 kind
@@ -1053,7 +906,7 @@ class TestConfirmInput:
         t = threading.Thread(target=worker, daemon=True)
         t.start()
         time.sleep(0.05)
-        r.push_user_input("confirm", {"key": "y", "comment": "go"})
+        r.push_confirm({"key": "y", "comment": "go"})
         t.join(timeout=2.0)
         assert result == [("y", "go")]
 
@@ -1081,7 +934,7 @@ class TestAwaitHumanSkeleton:
         import re
 
         sticky = re.compile(r'set_sticky\(\s*"input_required"')
-        for name in ("prompt_user", "confirm"):
+        for name in ("confirm",):
             src = inspect.getsource(getattr(WebRenderer, name))
             assert not sticky.search(src), name
             assert "_await_human(" in src, name

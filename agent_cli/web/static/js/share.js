@@ -3,7 +3,7 @@
 
 import { $tokenUsage, el } from "./dom.js";
 import { copyToClipboard, es } from "./sse.js";
-import { ovOnRoster } from "./channels.js";
+import { ovOnQuestions, ovOnRoster } from "./channels.js";
 import { channelOf, finishCard, MAIN } from "./timeline.js";
 import {
   ctxApplyView,
@@ -99,6 +99,11 @@ es.addEventListener("agent_roster", function (e) {
   // 상주 에이전트 목록/상태 sticky (P4) — Team 스윔레인 + 개요 채널 바.
   const d = JSON.parse(e.data);
   ovOnRoster(d); // 개요: 채널 바 + ask 트레이 + 상태
+});
+
+es.addEventListener("open_questions", function (e) {
+  // 사람에게 온 열린 질문 sticky (6b) — ❓ 트레이의 출처 하나(main·에이전트·스킬 런).
+  ovOnQuestions(JSON.parse(e.data));
 });
 
 es.addEventListener("agent_msg", function (e) {

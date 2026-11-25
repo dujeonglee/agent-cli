@@ -75,7 +75,6 @@ agent_cli/
 ├── token_estimator.py       토큰 추정(chars/4)과 `utf8_len` — import 없는 잎
 ├── instance_file.py         세션별 `web.json`·`status.json` 쓰기·읽기·지우기 — 서버와 렌더러가 같이 쓴다(`fsio` 만 import)
 ├── main_input.py            main 앞 사람의 입력 `MainInput` — 창구의 main 상자에 봉투로 넣기·보이기·취소·런을 열 것 기다리기
-├── input_history.py         readline 입력 히스토리 — `ask` 답과 설정 마법사의 터미널 입력
 ├── item_ids.py              열린 항목 id `<접두>-<토큰>` 의 할당·해석 — 접두가 닫는 법을 말한다 (docs/ledger/DESIGN.md)
 ├── images.py                이미지 입력 — `ImageRef` 참조·보관본(`.agent-cli/images/`)·공급자 경계 `expand` (docs/vision/DESIGN.md)
 ├── memory.py                세션 메모리 `memory.jsonl` — 압축·resume 를 넘기는 노트와 꼬리 색인 (docs/session-memory/DESIGN.md)
@@ -217,6 +216,7 @@ agent_cli/
 │   ├── agent_modes.py       `agent` 도구의 실행 — 모드 표 `_MODE_HANDLERS`·`tool_agent`·모드 결과 문구
 │   ├── agent_mail.py        에이전트 메일의 글 — 봉투 `envelope`·main 관찰 레코드 `build_reply_record`·대기열 한 줄·조회의 불변 사본 `MailView`
 │   ├── question_port.py     루프의 질문·회신 seam `QuestionPort` — `reply(id)` 의 판정 하나(`judge_reply`, main·에이전트 공통)와 거절 글·`ReplyDebt`
+│   ├── questions.py         사람에게 건 질문 — `Question`·등록·목록·답 배달·정리(`AgentRegistry` 가 받는 믹스인 `QuestionsMixin`)
 │   ├── conversation_log.py  🤝 창의 줄 — `conversation.jsonl` 쓰기·읽기와 창에 내기(규칙: 기록이 원본, 막히지 않는 표면만 배달 구간 안)
 │   └── agents_state.py      상태 어휘 `state_is_active`·`agents.json` 의 모양 — 명단만(항목 ↔ 에이전트), 버전·읽기
 ├── harness/                 하니스가 자기 몫으로 돌리는 일회성 작업 — 팀원이 아니다 (docs/auditor/DESIGN.md)
@@ -367,7 +367,7 @@ agent-cli.py                 하위 호환 래퍼 — `agent_cli.main.app` 실�
 | 4 | `context/` · `prompts/` · `providers/` (한 묶음) |
 | 3 | `dialects/` · `mcp/` · `web/` |
 | 2 | `tools/` · `render/` · `pump` · `actor` · `setup` |
-| 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `main_input` · `input_history` · `browser` · `web_sources` · `instance_file` · `wake` |
+| 1 | `session/` · `config` · `hooks/` · `images` · `memory` · `monitor/` · `schedule/` · `verbose` · `main_input` · `browser` · `web_sources` · `instance_file` · `wake` |
 | 0 | `post/` · `paths` · `fsio` · `constants` · `item_ids` · `thinking_tags` · `net_errors` · `jobs` · `snapshot` · `snapshot_nested` · `code_index/` · `knobs` · `command_table` · `extras` · `model_check` · `resource_loader` · `token_estimator` · `agent_icon` · `session_slots` · `terminate` · `agents/` |
 
 `context/`·`prompts/`·`providers/` 는 패키지 단위로 서로를 모듈 수준에서 import 한다(모듈 단위로는 순환이 없다).

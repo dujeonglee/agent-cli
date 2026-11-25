@@ -365,8 +365,11 @@ class PostOffice:
             self.cv.notify_all()
             return row
 
-    def answer(self, qid: str, answer_env: Envelope) -> None:
-        """사람의 답 — 질문 줄을 닫고 답 봉투를 묻는 쪽에게 배달한다(한 락 구간)."""
+    def answer(
+        self, qid: str, answer_env: Envelope, *, how: str = "user_answered"
+    ) -> None:
+        """사람의 답 — 질문 줄을 닫고 답 봉투를 묻는 쪽에게 배달한다(한 락 구간). ``how`` "user_closed" 는 사람이 답 없이
+        닫았다(6b) — 봉투는 그 사실이다."""
         with self.cv:
             row = self._book.get(qid)
             if row is None or row.kind != "q":
@@ -374,7 +377,7 @@ class PostOffice:
             if answer_env.dst != row.src:
                 raise RowError(f"{answer_env.id}: the answer goes to {row.src}")
             self._ensure_new([answer_env])
-            self._book.close(qid, "user_answered")
+            self._book.close(qid, how)
             self._deliver(answer_env)
             self.cv.notify_all()
 

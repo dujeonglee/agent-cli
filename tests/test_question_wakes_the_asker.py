@@ -7,12 +7,22 @@ from __future__ import annotations
 
 import pytest
 
+import agent_cli.main as M
 import agent_cli.render as render_mod
 from agent_cli.loop.ledger import OPEN_QUESTIONS_HEAD
-from agent_cli.prompts.system_prompt import _ASK_INLINE_RESIDENT
+from agent_cli.prompts.system_prompt import _ASK_INLINE
+from agent_cli.skills.loader import _reset_loader
 from agent_cli.tools.virtual import AskTool
 from agent_cli.wake import WaitingOn, wake_items
-from tests.oracle.driver import Provider, Session, call, complete_all, owed_id, until
+from tests.oracle.driver import (
+    Provider,
+    Session,
+    call,
+    complete_all,
+    owed_id,
+    runs_ended,
+    until,
+)
 from tests.test_agents_live import make_registry
 from tests.test_wait_checkin import _fake_agent
 
@@ -245,13 +255,14 @@ def test_the_turn_after_ask_reads_the_question_in_the_tail(where):
     )
 
 
-def test_the_resident_description_and_guide_no_longer_say_where_to_go():
-    """경로 선택은 꼬리 한 곳에서만 — 머리의 설명·안내는 `complete` 로 보내지 않는다(6a)."""
-    assert "`complete`" not in AskTool.RESIDENT_DESCRIPTION
-    assert "`complete`" not in _ASK_INLINE_RESIDENT
+def test_the_description_and_guide_no_longer_say_where_to_go():
+    """경로 선택은 꼬리 한 곳에서만 — 머리의 설명·안내는 못 나아갈 때 `complete` 로 보내지 않는다(6a). 설명의
+    `complete` 는 질문이 아닌 인사말의 끝맺음만 말한다(6b — 설명 하나)."""
+    assert "If nothing else can proceed" not in AskTool.description
+    assert "`complete`" not in _ASK_INLINE
     assert (
         "  - The answer may never come: a person is free not to answer, and nobody\n"
-        "    chases them.\n" in _ASK_INLINE_RESIDENT
+        "    chases them.\n" in _ASK_INLINE
     )
 
 
@@ -307,3 +318,155 @@ def test_only_my_own_question_wakes_me_and_it_sets_no_timer(tmp_path):
         assert reg.next_checkin_s("agent:n", frozenset()) is None
     finally:
         reg.shutdown_all()
+
+
+def test_an_answer_read_mid_run_is_an_envelope_not_the_users_words(where):
+    """제자리 대기에서 깬 런이 답을 턴 경계에 흡수한다 — 답은 줄 없는 ``n-`` 봉투다. 사람의 말이 아니라 ``[user]: ``
+    머리가 없고, 장부 항목이 되지 않는다(6b)."""
+    g = _asks_then_waits(where, owes=False)
+    assert g["after_answer"].startswith("[agent]\n── answer [n-")
+    tail = g["after_answer"].split("── end of message", 1)[-1]
+    assert "## Open Items" not in tail
+
+
+# ── main 이 묻는다 (6b) ───────────────────────────────────────
+
+
+def _main_asks_then_waits(root, *, close: bool) -> dict:
+    got: dict = {}
+
+    def waits(m):
+        got["after_ask"] = _content(m[-1])
+        return WAIT_CALL
+
+    def reads(m):
+        got["read"] = _content(m[-1])
+        return complete_all("main done")(m)
+
+    p = Provider({"MAIN": [call("ask", question=Q), waits, reads, reads]})
+    s = Session(root, p, path="web")
+    s.say("MAIN go", nickname="dj")
+    t = s.pump_in_thread()
+    try:
+        until(lambda: s.reg._post.is_waiting("main"), "main waits in place")
+        (q,) = s.reg.open_human_questions()
+        got["qid"], got["asker"] = q.id, q.asker
+        err = (
+            s.reg.close_question(q.id, by="user:dj")
+            if close
+            else s.reg.answer_question(q.id, ANSWER, by="user:dj")
+        )
+        assert not err
+        until(lambda: "read" in got, "main read it")
+        until(s.main_idle, "main idle")
+        got["open_after"] = [x.id for x in s.reg.open_human_questions()]
+        got["runs"] = runs_ended(s)
+    finally:
+        s.close()
+        t.join(20)
+    return got
+
+
+def test_main_asks_waits_and_the_answer_wakes_it(where):
+    g = _main_asks_then_waits(where, close=False)
+    assert g["asker"] == "main"
+    obs, tail = g["after_ask"].split("── end of message", 1)
+    assert (
+        obs.strip().split("\n\n")[0]
+        == f'[ask]\nObservation: question "{g["qid"]}" sent — "{Q}"'
+    )
+    assert f'{OPEN_QUESTIONS_HEAD}\n- "{g["qid"]}" · "{Q}"\n' in tail
+    assert g["read"].startswith("[ask]\n── answer [n-")
+    assert f"re [{g['qid']}] ──\nYour question: {Q}\nAnswer: {ANSWER}" in g["read"]
+    assert g["open_after"] == [] and g["runs"] == 1
+
+
+def test_main_asks_waits_and_the_close_wakes_it(where):
+    g = _main_asks_then_waits(where, close=True)
+    assert g["read"].startswith("[ask]\n── closed [n-")
+    assert (
+        "(The user closed it without an answer. Go on with what you have, and say what you assumed.)"
+        in g["read"]
+    )
+    assert g["open_after"] == [] and g["runs"] == 1
+
+
+# ── 스킬 런이 묻는다 (6b, 결정 B 라) ──────────────────────────
+
+
+def _skill_asks_then_waits(root, *, how: str) -> dict:
+    """사람이 ``/demo`` 를 부른다 — 스킬 런이 자기 주소로 묻고 `wait`, 사람이 질문 길로 답하거나 닫거나(``how``), ■ 로
+    멈춘다. 스킬은 펌프 스레드에서 inline 으로 돈다(웹·터미널의 명령 라우팅과 같은 자리)."""
+    (root / "skills").mkdir()
+    (root / "skills" / "demo.md").write_text(
+        "---\nname: demo\ndescription: demo\nallowed-tools: [ask, read_file]\n---\n"
+        "TASK-S ask the user for a name, then report it.\n"
+    )
+    _reset_loader([root / "skills"])
+    got: dict = {}
+
+    def waits(m):
+        got["after_ask"] = _content(m[-1])
+        return WAIT_CALL
+
+    def reads(m):
+        got["read"] = _content(m[-1])
+        return call("complete", result="got it", answers=[])
+
+    p = Provider({"MAIN": [], "TASK-S": [call("ask", question=Q), waits, reads]})
+    s = Session(root, p, path="web")
+    s.surface.commands["/demo"] = lambda: got.setdefault(
+        "result",
+        M._dispatch_skill(
+            "/demo",
+            s.binding,
+            max_turns=10,
+            ctx=s.spec.ctx,
+            session=s.spec.session,
+            stop_event=s.surface.stop,
+            mcp_manager=None,
+        ),
+    )
+    s.say("/demo", nickname="dj")
+    t = s.pump_in_thread()
+    try:
+        until(lambda: s.reg.open_human_questions(), "the skill asked")
+        (q,) = s.reg.open_human_questions()
+        got["qid"], got["asker"] = q.id, q.asker
+        until(lambda: s.main_input.post.is_waiting(q.asker), "the skill waits in place")
+        if how == "answer":
+            assert not s.reg.answer_question(q.id, ANSWER, by="user:dj")
+        elif how == "close":
+            assert not s.reg.close_question(q.id, by="user:dj")
+        else:
+            s.surface.stop.set()
+        until(lambda: "result" in got, "the skill ended")
+        got["open_after"] = [x.id for x in s.reg.open_human_questions()]
+        got["main_calls"] = len(p.calls.get("MAIN", []))
+    finally:
+        s.close()
+        t.join(20)
+    return got
+
+
+def test_a_skill_asks_waits_and_the_answer_wakes_it(where):
+    g = _skill_asks_then_waits(where, how="answer")
+    assert g["asker"].startswith("skill:skill-demo-")
+    tail = g["after_ask"].split("── end of message", 1)[1]
+    assert f'{OPEN_QUESTIONS_HEAD}\n- "{g["qid"]}" · "{Q}"' in tail
+    assert g["read"].startswith("[ask]\n── answer [n-")
+    assert f"re [{g['qid']}] ──\nYour question: {Q}\nAnswer: {ANSWER}" in g["read"]
+    assert g["result"] == ("got it", True)
+    assert g["open_after"] == [] and g["main_calls"] == 0
+
+
+def test_a_skill_asks_waits_and_the_close_wakes_it(where):
+    g = _skill_asks_then_waits(where, how="close")
+    assert g["read"].startswith("[ask]\n── closed [n-")
+    assert g["open_after"] == []
+
+
+def test_stopping_a_waiting_skill_closes_its_question(where):
+    """■ — 스킬 런이 멈추면 그 런이 건 질문은 닫힌다(답을 받을 쪽이 없다)."""
+    g = _skill_asks_then_waits(where, how="stop")
+    assert g["open_after"] == []

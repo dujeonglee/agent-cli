@@ -25,7 +25,7 @@ def _clean_runner():
 
 
 class _Reg:
-    def question_port(self, key):
+    def question_port(self, key=None, *, address="", name=""):
         return object()
 
     def absorb_main(self):  # main 의 턴 경계 흡수
@@ -59,7 +59,9 @@ def _all_ports():
             peer_roster=_S,
             agent_registry=None,
         ),
-        "skill": SkillLoop.make_ports(agent_registry=_Reg(), owner="agent:parent"),
+        "skill": SkillLoop.make_ports(
+            agent_registry=_Reg(), owner="agent:parent", address="skill:s-1"
+        ),
         "private": PrivateLoop.make_ports("harness:auditor:1-2"),
     }
 

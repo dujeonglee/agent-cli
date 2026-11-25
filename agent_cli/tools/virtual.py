@@ -121,28 +121,17 @@ class WaitTool(Tool):
 
 class AskTool(Tool):
     name = "ask"
-    requires_handler = "ctx"  # 비대화형 루프(ctx 없음)에선 목록에서 제거
-    # v10.112.0: main 의 안내 블록(`_ASK_INLINE`, 304 토큰 — "ask vs complete" 결정
-    # 나무)을 지웠다. 벤치 946 세션 0회·실사용 59 세션 2회(진짜 질문), 막으려던
-    # 오용(작별 인사를 `ask` 로)은 기록에 없었다. 그 뜻은 마지막 한 문장이 맡는다.
+    # 질문 포트가 있는 루프에만 — main·에이전트·스킬 런(6b). 묻고 나서 `wait` 로 기다릴 수 있는 루프와 같다
+    requires_handler = "questions"
+    # 누가 묻든 한 설명 — 질문을 올리고 바로 돌아온다. 묻고 나서 어디로 가나는 질문이 열린 동안 꼬리가 말한다(6a).
     description = (
-        "Ask the user one question and wait for their reply. One question per call — to"
-        " ask several, make several `ask` calls in one turn (each is answered in turn)."
-        " Use only when you cannot proceed without specific input; otherwise end with "
-        "`complete`. A closing remark or a pleasantry is not a question — end with "
-        "`complete` instead."
-    )
-    # 상주 에이전트용 (docs/agent-ask/DESIGN.md §3.1). 거기서 ``ask`` 는
-    # **막지 않는다** — 질문을 사람의 트레이에 올리고 즉시 돌아온다. 마지막
-    # 문장이 중요하다: ask 는 보통 "막혔다" 는 뜻이라 "계속하라" 고만 하면 작은
-    # 모델이 추측으로 메우고 끝낸다. v10.77.0 (B): 주소는 언제나 사람 — 에이전트·
-    # main 에게서 무언가 필요하면 `message` 다(요청 → 상대가 `reply` 를 빚진다).
-    RESIDENT_DESCRIPTION = (
         "Ask the person one question and keep working — you are not blocked. It "
         "goes to their question tray; the answer arrives later as a new message "
         "and you continue from there. Carry on with anything that does not depend "
-        "on it. To get something from "
-        "main or another agent, send it a `message` — its `reply` comes back to you."
+        "on it. Use it only when you need specific input from the person; a closing "
+        "remark or a pleasantry is not a question — end with `complete` instead. To "
+        "get something from an agent, send it a `message` — its `reply` comes back "
+        "to you."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -241,8 +230,9 @@ class ReplyTool(Tool):
     summary = "Answer a request someone is waiting on — another agent's `message` or the request you were given."
     # v10.56.0 (장부 P3 §11.3): main 에도 붙는다 — 빚을 갚는 도구는 루프와 무관하게
     # 하나다. 종전엔 상주 전용(``message_handler``)이었고 main 은 `agent` 의 옛 요청 모드
-    # 로 "가장 오래된 빚" 을 갚았다. 질문 포트가 있는 루프(main·상주)에 붙는다.
-    requires_handler = "questions"
+    # 로 "가장 오래된 빚" 을 갚았다. 6b: `message` 와 짝 — 메시지를 주고받는 루프(main·에이전트)에 붙는다.
+    # 질문 포트로 정하면 스킬 런(이제 자기 주소로 묻는다)에도 붙는데, 스킬에는 갚을 빚이 없다.
+    requires_handler = "message_handler"
     force_mount = True
     description = (
         "Reply to a request someone is waiting on — an agent's `message` that expects "

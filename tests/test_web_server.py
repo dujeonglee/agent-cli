@@ -1082,30 +1082,28 @@ class TestStaticUI:
 
     def test_global_ask_tray_wired(self, server_and_client):
         """agent-channels 3단계: **주소가 사람인 열린 질문**을 채널 무관
-        글로벌 트레이로 노출·답변. 답은 그 asker 로 고정
-        (/api/agent/<key>/input + ``answer_id``), 질문이 닫히면 자동 제거
-        (roster 의 ``open_questions`` 가 진실원)."""
+        글로벌 트레이로 노출·답변·닫기. 답은 질문 번호의 길
+        (/api/questions/<q-N>/answer|close, 6b), 질문이 닫히면 자동 제거
+        (열린 질문 목록 sticky ``open_questions`` 가 진실원)."""
         _, _, client = server_and_client
         html = client.get("/").text
         js = js_text()
         css = client.get("/static/style.css").text
         assert 'id="ask-tray"' in html
-        # 트레이의 진실원은 roster 행의 ``open_questions`` 다 — 프런트가
-        # 질문을 따로 캐시하면 두 진실원이 생긴다.
+        # 트레이의 진실원은 열린 질문 목록 하나다(6b) — 명단 행에서 읽지 않는다.
         assert "var ovAskTray" not in js
-        assert "open_questions" in js
+        assert 'es.addEventListener("open_questions"' in js
         assert "function ovRenderAskTray(" in js and "function ovSubmitAsk(" in js
-        # roster 의 open_questions 가 표시 진실원 — 주소는 언제나 사람(v10.77.0)
         rt = js_fn_body(js, "ovRenderAskTray")
-        assert "t.open_questions" in rt
+        assert "ovQuestions" in rt and "t.open_questions" not in rt
         assert "waiting_ask" not in rt
-        # roster 갱신마다 재렌더
+        # 명단 갱신마다 재렌더(이름표)
         onr = js_fn_body(js, "ovOnRoster")
         assert "ovRenderAskTray()" in onr
-        # 답변 라우팅: 그 agent 로 고정 + 질문 id 로 짝짓기
-        sa = js_fn_body(js, "ovSubmitAsk")
-        assert '"api/agent/" + encodeURIComponent(key) + "/input"' in sa
-        assert "body.answer_id = qid" in sa
+        # 답·닫기 라우팅: 질문 번호의 길
+        pq = js_fn_body(js, "ovPostQuestion")
+        assert '"api/questions/" + encodeURIComponent(qid) + "/" + action' in pq
+        assert "answer_id" not in js
         assert ".ask-item" in css and ".ask-answer" in css
 
     def test_task_group_collapse_from_any_position_wired(self, server_and_client):
@@ -1673,67 +1671,16 @@ class TestInputEndpoint:
         item = server.main_input.wait_to_open(0)["message"]
         assert item["text"] == "hello"
 
-    def test_prompt_response_goes_to_renderer_input_queue(self, server_and_client):
+    def test_the_prompt_kind_is_gone(self, server_and_client):
+        """6b: 막는 `ask` 가 없어져 ``kind: "prompt"`` 의 답 칸도 없다 — 질문의 답은 질문 길(`/api/questions/…`)로."""
         _, renderer, client = server_and_client
         cid = _register(renderer)
-        result: list[str] = []
-
-        def worker():
-            result.append(renderer.prompt_user("Q: "))
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-
         resp = client.post(
             "/api/input?token=testtoken",
             json={"kind": "prompt", "content": "answer text", "conn_id": cid},
         )
-        assert resp.status_code == 200
-
-        t.join(timeout=2.0)
-        assert result == ["answer text"]
-
-    def test_prompt_response_echoes_user_message_for_ui_feedback(
-        self, server_and_client
-    ):
-        """The ask-tool answer flows to the LLM through the renderer's
-        input queue (a tool observation, NOT a user message). For the
-        UI, however, an empty textarea after submit feels like the
-        click did nothing — the server echoes the content as a
-        ``user_message`` event so the chat thread shows the user's
-        reply right away, ahead of the LLM's next emission."""
-        _, renderer, client = server_and_client
-        conn = WebConnection(id="c1")
-        renderer.hub.register(conn)
-
-        # Detach a worker so the input_queue has a consumer.
-        def worker():
-            renderer.prompt_user("Q: ")
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-
-        client.post(
-            "/api/input?token=testtoken",
-            json={"kind": "prompt", "content": "my answer", "conn_id": "c1"},
-        )
-        t.join(timeout=2.0)
-
-        # ``user_message`` echo must arrive on the SSE side too.
-        seen_user_message = False
-        # Drain a few events from the queue — order matters but other
-        # transient events may interleave (e.g. input_resolved).
-        for _ in range(5):
-            try:
-                event, data = conn.queue.get(timeout=0.5)
-            except Exception:
-                break
-            if event == "user_message" and data.get("content") == "my answer":
-                seen_user_message = True
-                break
-        assert seen_user_message
+        assert resp.status_code == 400
+        assert renderer._input_queue.qsize() == 0
 
     def test_confirm_response_decodes_key_and_comment(self, server_and_client):
         from agent_cli.render.base import ConfirmOption
@@ -1819,27 +1766,8 @@ class TestInputGate:
         assert resp.status_code == 409
         assert renderer._input_queue.qsize() == 0
 
-    def test_prompt_without_pending_wait_is_409_and_not_echoed(self, server_and_client):
-        _, renderer, client = server_and_client
-        conn = WebConnection(id="c1")
-        renderer.hub.register(conn)
-        resp = client.post(
-            "/api/input?token=testtoken",
-            json={"kind": "prompt", "content": "stale answer", "conn_id": "c1"},
-        )
-        assert resp.status_code == 409
-        assert renderer._input_queue.qsize() == 0
-        # 거절된 답변은 user_message 로 echo 되어서도 안 된다.
-        while True:
-            try:
-                event, _data = conn.queue.get(timeout=0.2)
-            except Exception:
-                break
-            assert event != "user_message"
-
     def test_kind_mismatch_is_409(self, server_and_client):
-        """confirm 대기 중에 prompt 답변(또는 역)은 거절 — str 자리에 tuple
-        이 흘러드는 malformed 경로 차단."""
+        """confirm 대기 중에 다른 종류의 답은 거절 — 6b 뒤 ``prompt`` 는 없는 종류라 400."""
         from agent_cli.render.base import ConfirmOption
 
         _, renderer, client = server_and_client
@@ -1863,7 +1791,7 @@ class TestInputGate:
             "/api/input?token=testtoken",
             json={"kind": "prompt", "content": "wrong kind", "conn_id": cid},
         )
-        assert resp.status_code == 409
+        assert resp.status_code == 400
 
         # 일치하는 kind 는 정상 수용 — worker 가 그 답으로 해제된다.
         resp = client.post(
@@ -1924,15 +1852,13 @@ class TestConfirmStallWarning:
 
     def test_frontend_handles_409_as_stale_ask(self, server_and_client):
         """409(이미 해결된 ask) 응답이면 stale main-ask 트레이 항목을 접는다
-        (ovFoldMainAsk) — confirm/prompt 두 제출부 각각의 분기 안에서. v10.147.4: 접기는
+        (ovFoldMainAsk) — 확인 대화 제출부의 분기 안에서(6b: main 의 막는 물음은 확인 대화뿐이다). v10.147.4: 접기는
         `mainAskAlreadyClosed(item)` 한 곳 — 그 항목의 물음이 지금의 것일 때만 접고 알린다."""
         js = js_text()
         confirm_body = js_fn_body(js, "ovSubmitMainConfirm")
         assert "status === 409" in confirm_body
         assert "mainAskAlreadyClosed(item)" in confirm_body
-        prompt_body = js_fn_body(js, "ovSubmitMainPrompt")
-        assert "status === 409" in prompt_body
-        assert "mainAskAlreadyClosed(item)" in prompt_body
+        assert "ovSubmitMainPrompt" not in js and 'kind: "prompt"' not in js
         closed = js_fn_body(js, "mainAskAlreadyClosed")
         assert "session.mainAsk === item.askOf" in closed
         assert "ovFoldMainAsk()" in closed
@@ -2085,15 +2011,17 @@ class TestMessageQueue:
 
 
 class TestAbortEndpoint:
-    def test_abort_releases_blocked_prompt_user(self, server_and_client):
+    def test_abort_releases_a_blocked_confirm(self, server_and_client):
+        """6b 뒤 막는 물음은 확인 대화뿐 — 끊으면 기본값으로 풀린다."""
+        from agent_cli.render.base import ConfirmOption
+
         _, renderer, client = server_and_client
-        exc: list[BaseException] = []
+        result: list = []
 
         def worker():
-            try:
-                renderer.prompt_user("Q: ")
-            except BaseException as e:
-                exc.append(e)
+            result.append(
+                renderer.confirm("?", [ConfirmOption("y", "yes")], default_key="n")
+            )
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
@@ -2103,7 +2031,7 @@ class TestAbortEndpoint:
         assert resp.status_code == 200
 
         t.join(timeout=2.0)
-        assert exc and isinstance(exc[0], EOFError)
+        assert result == [("n", "")]
 
 
 class TestStopEndpoint:
@@ -3843,15 +3771,6 @@ class TestAgentInputImages:
             json={"content": "x", "images": ["missing.png"]},
         )
         assert r.status_code == 400
-        r = client.post(
-            f"/api/agent/agt-1/input?token={server.token}",
-            json={
-                "content": "x",
-                "answer_id": "q-1",
-                "images": [str(tmp_path / "a.png")],
-            },
-        )
-        assert r.status_code == 400 and "answer" in r.json()["detail"]
         assert reg.requests == []
 
 

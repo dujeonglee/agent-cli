@@ -101,7 +101,9 @@ class TestEveryKindHasOne:
             agent_registry=None,
         ).mailbox
         private = PrivateLoop.make_ports("run:t1").mailbox
-        skill = SkillLoop.make_ports(agent_registry=None, owner="agent:p").mailbox
+        skill = SkillLoop.make_ports(
+            agent_registry=None, owner="agent:p", address="skill:s-1"
+        ).mailbox
         got = {
             name: (type(mb).__name__, mb.owner, mb.has_inbox)
             for name, mb in {
@@ -115,14 +117,15 @@ class TestEveryKindHasOne:
             "main": ("Mailbox", "main", True),  # 턴 경계가 main 상자를 흡수한다
             "resident": ("Mailbox", "agent:k1", True),
             "private": ("Mailbox", "run:t1", True),
-            "skill": ("Mailbox", "agent:p", False),
+            # 6b: 스킬 런은 자기 주소의 상자(사람의 답·닫힘)를 읽는다
+            "skill": ("Mailbox", "skill:s-1", True),
         }
         # 레지스트리는 포트를 만들 때의 슬롯 것 — 종전 엔진이 읽던 것과 같다
         main.cancel_checkin()
         skill.cancel_checkin()
         assert [c.args for c in reg.cancel_checkin.call_args_list] == [
             ("main",),
-            ("agent:p",),
+            ("skill:s-1",),
         ]
 
 
@@ -177,7 +180,9 @@ class TestWakeableTruthTable:
         )
         oneshot = PrivateLoop.make_ports("run:task_1")
         harness = PrivateLoop.make_ports("harness:auditor:1-1")
-        skill = SkillLoop.make_ports(agent_registry=None, owner="main")
+        skill = SkillLoop.make_ports(
+            agent_registry=None, owner="main", address="skill:s-1"
+        )
         got = {
             "main": main.wakeable(),
             "resident": resident.wakeable(),
@@ -190,5 +195,5 @@ class TestWakeableTruthTable:
             "resident": True,
             "oneshot": True,
             "harness": True,
-            "skill": False,
+            "skill": True,  # 6b: 자기가 건 질문의 답을 기다릴 수 있다
         }

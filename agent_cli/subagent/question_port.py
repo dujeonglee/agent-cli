@@ -199,25 +199,24 @@ class QuestionPort:
     """루프가 질문·회신 빚에 닿는 seam (DESIGN.md §4).
 
     표면은 ``ask``·``reply``·``debts`` 다. main 도 같은 포트를 받는다
-    (``key=None``) — 빚을 갚는 `reply` 가 루프와 무관하게 하나이기 때문이다.
-    단 ``ask`` 는 거부한다(아래).
+    (``key=None``) — 묻기·빚 갚기가 루프와 무관하게 하나이기 때문이다(6b).
     """
 
-    def __init__(self, registry: AgentRegistry, key: str | None = None):
+    def __init__(
+        self,
+        registry: AgentRegistry,
+        key: str | None = None,
+        *,
+        address: str = "",
+        name: str = "",
+    ):
         self._reg = registry
-        self.key = key
-        # 이 주체의 **주소**(질문의 target 과 비교) / **발신 라벨**(asker).
-        self.me = "main" if key is None else f"agent:{key}"
-        self.asker = "main" if key is None else key
-
-    @property
-    def nonblocking(self) -> bool:
-        """이 주체의 ``ask`` 가 막지 않는가 — 상주 에이전트만 True.
-
-        main 의 ``ask`` 는 사람에게 묻는 기존 블로킹 경로 그대로다(§8-④).
-        디스패치와 시스템 프롬프트가 같은 이 값을 본다.
-        """
-        return self.key is not None
+        self.name = name  # 스킬 런의 스킬 이름(6b) — 질문의 묻는 쪽 이름표
+        # 이 주체의 **주소**(질문의 target 과 비교) / **발신 라벨**(asker). 스킬 런(6b)은 자기 주소(``skill:…``)가
+        # 셋 모두다 — 묻고, 답을 받고, 빚은 없다.
+        self.key = key if not address else address
+        self.me = address or ("main" if key is None else f"agent:{key}")
+        self.asker = address or ("main" if key is None else key)
 
     def ask(self, text: str) -> tuple[str, str]:
         """사람에게 질문 등록 — ``(id, err)``, err 가 비면 성공 (v10.77.0, B).
@@ -225,19 +224,10 @@ class QuestionPort:
         주소는 언제나 사람(❓ 트레이)이다. 에이전트·main 에게 무언가 필요하면
         `message` 다 — 그건 요청이고 상대가 `reply` 를 빚진다. 종전의 ``to``
         (원 요청자 기본·에이전트 주소)는 에이전트가 빚지는 질문(q-)과 `answer`
-        도구를 만들었는데, 실제 기록에서 `answer` 11회가 전부 실패했다.
-
-        **main 은 거부한다.** main 의 ``ask`` 는 사람에게 묻는 기존 블로킹
-        경로(`renderer.prompt_user`) 그대로다. 여기로 오면 로스터에도 창에도 안
-        뜨는(둘 다 asker 를 에이전트 키로 찾는다) 질문이 생겨 세션의 끝 판정
-        (`runtime.session_has_live_work` 의 열린 질문 항)을 영구 참으로 만든다.
+        도구를 만들었는데, 실제 기록에서 `answer` 11회가 전부 실패했다. main 도 같은 길이다(6b) — 열린 질문은
+        트레이·`/questions` 의 목록에 서고, 사람이 답하거나 닫아서 닫힌다.
         """
-        if self.key is None:
-            return "", (
-                "main asks the operator through the blocking `ask` prompt, "
-                "not through the question list"
-            )
-        return self._reg.register_question(self.asker, text)
+        return self._reg.register_question(self.asker, text, name=self.name)
 
     def debts(self) -> list[dict]:
         """이 런이 아직 갚지 않은 회신 빚 (v9.22.0) — main·상주 **같은 코드**.
@@ -257,7 +247,7 @@ class QuestionPort:
         return [
             (q.id, q.text)
             for q in self._reg.open_human_questions()
-            if q.asker == self.key
+            if q.asker == self.asker
         ]
 
     def awaited(self) -> list[dict]:

@@ -918,6 +918,7 @@ footer {
 .ask-in { display: flex; gap: 7px; }
 .ask-answer { flex: 1; font-size: 13px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: 6px; background: var(--bg); color: var(--text); }
 .ask-send { padding: 6px 14px; font-size: 13px; }
+.ask-close { padding: 6px 10px; font-size: 12px; }
 #input-area { display: flex; gap: 8px; align-items: stretch; position: relative; }
 /* agent-channels: 대화 채널 칩 바 (4단계) + 발신 대상 배지 */
 #input {

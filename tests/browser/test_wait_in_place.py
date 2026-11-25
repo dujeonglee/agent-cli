@@ -136,7 +136,6 @@ class TestMessageCard:
                     "est_tokens": 0,
                     "error": "",
                     "ends_after_task": True,
-                    "open_questions": [],
                 }
             ]
         )

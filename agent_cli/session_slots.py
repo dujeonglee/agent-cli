@@ -30,6 +30,8 @@ _MONITORS: MonitorRegistry | None = None
 _SCHEDULES: ScheduleRegistry | None = None
 _HOOKS: HookRunner | None = None
 _AGENTS: AgentRegistry | None = None
+#: 스킬 런이 제자리에서 기다리는 동안 사람의 입력을 보는 법 (6b) — ``(timeout) -> bool``. 호스트가 세운다
+_NESTED_WAIT_INPUT = None
 
 
 def set_job_registry(registry: JobRegistry | None) -> None:
@@ -82,10 +84,22 @@ def get_agent_registry() -> AgentRegistry | None:
     return _AGENTS
 
 
+def set_nested_wait_input(fn) -> None:
+    """스킬 런의 `wait` 동안 사람의 입력을 보는 법 — 명령(`/answer` 등)은 그 자리에서 라우팅하고 보통의 말은 main
+    앞에 둔다(스킬을 깨우지 않는다). 세션을 세우는 곳(`runtime.wire_session`)이 세운다."""
+    global _NESTED_WAIT_INPUT
+    _NESTED_WAIT_INPUT = fn
+
+
+def get_nested_wait_input():
+    return _NESTED_WAIT_INPUT
+
+
 def clear_session_slots() -> None:
-    """다섯을 None 으로 — 세션 정리(`runtime.teardown_session`)의 맨 마지막."""
+    """여섯을 None 으로 — 세션 정리(`runtime.teardown_session`)의 맨 마지막."""
     set_job_registry(None)
     set_monitor_registry(None)
     set_schedule_registry(None)
     set_hook_runner(None)
     set_agent_registry(None)
+    set_nested_wait_input(None)
