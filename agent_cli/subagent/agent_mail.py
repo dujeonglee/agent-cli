@@ -171,7 +171,6 @@ def envelope_of_item(item: dict, dst: str) -> Envelope:
     elif not kind and item.get("expects_reply", True):
         env = post_envelope.request(
             **common,
-            hop=int(item.get("hop", 0) or 0),
             answers=item.get("answers") or (),
         )
     elif kind == "reply":
@@ -179,11 +178,10 @@ def envelope_of_item(item: dict, dst: str) -> Envelope:
             **common,
             re=str(item.get("re") or ""),
             mark=str(item.get("mark") or ""),
-            hop=int(item.get("hop", 0) or 0),
             wakes=wakes,
         )
     elif kind in ("", "notice"):
-        env = post_envelope.notice(**common, hop=int(item.get("hop", 0) or 0))
+        env = post_envelope.notice(**common)
     else:
         env = post_envelope.system(**common)
     return replace(env, wakes=wakes and env.wakes)

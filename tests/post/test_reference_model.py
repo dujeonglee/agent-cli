@@ -39,7 +39,7 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
         src, dst = rnd.sample(ADDRS, 2)
         pick = rnd.randrange(6)
         if pick == 0:
-            return E.request(nid("r"), src, dst, "ask", hop=rnd.randrange(3))
+            return E.request(nid("r"), src, dst, "ask")
         if pick == 1:
             return E.human(nid("u"), "user:dj", rnd.choice(ADDRS[1:]), "hi")
         if pick == 2:

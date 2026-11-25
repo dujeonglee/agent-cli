@@ -5,7 +5,7 @@
 서로를 깨우며 돈다). 저장·렌더·콜백은 하지 않는다 — 락 밖에서 호출자가 한다. 조건변수는 주어지면 그것을(입력 큐와 공유), 아니면 기본
 `threading.Condition()`(재진입 락)을 쓴다.
 
-hop 상한·요청자 부재·사람 주소 같은 판정은 호출자의 몫이다 — 여기서는 회신 없이 닫으라는 지시(빈 ``replies``)로
+요청자 부재·사람 주소 같은 판정은 호출자의 몫이다 — 여기서는 회신 없이 닫으라는 지시(빈 ``replies``)로
 받는다.
 """
 
@@ -104,15 +104,12 @@ class PostOffice:
         creditor: str,
         text: str,
         *,
-        hop: int = 0,
         answers: Iterable[str] = (),
     ) -> Row:
         """봉투 없이 곧바로 집힌 r 줄 — 빚이 상자를 지나지 않고 생겼다. 같은 id 의 줄이 이미 있으면 `RowError`
         (이미 집힌 봉투의 빚인지는 호출자가 `row` 로 먼저 본다). 장부의 r 줄은 저장 대상이 아니다."""
         with self.cv:
-            row = self._book.owe(
-                rid, debtor, creditor, text, hop=hop, answers=tuple(answers)
-            )
+            row = self._book.owe(rid, debtor, creditor, text, answers=tuple(answers))
             self.cv.notify_all()
             return row
 

@@ -135,16 +135,6 @@ class TestEndRun:
         office.end_run("main", run_id="u-0", outcome="stopped", replies={})
         assert office.rows() == () and office.queued(A) == ()
 
-    def test_hops_are_carried_by_the_caller(self, office):
-        """D3: office 는 hop 을 잇기만 한다 — 줄은 요청의 hop 을, 회신은 만든 쪽이 준 hop 을 든다."""
-        office.deliver(E.request("r-1", "agent:b", A, "do", hop=4))
-        office.absorb(A)
-        (row,) = office.owed_by(A)
-        assert row.hop == 4
-        fb = E.reply("n-2", A, "agent:b", "fb", re="r-1", hop=row.hop + 1)
-        office.end_run(A, run_id="r-1", outcome="done", replies={"r-1": fb})
-        assert [e.hop for e in office.queued("agent:b")] == [5]
-
     def test_a_duplicate_reply_id_changes_nothing(self, office):
         self._two_debts(office)
         office.deliver(E.notice("n-4", A, "main", "taken id"))

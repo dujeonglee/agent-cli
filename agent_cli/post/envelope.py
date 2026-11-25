@@ -1,7 +1,7 @@
 """봉투 — 나르는 것의 모양 하나 (시안 §3).
 
 머리는 우편·장부가 읽는다: 누가 누구에게(``src``·``dst``), 무엇이(``kind``), 무엇에 대한 회신인가(``re``), 닫는
-법(``closes_by`` — 만드는 쪽이 정한다), 깨우는가·저장하는가, hop·귀속(``answers``). ``text`` 는 본문 — 장부
+법(``closes_by`` — 만드는 쪽이 정한다), 깨우는가·저장하는가, 귀속(``answers``). ``text`` 는 본문 — 장부
 줄과 읽기 전용 조회가 그대로 옮기며 해석하지 않는다. ``payload`` 는 글을 짓는 쪽만 읽는다(이미지·런 메타·
 작업 정보 등). 우편·장부는 payload 를 열지 않는다.
 
@@ -34,7 +34,6 @@ class Envelope:
     mark: str = ""
     closes_by: ClosesBy | None = None
     wakes: bool = True
-    hop: int = 0
     answers: tuple[str, ...] = ()
     ts: float = 0.0
     payload: Mapping[str, Any] = field(default_factory=dict, hash=False)
@@ -55,7 +54,6 @@ def request(
     dst: str,
     text: str,
     *,
-    hop: int = 0,
     answers=(),
     ts: float = 0.0,
     payload: Mapping[str, Any] | None = None,
@@ -68,7 +66,6 @@ def request(
         dst,
         text,
         closes_by="reply",
-        hop=hop,
         answers=answers,
         ts=ts,
         payload=payload or _EMPTY,
@@ -122,14 +119,11 @@ def notice(
     dst: str,
     text: str,
     *,
-    hop: int = 0,
     ts: float = 0.0,
     payload: Mapping[str, Any] | None = None,
 ) -> Envelope:
     """통지 — 빚 없음, 읽으면 끝."""
-    return Envelope(
-        id, "notice", src, dst, text, hop=hop, ts=ts, payload=payload or _EMPTY
-    )
+    return Envelope(id, "notice", src, dst, text, ts=ts, payload=payload or _EMPTY)
 
 
 def reply(
@@ -140,7 +134,6 @@ def reply(
     *,
     re: str,
     mark: str = "",
-    hop: int = 0,
     wakes: bool = True,
     answers=(),
     ts: float = 0.0,
@@ -156,7 +149,6 @@ def reply(
         text,
         re=re,
         mark=mark,
-        hop=hop,
         wakes=wakes,
         answers=answers,
         ts=ts,

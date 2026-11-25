@@ -44,7 +44,6 @@ class ReplyDebt:
     to: str  # "main" | "agent:<key>" | "user" | "user:<nick>"
     text: str  # 무엇에 대한 회신인지 (빚 목록의 설명)
     answers: list = field(default_factory=list)  # 요청 항목의 귀속 스냅샷
-    hop: int = 0  # peer 폴백 배달의 hop
     settled: bool = False
     id: str = ""  # 요청 번호 — `reply(id=…)` 가 가리키는 값
     #: 닫힌 줄이면 닫힌 사유(장부의 ``Row.how`` — "reply"·"unsent"·…), 열린 줄이면 "". "unsent" 는 회신이

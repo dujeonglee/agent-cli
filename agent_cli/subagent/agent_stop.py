@@ -288,7 +288,6 @@ def answer_main_debts(registry, records: list[dict], *, by: str = "user") -> int
             d.to.split(":", 1)[1],
             "main",
             stopped_reply("main", d.id, d.text, activity, notes, by=by),
-            d.hop,
             re=d.id,
             mark=mark,
             opens_run=registry.main_stop_wakes,

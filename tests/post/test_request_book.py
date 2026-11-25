@@ -194,13 +194,13 @@ class TestQuestions:
 
 def test_owe_opens_a_picked_reply_debt_without_an_envelope():
     book = RequestBook()
-    row = book.owe("r-1", "main", "agent:a", "decide", hop=2, answers=("dj",))
-    assert (row.kind, row.state, row.src, row.dst, row.hop) == (
+    row = book.owe("r-1", "main", "agent:a", "decide", answers=("dj",))
+    assert (row.kind, row.state, row.src, row.dst, row.answers) == (
         "r",
         "picked",
         "agent:a",
         "main",
-        2,
+        ("dj",),
     )
     assert [r.rid for r in book.owed_by("main")] == ["r-1"]
     with pytest.raises(RowError):
