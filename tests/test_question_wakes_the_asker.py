@@ -307,3 +307,9 @@ def test_only_my_own_question_wakes_me_and_it_sets_no_timer(tmp_path):
         assert reg.next_checkin_s("agent:n", frozenset()) is None
     finally:
         reg.shutdown_all()
+
+
+def test_an_answer_read_mid_run_carries_the_users_label(where):
+    """제자리 대기에서 깬 런이 답을 턴 경계에 흡수한다 — 답은 사람의 요청 ``u-`` 이고 사람의 말처럼 ``[user]: `` 머리가 붙는다."""
+    g = _asks_then_waits(where, owes=False)
+    assert g["after_answer"].startswith("[user]: ── answer [u-")
