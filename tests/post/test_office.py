@@ -284,6 +284,43 @@ class TestQuestions:
             office.answer("q-1", E.human("u-3", "user:dj", "agent:b", "v2"))
 
 
+class TestConfirms:
+    """확인(6d) — 봉투 없는 c 줄. 사람의 답이나 기다리던 쪽의 떠남이 닫고, 먼저 닫은 쪽이 이긴다."""
+
+    def test_open_close_and_list(self, office):
+        token = object()
+        row = office.open_confirm("c-1", "main", "rm?", meta=token)
+        assert (row.kind, row.state, row.dst) == ("c", "picked", "user")
+        office.open_confirm("c-2", A, "write?")
+        (first, second) = office.open_confirms()
+        assert first.meta is token and second.rid == "c-2"
+        assert office.close_confirm("c-1", "user_answered") is True
+        assert office.close_confirm("c-1", "undeliverable") is False  # 이미 닫혔다
+        assert [r.rid for r in office.open_confirms()] == ["c-2"]
+        assert office.close_confirm("c-2", "undeliverable") is True
+        assert office.open_confirms() == () and office.rows() == ()
+
+    def test_only_a_confirm_row_closes_as_a_confirm(self, office):
+        office.ask("q-1", A, "user:dj", "?")
+        assert office.close_confirm("q-1", "user_answered") is False
+        assert [r.rid for r in office.open_questions()] == ["q-1"]
+
+    def test_closing_wakes_a_waiter(self, office):
+        office.open_confirm("c-1", "main", "rm?")
+        woke = threading.Event()
+
+        def waiter():
+            with office.cv:
+                office.cv.wait_for(lambda: office.row("c-1") is None)
+            woke.set()
+
+        t = threading.Thread(target=waiter)
+        t.start()
+        office.close_confirm("c-1", "user_answered")
+        t.join()
+        assert woke.is_set()
+
+
 class TestConsistency:
     def test_the_checker_names_what_is_broken(self):
         o = PostOffice()

@@ -12,6 +12,7 @@
             메일·알림·회신 도착)  통지는 id 만 있고 항목이 아니다(v10.141.0)
 ``r-``      회신을 기다리는 요청  ``reply`` 의 ``id``
 ``q-``      사람에게 건 질문      (모델이 닫지 않는다 — 사람이 트레이에서 답한다)
+``c-``      사람에게 건 확인      (모델이 닫지 않는다 — 사람이 명령·트레이로 답한다)
 ==========  ====================  =================================
 
 v10.77.0: 번호는 :func:`next_id` 하나가 매긴다 — 번호 공간을 모든 접두가 함께
@@ -29,11 +30,12 @@ USER = "u"
 MAIL = "n"
 REPLY = "r"
 QUESTION = "q"
+CONFIRM = "c"
 
 #: 접두 전부 (v10.77.0)
-PREFIXES = frozenset({USER, MAIL, REPLY, QUESTION})
+PREFIXES = frozenset({USER, MAIL, REPLY, QUESTION, CONFIRM})
 
-#: 접두 → 그 항목을 닫는 도구. ``q-`` 는 없다 — 질문은 사람에게만 가고(v10.77.0)
+#: 접두 → 그 항목을 닫는 도구. ``q-``·``c-`` 는 없다 — 질문·확인은 사람에게만 가고(v10.77.0·6d)
 #: 모델이 닫을 항목이 아니다.
 CLOSER = {USER: "complete", MAIL: "complete", REPLY: "reply"}
 
@@ -71,7 +73,7 @@ def observe(*item_ids) -> None:
 
 
 #: 글 속의 id — 접두 하나·하이픈·숫자(앞이 낱말 글자가 아닐 때만: ``user-1`` 의 ``r-1`` 은 아니다)
-_ID_IN_TEXT = re.compile(r"\b[unrq]-(\d+)\b")
+_ID_IN_TEXT = re.compile(r"\b[unrqc]-(\d+)\b")
 
 #: 재시작 때 번호를 잇는 기록 글 — 모델 기록과 🤝 대화창
 RECORD_FILES = ("history.jsonl", "conversation.jsonl")

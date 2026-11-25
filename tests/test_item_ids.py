@@ -97,14 +97,15 @@ class TestMailIdsByKind:
 
 
 class TestConfirmPrefix:
-    """6d-1 전의 값 — 확인(`c-`)은 아직 장부의 접두가 아니다(6d-1 이 뒤집는다)."""
+    """확인(`c-`, 6d)은 장부의 접두다 — 같은 번호 공간을 쓰고, 기록의 `c-N` 도 번호를 잇는 근거다."""
 
-    def test_c_is_not_a_prefix(self):
-        assert item_ids.prefix_of("c-3") == ""
-        with pytest.raises(ValueError):
-            item_ids.next_id("c")
+    def test_c_is_a_prefix_in_the_one_number_space(self):
+        assert item_ids.prefix_of("c-3") == "c"
+        assert item_ids.next_id(item_ids.USER) == "u-1"
+        assert item_ids.next_id(item_ids.CONFIRM) == "c-2"
+        assert item_ids.closer_of("c-2") == ""  # 모델이 닫는 항목이 아니다
 
-    def test_a_c_id_in_the_records_does_not_raise_the_numbers(self, tmp_path):
+    def test_a_c_id_in_the_records_raises_the_numbers(self, tmp_path):
         (tmp_path / "history.jsonl").write_text('{"content": "waiting [c-90]"}\n')
         item_ids.observe_records(tmp_path)
-        assert item_ids.number_of(item_ids.next_id(item_ids.USER)) < 90
+        assert item_ids.next_id(item_ids.USER) == "u-91"

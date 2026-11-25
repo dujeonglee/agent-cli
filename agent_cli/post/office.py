@@ -437,6 +437,29 @@ class PostOffice:
         with self.cv:
             return self._book.open_questions()
 
+    # ── 확인 (6d) ────────────────────────────────────
+
+    def open_confirm(self, cid: str, asker: str, text: str, *, meta: Any = None) -> Row:
+        """도구 호출 하나가 사람의 확인을 기다린다 — c 줄을 연다. 저장하지 않는다. ``meta`` 는 부르는 쪽의 것이다."""
+        with self.cv:
+            row = self._book.open_confirm(cid, asker, text, meta=meta)
+            self.cv.notify_all()
+            return row
+
+    def close_confirm(self, cid: str, how: str) -> bool:
+        """c 줄을 닫는다 — 닫았으면 참, 이미 닫혔거나 c 줄이 아니면 거짓(먼저 닫은 쪽이 이긴다)."""
+        with self.cv:
+            row = self._book.get(cid)
+            if row is None or row.kind != "c":
+                return False
+            self._book.close(cid, how)
+            self.cv.notify_all()
+            return True
+
+    def open_confirms(self) -> tuple[Row, ...]:
+        with self.cv:
+            return self._book.open_confirms()
+
     def row(self, rid: str) -> Row | None:
         with self.cv:
             return self._book.get(rid)
@@ -486,8 +509,8 @@ class PostOffice:
                     problems.append(f"I7 {eid} row and envelope disagree on src/dst")
             for rid, row in rows.items():
                 spots = where.get(rid, [])
-                if row.kind == "q" and spots:
-                    problems.append(f"I3 question {rid} has an envelope")
+                if row.kind in ("q", "c") and spots:
+                    problems.append(f"I3 {rid} ({row.kind}) has an envelope")
                 if row.state == "queued" and not any(
                     p == "queued" and a == row.dst for a, p, _ in spots
                 ):
