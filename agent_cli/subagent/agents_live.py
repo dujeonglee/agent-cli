@@ -820,16 +820,14 @@ class AgentRegistry(QuestionsMixin):
         """`reply` 판정의 재료(`question_port.ReplyFacts`) — ``_cv`` 를 한 번 쥐고 뜬다. 런을 연 주소는 에이전트만
         안다(지금 런의 첫 항목 author); main 의 런은 펌프가 연다 — None. 읽기만 한다."""
         with self._cv:
-            known, opener = True, None
+            opener = None
             if debtor.startswith("agent:"):
                 tm = self._agents.get(debtor.split(":", 1)[1])
-                known = tm is not None
                 if (
                     tm is not None
                 ):  # 빈 author 도 "아는" 것이다 — 그 주소에게 진 줄이 없을 뿐
                     opener = str(tm.current_author or "")
             return ReplyFacts(
-                known=known,
                 owed=tuple(self.reply_debts(debtor)),
                 opener=opener,
                 opener_row=None if opener is None else self.reply_debt(debtor, opener),

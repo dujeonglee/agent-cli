@@ -174,14 +174,6 @@ class TestMainReplySentences:
 
 
 class TestAgentReplySentences:
-    def test_unknown_self(self, tmp_path):
-        reg, _keys, door = _agents(tmp_path)
-        try:
-            assert reg.question_port("nobody").reply("x", id="r-1") == "unknown agent"
-        finally:
-            door.set()
-            reg.shutdown_all()
-
     def test_nothing_owed_by_a_run_not_started_by_a_request(self, tmp_path):
         reg, (_a, b), door = _agents(tmp_path)
         try:

@@ -25,8 +25,8 @@ PAID_MAIN = ReplyDebt(
 )
 
 
-def facts(*, owed=(), opener=None, opener_row=None, by_id=None, known=True):
-    return ReplyFacts(known, tuple(owed), opener, opener_row, by_id)
+def facts(*, owed=(), opener=None, opener_row=None, by_id=None):
+    return ReplyFacts(tuple(owed), opener, opener_row, by_id)
 
 
 GONE_R4 = (
@@ -50,14 +50,6 @@ CASES = [
         facts(owed=[R1]),
         "no_words",
         "reply has no words ('!!') — nothing sent; say it in words",
-    ),
-    (
-        "주체 없음",
-        "ok",
-        "",
-        facts(known=False, opener=None),
-        "unknown_self",
-        "unknown agent",
     ),
     (
         "main — 빚 없음",
