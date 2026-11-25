@@ -99,7 +99,6 @@ class TestOneItem:
         assert start.request_id
         assert isinstance(start.stop_event, threading.Event)
         assert surface.stop_events[0] is start.stop_event  # 표면에 건 핸들 = 런의 핸들
-        assert reg.authors == [["dj"]]
 
     def test_quiet_policy_ends_after_the_queue_drains(self):
         q = MainInput()
@@ -150,7 +149,6 @@ class TestMailRun:
         assert seen[0].author is None and seen[0].author_is_user is False
         assert seen[0].request_id == "" and seen[0].query == ""  # 시작 메시지 없음
         assert not [c for c in surface.calls if c[0] == "echo"]  # 말풍선 없음
-        assert reg.authors == [[]]
         # 메일 런의 글은 라우팅하지 않는다 (사람 명령이 아니다)
         assert not [c for c in surface.calls if c[0] == "route"]
 

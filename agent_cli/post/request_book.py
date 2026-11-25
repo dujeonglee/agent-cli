@@ -71,7 +71,6 @@ class Row:
     dst: str  # 빚진 쪽(받는 쪽)
     kind: RowKind
     text: str
-    answers: tuple[str, ...] = ()
     state: State = "queued"
     how: How | None = None
     closed_in_run: str = ""
@@ -92,11 +91,11 @@ class RequestBook:
         kind = ROW_KIND.get((env.kind, env.closes_by or ""))
         if kind is None:
             raise RowError(f"no row for a {env.kind}/{env.closes_by} envelope")
-        return self._add(Row(env.id, env.src, env.dst, kind, env.text, env.answers))
+        return self._add(Row(env.id, env.src, env.dst, kind, env.text))
 
-    def open_human(self, rid: str, src: str, dst: str, text: str, *, answers=()) -> Row:
+    def open_human(self, rid: str, src: str, dst: str, text: str) -> Row:
         """봉투 없이 곧바로 집힌 사람의 말(u-) — main 의 입력은 입력 큐를 지나 상자에 들지 않는다."""
-        return self._add(Row(rid, src, dst, "u", text, tuple(answers), state="picked"))
+        return self._add(Row(rid, src, dst, "u", text, state="picked"))
 
     def owe(
         self,
@@ -104,14 +103,10 @@ class RequestBook:
         debtor: str,
         creditor: str,
         text: str,
-        *,
-        answers=(),
     ) -> Row:
         """봉투 없이 곧바로 집힌 r 줄 — ``debtor`` 가 ``creditor`` 에게 `reply` 를 빚진다(봉투가 상자를 지나지
         않은 빚: main 이 관찰로 읽은 요청, 테스트가 세운 빚). 같은 id 의 줄이 있으면 `RowError`."""
-        return self._add(
-            Row(rid, creditor, debtor, "r", text, tuple(answers), state="picked")
-        )
+        return self._add(Row(rid, creditor, debtor, "r", text, state="picked"))
 
     def open_question(
         self, qid: str, asker: str, target: str, text: str, *, meta: Any = None

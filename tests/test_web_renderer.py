@@ -3112,16 +3112,12 @@ class TestCtxDirWiring:
         assert len({s["channel"] for s in starts}) == 2
 
 
-# ── Complete attribution (v8.2.0 — team view user lane) ──────────
+# ── user_message 의 author (v8.2.0 — team view user lane) ──────────
 
 
-class TestCompleteAttribution:
-    """``answers`` on MAIN-timeline finals + ``author`` on user_message.
-
-    Live: the loop owns the set (``set_run_authors``); replay derives the SAME
-    set from the history user records' ``author`` field. Scope-level finals
-    answer their caller, never a user — no ``answers`` there.
-    """
+class TestUserMessageAuthor:
+    """``author`` on user_message — 라이브와 재생이 같다. 사람이 아닌 발신은 재생에서 그리지 않는다.
+    최종 답(`assistant_turn`)에는 닉네임 목록을 싣지 않는다 — 답한 요청은 ``requests`` 가 말한다."""
 
     def _renderer_with_conn(self):
         r = WebRenderer()
@@ -3145,55 +3141,11 @@ class TestCompleteAttribution:
         assert d1["author"] == "Bob"
         assert "author" not in d2  # additive: absent, not empty-string
 
-    def test_live_final_carries_set_run_authors(self):
-        r, conn = self._renderer_with_conn()
-        r.set_run_authors(["Bob", "두정"])
-        r.final("ans", turn=1)
-        [(event, data)] = self._events(conn)
-        assert event == "assistant_turn"
-        assert data["answers"] == ["Bob", "두정"]
-
-    def test_live_final_without_set_has_no_answers_key(self):
-        # CLI / pre-run finals: no claim either way (missing ≠ empty).
+    def test_live_final_carries_no_answers_key(self):
         r, conn = self._renderer_with_conn()
         r.final("ans", turn=1)
         [(_e, data)] = self._events(conn)
         assert "answers" not in data
-
-    def test_empty_answers_is_a_real_value(self):
-        # 🤝 agent-report run: the loop DID set (empty) → explicit [].
-        r, conn = self._renderer_with_conn()
-        r.set_run_authors([])
-        r.final("ans", turn=1)
-        [(_e, data)] = self._events(conn)
-        assert data["answers"] == []
-
-    def test_worker_busy_clears_stale_attribution(self):
-        # A routed-command dispatch (no run_loop) must not inherit the
-        # PREVIOUS run's answers.
-        r, conn = self._renderer_with_conn()
-        r.set_run_authors(["Bob"])
-        r.final("run1", turn=1)
-        r.worker_busy()
-        r.final("command output", turn=0)
-        events = self._events(conn)
-        finals = [d for e, d in events if e == "assistant_turn"]
-        assert finals[0]["answers"] == ["Bob"]
-        assert "answers" not in finals[1]
-
-    def test_scope_level_final_never_carries_answers(self):
-        # A skill/agent sub-loop's final answers its CALLER.
-        r, conn = self._renderer_with_conn()
-        r.set_run_authors(["Bob"])
-        r.begin_scope(task_id="sk1", kind="skill", label="plan")
-        r.final("sub answer", turn=1)
-        r.end_scope(task_id="sk1", kind="skill", success=True, duration_s=0.1)
-        r.final("main answer", turn=2)
-        finals = [d for e, d in self._events(conn) if e == "assistant_turn"]
-        scoped = [d for d in finals if d.get("task_id")]
-        main = [d for d in finals if not d.get("task_id")]
-        assert scoped and all("answers" not in d for d in scoped)
-        assert main and main[-1]["answers"] == ["Bob"]
 
     # ── replay path ──
 
@@ -3205,7 +3157,7 @@ class TestCompleteAttribution:
             "ts": ts,
         }
 
-    def test_replay_derives_answers_from_user_record_authors(self):
+    def test_replay_keeps_user_record_authors(self):
         r, conn = self._renderer_with_conn()
         ctx = _FakeResumeCtx(
             [
@@ -3219,28 +3171,10 @@ class TestCompleteAttribution:
         users = [d for e, d in events if e == "user_message"]
         finals = [d for e, d in events if e == "assistant_turn" and "final" in d]
         assert [u.get("author") for u in users] == ["Bob", "두정"]
-        assert finals[-1]["answers"] == ["Bob", "두정"]
+        assert finals and "answers" not in finals[-1]
 
-    def test_replay_attribution_resets_per_final(self):
-        # Two runs in one history: the second final only lists ITS askers.
-        r, conn = self._renderer_with_conn()
-        ctx = _FakeResumeCtx(
-            [
-                {"role": "user", "content": "[Bob]: q1", "author": "Bob", "ts": 1.0},
-                self._final_record(2.0, "a1"),
-                {"role": "user", "content": "[Ann]: q2", "author": "Ann", "ts": 3.0},
-                self._final_record(4.0, "a2"),
-            ]
-        )
-        r.replay_from_history(ctx)
-        finals = [
-            d for e, d in self._events(conn) if e == "assistant_turn" and "final" in d
-        ]
-        assert finals[0]["answers"] == ["Bob"]
-        assert finals[1]["answers"] == ["Ann"]
-
-    def test_replay_excludes_non_user_authors(self):
-        """사람이 아닌 발신자는 귀속에서 빠지고, **그려지지도 않는다**.
+    def test_replay_does_not_draw_non_user_authors(self):
+        """사람이 아닌 발신자는 **그려지지 않는다**.
 
         v9.8.0: 종전엔 author 만 떼고 `user_message` 로 재생해서, v9.7.0 이
         고친 파란 말풍선이 `--resume` 때 되살아났다. v10.51.0: 라이브가 깨우기를
@@ -3268,81 +3202,11 @@ class TestCompleteAttribution:
         r.replay_from_history(ctx)
         events = self._events(conn)
         users = [d for e, d in events if e == "user_message"]
-        finals = [d for e, d in events if e == "assistant_turn" and "final" in d]
         # 사람 메시지만 말풍선으로 — 신형 레코드와 레거시 "🤝 agent" 둘 다 빠진다.
         assert [u.get("author") for u in users] == ["Bob"]
         assert not any(
             "reply arrived" in str(d) or "legacy record" in str(d) for _, d in events
         )
-        assert finals[-1]["answers"] == ["Bob"]
-
-    def test_replay_dedupes_repeat_authors(self):
-        r, conn = self._renderer_with_conn()
-        ctx = _FakeResumeCtx(
-            [
-                {"role": "user", "content": "[Bob]: q1", "author": "Bob", "ts": 1.0},
-                {"role": "user", "content": "[Bob]: more", "author": "Bob", "ts": 2.0},
-                self._final_record(3.0),
-            ]
-        )
-        r.replay_from_history(ctx)
-        finals = [
-            d for e, d in self._events(conn) if e == "assistant_turn" and "final" in d
-        ]
-        assert finals[-1]["answers"] == ["Bob"]
-
-    def test_replay_inherits_answers_from_agent_reply_observation(self):
-        # 귀속 승계 재생 (v8.5.0): 🤝 웨이크 런은 user 레코드가 agent 발신
-        # (author_is_user=False)이라 그 자체론 무귀속인데, 에이전트 회신
-        # 관찰 레코드의 ``answers`` additive 가 원 요청자를 되실어 온다 —
-        # 라이브의 턴경계 합류와 동일 집합.
-        r, conn = self._renderer_with_conn()
-        ctx = _FakeResumeCtx(
-            [
-                {
-                    "role": "user",
-                    "content": "[🤝 agent]: New agent mail has arrived…",
-                    "author": "🤝 agent",
-                    "author_is_user": False,
-                    "ts": 1.0,
-                },
-                {
-                    "role": "user",
-                    "tool": "agent",
-                    "content": "Observation: ── agent w1 reply ──\ndone",
-                    "success": True,
-                    "answers": ["Bob"],
-                    "ts": 2.0,
-                },
-                self._final_record(3.0, "the real answer"),
-            ]
-        )
-        r.replay_from_history(ctx)
-        finals = [
-            d for e, d in self._events(conn) if e == "assistant_turn" and "final" in d
-        ]
-        assert finals[-1]["answers"] == ["Bob"]
-
-    def test_replay_answerless_observation_is_noop(self):
-        # 구세션 관찰(answers 없음) 은 종전 그대로 — 하위호환.
-        r, conn = self._renderer_with_conn()
-        ctx = _FakeResumeCtx(
-            [
-                {
-                    "role": "user",
-                    "tool": "shell",
-                    "content": "Observation: ok",
-                    "success": True,
-                    "ts": 1.0,
-                },
-                self._final_record(2.0),
-            ]
-        )
-        r.replay_from_history(ctx)
-        finals = [
-            d for e, d in self._events(conn) if e == "assistant_turn" and "final" in d
-        ]
-        assert finals[-1]["answers"] == []
 
 
 class TestAgentWorkNavTs:

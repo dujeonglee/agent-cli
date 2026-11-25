@@ -897,10 +897,8 @@ class MainLoop(LoopKind):
         return True
 
     @property
-    def tracks_run_authors(self) -> bool:
-        return (
-            True  # 웹 다중 사용자 귀속 — 렌더러와 레지스트리의 요청자 스냅샷을 비춘다
-        )
+    def owns_main_view(self) -> bool:
+        return True
 
     @staticmethod
     def start(opened: dict, stop_event) -> Start:

@@ -366,15 +366,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -857,9 +848,6 @@
     "tool": "wait"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-179] from agt-732d3475 (aa) re [r-176] · stopped by user ──\nThe user stopped agt-732d3475 while it was working on your request [r-176] (\"TASK-X1 delegate\").\nLast activity: `message` \"bb\" ✓ · `agent` ✓ · `wait` ✓\nDecide whether to continue another way or report back to the user.",
     "role": "user",
     "source": "agent_message",

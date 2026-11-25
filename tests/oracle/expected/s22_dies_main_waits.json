@@ -67,15 +67,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -387,9 +378,6 @@
     "tool": "agent"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-2] from agt-A (bb) re [r-1] · died ──\nagt-A died while it was working on your request [r-1] (\"TASK-F1 compute\").\nDecide whether to continue another way or report back to the user.",
     "role": "user",
     "source": "agent_message",

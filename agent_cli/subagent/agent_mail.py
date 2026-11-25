@@ -165,14 +165,9 @@ def envelope_of_item(item: dict, dst: str) -> Envelope:
         # 사람의 답·닫힘 (6b) — 회신과 같은 줄 없는 봉투: 질문 줄은 그 배달이 닫는다
         env = post_envelope.reply(**common, re=str(item.get("re") or ""), wakes=wakes)
     elif is_human_addr(author) and not kind:
-        env = post_envelope.human(
-            **common, re=str(item.get("re") or ""), answers=item.get("answers") or ()
-        )
+        env = post_envelope.human(**common, re=str(item.get("re") or ""))
     elif not kind and item.get("expects_reply", True):
-        env = post_envelope.request(
-            **common,
-            answers=item.get("answers") or (),
-        )
+        env = post_envelope.request(**common)
     elif kind == "reply":
         env = post_envelope.reply(
             **common,
@@ -209,7 +204,7 @@ def envelope_of_main_mail(mail: dict, dst: str = "main") -> Envelope:
         # 사람의 답·닫힘 (6b) — 에이전트의 받은편지함과 같은 줄 없는 봉투
         env = post_envelope.reply(**common, re=str(mail.get("re") or ""))
     elif kind == "peer_message" and mail.get("expects_reply"):
-        env = post_envelope.request(**common, answers=mail.get("answers") or ())
+        env = post_envelope.request(**common)
     elif kind == "peer_message" and mail.get("notice"):
         env = post_envelope.notice(**common)
     elif kind == "reply" or (kind == "peer_message" and mail.get("re")):
@@ -217,7 +212,6 @@ def envelope_of_main_mail(mail: dict, dst: str = "main") -> Envelope:
             **common,
             re=str(mail.get("re") or ""),
             mark=str(mail.get("mark") or ""),
-            answers=mail.get("answers") or (),
         )
     else:
         env = post_envelope.system(**common)

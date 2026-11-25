@@ -97,7 +97,7 @@ class TestRuns:
         )
 
     def test_open_human_has_no_envelope(self, office):
-        office.open_human("u-1", "user:dj", "main", "hello", answers=["dj"])
+        office.open_human("u-1", "user:dj", "main", "hello")
         assert [r.rid for r in office.open_requests("main")] == ["u-1"]
         assert office.queued("main") == () == office.taken("main")
 

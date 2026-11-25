@@ -1148,7 +1148,6 @@ class TestLoopWiring:
             ctx=fake_ctx,
             turn=3,
             _oversized_cap=10_000,
-            run_authors=[],
             # v10.119.0: 메일 레코드의 항목 id 를 렌더러에 알린다(📋 띠 점프)
             noted=[],
         )
@@ -1838,9 +1837,6 @@ class TestRunMessagePump:
 
         def open_human_questions(self):
             return []
-
-        def set_current_run_authors(self, authors):
-            pass
 
         def run_ended(self, owner, output="", *, waiting=False, **kw):
             return 0
@@ -4030,77 +4026,6 @@ class TestDelegationGuidanceIsCostFirst:
         assert "several rounds of questions" in d  # spawn 의 유일한 사유
         assert "One agent per area" in d and "disjoint" in d
         assert "Prefer spawn" not in d
-
-
-class TestAttributionInheritance:
-    """귀속 승계 (v8.5.0) — main 발신 request 가 그 시점 런의 USER 목록을
-    스냅샷해 회신에 되실어 온다. 시간이 아니라 요청↔회신 쌍에 묶이므로,
-    응답 전에 다른 사용자의 요청이 끼어들어도 교차 오염이 없다."""
-
-    def test_request_snapshots_current_run_authors(self, tmp_path, renderer):
-        reg = make_registry(tmp_path)
-        key, _ = reg.spawn()
-        wait_until(lambda: reg.get(key).state == "idle")
-        reg.set_current_run_authors(["Bob"])
-        reg.request(key, "fix it")
-        assert wait_until(
-            lambda: reg.arrived_for("main", waking_only=False, words=False)
-        )
-        reply = absorbed_mail(reg)[0]
-        assert reply["kind"] == "reply"
-        assert reply["answers"] == ["Bob"]
-
-    def test_interleaved_request_keeps_its_own_authors(self, tmp_path, renderer):
-        # Bob 런의 요청이 블록된 사이 두정 런이 시작돼 스냅샷 소스가
-        # 바뀌어도, 먼저 만든 요청의 회신은 ["Bob"] 을 유지한다.
-        gate = threading.Event()
-        reg = make_registry(tmp_path, runner=make_runner(block=gate))
-        key, _ = reg.spawn()
-        wait_until(lambda: reg.get(key).state == "idle")
-        reg.set_current_run_authors(["Bob"])
-        reg.request(key, "bob's job")  # 워커가 gate 에 블록
-        reg.set_current_run_authors(["두정"])  # 다음 런 시작 (인터리브)
-        gate.set()
-        assert wait_until(
-            lambda: reg.arrived_for("main", waking_only=False, words=False)
-        )
-        reply = absorbed_mail(reg)[0]
-        assert reply["answers"] == ["Bob"]  # 두정 오염 없음
-
-    def test_peer_request_carries_no_answers(self, tmp_path, renderer):
-        # peer 발신은 회신이 main mailbox 로 가지 않으므로 스냅샷 자체가
-        # 없어야 한다 (아이템에 answers 키 없음).
-        reg = make_registry(tmp_path)
-        k1, _ = reg.spawn()
-        k2, _ = reg.spawn()
-        wait_until(lambda: reg.get(k1).state == "idle")
-        reg.set_current_run_authors(["Bob"])
-        reg.request(k1, "peer job", author=f"agent:{k2}", expects_reply=False)
-        # 처리 후 main pending 이 비어야 한다 (terminal 소비 — 재라우팅 없음)
-        wait_until(lambda: reg.get(k1).state == "idle" and reg.get(k1).handled >= 1)
-        assert not reg.arrived_for("main", waking_only=False, words=False)
-
-    def test_question_reply_has_no_answers(self, tmp_path, renderer):
-        # question 은 사용자 답이 아닌 내부 왕복 — 미승계 설계.
-        reg = make_registry(tmp_path)
-        key, _ = reg.spawn()
-        wait_until(lambda: reg.get(key).state == "idle")
-        reg.set_current_run_authors(["Bob"])
-        # 워커가 question 을 올리게 하려면 ask 경로가 필요해 무겁다 —
-        # 계약의 핵심(승계는 kind=reply 에만 존재)을 shape 로 고정:
-        # main 메일함으로 올라오는 question dict 에는 answers 키가 없다.
-        to_main(
-            reg,
-            {
-                "kind": "question",
-                "key": key,
-                "profile": "p",
-                "success": True,
-                "output": "which file?",
-            },
-        )
-        q = next(r for r in absorbed_mail(reg) if r["kind"] == "question")
-        assert "answers" not in q
 
 
 class TestRequestInEventAddressing:

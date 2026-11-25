@@ -248,15 +248,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -790,9 +781,6 @@
     "tool": "wait"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-97] from agt-d58fa4a1 (aa) re [r-95] ──\nasked bb",
     "role": "user",
     "source": "agent_message",

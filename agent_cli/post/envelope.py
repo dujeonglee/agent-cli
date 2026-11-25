@@ -1,7 +1,7 @@
 """봉투 — 나르는 것의 모양 하나 (시안 §3).
 
 머리는 우편·장부가 읽는다: 누가 누구에게(``src``·``dst``), 무엇이(``kind``), 무엇에 대한 회신인가(``re``), 닫는
-법(``closes_by`` — 만드는 쪽이 정한다), 깨우는가·저장하는가, 귀속(``answers``). ``text`` 는 본문 — 장부
+법(``closes_by`` — 만드는 쪽이 정한다), 깨우는가·저장하는가. ``text`` 는 본문 — 장부
 줄과 읽기 전용 조회가 그대로 옮기며 해석하지 않는다. ``payload`` 는 글을 짓는 쪽만 읽는다(이미지·런 메타·
 작업 정보 등). 우편·장부는 payload 를 열지 않는다.
 
@@ -23,7 +23,7 @@ _EMPTY: Mapping[str, Any] = MappingProxyType({})
 
 @dataclass(frozen=True)
 class Envelope:
-    """봉투 하나 — 불변. ``answers`` 는 튜플, ``payload`` 는 읽기 전용 사본으로 굳는다."""
+    """봉투 하나 — 불변. ``payload`` 는 읽기 전용 사본으로 굳는다."""
 
     id: str
     kind: Kind
@@ -34,12 +34,10 @@ class Envelope:
     mark: str = ""
     closes_by: ClosesBy | None = None
     wakes: bool = True
-    answers: tuple[str, ...] = ()
     ts: float = 0.0
     payload: Mapping[str, Any] = field(default_factory=dict, hash=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "answers", tuple(self.answers))
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
 
     @property
@@ -54,7 +52,6 @@ def request(
     dst: str,
     text: str,
     *,
-    answers=(),
     ts: float = 0.0,
     payload: Mapping[str, Any] | None = None,
 ) -> Envelope:
@@ -66,7 +63,6 @@ def request(
         dst,
         text,
         closes_by="reply",
-        answers=answers,
         ts=ts,
         payload=payload or _EMPTY,
     )
@@ -79,7 +75,6 @@ def human(
     text: str,
     *,
     re: str = "",
-    answers=(),
     ts: float = 0.0,
     payload: Mapping[str, Any] | None = None,
 ) -> Envelope:
@@ -93,7 +88,6 @@ def human(
         text,
         re=re,
         closes_by="complete",
-        answers=answers,
         ts=ts,
         payload=payload or _EMPTY,
     )
@@ -135,7 +129,6 @@ def reply(
     re: str,
     mark: str = "",
     wakes: bool = True,
-    answers=(),
     ts: float = 0.0,
     payload: Mapping[str, Any] | None = None,
 ) -> Envelope:
@@ -150,7 +143,6 @@ def reply(
         re=re,
         mark=mark,
         wakes=wakes,
-        answers=answers,
         ts=ts,
         payload=payload or _EMPTY,
     )

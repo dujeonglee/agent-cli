@@ -184,15 +184,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -506,9 +497,6 @@
     "tool": "wait"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-36] from agt-2deb87ad (helper) re [r-34] ──\nasked the user",
     "role": "user",
     "source": "agent_message",

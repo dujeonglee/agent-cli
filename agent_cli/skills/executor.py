@@ -322,7 +322,7 @@ class SkillLoop(LoopKind):
         return False  # 스킬 턴은 그리지 않는다 — 카드만
 
     @property
-    def tracks_run_authors(self) -> bool:
+    def owns_main_view(self) -> bool:
         return False
 
     # ── ⑫ 시작 — 템플릿 치환 ──

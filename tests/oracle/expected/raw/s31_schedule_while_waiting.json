@@ -86,15 +86,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -229,16 +220,6 @@
     [
      "u-147",
      7
-    ],
-    {}
-   ],
-   [
-    "set_run_authors",
-    [
-     [
-      "dj",
-      "Scheduler-nightly"
-     ]
     ],
     {}
    ],
@@ -497,9 +478,6 @@
     "tool": "wait"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-148] from agt-dc3d714f re [r-146] ──\ndone",
     "role": "user",
     "source": "agent_message",

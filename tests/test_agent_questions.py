@@ -1371,15 +1371,6 @@ class TestCompleteIsLocal:
         assert f"from {b}" in head
         assert body.startswith(_NO_REPLY_LABEL) and "b 의 런 요약" in body
 
-    def test_reply_to_main_carries_attribution(self, mkreg, renderer):
-        reg = mkreg()
-        b = spawn_idle(reg)
-        reg.set_current_run_authors(["dj"])
-        self._run(reg, b, "main", lambda: reg.question_port(b).reply("보고", id="r-1"))
-        mail = absorbed_mail(reg)
-        assert [m["output"] for m in mail] == ["보고"], f"에코가 섞였다: {mail}"
-        assert mail[0].get("answers") == ["dj"]
-
     def test_reply_is_refused_when_nothing_is_owed(self, mkreg, renderer):
         """회신·통지·답으로 시작한 런 — ack 가 새는 자리. 거부하고 message 로 안내."""
         reg = mkreg()

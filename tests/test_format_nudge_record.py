@@ -243,7 +243,6 @@ class TestReaders:
         calls = []
         r.observation = lambda *a, **k: calls.append(("observation", a, k))
         r.push_user_message = lambda *a, **k: calls.append(("user", a, k))
-        r._replay_authors = []
         r._replay_record(
             {
                 "role": "user",

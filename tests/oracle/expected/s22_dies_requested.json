@@ -206,15 +206,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -823,15 +814,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -1184,9 +1166,6 @@
     "role": "assistant"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-3] from agt-B (aa) re [r-2] ──\naa: bb did not answer",
     "role": "user",
     "source": "agent_message",

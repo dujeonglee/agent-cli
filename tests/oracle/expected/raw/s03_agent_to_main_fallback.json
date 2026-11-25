@@ -175,15 +175,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -948,15 +939,6 @@
     }
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -1364,9 +1346,6 @@
     "role": "assistant"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-19] from agt-caf21554 re [r-16] ──\n(no explicit reply — this is the agent's run summary)\nread the answer\n(agent status: idle — ready for new requests.)",
     "role": "user",
     "source": "agent_reply",

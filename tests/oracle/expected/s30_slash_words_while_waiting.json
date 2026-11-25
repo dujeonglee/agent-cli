@@ -86,15 +86,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -207,15 +198,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "push_user_message",
     [
      "[dj]: MAIN and then summarize"
@@ -231,15 +213,6 @@
     [
      "u-3",
      6
-    ],
-    {}
-   ],
-   [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
     ],
     {}
    ],
@@ -506,9 +479,6 @@
     "tool": "wait"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-1] from agt-A re [r-1] ──\ndone",
     "role": "user",
     "source": "agent_message",

@@ -67,15 +67,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -387,9 +378,6 @@
     "tool": "agent"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-104] from agt-eba844a2 (bb) re [r-102] · died ──\nagt-eba844a2 died while it was working on your request [r-102] (\"TASK-F1 compute\").\nDecide whether to continue another way or report back to the user.",
     "role": "user",
     "source": "agent_message",

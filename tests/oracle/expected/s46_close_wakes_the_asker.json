@@ -163,15 +163,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -494,9 +485,6 @@
     "tool": "wait"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-2] from agt-A (helper) re [r-1] ──\nassumed v1",
     "role": "user",
     "source": "agent_message",

@@ -227,11 +227,6 @@ class MainActor:
         d.surface.busy()
         if item is not None:
             d.surface.echo(item)
-        # 귀속 승계의 런-시작 스냅샷: run_loop 를 안 타는 라우팅 명령이
-        # 만든 요청도 이 런의 요청자를 물려받는다 — run_loop 는 주입마다
-        # 재갱신한다. 메일 런엔 귀속할 사용자가 없다.
-        author = (item or {}).get("nickname") or None
-        d.agent_registry.set_current_run_authors([author] if author else [])
         stop_event = threading.Event()
         # "Stop everything" 의 조용함은 그 정지 하나의 것 — 새 런은 깨우는 정지 회신으로 시작한다
         if d.agent_registry is not None:

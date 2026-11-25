@@ -103,15 +103,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -290,15 +281,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -467,9 +449,6 @@
     "tool": "job"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-151] from agt-6aa44d5d re [r-150] · stopped by user ──\nThe user stopped agt-6aa44d5d while it was working on your request [r-150] (\"TASK-T slow work\").\nDecide whether to continue another way or report back to the user.",
     "role": "user",
     "source": "agent_message",

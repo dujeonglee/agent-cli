@@ -103,15 +103,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -262,15 +253,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -401,15 +383,6 @@
     [
      "u-3",
      14
-    ],
-    {}
-   ],
-   [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
     ],
     {}
    ],
@@ -822,9 +795,6 @@
     "tool": "wait"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-3] from agt-A re [r-1] · stopped by user ──\nThe user stopped agt-A while it was working on your request [r-1] (\"TASK-N slow work\").\nDecide whether to continue another way or report back to the user.",
     "role": "user",
     "source": "agent_message",

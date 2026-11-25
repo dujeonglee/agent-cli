@@ -38,16 +38,13 @@ def test_a_quiet_reply_does_not_wake():
     assert E.reply("n-6", "agent:a", "main", "x", re="r-1", wakes=False).wakes is False
 
 
-def test_frozen_with_tuple_answers_and_a_read_only_payload_copy():
+def test_frozen_with_a_read_only_payload_copy():
     src = {"run": "r-1"}
-    answers = ["dj"]
-    env = E.request("r-2", "main", "agent:a", "do", answers=answers, payload=src)
+    env = E.request("r-2", "main", "agent:a", "do", payload=src)
     with pytest.raises(dataclasses.FrozenInstanceError):
         env.text = "changed"
-    assert env.answers == ("dj",)
-    answers.append("other")
     src["run"] = "r-9"
-    assert env.answers == ("dj",) and env.payload["run"] == "r-1"  # 사본
+    assert env.payload["run"] == "r-1"  # 사본
     with pytest.raises(TypeError):
         env.payload["run"] = "x"  # 읽기 전용
 

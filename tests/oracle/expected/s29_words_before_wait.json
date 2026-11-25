@@ -86,15 +86,6 @@
     {}
    ],
    [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
-    ],
-    {}
-   ],
-   [
     "open_items",
     [
      {
@@ -203,15 +194,6 @@
     [
      "u-2",
      5
-    ],
-    {}
-   ],
-   [
-    "set_run_authors",
-    [
-     [
-      "dj"
-     ]
     ],
     {}
    ],
@@ -455,9 +437,6 @@
     "tool": "wait"
    },
    {
-    "answers": [
-     "dj"
-    ],
     "content": "── reply [n-1] from agt-A re [r-1] ──\ndone",
     "role": "user",
     "source": "agent_message",

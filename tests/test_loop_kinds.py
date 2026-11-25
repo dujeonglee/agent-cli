@@ -348,7 +348,7 @@ class TestKindsStateTheirPolicy:
         assert not main.ports.ask_guide() and not skill.ports.ask_guide()
         assert harness.prompt_profile().role == "body"
         assert skill.renders() is False and one.renders() and main.renders()
-        assert main.tracks_run_authors and not skill.tracks_run_authors
+        assert main.owns_main_view and not skill.owns_main_view
 
 
 class TestEngineAsksTheKind:
@@ -390,7 +390,7 @@ class TestEngineAsksTheKind:
         from agent_cli.loop.ledger import Ledger
 
         class _Kind:
-            tracks_run_authors = False
+            owns_main_view = False
 
             def intake(self):
                 return [
@@ -411,7 +411,6 @@ class TestEngineAsksTheKind:
         loop.ctx = None
         loop.messages = []
         loop.task_log = []
-        loop.run_authors = []
         loop.route_message = None
         loop.turn = 0
         loop._intake()
