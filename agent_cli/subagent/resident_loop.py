@@ -210,7 +210,6 @@ class ResidentLoop(LoopKind):
                 me,
                 author,
                 item["text"],
-                answers=item.get("answers") or [],
                 id=item["id"],
             )
         reg._notify_roster()

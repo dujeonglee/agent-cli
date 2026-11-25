@@ -187,20 +187,20 @@ class TestQuestions:
 
     def test_open_human_is_picked_at_once_without_an_envelope(self):
         book = RequestBook()
-        row = book.open_human("u-1", "user:dj", "main", "hello", answers=("dj",))
-        assert (row.kind, row.state, row.answers) == ("u", "picked", ("dj",))
+        row = book.open_human("u-1", "user:dj", "main", "hello")
+        assert (row.kind, row.state, row.text) == ("u", "picked", "hello")
         assert [r.rid for r in book.open_requests("main")] == ["u-1"]
 
 
 def test_owe_opens_a_picked_reply_debt_without_an_envelope():
     book = RequestBook()
-    row = book.owe("r-1", "main", "agent:a", "decide", answers=("dj",))
-    assert (row.kind, row.state, row.src, row.dst, row.answers) == (
+    row = book.owe("r-1", "main", "agent:a", "decide")
+    assert (row.kind, row.state, row.src, row.dst, row.text) == (
         "r",
         "picked",
         "agent:a",
         "main",
-        ("dj",),
+        "decide",
     )
     assert [r.rid for r in book.owed_by("main")] == ["r-1"]
     with pytest.raises(RowError):

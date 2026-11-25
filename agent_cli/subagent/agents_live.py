@@ -120,7 +120,6 @@ def _debt_view(row) -> ReplyDebt:
     return ReplyDebt(
         to=row.src,
         text=row.text,
-        answers=list(row.answers),
         settled=row.state == "closed",
         id=row.rid,
         closed_by=row.how or "",
@@ -731,7 +730,6 @@ class AgentRegistry(QuestionsMixin):
         to: str,
         text: str,
         *,
-        answers: list | None = None,
         id: str = "",
     ) -> ReplyDebt:
         """``debtor`` 가 ``to`` 에게 회신을 빚진다 — 요청마다 새 빚(v9.25.0).
@@ -746,13 +744,9 @@ class AgentRegistry(QuestionsMixin):
                 row is None
             ):  # 봉투 없이 적는 빚 — 봉투가 이미 줄을 열었으면(런 시작·흡수가 집었다) 그 줄이다
                 if is_human_addr(to):
-                    row = self._post.open_human(
-                        rid, to, debtor, text, answers=list(answers or [])
-                    )
+                    row = self._post.open_human(rid, to, debtor, text)
                 else:
-                    row = self._post.owe(
-                        rid, debtor, to, text, answers=list(answers or [])
-                    )
+                    row = self._post.owe(rid, debtor, to, text)
             return _debt_view(row)
 
     def pay_debt(self, debtor: str, d: ReplyDebt, text: str) -> str:
@@ -785,7 +779,6 @@ class AgentRegistry(QuestionsMixin):
                 text,
                 profile=tm.profile_name if tm else "",
                 name=tm.instance_name if tm else "",
-                answers=d.answers,
                 re=d.id,
                 settles=d.id,
             )
@@ -1040,7 +1033,6 @@ class AgentRegistry(QuestionsMixin):
                     "key": key,
                     "profile": tm.profile_name if tm else "",
                     "output": summary,
-                    "answers": list(d.answers),
                     **meta,
                     "re": d.id,  # 이 요약이 대신하는 회신의 요청
                 },
@@ -1264,7 +1256,6 @@ class AgentRegistry(QuestionsMixin):
         *,
         author: str = "main",
         expects_reply: bool = True,
-        answers: list | None = None,
         images: list[dict] | None = None,
         item_id: str = "",
         kind: str = "",
@@ -1297,10 +1288,6 @@ class AgentRegistry(QuestionsMixin):
         ``images`` (v10.61.0): 사람이 창에서 붙인 이미지 참조(``ImageRef`` dict,
         웹 `/api/agent/{key}/input` 의 ``images``) — inbox 항목과 🤝 창 메시지에
         실리고 그 런의 시작 user 레코드 ``images`` 가 된다(docs/vision/DESIGN.md §5).
-
-        ``answers`` (v9.24.5): 귀속 스냅샷을 호출자가 준다 — 재시작 뒤 끊긴
-        런을 다시 넣을 때 원래 요청의 스냅샷을 잇기 위해. 없으면 종전대로
-        main 발신이면 지금 런의 USER 목록.
 
         ``expects_reply`` (v5.11): 이 아이템 처리 후 산출물을 발신자에게
         되돌릴지. main/watch/user·peer 요청=True(회신 라우팅), 배달된 peer
@@ -1366,8 +1353,6 @@ class AgentRegistry(QuestionsMixin):
             item["opens_run"] = False
         if images:
             item["images"] = [dict(r) for r in images]
-        if answers is not None:
-            item["answers"] = list(answers)
         # 답이든 일감이든 **항상** 창·로그·로스터에 남긴다 — 답만 건너뛰면
         # 🤝 창과 conversation.jsonl(=resume 재생 소스)에서 사라진다. 기록은 넣기와 한 구간(`_enqueue`).
         payload = {
@@ -1532,7 +1517,6 @@ class AgentRegistry(QuestionsMixin):
                     me,
                     author,
                     text,
-                    answers=item.get("answers") or [],
                     id=rid,
                 )
                 rec = {
@@ -1707,7 +1691,6 @@ class AgentRegistry(QuestionsMixin):
         *,
         profile: str = "",
         name: str = "",
-        answers: list | None = None,
         expects_reply: bool = False,
         notice: bool = False,
         re: str = "",
@@ -1722,11 +1705,6 @@ class AgentRegistry(QuestionsMixin):
         ``expects_reply`` (v9.22.0): `message` 는 True(main 이 회신을 빚진다),
         `reply` 는 False(답이다). main 의 메일 관찰이 이 값으로 갈린다.
 
-        ``answers`` (v9.21.0): main 의 요청에 대한 **회신**이면 그 요청의
-        귀속 스냅샷을 그대로 싣는다 — 종전엔 자동 회신(`kind:"reply"`)이
-        실어 나르던 것. 자동 회신이 없어졌으니 명시 message 가 실어야
-        main 의 run_authors 합류(v8.5.0 승계)가 유지된다.
-
         그 메일의 id 를 돌려준다(v10.77.0 — `message` 의 결과가 말한다)."""
         rec = {
             "kind": "peer_message",
@@ -1736,8 +1714,6 @@ class AgentRegistry(QuestionsMixin):
             "success": True,
             "output": text,
         }
-        if answers is not None:
-            rec["answers"] = list(answers)
         rec["expects_reply"] = bool(expects_reply)
         if notice:
             rec["notice"] = True
@@ -2140,7 +2116,7 @@ class AgentRegistry(QuestionsMixin):
         for d in self.reply_debts(f"agent:{tm.key}"):
             text = reply_of(tm.key, d.id, d.text)
             self._send_stop_reply(  # 회신의 배달이 곧 갚음
-                tm, d.to, d.id, text, mark, answers=d.answers, settles=True
+                tm, d.to, d.id, text, mark, settles=True
             )
 
     def _answer_queued(
@@ -2177,7 +2153,6 @@ class AgentRegistry(QuestionsMixin):
         text: str,
         mark: str,
         *,
-        answers: list | None = None,
         settles: bool = False,
     ) -> None:
         """정지 회신 한 통 — 요청자가 main 이면 메일함, 에이전트면 그 받은편지함(회신 — 빚 아님). ``settles`` 면 그
@@ -2192,7 +2167,6 @@ class AgentRegistry(QuestionsMixin):
                     # 배달된 회신이다(실패가 아니다) — 멈춤은 머리 표지가 말한다
                     "success": True,
                     "output": text,
-                    "answers": list(answers or []),
                     "expects_reply": False,
                     "re": rid,
                     "mark": mark,
