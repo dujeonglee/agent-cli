@@ -252,6 +252,14 @@ class QuestionPort:
             for d in self._reg.reply_debts(self.me)
         ]
 
+    def open_questions(self) -> list[tuple[str, str]]:
+        """이 주체가 사람에게 건 열린 질문 ``[(id, 글)]``, 연 순서 — 꼬리의 ``## Your open questions`` (6a)."""
+        return [
+            (q.id, q.text)
+            for q in self._reg.open_human_questions()
+            if q.asker == self.key
+        ]
+
     def awaited(self) -> list[dict]:
         """이 주체가 보내 놓고 아직 받지 못한 회신 (v10.141.0) — 장부의 "기다리는 회신".
         main·에이전트 같은 코드(`AgentRegistry.awaited_replies`)."""

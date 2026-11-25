@@ -141,7 +141,7 @@ class AskTool(Tool):
         "Ask the person one question and keep working — you are not blocked. It "
         "goes to their question tray; the answer arrives later as a new message "
         "and you continue from there. Carry on with anything that does not depend "
-        "on it. If nothing else can proceed, `complete`. To get something from "
+        "on it. To get something from "
         "main or another agent, send it a `message` — its `reply` comes back to you."
     )
     parameters: ClassVar[dict] = {

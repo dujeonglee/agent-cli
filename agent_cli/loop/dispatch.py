@@ -1499,12 +1499,8 @@ class TurnDispatcher:
                 lines.append(f"could not ask: {err}")
             else:
                 lines.append(f'question "{qid}" sent — "{q}"')
-        obs = (
-            "\n".join(lines)
-            + "\nYou are not blocked. Continue with whatever does not depend "
-            "on the answer; it will arrive as a new message. If nothing else "
-            "can proceed, `complete` — you will be resumed when it arrives."
-        )
+        # 관찰은 일어난 일만 — 묻고 나서 어디로 가나는 질문이 열린 동안 꼬리의 ``## Your open questions`` 가 말한다(6a)
+        obs = "\n".join(lines)
         # 질문이 전부 올라갔을 때만 성공으로 적는다 — ``_op_message`` 와 같다. 관찰 글은 그대로다.
         return self._emit_obs(record, accumulate, "ask", obs, not refused)
 

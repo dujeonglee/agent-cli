@@ -217,10 +217,8 @@ _ASK_INLINE_RESIDENT = """\
   - `ask` reaches only the person. For main or another agent, send a
     `message` — it becomes a request they owe you a `reply` for.
   - Then keep going on everything that does not depend on the answer.
-  - When nothing else can proceed, `complete` and report what you did.
-    That is not giving up — if an answer comes, it arrives as a new
-    message and you continue from there. It may never come: a person is
-    free not to answer, and nobody chases them.
+  - The answer may never come: a person is free not to answer, and nobody
+    chases them.
   - Do not re-ask the same question while it is open (a repeat in the
     same run is folded into the original)."""
 

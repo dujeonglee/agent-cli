@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 import agent_cli.render as render_mod
+from agent_cli.loop.ledger import OPEN_QUESTIONS_HEAD
 from agent_cli.prompts.system_prompt import _ASK_INLINE_RESIDENT
 from agent_cli.tools.virtual import AskTool
 from tests.oracle.driver import Provider, Session, call, complete_all, owed_id, until
@@ -199,20 +200,27 @@ def test_a_run_agent_asks_then_waits_while_main_waits_for_it(where):
 # ── 질문이 열린 턴에 묻는 쪽이 읽는 글 ─────────────────────────
 
 
-def test_the_turn_after_ask_says_where_to_go_in_the_observation(where):
-    """`ask` 바로 다음 호출 — 관찰이 "할 게 없으면 `complete`" 로 보내고, 꼬리에는 질문이 없다."""
+def test_the_turn_after_ask_reads_the_question_in_the_tail(where):
+    """`ask` 바로 다음 호출 — 관찰은 일어난 일만, 어디로 가나는 꼬리의 ``## Your open questions`` 가 말한다."""
     g = _asks_then_waits(where, owes=False)
-    after = g["after_ask"]
-    assert (
-        "If nothing else can proceed, `complete` — you will be resumed when it arrives."
-        in after
+    obs, tail = g["after_ask"].split("── end of message", 1)
+    # 관찰 뒤의 넛지(`_OBS_COMPLETE_NUDGE`)는 모든 관찰에 붙는 것이라 그대로다
+    assert obs.strip().split("\n\n")[0] == (
+        f'[ask]\nObservation: question "{g["qid"]}" sent — "{Q}"'
     )
-    assert "## Your open questions" not in after
+    block = f'{OPEN_QUESTIONS_HEAD}\n- "{g["qid"]}" · "{Q}"\n'
+    assert block in tail
+    assert OPEN_QUESTIONS_HEAD == (
+        "## Your open questions (do not wait for the answer: do what you can without it, "
+        "and call `wait` only when you cannot go further)"
+    )
 
 
-def test_the_resident_description_and_guide_send_a_stuck_asker_to_complete():
-    assert "If nothing else can proceed, `complete`." in AskTool.RESIDENT_DESCRIPTION
+def test_the_resident_description_and_guide_no_longer_say_where_to_go():
+    """경로 선택은 꼬리 한 곳에서만 — 머리의 설명·안내는 `complete` 로 보내지 않는다(6a)."""
+    assert "`complete`" not in AskTool.RESIDENT_DESCRIPTION
+    assert "`complete`" not in _ASK_INLINE_RESIDENT
     assert (
-        "When nothing else can proceed, `complete` and report what you did."
-        in _ASK_INLINE_RESIDENT
+        "  - The answer may never come: a person is free not to answer, and nobody\n"
+        "    chases them.\n" in _ASK_INLINE_RESIDENT
     )
