@@ -663,9 +663,12 @@ class AgentRegistry(QuestionsMixin):
     # 말한다 — 같은 모양의 봉투라도 위임·`message`·removed 회신·재배달은 갚지 않으므로 호출자가 아는 사실이다(갚는
     # 것은 `reply` 와 그 대신인 폴백·정지 회신, v10.145.1). 배달 지시라 봉투·저장 파일·모델이 읽는 글에 실리지 않는다.
 
-    def _post_deliver(self, env, *, settles: str = "") -> None:
+    def _post_deliver(
+        self, env, *, settles: str = "", closes_as: str = "user_answered"
+    ) -> None:
         """봉투를 우편에 넣는다 — ``_cv`` 안에서 부른다. 닫는 연산은 배달과 한 락 구간이다: 없음 → `deliver`, 줄 id →
-        q 줄은 `answer`·r 줄은 `pay`. 없는 줄·r/q 가 아닌 줄은 `RowError`(닫힌 줄은 그 연산이 거절 — "already replied")."""
+        q 줄은 `answer`(``closes_as`` — 답 또는 사람이 닫음)·r 줄은 `pay`. 없는 줄·r/q 가 아닌 줄은 `RowError`(닫힌 줄은
+        그 연산이 거절 — "already replied")."""
         if not settles:
             self._post.deliver(env)
             return
@@ -673,7 +676,7 @@ class AgentRegistry(QuestionsMixin):
         if row is None or row.kind not in ("q", "r"):
             raise RowError(f"{settles}: no request or question to settle")
         if row.kind == "q":
-            self._post.answer(settles, env)
+            self._post.answer(settles, env, how=closes_as)
         else:
             self._post.pay(env.src, settles, env, run_id=self._run_of(env.src))
 
@@ -1305,6 +1308,7 @@ class AgentRegistry(QuestionsMixin):
         mark: str = "",
         opens_run: bool = True,
         settles: str = "",
+        closes_as: str = "user_answered",
         lines=(),
     ) -> str:
         """request 큐잉 — 에러 메시지 또는 빈 문자열.
@@ -1425,19 +1429,33 @@ class AgentRegistry(QuestionsMixin):
         }
         if images:
             payload["images"] = [dict(r) for r in images]  # 창의 썸네일 (v10.61.0)
-        self._enqueue(tm, item, settles=settles, lines=[(tm, payload), *lines])
+        self._enqueue(
+            tm,
+            item,
+            settles=settles,
+            closes_as=closes_as,
+            lines=[(tm, payload), *lines],
+        )
         self._notify_roster()
         return ""
 
     def _enqueue(
-        self, tm: AgentInstance, item: dict, *, settles: str = "", lines=()
+        self,
+        tm: AgentInstance,
+        item: dict,
+        *,
+        settles: str = "",
+        closes_as: str = "user_answered",
+        lines=(),
     ) -> None:
         """받은편지함(우편의 그 주소 상자)에 넣는다. 회신을 기다리는 요청이면
         그 줄이 보낸 쪽의 "기다리는 회신" 이다(v10.141.0 — 넣는 것과 한 락 구간). ``lines`` 는 이 배달의 대화
         줄(받는 쪽 in·보낸 쪽 out) — 넣기가 성공한 같은 구간에서 `_lines_in_section`, 그 뒤 `_lines_after_section`."""
         with self._cv:
             self._post_deliver(
-                envelope_of_item(item, f"agent:{tm.key}"), settles=settles
+                envelope_of_item(item, f"agent:{tm.key}"),
+                settles=settles,
+                closes_as=closes_as,
             )
             self._lines_in_section(lines)
         self._lines_after_section(lines)

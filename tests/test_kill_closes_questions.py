@@ -70,14 +70,16 @@ def test_answer_racing_the_kill_is_refused_and_closes_the_question(
     """답이 질문을 찾은 뒤·배달 전에 ✕ 가 끼어든다 — 배달이 거절되면 그 거절을 돌려주고 질문을 닫는다."""
     reg, key, qid, gate = _busy_agent_with_a_question(tmp_path)
     found, go = threading.Event(), threading.Event()
-    deliver = reg._deliver_answer
+    deliver = reg._deliver_to_asker
 
-    def deliver_after_the_kill(q, text):  # 질문을 찾은 뒤에 멈춘다 — ✕ 가 먼저 닿게
+    def deliver_after_the_kill(
+        q, body, **kw
+    ):  # 질문을 찾은 뒤에 멈춘다 — ✕ 가 먼저 닿게
         found.set()
         assert go.wait(5)
-        return deliver(q, text)
+        return deliver(q, body, **kw)
 
-    reg._deliver_answer = deliver_after_the_kill
+    reg._deliver_to_asker = deliver_after_the_kill
     out: dict = {}
     t = threading.Thread(
         target=lambda: out.setdefault(

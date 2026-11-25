@@ -1180,7 +1180,9 @@ class MinimalRenderer(Renderer):
         self.con.print(text, highlight=False, markup=False)
         if number:
             self.con.print(
-                f"  answer with: /answer {item} <text>", style=_MUTED, markup=False
+                f"  answer with: /answer {item} <text> · close with: /close {item}",
+                style=_MUTED,
+                markup=False,
             )
 
     # ── Ask-tool announcement ────────────────────────

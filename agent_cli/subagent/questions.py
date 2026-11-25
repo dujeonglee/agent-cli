@@ -51,6 +51,13 @@ class Question:
         return is_human_addr(self.target)
 
 
+#: 사람이 질문을 답 없이 닫았을 때 묻는 쪽이 읽는 괄호 줄 (6b, 결정 E1)
+QUESTION_CLOSED_TODO = (
+    "The user closed it without an answer. Go on with what you have, and say "
+    "what you assumed."
+)
+
+
 def _new_question_id() -> str:
     return item_ids.next_id(item_ids.QUESTION)
 
@@ -134,7 +141,7 @@ class QuestionsMixin:
         ]
 
     def answer_question(self, qid: str, text: str, *, by: str) -> str:
-        """사람이 트레이에서 ``qid`` 에 답한다 — 에러 또는 빈 문자열.
+        """사람이 ``qid`` 에 답한다(트레이·`/answer`) — 에러 또는 빈 문자열.
 
         ``user*`` 는 하나의 주체로 본다 — CLI 는 ``user``, 웹은 ``user:{nick}``
         이고 뷰어마다 닉이 달라, 문자열 동치로 검사하면 두 번째 뷰어의 트레이
@@ -143,34 +150,73 @@ class QuestionsMixin:
         text = (text or "").strip()
         if not text:
             return "empty answer"
-        unknown = f'unknown or already-answered question "{qid}"'
+        return self._close_question(
+            qid,
+            by,
+            unknown=f'unknown or already-answered question "{qid}"',
+            body=lambda q: f"Your question: {q.text}\nAnswer: {text}",
+            kind="answer",
+            todo="Continue the work it was blocking.",
+            closes_as="user_answered",
+        )
+
+    def close_question(self, qid: str, *, by: str) -> str:
+        """사람이 ``qid`` 를 답 없이 닫는다(트레이의 단추·`/close`, 6b) — 에러 또는 빈 문자열. 답과 같은 길이다: 묻는
+        쪽에게 그 사실의 봉투가 가고(기다리던 `wait` 가 깬다), 질문 줄은 ``user_closed`` 로 닫힌다."""
+        return self._close_question(
+            qid,
+            by,
+            unknown=f'unknown or already-closed question "{qid}"',
+            body=lambda q: f"Your question: {q.text}",
+            kind="closed",
+            todo=QUESTION_CLOSED_TODO,
+            closes_as="user_closed",
+        )
+
+    def _close_question(
+        self,
+        qid: str,
+        by: str,
+        *,
+        unknown: str,
+        body,
+        kind: str,
+        todo: str,
+        closes_as: str,
+    ) -> str:
+        """답·닫힘의 한 길 — 그 번호의 질문을 찾아, 사람만, 묻는 쪽에게 봉투를 배달하며 줄을 닫는다."""
         row = self._post.row(qid)
         q = row.meta if row is not None and row.kind == "q" else None
         if q is None:
             return unknown
         if not is_human_addr(by):
             return f'question "{qid}" is addressed to the person, not "{by}"'
-        try:  # 답의 배달이 곧 질문 줄 닫기(``settles`` — 한 락 구간)
-            refused = self._deliver_answer(q, text)
+        try:  # 배달이 곧 질문 줄 닫기(``settles`` — 한 락 구간)
+            refused = self._deliver_to_asker(
+                q, body(q), kind=kind, todo=todo, closes_as=closes_as
+            )
         except RowError:
-            return unknown  # 다른 답변자가 먼저 답했다 — 줄이 이미 닫혔다
+            return unknown  # 다른 사람이 먼저 답하거나 닫았다 — 줄이 이미 닫혔다
         if refused:  # 묻는 쪽이 멈췄거나 사라져 받지 못한다 — 그 질문들을 닫고 명단에 알린다 (v10.149.1)
             self._purge_questions_for(q.asker)
             return f'the agent that asked "{qid}" has stopped — the question is closed'
         return ""
 
-    def _deliver_answer(self, q: Question, text: str) -> str:
-        """사람의 답을 asker 에게 — 줄 없는 봉투(``n-``, 회신과 같다: 기다리던 것의 도착이지 새 항목이 아니다, 6b). 질문 줄
-        닫기와 한 락 구간이다. `request` 의 거절(묻는 쪽이 받지 못함) 또는 "". 봉투가 무엇에 대한 답인지(``re``) 적는다."""
+    def _deliver_to_asker(
+        self, q: Question, body: str, *, kind: str, todo: str, closes_as: str
+    ) -> str:
+        """질문을 닫는 봉투(답·닫힘)를 묻는 쪽에게 — 줄 없는 ``n-`` 봉투(회신과 같다: 기다리던 것의 도착이지 새 항목이
+        아니다), 질문 줄 닫기와 한 락 구간. `request` 의 거절(묻는 쪽이 받지 못함) 또는 ""."""
         return self.request(
             q.asker,
-            f"Your question: {q.text}\nAnswer: {text}",
+            body,
             author=q.target,
             expects_reply=False,
-            kind="answer",
+            kind=kind,
             re=q.id,
-            todo="Continue the work it was blocking.",
+            todo=todo,
             settles=q.id,
+            closes_as=closes_as,
         )
 
     def _purge_questions_for(self, key: str) -> None:

@@ -280,7 +280,10 @@ def test_the_terminal_question_line_carries_its_number_and_how_to_answer(
     i = next(n for n, ln in enumerate(lines) if ln.startswith("❓"))
     assert lines[i].endswith(f"→ user] {qid}")
     assert lines[i + 1] == "which directory should I use?"
-    assert lines[i + 2] == f"  answer with: /answer {qid} <text>"
+    assert (
+        lines[i + 2]
+        == f"  answer with: /answer {qid} <text> · close with: /close {qid}"
+    )
 
 
 # ── 터미널 읽기와 프롬프트의 잠금 ───────────────────────────
@@ -471,7 +474,7 @@ class TestOpenQuestionsKeepTheSession:
         q1 = _open_question(reg, key, "first?")
         q2 = _open_question(reg, key, "second?")
         assert M._questions_wait_notice(reg) == (
-            f"❓ Waiting for your answer to {q1}, {q2} — type /answer <q-N> <text>, "
+            f"❓ Waiting for your answer to {q1}, {q2} — type /answer <q-N> <text> or /close <q-N>, "
             "or press Ctrl-C to quit."
         )
 

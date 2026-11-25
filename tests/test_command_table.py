@@ -26,6 +26,8 @@ _WEB_HELP_BEFORE = (
     # v10.174.0: 질문의 목록과 답 — 번호를 적은 명령으로만 답한다
     "  /questions               List open questions to you\n"
     "  /answer <q-N> <text>     Answer an open question\n"
+    # 6b: 답 없이 닫기
+    "  /close <q-N>             Close an open question without an answer\n"
     "  @agents                  List available agents\n"
     "  @<agent> <task>          Delegate a task to an agent\n"
     # v10.165.0: 상주 에이전트로 가는 두 꼴 — `main._try_dispatch_agent_command` 가 처리해 온 것을 표에 올렸다

@@ -13,6 +13,8 @@ Endpoints (not exhaustive — see the route decorators):
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn; body ``{"scope"}`` (v10.142.0):
     ``"main"`` (default) · ``"agents"`` (every working agent's run) · ``"all"`` (both)
   - ``POST /api/agent/{key}/stop`` — ■ stop that agent's run (a run agent comes down, v10.142.0)
+  - ``POST /api/questions/{qid}/answer`` · ``POST /api/questions/{qid}/close`` — answer or close (without an answer)
+    one open question to the person (6b)
   - ``POST /api/jobs/stop`` — a viewer stops one background job (v10.121.0)
   - ``GET  /api/changes`` · ``GET /api/changes/diff?path=`` · ``POST /api/changes/clear``
     · ``POST /api/changes/undo`` · ``POST /api/changes/notices/dismiss`` — the Changes
@@ -1472,6 +1474,28 @@ def create_app(server: WebServer) -> FastAPI:
         error = registry.request(key, content, author=author, images=images or None)
         if error:
             raise HTTPException(status_code=404, detail=error)
+        return JSONResponse({"accepted": True})
+
+    @app.post("/api/questions/{qid}/{action}")
+    async def question_action(qid: str, action: str, request: Request):
+        """❓ 트레이의 질문 하나 (6b) — ``answer`` (본문 ``content``) 또는 ``close`` (답 없이 닫기). 질문 번호가 묻는 쪽을
+        정한다. `user*` 는 하나의 주체라 어느 뷰어든 — 먼저 한 쪽이 닫는다(뒤의 것은 409)."""
+        registry = server.agent_registry
+        if registry is None:
+            raise HTTPException(status_code=503, detail="agent registry not ready")
+        body = await _json_object(request)
+        author = human_addr(server.renderer.hub.nickname_for(body.get("conn_id")))
+        if action == "answer":
+            content = body.get("content", "")
+            if not isinstance(content, str):
+                raise HTTPException(status_code=400, detail="content must be a string")
+            error = registry.answer_question(qid, content, by=author)
+        elif action == "close":
+            error = registry.close_question(qid, by=author)
+        else:
+            raise HTTPException(status_code=404, detail=f"unknown action '{action}'")
+        if error:
+            raise HTTPException(status_code=409, detail=error)
         return JSONResponse({"accepted": True})
 
     @app.post("/api/agent/{key}/resume")

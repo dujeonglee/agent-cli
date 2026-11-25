@@ -985,6 +985,7 @@ def _dispatch_stop(message: str, output: DispatchOutput, agent_registry) -> None
 
 
 ANSWER_USAGE = "usage: /answer <q-N> <text>"
+CLOSE_USAGE = "usage: /close <q-N>"
 NO_OPEN_QUESTIONS = "no open questions"
 
 
@@ -1010,6 +1011,16 @@ def _dispatch_question(
             output.agent_dispatch_result(NO_OPEN_QUESTIONS, True)
             return
         output.agent_dispatch_result("\n".join(["Open questions:", *lines]), True)
+        return
+    if parts[0] == "/close":
+        # 번호 하나만 — 질문이 하나뿐이어도 짐작해 닫지 않는다(답과 같은 규칙)
+        if len(parts) != 2:
+            output.agent_dispatch_result(CLOSE_USAGE, False)
+            return
+        error = agent_registry.close_question(parts[1], by=author)
+        output.agent_dispatch_result(
+            f"/close: {error}" if error else f"closed {parts[1]}", not error
+        )
         return
     if len(parts) < 3:
         output.agent_dispatch_result(ANSWER_USAGE, False)
@@ -2346,7 +2357,7 @@ _HARNESS_WAIT_NOTICE = "🔎 Waiting for the audit to finish — its result goes
 def _questions_wait_notice(registry) -> str:
     """`run` 이 열린 사람 질문 때문에 끝나지 않고 기다릴 때의 한 줄(6c) — 번호·답하는 법·끝내는 법."""
     ids = ", ".join(q.id for q in registry.open_human_questions())
-    return f"❓ Waiting for your answer to {ids} — type /answer <q-N> <text>, or press Ctrl-C to quit."
+    return f"❓ Waiting for your answer to {ids} — type /answer <q-N> <text> or /close <q-N>, or press Ctrl-C to quit."
 
 
 def _auditor_boot_line(auditor) -> str:
