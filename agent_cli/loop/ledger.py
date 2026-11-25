@@ -174,7 +174,7 @@ class Ledger:
         return [r for r in self.requests if str(r.get("id")) in claimed]
 
     def debts(self) -> list[dict]:
-        """아직 갚지 않은 회신·질문 빚 — 포트가 없거나 깨지면 빈 목록."""
+        """아직 갚지 않은 회신 빚(r-) — 포트가 없거나 깨지면 빈 목록."""
         from agent_cli.constants import open_debts
 
         return open_debts(self._port)
@@ -254,15 +254,13 @@ class Ledger:
             did = str(d.get("id") or "")
             if not did:
                 continue
-            question = item_ids.prefix_of(did) == item_ids.QUESTION
             items.append(
                 {
                     "id": did,
-                    "source": "question" if question else "debt",
+                    "source": "debt",
                     "who": str(d.get("to") or "").split(":", 1)[-1],
                     "head": _head(d.get("text")),
-                    # q- 는 모델이 닫지 않는다 — 사람이 트레이에서 답한다
-                    "closer": "answer" if question else item_ids.closer_of(did),
+                    "closer": item_ids.closer_of(did),
                     "turns": None,
                     "hidx": None,
                 }
