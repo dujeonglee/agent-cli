@@ -50,7 +50,6 @@ NOTHING_CHANGES = {
     "take_reply": lambda o: o.take_reply(A, "r-9"),
     "end_run_done": lambda o: o.end_run(A, run_id="r-1", outcome="done"),
     "end_run_stopped": lambda o: o.end_run(A, run_id="r-1", outcome="stopped"),
-    "end_run_session_end": lambda o: o.end_run(A, run_id="r-1", outcome="session_end"),
     "remove_queued": lambda o: o.remove_queued(A),
     "forget_questions_of": lambda o: o.forget_questions_of(A),
 }

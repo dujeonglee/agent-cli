@@ -135,13 +135,6 @@ class TestEndRun:
         office.end_run("main", run_id="u-0", outcome="stopped", replies={})
         assert office.rows() == () and office.queued(A) == ()
 
-    def test_session_end_touches_nothing(self, office):
-        """버그 3 의 구조 수준 짝 — 세션 끝은 들고 있던 봉투도 줄도 남긴다(재시작이 되살린다)."""
-        self._two_debts(office)
-        before = (_rows(office), office.taken(A))
-        office.end_run(A, run_id="r-1", outcome="session_end", replies={})
-        assert (_rows(office), office.taken(A)) == before
-
     def test_hops_are_carried_by_the_caller(self, office):
         """D3: office 는 hop 을 잇기만 한다 — 줄은 요청의 hop 을, 회신은 만든 쪽이 준 hop 을 든다."""
         office.deliver(E.request("r-1", "agent:b", A, "do", hop=4))
@@ -205,17 +198,6 @@ class TestUnusedReplies:
         assert (_rows(office), office.taken(A)) == before and office.queued(
             "main"
         ) == ()
-
-    @pytest.mark.parametrize("outcome", ["session_end"])
-    def test_end_run_without_closing_takes_no_replies(self, office, outcome):
-        office.deliver(E.request("r-1", "main", A, "do"))
-        office.absorb(A)
-        with pytest.raises(RowError):
-            office.end_run(
-                A, run_id="r-1", outcome=outcome,
-                replies={"r-1": E.reply("n-2", A, "main", "fb", re="r-1")},
-            )  # fmt: skip
-        assert [e.id for e in office.taken(A)] == ["r-1"]
 
     def test_remove_queued_refuses_a_reply_for_a_row_not_queued(self, office):
         office.deliver(E.request("r-1", "main", A, "one"))

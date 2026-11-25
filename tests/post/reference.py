@@ -154,28 +154,25 @@ class Model:
         self._put(reply)
 
     def end_run(self, addr, run_id, outcome, replies):
-        closing = set(self._owed(addr)) if outcome in ("done", "stopped") else set()
-        if set(replies) - closing:
+        if set(replies) - set(self._owed(addr)):
             raise Refused("unused replies")
-        if outcome in ("done", "stopped"):
-            for e in replies.values():
-                if self._anywhere(e["id"]):
-                    raise Refused("dup reply")
-            how = "fallback" if outcome == "done" else "stopped"
-            for rid in self._owed(addr):
-                if rid in replies:
-                    self._close(rid, how, run_id)
-                    self._put(replies[rid])
-                else:
-                    self._close(rid, "dropped")
-            for rid, r in list(self.rows.items()):
-                if r["kind"] == "u" and r["state"] == "picked" and r["dst"] == addr:
-                    self._close(rid, "run_ended", run_id)
-            for rid, r in list(self.rows.items()):
-                if r["state"] == "closed" and r["dst"] == addr:
-                    del self.rows[rid]
-        if outcome != "session_end":
-            self.taken[addr] = []
+        for e in replies.values():
+            if self._anywhere(e["id"]):
+                raise Refused("dup reply")
+        how = "fallback" if outcome == "done" else "stopped"
+        for rid in self._owed(addr):
+            if rid in replies:
+                self._close(rid, how, run_id)
+                self._put(replies[rid])
+            else:
+                self._close(rid, "dropped")
+        for rid, r in list(self.rows.items()):
+            if r["kind"] == "u" and r["state"] == "picked" and r["dst"] == addr:
+                self._close(rid, "run_ended", run_id)
+        for rid, r in list(self.rows.items()):
+            if r["state"] == "closed" and r["dst"] == addr:
+                del self.rows[rid]
+        self.taken[addr] = []
 
     def remove_queued(self, addr, replies):
         queued_r = {

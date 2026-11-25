@@ -110,7 +110,7 @@ def make_ops(seed: int) -> list[tuple[str, dict]]:
                 ("deliver", {"e": E.notice(nid("n"), addr, rnd.choice(ADDRS), "m")})
             )
         elif k == 9:
-            outcome = rnd.choice(["done", "stopped", "session_end"])
+            outcome = rnd.choice(["done", "stopped"])
             replies = {}
             for rid in rnd.sample(ids, min(2, len(ids))):
                 replies[rid] = E.reply(nid("n"), addr, rnd.choice(ADDRS), "fb", re=rid)

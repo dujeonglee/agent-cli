@@ -26,7 +26,7 @@ from agent_cli.post.request_book import (
     RowError,
 )
 
-Outcome = Literal["done", "stopped", "session_end"]
+Outcome = Literal["done", "stopped"]
 
 
 class _Mark:
@@ -160,44 +160,32 @@ class PostOffice:
         outcome: Outcome,
         replies: Mapping[str, Envelope] | None = None,
     ) -> None:
-        """``addr`` 의 런이 끝났다. 규칙 하나:
+        """``addr`` 의 런이 끝났다(``done``·``stopped``). 규칙 하나: 집힌 r 줄마다 ``replies`` 에 그 rid 가 있으면 그
+        회신을 배달하고 닫는다(``done`` → fallback, ``stopped`` → stopped), 없으면 dropped. 집힌 u 줄은 run_ended.
+        들고 있던 봉투를 비우고, 남겨 둔 닫힌 줄(명시 회신)을 버린다.
 
-        - ``done``·``stopped``: 집힌 r 줄마다 ``replies`` 에 그 rid 가 있으면 그 회신을 배달하고 닫는다(``done`` →
-          fallback, ``stopped`` → stopped), 없으면 dropped. 집힌 u 줄은 run_ended. 들고 있던 봉투를 비우고,
-          남겨 둔 닫힌 줄(명시 회신)을 버린다.
-        - ``session_end`` [단계 5 에서 쓰임 — 지금 제품은 부르지 않는다]: 아무것도 건드리지 않는다 — 프로세스가 끝나면
-          우편째 사라진다(재시작은 우편을 올리지 않는다, 5c-0).
-
-        쓰이지 않을 회신은 받지 않는다: ``replies`` 의 rid 가 이번에 닫는 r 줄이 아니거나, ``session_end`` 인데
-        ``replies`` 가 있으면 아무것도 바꾸지 않고 `RowError`. (`wait` 는 런의 끝이 아니다 — 5c-1.)"""
+        쓰이지 않을 회신은 받지 않는다: ``replies`` 의 rid 가 이번에 닫는 r 줄이 아니면 아무것도 바꾸지 않고
+        `RowError`. (`wait` 는 런의 끝이 아니다 — 5c-1.)"""
         replies = replies or {}
         with self.cv:
             box = self._box(addr)
-            closing = (
-                {r.rid for r in self._book.owed_by(addr)}
-                if outcome in ("done", "stopped")
-                else set()
-            )
-            self._ensure_used(replies, closing)
+            self._ensure_used(replies, {r.rid for r in self._book.owed_by(addr)})
+            self._ensure_new(replies.values())
             changed = False
-            if outcome in ("done", "stopped"):
-                self._ensure_new(replies.values())
-                how = "fallback" if outcome == "done" else "stopped"
-                for row in self._book.owed_by(addr):
-                    changed = True
-                    env = replies.get(row.rid)
-                    if env is None:
-                        self._book.close(row.rid, "dropped")
-                        continue
-                    self._book.close(row.rid, how, in_run=run_id)
-                    self._deliver(env)
-                for row in self._book.open_requests(addr):
-                    changed = True
-                    self._book.close(row.rid, "run_ended", in_run=run_id)
-            if outcome in ("done", "stopped"):
-                changed = bool(self._book.purge_closed(addr)) or changed
-            if outcome != "session_end":
-                changed = bool(box.finish_run()) or changed
+            how = "fallback" if outcome == "done" else "stopped"
+            for row in self._book.owed_by(addr):
+                changed = True
+                env = replies.get(row.rid)
+                if env is None:
+                    self._book.close(row.rid, "dropped")
+                    continue
+                self._book.close(row.rid, how, in_run=run_id)
+                self._deliver(env)
+            for row in self._book.open_requests(addr):
+                changed = True
+                self._book.close(row.rid, "run_ended", in_run=run_id)
+            changed = bool(self._book.purge_closed(addr)) or changed
+            changed = bool(box.finish_run()) or changed
             if changed:
                 self.cv.notify_all()
 
