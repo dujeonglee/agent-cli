@@ -545,7 +545,7 @@ class TurnDispatcher:
 
         asking = (
             guard.fires >= 2
-            and self.cfg.kind.tracks_run_authors
+            and self.cfg.kind.owns_main_view
             and get_renderer().can_pause_for_human()
         )
         self._stale_shown = True
@@ -2058,10 +2058,10 @@ def _combined_tool_label(names: list[str]) -> str:
 def show_open_items(cfg, state) -> None:
     """장부를 사람 화면에 (v10.119.0, docs/ledger/DESIGN.md §15) — 런 시작·턴 경계·
     `complete` 정산·런 끝에서 부른다. **main 런만**: 사람 요청을 받는 런(입력 큐가
-    있는 종류 — `tracks_run_authors`)의 장부가 사람이 보는 장부다. 상주·
+    있는 종류 — `owns_main_view`)의 장부가 사람이 보는 장부다. 상주·
     스킬 루프도 같은 렌더러를 쓰므로 거르지 않으면 main 의 띠를 덮어쓴다. 같은
     스냅샷이 연달아 와도 렌더러가 거른다. 모델 입력과 무관하다."""
-    if not cfg.kind.tracks_run_authors:
+    if not cfg.kind.owns_main_view:
         return
     from agent_cli.render import get_renderer
 

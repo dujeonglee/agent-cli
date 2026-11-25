@@ -148,7 +148,7 @@ class ResidentLoop(LoopKind):
         return True
 
     @property
-    def tracks_run_authors(self) -> bool:
+    def owns_main_view(self) -> bool:
         return False
 
     def peer_roster(self) -> str:

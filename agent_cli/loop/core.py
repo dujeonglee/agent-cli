@@ -710,7 +710,7 @@ class AgentLoop:
         """방금 기록한 레코드가 장부 항목 ``request_id`` 의 원문이다 — 렌더러가 그
         서수를 기억해 📋 띠의 행이 그 카드로 점프한다 (v10.119.0). main 런만
         (`show_open_items` 와 같은 거름). 서수를 모르는 ctx(테스트 더미)는 건너뛴다."""
-        if not self._config.kind.tracks_run_authors:
+        if not self._config.kind.owns_main_view:
             return
         hidx = getattr(self.ctx, "last_ordinal", None)
         if hidx is None:

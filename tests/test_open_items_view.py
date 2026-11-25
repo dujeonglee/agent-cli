@@ -279,7 +279,7 @@ def _loop(tmp_path, *, requests=(), main=True):
         model="m",
         ctx=ContextManager(Path(tmp_path) / "s", max_context_tokens=30_000),
         ports=make_ports(
-            # 입력 큐가 있는 종류 = 사람 요청을 받는 main (`tracks_run_authors`)
+            # 입력 큐가 있는 종류 = 사람 요청을 받는 main (`owns_main_view`)
             inbox=queue_inbox(lambda: q.pop(0) if q else None) if main else None
         ),
     )

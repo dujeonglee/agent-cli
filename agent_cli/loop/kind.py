@@ -289,9 +289,9 @@ class LoopKind:
         return not self.skill_name
 
     @property
-    def tracks_run_authors(self) -> bool:
-        """사용자 귀속(`run_authors`)을 렌더러·레지스트리에 비추나 — 기본은 포트에서 유도한다: main 주소의 상자를
-        흡수하는 루프(사람의 말을 받는 main 의 모양). 다섯 종류는 자기 답을 명시한다."""
+    def owns_main_view(self) -> bool:
+        """사람이 보는 main 화면의 주인인가 — 📋 띠·원문 점프·제자리 고리 질문이 이 화면에만 선다. 기본은 포트에서
+        유도한다: main 주소의 상자를 흡수하는 루프(사람의 말을 받는 main 의 모양). 다섯 종류는 자기 답을 명시한다."""
         return self.owner == "main" and self.ports.mailbox.has_inbox
 
     def _engine(self) -> Callable:
@@ -396,5 +396,5 @@ class PrivateLoop(LoopKind):
         return True
 
     @property
-    def tracks_run_authors(self) -> bool:
+    def owns_main_view(self) -> bool:
         return False
