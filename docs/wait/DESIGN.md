@@ -24,7 +24,8 @@
 
 - **깨울 것이 있을 때만** 받는다(`wake.wake_items(owner)`): 이 소유자의
   돌고 있는 백그라운드 작업·살아 있는 모니터, 세션의 일하는 중인 상주 에이전트·
-  예약, 그리고 내 요청을 아직 집지 않은 받는 쪽(main 포함 — "has your request queued", 5c-2 C).
+  예약, 내 요청을 아직 집지 않은 받는 쪽(main 포함 — "has your request queued", 5c-2 C), 그리고 내가 사람에게 건
+  열린 질문(6a — `your question "q-3" to the user`; 답이 봉투로 와서 깨운다. 잠든 채무자를 거슬러 볼 때도 센다).
 - **깨울 것이 없으면 물음은 하나다 — 닫지 않은 것이 있나 (5d).** 닫지 않은 것 = 갚지 않은 회신(`r-`, `ledger.debts`)과
   답하지 않은 사람의 요청(`u-`, `ledger.unanswered_human_request_ids` — `complete` 의 `answers` 로 닫는 것). 통지
   항목(`n-`)은 세지 않는다(답을 빚진 것이 아니다 — 작업 구간 끝으로 닫힌다). 있으면 그 번호를 말하는 거부 관찰을
@@ -221,8 +222,8 @@ harbor 벤치 전부(trial 483)에서 받아들여진 `wait` 50번 중 **13번(2
 (`AgentRegistry._checkin_step`). 진짜 보고로 깨면 집합이 거의 항상 바뀌므로(작업 소멸·빚 정산)
 별도 초기화가 없고, 바뀌지 않는 드문 경우(`once` false 모니터의 재발화)에 배증이 이어지는 것은
 해롭지 않다. 숫자는 하니스가 고정한다(`constants.CHECKIN_STEPS_S`) — 모델이 정하는 인자는 없다.
-예약(schedule)만 기다리는 `wait` 에는 걸지 않는다; 예약과 작업을 함께 기다리면 걸되 알림에는
-작업·monitor·에이전트만 적힌다.
+예약(schedule)·내가 건 질문만 기다리는 `wait` 에는 걸지 않는다(6a — 질문의 답은 사람이 준다, 알릴 진척이 없다); 둘을
+작업과 함께 기다리면 걸되 알림에는 작업·monitor·에이전트만 적힌다.
 
 왜 5분·배증·60분 상한: 5분이면 13번 중 5번을 더 일찍 한 번 본다; 깨어난 기다림의 중앙값이
 130~175초라 대부분은 걸리지도 않는다; 배증은 정말 오래 걸리는 정상 작업이 5분마다 턴을 쓰지
@@ -305,6 +306,7 @@ float 하나 — 락 없는 근사값). "step" 은 컨텍스트 기록 하나(�
 | 회신을 빚졌고 일하지 않음(받은편지함이 비지 않아 잠듦으로 세지 않는다) | `agent:p (explorer) · owes you a reply · idle` (v10.146.6) |
 | 회신을 빚진 채 스스로 잠듦 | `agent:m (coder) · owes you a reply · itself waiting on job #3` — 기다리는 것은 이름만(v10.166.0, `wake.wake_name`): 에이전트는 키(`agt-5`), main 은 `main`, 작업 `job #3`, 모니터 `monitor m-2`, 예약 `a schedule`. 종전엔 `wait` 수락 문장의 줄 그대로였다(`job #3 (\`pytest -x tests/\`)`·`agent:agt-5 working on your request` — 뒤의 "your" 는 읽는 쪽이 아니라 그 채무자의 시점이었다) |
 | 사람 질문에 막힘 | `agent:n (reviewer) · owes you a reply · itself waiting on job #1 · blocked on question q-3 to the user, unanswered for 9m` |
+| 사람 질문에만 막힘(6a) | `agent:n (reviewer) · owes you a reply · blocked on question "q-3" to the user, unanswered for 5m` — 그가 기다리는 이름이 없어 "itself waiting on" 이 빠진다 |
 | main 이 회신을 빚짐(기다리는 쪽이 에이전트) | `main · owes you a reply` — 에이전트가 아니라 걸음 수·일감·kill 안내가 없다 |
 | main 이 내 요청을 아직 집지 않음 | `main · has your request queued` — main 이 일하는 중이거나 기다리는 중이다. 그 봉투가 main 을 깨운다 |
 

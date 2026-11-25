@@ -107,6 +107,12 @@ If nothing else can proceed, `complete` — you will be resumed when it arrives.
 **마지막 문장이 중요하다.** `ask` 는 보통 "막혔다"는 뜻이라 "계속하라"고만 하면
 작은 모델이 추측하고 끝낼 수 있다. `complete` 해도 이어진다는 걸 알린다.
 
+> 6a(v10.175.0) 에서 바뀜: 관찰은 일어난 일(`question "q-3" sent — "…"`)만 말한다. 묻고 나서 어디로 가나는 질문이
+> 열린 동안 꼬리의 `## Your open questions (do not wait for the answer: do what you can without it, and call `wait`
+> only when you cannot go further)` 가 말한다 — `wait` 하면 답이 그 자리를
+> 깨운다. 설명(`RESIDENT_DESCRIPTION`)과 안내(`_ASK_INLINE_RESIDENT`)의 "할 게 없으면 `complete`" 도 지웠다 —
+> `complete` 와 `wait` 두 길을 동시에 말하지 않는다.
+
 **설명은 루프마다 다르다**(§2-⑥). main·delegate 는 블록하는 기존 `ask`
 (`renderer.prompt_user`), 상주 에이전트는 비블로킹 —
 `AskTool.RESIDENT_DESCRIPTION` 을 `description_overrides` 로 갈아끼운다.

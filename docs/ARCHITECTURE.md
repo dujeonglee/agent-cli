@@ -618,7 +618,7 @@ provider.call() → 예외
   정책은 `Tool.render_oversized` 하나다 — 전문은 파일로(도구가 이미 쓴 파일이 아니면 `persist_oversized` 가 `<session_dir>/oversized/` 에),
   head/tail 발췌(`oversized_excerpt`)와 좁혀 읽는 길을 함께. 경로는 `paths.display_path()` 로 cwd 상대.
 - **세션 상태 블록(꼬리)**: 매 턴 바뀌는 상태를 마지막 메시지 뒤에 붙인다 (`prompts/session_state.py`, docs/tail/DESIGN.md). 첫 줄은 `TAIL_BOUNDARY`.
-  Task Guidelines, `## Open Items`(장부), `## Session Memory`, `## Background jobs`, `## Web Sources`, 상주 에이전트 목록, 턴 예산, 압축 안내
+  Task Guidelines, `## Open Items`(장부), `## Session Memory`, `## Background jobs`, `## Your open questions`(내가 사람에게 건 열린 질문 — 열린 동안만), `## Web Sources`, 상주 에이전트 목록, 턴 예산, 압축 안내
   (`COMPACTION_NOTICE_STEPS`)가 여기 있다. 컨텍스트 사용량 숫자는 싣지 않는다.
 - **관측**: 압축마다 `TurnRecorder.record_compaction` 이 turns.jsonl 에 `event: "compaction"` 줄을 쓴다 (§7.7).
   화면은 `render_compaction_progress` → `Renderer.compaction`(web 은 `compaction` SSE 이벤트).
