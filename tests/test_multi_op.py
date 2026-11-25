@@ -28,10 +28,16 @@ from agent_cli.dialects.base import (
 )
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.render import get_renderer
 from agent_cli.tools.registry import TOOLS
 from tests.loop_ports import TEST_PORTS
 
 # ─── Tool.wrap_single_op ────────────────────────────
+
+
+def _answerable(monkeypatch):
+    """답이 올 수 있는 표면 — 아니면 `ask` 가 거절된다(6c). 테스트에는 터미널이 없다."""
+    monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: True)
 
 
 class TestWrapSingleOp:
@@ -481,6 +487,7 @@ class TestMultiOpDispatch:
         import agent_cli.loop.dispatch as loop_mod
 
         monkeypatch.setattr(loop_mod, "_handle_ask", lambda qs: "yes")
+        _answerable(monkeypatch)
         f1 = tmp_path / "a.txt"
         f1.write_text("alpha")
         _result, ctx, _ = _run(
@@ -517,6 +524,7 @@ class TestMultiOpDispatch:
             return next(answers)
 
         monkeypatch.setattr(loop_mod, "_handle_ask", fake_ask)
+        _answerable(monkeypatch)
         _result, ctx, _ = _run(
             [
                 _turn(

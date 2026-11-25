@@ -84,6 +84,13 @@ BATCH_OP_SKIPPED_NOTE = (
     "see their own results. Fix this op and re-send only it."
 )
 
+#: 답할 길이 없는 곳의 `ask` (6c) — 표면이 "답이 올 수 있다" 고 말하지 않으면(`Renderer.can_prompt`) 질문을 올리지도
+#: 묻지도 않는다. 누가 묻든(main·스킬·에이전트) 같은 글이다
+ASK_REFUSED_NOBODY_CAN_ANSWER = (
+    "ask refused — nobody can answer here: this session has no terminal and no "
+    "viewer. Go on with what you have and say what you assumed in your result."
+)
+
 
 def _ops_shape(ops, *, broken_as_empty: bool = False) -> list[dict]:
     """op 들의 ops shape 레코드 — 층이 바꾼 op 는 ``rewritten_from`` 을 함께
@@ -1414,6 +1421,11 @@ class TurnDispatcher:
                 if isinstance(op.action_input, dict)
                 else str(op.action_input),
             )
+            # 답이 올 수 없으면 묻지 않는다 — 갈래(막음/올림) 앞 한 곳(6c)
+            if not render_surface.get_renderer().can_prompt():
+                return self._emit_obs(
+                    turn.record, accumulate, "ask", ASK_REFUSED_NOBODY_CAN_ANSWER, False
+                )
             port = self.cfg.kind.ports.questions
             if port is not None and not self.cfg.kind.prompt_profile().ask_blocking:
                 return self._op_ask_async(turn.record, questions, port, accumulate)
@@ -2027,24 +2039,16 @@ def _handle_ask(questions: list[str]) -> str:
     # at the CLI and a web renderer can serve the same prompt as a form
     # without the loop knowing the difference. ``prompt_user`` propagates
     # EOF / Ctrl+C — caller policy is "(no response)" so the assistant
-    # gets a stable answer slot even when the user bails.
-    if not renderer.can_prompt():
-        # No interactive channel right now (non-TTY CLI / no connected web
-        # client) → don't block forever on an answer that can't arrive;
-        # give the model a stable answer slot. ``prompt_user`` itself
-        # serializes + pauses any Live panel, so a delegate worker thread
-        # is fine when a channel IS available.
+    # gets a stable answer slot even when the user bails. 답이 올 수 없는 곳은 여기 오지 않는다 — `_op_ask` 가 거절한다.
+    try:
+        answer = renderer.prompt_user(
+            f"{prefix}\n{prefix}Your answer: ",
+            multiline=True,
+            continuation=f"{prefix}... ",
+            context=context_text,
+        )
+    except (EOFError, KeyboardInterrupt):
         answer = "(no response)"
-    else:
-        try:
-            answer = renderer.prompt_user(
-                f"{prefix}\n{prefix}Your answer: ",
-                multiline=True,
-                continuation=f"{prefix}... ",
-                context=context_text,
-            )
-        except (EOFError, KeyboardInterrupt):
-            answer = "(no response)"
 
     q_part = "\n".join(f"Q: {_strip_leading_marker(q)}" for q in questions)
     return f"{q_part}\nA: {answer}"

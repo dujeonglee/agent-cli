@@ -387,7 +387,7 @@ class TestLiveness:
         from agent_cli.main_input import MainInput
         from agent_cli.pump import QuietPolicy
 
-        reg = SimpleNamespace(has_agent_work=lambda: False)
+        reg = SimpleNamespace(has_agent_work=lambda: False, open_human_questions=list)
         harness = SimpleNamespace(in_flight=1)
         waits: list[str] = []
         pol = QuietPolicy(

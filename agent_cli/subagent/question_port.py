@@ -229,8 +229,8 @@ class QuestionPort:
 
         **main 은 거부한다.** main 의 ``ask`` 는 사람에게 묻는 기존 블로킹
         경로(`renderer.prompt_user`) 그대로다. 여기로 오면 로스터에도 창에도 안
-        뜨는(둘 다 asker 를 에이전트 키로 찾는다) 질문이 생겨 웹의 한가함 정리
-        (`main.web_instance_is_active` 의 열린 질문 항)를 영구 참으로 만든다.
+        뜨는(둘 다 asker 를 에이전트 키로 찾는다) 질문이 생겨 세션의 끝 판정
+        (`runtime.session_has_live_work` 의 열린 질문 항)을 영구 참으로 만든다.
         """
         if self.key is None:
             return "", (

@@ -1041,7 +1041,7 @@ class TestAskToUser:
         assert "`to`" not in g
         assert not HANGUL.findall(g)
 
-    def test_dispatch_ignores_a_stale_to(self):
+    def test_dispatch_ignores_a_stale_to(self, renderer):
         """모델이 옛 ``to`` 를 보내도 포트는 질문만 받는다 — 주소는 포트가
         정한다(사람). 구제가 아니라 무시다: 스키마에 없는 키다."""
         import types

@@ -138,6 +138,11 @@ class Recorder:
         #: 규칙은 main 의 것이다 — **main 이 아닌 레인의 호출은 규칙을 거치지 않는다**(조용히 넘긴다, `_ruled_here`).
         #: 5c-1 부터 에이전트도 제자리 대기마다 `wait_in_place` 를 부른다 — 에이전트를 잡을 규칙이 필요하면 hold 를 쓴다.
         self.rules: dict = {}
+        #: 답이 올 길이 있는가(`Renderer.can_prompt`) — 세션이 길에 맞춘다: web 은 트레이가 있고, run 은 터미널이 없다
+        self.answerable = False
+
+    def can_prompt(self) -> bool:
+        return self.answerable
 
     def hold(self, event: str, key: str, cond) -> None:
         self.holds.append([event, key, cond])
@@ -358,6 +363,7 @@ class Session:
         self.provider = provider
         self.path = path
         self.recorder = Recorder(threading.current_thread())
+        self.recorder.answerable = path == "web"
         for h in holds:
             self.recorder.hold(*h)
         set_renderer(self.recorder)

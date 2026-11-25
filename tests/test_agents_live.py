@@ -58,6 +58,9 @@ class RecordingRenderer:
         with self.lock:
             self.calls.append((name, kw))
 
+    def can_prompt(self):
+        return True  # 기본 표면처럼 답이 올 수 있다(`Renderer.can_prompt` 의 기본값) — 아니면 `ask` 가 거절된다(6c)
+
     def begin_prompt_scope(self, scope_id, label=""):
         self._rec("begin_prompt_scope", scope=scope_id, label=label)
 
@@ -1364,31 +1367,6 @@ class TestAskRouting:
         assert reg.get(key).state == "dead"
         assert len(reg.open_human_questions()) == 1  # 세션 종료는 질문을 지우지 않는다
 
-    def test_delegate_ask_path_unchanged(self):
-        # handler=None(delegate/main) 이면 종전 사용자-프롬프트 경로 —
-        # can_prompt False 환경에선 "(no response)" 폴백 그대로.
-        from unittest.mock import MagicMock
-
-        import agent_cli.loop.dispatch as dispatch_mod
-        from agent_cli.loop.dispatch import _handle_ask
-
-        fake = MagicMock()
-        fake.can_prompt.return_value = False
-        fake._prefix = ""
-        assert dispatch_mod is not None  # import 경로 확인용
-        import pytest as _pytest
-
-        import agent_cli.render as render_mod
-
-        mp = _pytest.MonkeyPatch()
-        try:
-            mp.setattr(render_mod, "get_renderer", lambda: fake)
-            out = _handle_ask(["q?"])
-        finally:
-            mp.undo()
-        assert out.endswith("A: (no response)")
-        fake.announce_ask.assert_called_once()
-
 
 # ── P3: 상태 영속 + resume 재생성 (D7) ──────────
 
@@ -1855,6 +1833,9 @@ class TestRunMessagePump:
 
         def has_agent_work(self):
             return self.busy
+
+        def open_human_questions(self):
+            return []
 
         def set_current_run_authors(self, authors):
             pass

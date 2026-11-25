@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import select
 import signal
 import subprocess
 import sys
@@ -15,8 +16,10 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
+from agent_cli.agent_icon import agent_display_name
 from agent_cli.command_table import (
     IMAGES_NOT_TAKEN,
+    command_kind,
     command_takes_images,
     looks_like_slash_command,
     run_input_is_command,
@@ -41,6 +44,7 @@ from agent_cli.providers import (
     get_capabilities,
 )
 from agent_cli.render import C, console, get_renderer
+from agent_cli.render.base import interactive_lock
 from agent_cli.terminate import SigTerm, Terminated, wait_left
 
 app = typer.Typer(
@@ -914,6 +918,9 @@ def try_dispatch_agent_or_skill(
     if message.split(maxsplit=1)[:1] == ["/stop"]:
         _dispatch_stop(message, output, agent_registry)
         return True
+    if command_kind(message) == "question":
+        _dispatch_question(message, output, agent_registry, author)
+        return True
 
     if message.startswith("/") and looks_like_slash_command(message):
         parts = message.split(maxsplit=1)
@@ -975,6 +982,42 @@ def _dispatch_stop(message: str, output: DispatchOutput, agent_registry) -> None
     error = agent_registry.stop_run(key)
     if error:
         output.agent_dispatch_result(f"/stop: {error}", False)
+
+
+ANSWER_USAGE = "usage: /answer <q-N> <text>"
+NO_OPEN_QUESTIONS = "no open questions"
+
+
+def _dispatch_question(
+    message: str, output: DispatchOutput, agent_registry, author: str
+) -> None:
+    """``/questions`` — 열린 질문 목록, ``/answer <q-N> <글>`` — **그 번호의** 질문에 답한다(6c). 답은 웹 트레이와 같은
+    함수(`AgentRegistry.answer_question`)로 간다 — 길은 하나, 입구가 둘이다. 번호가 없으면 사용법만 말한다: 질문이
+    하나뿐이어도 짐작해 붙이지 않는다(답은 번호를 적은 명령이나 트레이로만 — 사용자 결정). 목록은 트레이와 같은
+    출처(명단 행의 ``open_questions``)를 읽고, 묻는 쪽은 질문 줄과 같은 이름으로 적는다."""
+    if agent_registry is None:
+        output.agent_dispatch_result("(no agent registry in this mode)", False)
+        return
+    parts = message.split(maxsplit=2)
+    if parts[0] == "/questions":
+        lines = [
+            f"{q['id']}  {agent_display_name(row['key'], row['profile'], row['name'])}"
+            f" ({row['key']})  {q['text']}"
+            for row in agent_registry.roster_snapshot()
+            for q in row["open_questions"]
+        ]
+        if not lines:
+            output.agent_dispatch_result(NO_OPEN_QUESTIONS, True)
+            return
+        output.agent_dispatch_result("\n".join(["Open questions:", *lines]), True)
+        return
+    if len(parts) < 3:
+        output.agent_dispatch_result(ANSWER_USAGE, False)
+        return
+    error = agent_registry.answer_question(parts[1], parts[2], by=author)
+    output.agent_dispatch_result(
+        f"/answer: {error}" if error else f"answered {parts[1]}", not error
+    )
 
 
 def _command_dispatch(spec, owners, output, *, graceful_interrupt: bool):
@@ -2110,6 +2153,8 @@ def run(
                     if kind == "monitors"
                     else _HARNESS_WAIT_NOTICE
                     if kind == "harness"
+                    else _questions_wait_notice(owners.agent_registry)
+                    if kind == "questions"
                     else _schedule_wait_notice(stores.schedules)
                 )
                 + "[/]"
@@ -2124,6 +2169,8 @@ def run(
             on_mail_notice=_agent_mail_notice,
             # 대기 중에 친 명령(`/stop` 등)은 그 자리에서 라우팅한다
             on_wait_input=_terminal_steer_input(main_input, surface),
+            # 한가한 동안에도 친 줄을 읽는다 — main 이 결과를 낸 뒤에도 `/answer`·새 말을 받는다(6c)
+            on_idle_input=lambda t: read_terminal_line(main_input, t),
         )
 
         agent_registry = owners.agent_registry
@@ -2199,8 +2246,8 @@ def web_instance_is_active(
     ∨ 열린 사람 질문 ∨ main 앞 깨우는 봉투(사람의 말·깨우는 메일) ∨ **살아 있는 모니터**
     ∨ **켜진 예약** (v10.12.0 — 예약이 있으면 "유지" 처럼 꺼지지 않는다).
     ``agent_registry`` 는 web() 의 worker 부트스트랩이 늦게 채우는 nonlocal
-    이라 None 허용. 세션 판정은 run 과 같은 하나(`runtime.session_has_live_work`), 웹만의 항은 접속한 뷰어·바쁜
-    main 워커·열린 사람 질문이다.
+    이라 None 허용. 세션 판정은 run 과 같은 하나(`runtime.session_has_live_work` — 열린 사람 질문도 거기 있다, 6c),
+    웹만의 항은 접속한 뷰어·바쁜 main 워커다.
 
     ``monitors`` (v9.11.0): 설계 초판은 "web 은 무한 대기라 수명 문제는 run
     에만 해당"이라고 봤는데 **틀렸다** — board 가 띄운 인스턴스는 뷰어가 없으면
@@ -2212,10 +2259,6 @@ def web_instance_is_active(
     return bool(
         renderer.hub.has_live_connections()
         or renderer.worker_is_busy()
-        # 사람에게 물은 질문은 답이 올 때까지 열려 있고 상한도 없다 — 답은 웹에서만 온다(`answer_question`).
-        # 세지 않으면 질문을 든 세션을 한가함 정리가 걷는다 — 재시작은 질문을 되살리지 않는다(5c-0).
-        # run 은 답할 길이 없어 세지 않는다 — 세면 끝나지 않는다.
-        or bool(agent_registry is not None and agent_registry.open_human_questions())
         or session_has_live_work(
             post=server.main_input.post,
             agent_registry=agent_registry,
@@ -2296,6 +2339,12 @@ def _previous_monitors_notice(session_dir) -> str:
 _HARNESS_WAIT_NOTICE = "🔎 Waiting for the audit to finish — its result goes to main, and the process exits when that run ends"
 
 
+def _questions_wait_notice(registry) -> str:
+    """`run` 이 열린 사람 질문 때문에 끝나지 않고 기다릴 때의 한 줄(6c) — 번호·답하는 법·끝내는 법."""
+    ids = ", ".join(q.id for q in registry.open_human_questions())
+    return f"❓ Waiting for your answer to {ids} — type /answer <q-N> <text>, or press Ctrl-C to quit."
+
+
 def _auditor_boot_line(auditor) -> str:
     """감사자 부팅 상태 한 줄 — run 콘솔·web 상태 공용. 켜져 있을 때만 알린다
     (기본 꺼짐; web 은 🔎 칩으로 세션 도중 켜고 끈다). 빈 문자열 = 알릴 것 없음."""
@@ -2347,37 +2396,52 @@ def _terminal_steer_input(main_input, surface):
     보고, 터미널이면 그 사이 친 한 줄을 같은 판정으로: 명령이 아니면 main 앞에 넣고 참(꺼내는 것은 다음 턴 경계의
     흡수다). 터미널이 아니면 줄 선 말만 본다.
 
-    터미널 줄은 main 이 제자리에서 기다리는 동안에만 읽는다 — 그 밖의 시간엔 `ask`·확인
-    프롬프트가 같은 표준입력을 쓴다.
+    친 줄은 `read_terminal_line` 하나로 읽는다 — 프롬프트(`ask`·확인 대화)가 표준입력을 쥐고 있으면 읽지 않는다(그
+    줄은 프롬프트의 것이다), 표준입력이 터미널이 아니면 줄 선 말만 본다.
 
     친 줄도 main 앞에 넣는다(들어오는 문 하나 — 명령인가는 거기서 판정한다). 명령(``/stop agt-3`` 등)은 줄 선 것이든
     친 것이든 그 자리에서 ``surface.route`` 하고
     기다림을 깨우지 않는다 — 깨우면 main 이 "사용자가 썼다" 로 깨어 그 말이 없는 관찰을 읽는다(명령은 흡수 때
     소비된다). 멈춘 에이전트의 회신이 따로 깨운다 (v10.148.0: 줄 선 명령도 — 종전엔 친 줄만)."""
-    import select
-
     from agent_cli.runtime import wait_for_human_words
 
     queued = wait_for_human_words(main_input, surface)
 
     def wait(timeout: float) -> bool:
-        if not sys.stdin.isatty():
-            return queued(timeout)
         if queued(0):
             return True
+        took = read_terminal_line(main_input, timeout)
+        if took is None:
+            return queued(timeout)
+        return queued(0) if took else False
+
+    return wait
+
+
+def read_terminal_line(main_input, timeout: float) -> bool | None:
+    """터미널에서 친 한 줄을 main 앞에 넣는다 — 넣었으면 True, 시한 안에 줄이 없으면 False, 읽지 않았으면 None(6c).
+
+    읽지 않는 때: 표준입력이 터미널이 아니다("친 줄을 읽을 수 있나" 의 판정은 여기 하나 — 파이프·하니스) · 프롬프트
+    (`ask`·확인 대화)가 표준입력을 쥐고 있다 — 그 읽기와 같은 잠금(`interactive_lock`, `Renderer._guarded_read`)을 못
+    잡으면 그 줄은 프롬프트의 것이다 · 표준입력을 고를 수 없다. 넣은 줄은 들어오는 문(`MainInput.enqueue`)이 명령인가를
+    판정한다 — 명령이 아닌 말은 언제나 main 의 요청이다(열린 질문의 답으로 짐작하지 않는다). 부르는 자리는 둘이다:
+    main 의 제자리 대기(`_terminal_steer_input`)와 `run` 이 한가한 동안(`pump.MainActor.take`)."""
+    if not sys.stdin.isatty() or not interactive_lock.acquire(blocking=False):
+        return None
+    try:
         try:
             ready, _, _ = select.select([sys.stdin], [], [], timeout)
         except (OSError, ValueError):
-            return queued(timeout)
+            return None
         if not ready:
             return False
         text = sys.stdin.readline().strip()
-        if is_blank_words(text):
-            return False
-        main_input.enqueue(None, text)
-        return queued(0)
-
-    return wait
+    finally:
+        interactive_lock.release()
+    if is_blank_words(text):
+        return False
+    main_input.enqueue(None, text)
+    return True
 
 
 def _agent_mail_notice(reply: dict, busy: bool) -> None:

@@ -1170,12 +1170,18 @@ class MinimalRenderer(Renderer):
         )
         # 이름을 앞에, 주소(key)를 뒤에 — 웹 채널 칩과 같은 배치. 터미널엔
         # 흐리게 할 자리가 없으니 괄호로 눌러 둔다. v9.9.0.
+        # 질문은 번호와 답하는 법을 단다(6c) — 터미널의 답은 그 번호를 적은 `/answer` 하나다
+        number = f" {item}" if direction == "question" and item else ""
         self.con.print(
-            f"\n{icon} [{agent_display_name(key, profile, instance_name)} ({key}) → {to}]",
+            f"\n{icon} [{agent_display_name(key, profile, instance_name)} ({key}) → {to}]{number}",
             style="bold cyan",
             markup=False,
         )
         self.con.print(text, highlight=False, markup=False)
+        if number:
+            self.con.print(
+                f"  answer with: /answer {item} <text>", style=_MUTED, markup=False
+            )
 
     # ── Ask-tool announcement ────────────────────────
 

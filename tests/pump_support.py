@@ -64,6 +64,9 @@ class FakeRegistry:
     def has_agent_work(self):
         return False
 
+    def open_human_questions(self):
+        return []
+
     def set_current_run_authors(self, authors):
         self.authors.append(list(authors))
 
@@ -84,6 +87,7 @@ def make_pump(
     poll_secs=0.05,
     auditor=None,
     policy=None,
+    read_terminal=None,
 ):
     """run 수명 정책의 펌프. ``run_main`` 은 시작(`Start` — `MainLoop.start` 가 꺼낸 것에서 짓는다)을 받는다.
     ``policy`` 를 주면 그 수명 정책으로(기본은 run 의 `QuietPolicy`)."""
@@ -98,6 +102,7 @@ def make_pump(
             main_input=main_input,
             agent_registry=registry,
             main=SimpleNamespace(start=MainLoop.start, run=run_main),
+            read_terminal=read_terminal,
             surface=surface if surface is not None else FakeSurface(),
             auditor=auditor,
             policy=policy

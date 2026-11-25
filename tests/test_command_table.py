@@ -23,6 +23,9 @@ _WEB_HELP_BEFORE = (
     "  /<skill> <args>          Invoke a skill directly\n"
     # v10.142.0: /stop 이 더해졌다 — 그 한 줄 말고는 표로 옮기기 전과 같다
     "  /stop <agent>|all        Stop an agent's run (all: every working agent)\n"
+    # v10.174.0: 질문의 목록과 답 — 번호를 적은 명령으로만 답한다
+    "  /questions               List open questions to you\n"
+    "  /answer <q-N> <text>     Answer an open question\n"
     "  @agents                  List available agents\n"
     "  @<agent> <task>          Delegate a task to an agent\n"
     # v10.165.0: 상주 에이전트로 가는 두 꼴 — `main._try_dispatch_agent_command` 가 처리해 온 것을 표에 올렸다

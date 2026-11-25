@@ -13,6 +13,9 @@ from __future__ import annotations
 import json
 import threading
 
+import pytest
+
+from agent_cli.render import get_renderer
 from tests.test_agents_live import _FakeLoopResult, make_registry
 from tests.test_engine_p2 import wait_until
 
@@ -279,6 +282,11 @@ class TestResidentAskIsRecordedAsWhatHappened:
     으로 거부한다. 그래서 가짜 포트 없이 실제 ``question_port`` 로 몬다.
     관찰 글은 바뀌지 않는다 — 아래 기대 글은 고치기 전의 출력과 같다.
     """
+
+    @pytest.fixture(autouse=True)
+    def _answerable(self, monkeypatch):
+        """답이 올 수 있는 표면 — 아니면 `ask` 가 거절된다(6c). 테스트에는 터미널이 없다."""
+        monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: True)
 
     def _ports(self, reg, b):
         from tests.loop_ports import make_ports

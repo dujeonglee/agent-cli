@@ -682,3 +682,19 @@ message → r-)이었다.
 - **id 는 할당기 하나**(docs/ledger §11.4 v10.77.0), 봉투 모양 하나(`envelope`).
 - 후보(관측되면): 상주 루프에서 미납 r- 가 있고 깨울 근거가 있으며 닫을 u-/n- 가 없을 때
   `complete` → `wait` 재라우팅(결과는 `rewritten_from` 에 보존) — docs/tool-review/TRACKER.md.
+
+## 12. v10.174.0 — 답할 길이 있는 곳에서만 묻는다, 터미널에서 답한다 (6c)
+
+- **답이 올 수 없는 곳에서는 묻지 않는다.** `dispatch._op_ask` 가 갈래(막음/올림) 앞에서 `Renderer.can_prompt()`
+  를 본다 — 거짓이면 누가 묻든 거절 글 하나(`ASK_REFUSED_NOBODY_CAN_ANSWER`). 종전엔 main·스킬이
+  `A: (no response)` 를 답으로 받았고(답이 아닌 것을 답의 자리에), 에이전트의 질문은 답할 길 없이 올라갔다.
+- **§⑧ "CLI 에는 사람이 답할 루프가 없다" 가 바뀌었다.** `/answer <q-N> <글>` 이 웹 트레이와 같은
+  `AgentRegistry.answer_question` 을 부른다(웹·run 두 표면). `/questions` 는 트레이와 같은 출처(명단의
+  `open_questions`). 터미널 `run` 은 한가한 동안에도 친 줄을 읽는다(`main.read_terminal_line` — 제자리 대기와 같은
+  함수, 프롬프트의 `interactive_lock` 안에서).
+- **답은 번호를 적은 명령과 트레이로만(사용자 결정).** 그 밖의 입력(터미널·웹 채팅의 보통의 말·예약 발화)은 질문이
+  열려 있든 없든 main 의 요청이다. `/answer` 에 번호가 없으면 사용법만 — 질문이 하나뿐이어도 짐작해 붙이지 않는다.
+- **열린 질문은 세션의 할 일이다.** `runtime.session_has_live_work` 의 조건 없는 항 — 답이 올 수 없는 곳에서는 질문이
+  열리지 않으므로 열린 질문은 곧 답이 올 수 있는 질문이다. 웹만의 항이 없어졌고 터미널 `run` 도 질문이 열려 있는 동안
+  끝나지 않는다.
+

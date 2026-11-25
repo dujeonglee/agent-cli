@@ -834,6 +834,7 @@ class AgentRegistry:
         payload = {
             "key": tm.key,
             "direction": "question",
+            "item": q.id,
             "author": tm.key,
             "text": q.text,
             "to": q.target,
