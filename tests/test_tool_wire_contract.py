@@ -4,7 +4,7 @@
 
     프롬프트가 광고한 flat op → 중앙 검증 → 실행
 
-v9.11.0 의 ``monitor`` 는 그 사이의 재포장(옛 ``wrap_single_op`` 의 기본 ``add_prefix``)이 키에
+v9.11.0 의 ``monitor`` 는 그 사이의 재포장(도구 훅의 기본 ``add_prefix``)이 키에
 ``monitor_`` 를 붙여, 검증이 *"Missing required field(s): mode"* 로 **모든 호출을 거절**했다. 도구가
 릴리스 내내 한 번도 동작하지 않았다. 재포장은 v10.177.5 에서 없앴다(모든 도구가 항등이었다).
 
@@ -71,7 +71,7 @@ def _canonical(params: dict) -> dict:
 def _advertised_flat(name: str, params: dict) -> dict:
     """멀티-op 프롬프트가 **광고하는** flat 모양.
 
-    `registry._multi_op_flat_params` 와 같은 규칙이다: 배열 파라미터는 item
+    `registry._flat_params` 와 같은 규칙이다: 배열 파라미터는 item
     속성으로 펼치고, 스칼라는 도구 자신의 접두사를 뗀다. 모델이 실제로
     내보내는 것이 이 모양이라, 계약은 여기서 성립해야 한다.
     """
