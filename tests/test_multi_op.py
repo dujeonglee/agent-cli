@@ -641,7 +641,7 @@ class TestMultiOpDelegateParallel:
 
 class TestEditBatchGrouping:
     """A run of >=2 consecutive edit_file ops on the SAME path is grouped and
-    applied via apply_edits_batch (one read, all refs against original,
+    applied via apply_edits_batch_parts (one read, all refs against original,
     bottom-up, all-or-nothing). Non-consecutive / different-path edits and lone
     edits keep the normal per-op path."""
 

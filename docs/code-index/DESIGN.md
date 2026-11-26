@@ -433,7 +433,6 @@ Markdown additionally covers:
 - `find_refs_in_range(file, start, end)`.
 - `normalize_file_path` for: exact, absolute, basename, suffix, ambiguous
   (returns None).
-- `kind_counts`, `ref_kind_counts`, `top_ref_names`.
 
 ### 12.4 Callgraph & slice
 

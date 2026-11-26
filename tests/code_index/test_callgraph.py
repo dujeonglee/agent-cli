@@ -12,14 +12,14 @@ from collections import Counter
 
 import pytest
 
-from agent_cli.code_index import callees_of, callers_of, definitions_named
+from agent_cli.code_index import callees_of, callers_of
 from tests.code_index.helpers import build_fixture, build_tree
 from tests.code_index.helpers import callees_of as callee_names
 from tests.code_index.helpers import callers_of as caller_names
 
 
 def _one(store, name):
-    (d,) = definitions_named(store, name)
+    (d,) = store.definitions(name)
     return d
 
 
@@ -55,7 +55,7 @@ class TestDefinitionsAreNodes:
 
     def test_same_name_in_two_files_stays_two_nodes(self):
         store, _ = build_fixture("nested")
-        defs = definitions_named(store, "dup_helper")
+        defs = store.definitions("dup_helper")
         assert sorted(d["file"] for d in defs) == ["other/mod.py", "sub/mod.py"]
         for d in defs:
             assert callers_of(store, d).definitions == [d]
@@ -109,7 +109,7 @@ class TestSemantics:
         assert edges.unknown_definitions == 1
 
     def test_a_class_is_not_a_function_node(self, idx):
-        assert definitions_named(idx, "Service") == []
+        assert idx.definitions("Service") == []
 
 
 def test_cycle_records_both_directions(tmp_path):

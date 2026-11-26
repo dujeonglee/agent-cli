@@ -18,7 +18,7 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from agent_cli.code_index import IndexStore, build, definitions_named, load_index
+from agent_cli.code_index import IndexStore, build, load_index
 from agent_cli.code_index import callees_of as _callees_of
 from agent_cli.code_index import callers_of as _callers_of
 
@@ -82,7 +82,7 @@ def names_of_kind(idx: IndexStore, kind: str) -> set[str]:
 
 def _neighbor_names(idx, name: str, query) -> set[str]:
     out: set[str] = set()
-    for d in definitions_named(idx, name):
+    for d in idx.definitions(name):
         out.update(n.name for n in query(idx, d).neighbors)
     return out
 

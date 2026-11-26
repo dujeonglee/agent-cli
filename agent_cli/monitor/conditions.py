@@ -185,10 +185,6 @@ def build(spec: dict) -> Condition:
     return cls.from_spec(spec)  # type: ignore[attr-defined]
 
 
-def known_types() -> list[str]:
-    return sorted(_REGISTRY)
-
-
 # ── 파일 커서 공용 ──────────────────────────────────────────
 
 

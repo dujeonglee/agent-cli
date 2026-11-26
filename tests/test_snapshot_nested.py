@@ -610,7 +610,6 @@ def test_listing_reads_only_and_sync_is_its_own_call(ws, situation):
     before = _all_refs(s)
     for _ in range(2):
         rep = s.report()
-        s.changes()
         s.change_diff("git-proj/util.py")
         s.change_diff("lib-x")
         assert _all_refs(s) == before

@@ -3,9 +3,7 @@
 Covers the filter combinations on ``find_symbols`` / ``find_refs``,
 the call-graph queries on the stored resolution (v10.96.0), ``normalize_file_path``
 across exact / absolute / bare-basename / suffix / ambiguous shapes
-(using the ``nested/`` multi-file fixture), and the aggregate accessors
-``kind_counts`` / ``ref_kind_counts`` / ``top_ref_names`` /
-``n_symbols`` / ``n_refs`` / ``n_definitions``.
+(using the ``nested/`` multi-file fixture), and ``n_symbols``.
 """
 
 from __future__ import annotations
@@ -106,7 +104,7 @@ class TestFindRefs:
     def test_no_filters_returns_all_refs(self, python_index):
         store, _, _ = python_index
         all_refs = store.find_refs()
-        assert len(all_refs) == store.n_refs()
+        assert len(all_refs) == len(store.all_refs())
 
 
 class TestResolutionQueries:
@@ -114,12 +112,12 @@ class TestResolutionQueries:
 
     def test_function_definitions_bare_is_all_qualified_is_one(self, python_index):
         store, _, _ = python_index
-        defs = store.function_definitions("helper")
+        defs = store.definitions("helper")
         assert defs and all(d["kind"] == "function" and "id" in d for d in defs)
-        method = store.function_definitions("DerivedService.process")
+        method = store.definitions("DerivedService.process")
         assert [d["qualified_name"] for d in method] == ["DerivedService.process"]
-        assert len(store.function_definitions("process")) == 2  # 맨 이름은 둘 다
-        assert store.function_definitions("no_such_name") == []
+        assert len(store.definitions("process")) == 2  # 맨 이름은 둘 다
+        assert store.definitions("no_such_name") == []
 
     def test_module_qualified_names(self, tmp_path):
         """v10.97.0 — 파일 경로를 모듈 이름으로 읽어 ``모듈.한정 이름`` 의 끝이 맞는 것."""
@@ -162,7 +160,7 @@ class TestResolutionQueries:
 
     def test_refs_to_and_refs_in_functions(self, python_index):
         store, _, _ = python_index
-        (helper,) = store.function_definitions("helper")
+        (helper,) = store.definitions("helper")
         sites = store.refs_to(helper["id"])
         assert sites and all(fn is not None for fn, *_ in sites)
         callers = store.symbols_by_id({fn for fn, *_ in sites})
@@ -183,14 +181,14 @@ class TestResolutionQueries:
         (tmp_path / "b.py").write_text("from a import t\n\n\ndef b():\n    t()\n")
         db = tmp_path / ".db"
         build(tmp_path, db, defs_path=None, verbose=False)
-        (before,) = load_index(db).function_definitions("t")
+        (before,) = load_index(db).definitions("t")
         (tmp_path / "a.py").write_text("# moved down\n\n\ndef t():\n    pass\n")
         build(tmp_path, db, defs_path=None, verbose=False)
         store = load_index(db)
-        (after,) = store.function_definitions("t")
+        (after,) = store.definitions("t")
         assert after["id"] == before["id"] and after["line"] == 4
         assert [fn for fn, *_ in store.refs_to(after["id"])] == [
-            store.function_definitions("b")[0]["id"]
+            store.definitions("b")[0]["id"]
         ]
 
     @pytest.mark.parametrize(
@@ -259,51 +257,28 @@ class TestNormalizeFilePath:
         assert store.normalize_file_path("not/a/real/file.py") is None
 
 
-class TestKindAggregates:
-    """``kind_counts`` / ``ref_kind_counts`` / ``top_ref_names``."""
+class TestIndexContents:
+    """색인의 내용 — 픽스처가 만드는 종류."""
 
-    def test_kind_counts_returns_counter(self, python_index):
+    def test_functions_and_a_type_are_indexed(self, python_index):
         store, _, _ = python_index
-        kc = store.kind_counts()
-        assert isinstance(kc, Counter)
+        kinds = Counter(s["kind"] for s in store.all_symbols())
         # Python fixture defines functions and at least one type (Service class)
-        assert kc["function"] > 0
-        assert kc["type"] > 0
+        assert kinds["function"] > 0
+        assert kinds["type"] > 0
 
-    def test_kind_counts_sums_to_n_symbols(self, python_index):
+    def test_python_refs_are_call_or_name(self, python_index):
         store, _, _ = python_index
-        assert sum(store.kind_counts().values()) == store.n_symbols()
-
-    def test_ref_kind_counts_has_call_or_name(self, python_index):
-        store, _, _ = python_index
-        rkc = store.ref_kind_counts()
-        assert isinstance(rkc, Counter)
+        ref_kinds = Counter(r["kind"] for r in store.all_refs())
         # Python emits 'call' and 'name' refs but never 'type'
-        assert ("call" in rkc) or ("name" in rkc)
-
-    def test_top_ref_names_sorted_desc_and_limited(self, python_index):
-        store, _, _ = python_index
-        top = store.top_ref_names("call", limit=3)
-        assert len(top) <= 3
-        counts = [n for _, n in top]
-        assert counts == sorted(counts, reverse=True)
-
-    def test_top_ref_names_limit_one(self, python_index):
-        store, _, _ = python_index
-        top = store.top_ref_names("call", limit=1)
-        assert len(top) <= 1
+        assert ("call" in ref_kinds) or ("name" in ref_kinds)
 
 
 class TestCounts:
-    """``n_symbols`` / ``n_refs`` / ``n_definitions`` sanity bounds."""
+    """``n_symbols`` sanity bounds, and the fixture has refs and definitions."""
 
     def test_counts_nonzero(self, python_index):
         store, _, _ = python_index
         assert store.n_symbols() > 0
-        assert store.n_refs() > 0
-        assert store.n_definitions() > 0
-
-    def test_definitions_bounded_by_total(self, python_index):
-        store, _, _ = python_index
-        # every definition is a symbol, so n_definitions <= n_symbols
-        assert store.n_definitions() <= store.n_symbols()
+        assert store.all_refs()
+        assert any(s["is_definition"] for s in store.all_symbols())

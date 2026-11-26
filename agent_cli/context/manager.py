@@ -858,10 +858,12 @@ class ContextManager:
 
     @property
     def file_list(self) -> list[str]:
+        """테스트가 보는 창 — 제품은 부르지 않는다."""
         return list(self._file_list)
 
     @property
     def image_list(self) -> list[str]:
+        """테스트가 보는 창 — 제품은 부르지 않는다."""
         return list(self._image_list)
 
     def _shows_images(self) -> bool:

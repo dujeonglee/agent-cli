@@ -63,10 +63,6 @@ def load_harness_profile(job: str) -> tuple[str, dict, str]:
     return res.body, dict(res.meta), ""
 
 
-def harness_profile_names() -> list[str]:
-    return _profile_loader.list_names()
-
-
 class HarnessJobs:
     """세션당 하나. ``run(job, label, task)`` 이 스레드 하나로 런을 돌리고 결과를
     ``deliver(job, success, output)`` 로 넘긴다 — 배달 뒤에야 ``in_flight`` 가

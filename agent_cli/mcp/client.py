@@ -203,7 +203,7 @@ class McpClientManager:
     도구 목록을 받고, 닫으라는 신호(``closing``)를 기다렸다가 같은 태스크에서 닫는다.
 
     잠금이 없는 이유: ``_sessions``·``_closers``·``_tools``·``status``·``configs`` 는
-    ``connect_all``(부팅 한 번)과 ``disconnect``·``disconnect_all``(종료) 안에서만 쓰인다 — 루프
+    ``connect_all``(부팅 한 번)과 ``disconnect_all``(종료) 안에서만 쓰인다 — 루프
     스레드가 쓴 것은 ``_submit`` 의 ``future.result()`` 가 돌아오기 전에 끝나 있으므로(완료가
     happens-before) 그 뒤 어느 스레드가 읽어도 다 쓴 값을 본다. 런타임 중에 다시 연결하는 길은 없다
     (웹 🔌 칩·훅·도구 호출은 읽기만). 스레드 시작도 ``connect_all`` 에서만이라 경합이 없다.
@@ -394,15 +394,6 @@ class McpClientManager:
         if not done:
             task.cancel()
             await asyncio.wait({task}, timeout=DISCONNECT_TIMEOUT_S)
-
-    def disconnect(self, name: str) -> None:
-        """Disconnect from a specific server — 그 서버의 연결 태스크가 세션과 전송을 닫는다
-        (stdio 면 서버 프로세스가 끝난다)."""
-        entry = self._closers.pop(name, None)
-        self._sessions.pop(name, None)
-        self._tools.pop(name, None)
-        if entry is not None:
-            self._submit(self._close(*entry))
 
     def disconnect_all(self) -> None:
         """모든 연결을 닫고 루프 스레드를 내린다 — 런타임 종료·마법사 끝에서 부른다.

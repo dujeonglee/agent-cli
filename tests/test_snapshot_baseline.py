@@ -33,6 +33,12 @@ def ws(tmp_path):
     return w
 
 
+def _changed(s: GitSnapshot) -> list[dict] | None:
+    """기준점 ↔ 지금 디스크의 바뀐 파일 — `/api/changes` 가 읽는 `report().files`. 비교할 수 없으면 None."""
+    rep = s.report()
+    return rep.files if rep is not None else None
+
+
 def _store(ws, sid="s-1", **kw) -> GitSnapshot:
     s = GitSnapshot(ws, min_interval_s=0, **kw)
     assert s.init(sid), s.reason
@@ -59,14 +65,14 @@ def _git_state(s: GitSnapshot):
 
 def test_outside_edits_add_and_delete_show_up(ws):
     s = _store(ws)
-    assert s.changes() == []
+    assert _changed(s) == []
     # 셸처럼 밖에서 — 체크포인트 없이 디스크만 바뀐다
     (ws / "inventory.py").write_text("a\nB\nc\nd\n")
     (ws / "tests").mkdir()
     (ws / "tests" / "test_stock.py").write_text("1\n2\n3\n")
     (ws / "old.csv").unlink()
     (ws / "logo.bin").write_bytes(b"\x00\x01\x02")
-    got = _by_path(s.changes())
+    got = _by_path(_changed(s))
     assert set(got) == {"inventory.py", "tests/test_stock.py", "old.csv", "logo.bin"}
     assert got["inventory.py"] == {
         "path": "inventory.py",
@@ -89,14 +95,14 @@ def test_rename_is_delete_plus_add_and_excludes_hold(ws):
     (ws / "node_modules" / "x.js").write_text("x")
     (ws / ".agent-cli" / "tmp").mkdir(parents=True, exist_ok=True)
     (ws / ".agent-cli" / "tmp" / "scratch.txt").write_text("x")
-    got = _by_path(s.changes())
+    got = _by_path(_changed(s))
     assert {p: c["status"] for p, c in got.items()} == {"new.csv": "A", "old.csv": "D"}
 
 
 def test_non_ascii_paths_are_not_quoted(ws):
     s = _store(ws)
     (ws / "보고서 초안.md").write_text("안녕\n")
-    assert [c["path"] for c in s.changes()] == ["보고서 초안.md"]
+    assert [c["path"] for c in _changed(s)] == ["보고서 초안.md"]
     diff, err = s.change_diff("보고서 초안.md")
     assert not err and "+안녕" in diff
 
@@ -110,11 +116,11 @@ def test_clear_empties_the_list_and_touches_nothing_else(ws):
     stamp = s._last_checkpoint
     before = _git_state(s)
     files = _files(ws)
-    assert len(s.changes()) == 2
+    assert len(_changed(s)) == 2
 
     new, n = s.clear()
     assert new[1] == "cleared" and n == 2  # 비운 수는 같은 트리로 센 것
-    assert s.changes() == []
+    assert _changed(s) == []
     assert s.baseline() == new
     # 파일·HEAD·실제 색인·체크포인트 간격 불변, 모델의 `list` 에 사람의 커밋이 없다
     assert _files(ws) == files
@@ -125,7 +131,7 @@ def test_clear_empties_the_list_and_touches_nothing_else(ws):
     assert s.checkpoint("before shell (turn 2)") is not None
     # 다시 쌓인다 — Clear 뒤에 바뀐 것만
     (ws / "inventory.py").write_text("again\n")
-    assert [c["path"] for c in s.changes()] == ["inventory.py"]
+    assert [c["path"] for c in _changed(s)] == ["inventory.py"]
 
 
 def test_undo_restores_the_previous_baseline_once(ws):
@@ -134,10 +140,10 @@ def test_undo_restores_the_previous_baseline_once(ws):
     assert start[1] == "session"
     (ws / "inventory.py").write_text("one\n")
     s.clear()
-    assert s.changes() == []
+    assert _changed(s) == []
     assert s.undo_clear() is True
     assert s.baseline() == start
-    assert [c["path"] for c in s.changes()] == ["inventory.py"]
+    assert [c["path"] for c in _changed(s)] == ["inventory.py"]
     assert s.undo_clear() is False  # 한 단계만
     assert s.baseline() == start
     # Clear 두 번 → Undo 는 첫 Clear 로
@@ -146,7 +152,7 @@ def test_undo_restores_the_previous_baseline_once(ws):
     s.clear()
     assert s.undo_clear() is True
     assert s.baseline() == first
-    assert [c["path"] for c in s.changes()] == ["old.csv"]
+    assert [c["path"] for c in _changed(s)] == ["old.csv"]
     assert s.undo_clear() is False
     assert s._rev(BASELINE_PREV_REF) is None
 
@@ -160,11 +166,11 @@ def test_resume_keeps_the_first_session_start(ws):
     assert again.log(1)[0][1] == "session start (s-7)"
     assert again.head() != first[0]
     assert again.baseline() == first
-    assert [c["path"] for c in again.changes()] == ["inventory.py"]
+    assert [c["path"] for c in _changed(again)] == ["inventory.py"]
     # 다른 세션은 자기 시작부터
     other = _store(ws, sid="s-8")
     assert other.baseline()[0] == other.head()
-    assert other.changes() == []
+    assert _changed(other) == []
 
 
 def test_clear_survives_a_new_process(ws):
@@ -173,7 +179,7 @@ def test_clear_survives_a_new_process(ws):
     cleared, _ = s.clear()
     again = _store(ws, sid="s-1")
     assert again.baseline() == cleared
-    assert again.changes() == []
+    assert _changed(again) == []
 
 
 def test_change_diff_against_the_baseline_and_path_guard(ws):
@@ -203,7 +209,7 @@ def test_change_diff_is_capped(ws):
 def test_concurrent_listing_leaves_no_temp_index(ws):
     s = _store(ws)
     (ws / "inventory.py").write_text("x\n")
-    s.changes()
+    _changed(s)
     s.change_diff("inventory.py")
     assert not list(s.git_dir.glob("index.changes-*"))
 
@@ -215,7 +221,7 @@ def test_snapshots_off(ws, monkeypatch):
     s = GitSnapshot(ws)
     assert s.init("s-1") is False
     assert s.baseline() is None
-    assert s.changes() is None
+    assert _changed(s) is None
     assert s.clear() is None and s.undo_clear() is False
     d, e = s.change_diff("inventory.py")
     assert d is None and e == "git not found"
@@ -246,27 +252,27 @@ def test_same_size_edit_in_the_same_second_is_seen(ws):
     목록을 여러 번 센 뒤에도 그런 편집이 빠지지 않는다."""
     s = _store(ws)
     for _ in range(3):
-        assert s.changes() == []
+        assert _changed(s) == []
     (ws / "inventory.py").write_text("a\nB\nc\n")  # 같은 크기
     for _ in range(3):
-        assert [c["path"] for c in s.changes()] == ["inventory.py"]
+        assert [c["path"] for c in _changed(s)] == ["inventory.py"]
     s.clear()
     (ws / "inventory.py").write_text("a\nb\nc\n")
     for _ in range(3):
-        assert [c["path"] for c in s.changes()] == ["inventory.py"]
+        assert [c["path"] for c in _changed(s)] == ["inventory.py"]
 
 
 def test_clear_counts_what_is_on_disk_now_not_the_last_listing(ws):
     """Clear 가 돌려주는 수는 Clear 가 기준으로 찍은 트리로 센 것 — 마지막 셈 뒤에
     밖에서 바뀐 것도 든다(화면 0·실제 N 에서 "0 files" 로 틀리지 않게, v10.144.2)."""
     s = _store(ws)
-    assert s.changes() == []  # 마지막 셈: 0
+    assert _changed(s) == []  # 마지막 셈: 0
     (ws / "inventory.py").write_text("x\n")
     (ws / "old.csv").unlink()
     (ws / "new.txt").write_text("n\n")
     base, n = s.clear()
     assert n == 3 and base[1] == "cleared"
-    assert s.changes() == []
+    assert _changed(s) == []
     _, again = s.clear()
     assert again == 0
 

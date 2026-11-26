@@ -57,13 +57,13 @@ class ActionLoopDetector:
 
     @property
     def fire_count(self) -> int:
-        """Number of times the detector has fired for the current loop."""
+        """Number of times the detector has fired for the current loop. 테스트가 보는 창 — 제품은 부르지 않는다."""
         return self._fire_count
 
     @property
     def consecutive_count(self) -> int:
         """Consecutive emissions of the current signature counted toward the
-        threshold — an error retry or a progress reset starts it again at 1."""
+        threshold — an error retry or a progress reset starts it again at 1. 테스트가 보는 창 — 제품은 부르지 않는다."""
         return self._consecutive_count
 
     @property

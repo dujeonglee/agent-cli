@@ -20,7 +20,7 @@ from agent_cli.tools._change_echo import (
     _updated_region_echo,
 )
 from agent_cli.tools.edit_file import (
-    apply_edits_batch,
+    apply_edits_batch_parts,
     tool_edit_file,
 )
 from agent_cli.tools.read_file import compute_line_hash
@@ -105,13 +105,13 @@ class TestRegionEcho:
 
     def test_batch_edit_emits_region(self, tmp_path):
         p = _write(tmp_path, "f.txt", ["a", "b", "c", "d", "e"])
-        r = apply_edits_batch(
+        r = apply_edits_batch_parts(
             str(p),
             [
                 {"op": "replace", "pos": _ref(2, "b"), "lines": ["B"]},
                 {"op": "replace", "pos": _ref(4, "d"), "lines": ["D"]},
             ],
-        )
+        )[0]
         assert r.success
         block = _region_block(r.output)
         assert block

@@ -16,13 +16,17 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.harness.jobs import (
     HARNESS_PROFILES_DIR,
     HarnessJobs,
-    harness_profile_names,
     load_harness_profile,
 )
 from agent_cli.loop.ports import LoopPorts
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.test_agents_live import make_registry, make_runner, wait_until
+
+
+def _profile_names() -> list[str]:
+    """배포되는 하니스 프로파일 — 그 디렉터리의 ``*.md`` (로더가 읽는 바로 그 파일들)."""
+    return sorted(p.stem for p in HARNESS_PROFILES_DIR.glob("*.md"))
 
 
 def _ctx(tmp_path):
@@ -49,7 +53,7 @@ class TestProfiles:
     def test_harness_profiles_live_in_their_own_directory(self):
         assert HARNESS_PROFILES_DIR.name == "harness"
         assert HARNESS_PROFILES_DIR.parent.name == "agents"
-        assert "auditor" in harness_profile_names()
+        assert "auditor" in _profile_names()
         body, meta, err = load_harness_profile("auditor")
         assert err == "" and body and meta.get("allowed-tools")
 
@@ -59,7 +63,7 @@ class TestProfiles:
 
     def test_harness_profiles_never_hold_shell_or_monitor(self):
         """읽기 전용 하니스 작업 — 감시를 거는 쪽이 아니라 하니스 과제에 답하는 쪽."""
-        for name in harness_profile_names():
+        for name in _profile_names():
             _b, meta, _e = load_harness_profile(name)
             allowed = meta.get("allowed-tools") or []
             assert "shell" not in allowed and "monitor" not in allowed, name
@@ -187,7 +191,7 @@ class TestIsolationFromTheRegistry:
         from agent_cli.subagent.profiles import available_profiles
 
         names = {n for n, _ in available_profiles(include_meta=True)}
-        assert names.isdisjoint(set(harness_profile_names()))
+        assert names.isdisjoint(set(_profile_names()))
         reg = make_registry(tmp_path)
         assert build_live_agents_section(reg, via_message_tool=True) == ""
 

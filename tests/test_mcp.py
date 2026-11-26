@@ -66,24 +66,14 @@ class TestDisconnectClosesErrlog:
     def test_errlog_closed_on_disconnect(self, monkeypatch):
         mgr, seen = self._connect_fake_stdio(monkeypatch)
         assert not seen["errlog"].closed
-        mgr.disconnect("srv")
+        mgr.disconnect_all()
         assert seen["errlog"].closed
         assert not mgr.is_connected("srv")
-        mgr.disconnect_all()
 
     def test_errlog_closed_even_when_the_transport_fails_to_close(self, monkeypatch):
         mgr, seen = self._connect_fake_stdio(monkeypatch, exit_raises=True)
-        mgr.disconnect("srv")  # 닫을 때의 오류는 연결 태스크가 삼킨다
+        mgr.disconnect_all()  # 닫을 때의 오류는 연결 태스크가 삼킨다
         assert seen["errlog"].closed
-        mgr.disconnect_all()
-
-    def test_disconnect_of_an_unknown_server_is_noop(self):
-        from agent_cli.mcp.client import McpClientManager
-
-        mgr = McpClientManager()
-        mgr.disconnect("srv")
-        mgr.disconnect_all()
-        assert mgr._thread is None  # 연결한 적이 없으면 루프 스레드도 없다
 
 
 class TestMcpServerConfig:
