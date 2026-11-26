@@ -293,9 +293,9 @@ agent_cli/
 │   └── wizard.py            `agent-cli mcp` — 서버 등록·진단(저장 전 연결 시험)
 ├── render/                  렌더러 — 루프가 사용자를 보는 창(출력과 입력)
 │   ├── __init__.py          활성 렌더러 전역과 `render_*` 함수 표면
-│   ├── base.py              `Renderer` 기본 인터페이스와 `ConfirmOption`
+│   ├── base.py              `Renderer` 기본 인터페이스
 │   ├── minimal.py           `MinimalRenderer` — 상자 없는 들여쓰기 터미널 렌더러
-│   ├── web.py               `WebRenderer` — 렌더러 이벤트를 SSE 로, 입력은 `POST /api/input` 에서
+│   ├── web.py               `WebRenderer` — 렌더러 이벤트를 SSE 로
 │   └── web_hub.py           `EventHub` — SSE 구독자·재접속 재생 버퍼·스티키·뷰어 별명
 └── web/                     `agent-cli web` 서버와 정적 UI (선택 의존성)
     ├── __init__.py          패키지 표식(docstring)

@@ -85,7 +85,7 @@ while not stop:
 ### D. ③ 글로벌 ask 트레이 (프론트 + 약간의 서버)
 
 - **수집원**:
-  - main prompt/confirm: 현재 main 입력창 모드 전환 대신 **트레이 항목**으로. (renderer의 `input_required`/`awaiting_input_kind` 신호 재사용.)
+  - main prompt/confirm: 현재 main 입력창 모드 전환 대신 **트레이 항목**으로. (renderer의 `input_required`/`awaiting_input_kind` 신호 재사용.) (6d·v10.177.0 에서 바뀜: 확인은 번호 항목 `c-N` — sticky `open_confirms`, 길 `/api/confirms/<c-N>/…`; `input_required` 는 지웠다.)
   - agent question: `agent_msg{direction:"question"}` + roster `state==="waiting_ask"`.
 - **렌더**: 채널 무관 고정 영역(입력창 위 pinned). 각 항목 = `❓ <asker>가 물었습니다` + 질문 + 인라인 답변(input/confirm 버튼). 여러 건 stack.
 - **라우팅**: main 항목 답 → `POST /api/input`(kind 게이트 유지); agent 항목 답 → `POST /api/agent/<key>/input`. **드롭박스 target과 무관, asker에 고정.**
