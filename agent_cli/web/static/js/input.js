@@ -1,8 +1,7 @@
-// input.js — 입력: Send/Stop 가시성, 프롬프트 메타·위험 강조, POST, confirm stall,
-// 입력 바인딩, abort 버튼과 input_required·worker_state 배선.
+// input.js — 입력: Send/Stop 가시성, 프롬프트 메타·위험 강조, POST, 입력 바인딩, worker_state 배선.
 // (v10.117.0, docs/web-modules/DESIGN.md §8 — 옛 main.js 의 절 [19]·[20]·[21]·[22]·[32])
 
-import { $abort, $chatStop, $chatStopMore, $input, $send, $stopMenu, el } from "./dom.js";
+import { $chatStop, $chatStopMore, $input, $send, $stopMenu, el } from "./dom.js";
 import { session } from "./state.js";
 import { escapeHtml } from "./markdown.js";
 import { es } from "./sse.js";
@@ -13,7 +12,7 @@ import {
   attachRefreshVision,
   attachRemove,
 } from "./attach.js";
-import { ovActiveChannel, ovRenderAskTray, postStop } from "./channels.js";
+import { ovActiveChannel, postStop } from "./channels.js";
 import { sendOnce } from "./send.js";
 import { ovSyncChannels } from "./runs.js";
 
@@ -27,10 +26,8 @@ import { ovSyncChannels } from "./runs.js";
 // available in chat mode now — typing while busy QUEUES the message
 // (injected at the next turn boundary), so Stop is a separate button.
 function isBusyChat() {
-  // main 의 확인 대화 대기 중엔 #chat-stop 을 숨긴다 — 그땐 런을
-  // 중단(#chat-stop)하는 게 아니라 입력 대기를 취소(#abort)하는 상황.
-  // (예전 currentMode 게이트를 ovMainAsk 로 대체 — 두 Stop 동시노출 방지.)
-  return session.workerBusy && !session.mainAsk;
+  // 확인을 기다리는 동안에도 Stop 이 보인다(6d) — 그 정지가 기다리는 호출을 깨운다.
+  return session.workerBusy;
 }
 
 function updateSendEnabled() {
@@ -60,7 +57,7 @@ export function buildPromptMetaEl(data) {
   const reasoning = typeof data.reasoning === "string" ? data.reasoning : "";
   const action = typeof data.action === "string" ? data.action : "";
   // **agent 없으면 안 그린다** — CLI 가 이미 내린 판단을 옮긴 것
-  // (`base._format_prompt_meta`: *"the main agent already prints its
+  // (옛 CLI 머리 블록의 판단: *"the main agent already prints its
   // thought/action inline right above the prompt, so a header would just
   // duplicate it"*). 웹에만 이 게이트가 없어서 main confirm 이 바로 위
   // 💭/⚡ 두 줄을 그대로 반복했다. 서브에이전트 confirm 의 `↳ from` 은
@@ -127,7 +124,7 @@ function postInput(body, signal) {
 // ── 보내기 한 번 ─────────────────────────────
 // 규칙과 함수는 `send.js`(`sendOnce`) — 입력창·트레이 답·확인·글 없는 버튼이 같이 쓴다.
 
-// 트레이 항목 안 맨 아래의 알림 줄 하나(`.ask-failed`, `.confirm-stall` 과 같은 모양) — 있으면 글만 바꾼다.
+// 트레이 항목 안 맨 아래의 알림 줄 하나(`.ask-failed`) — 있으면 글만 바꾼다.
 export function noteOnAnswer(item, text) {
   let n = item.querySelector(":scope > .ask-failed");
   if (!n) n = el("div", ["ask-failed"]);
@@ -186,79 +183,10 @@ function submitChatOrPrompt() {
   );
 }
 
-// main ask 를 접는다 — 409(선착순 소비) / input_resolved 공용.
-function ovFoldMainAsk() {
-  session.mainAsk = null;
-  clearConfirmStall();
-  ovRenderAskTray();
-  updateSendEnabled(); // ovMainAsk 해제 → busy 면 #chat-stop 다시 노출
-  setAbortVisible(false);
-}
-
 // 답할 물음이 이미 닫혔다는 알림 — 트레이 답의 409(다른 뷰어가 먼저 답함·묻기가 끝남), 그리고 보내는 사이
 // 항목이 트레이에서 빠진 뒤의 실패. 입력창 아래 줄에 선다. 409 는 상태 코드로만 읽는다 — 웹에서 나오는
 // 트레이 답의 409 는 "닫힌 물음" 뿐이고, 서버 문구(모델도 읽는 글)에 화면을 묶지 않는다.
 export const ALREADY_CLOSED_NOTICE = "Not sent — already answered or closed";
-
-// main 의 답이 409 — 항목을 접고 알린다. 쓴 글은 버린다(물음이 없다). 그 사이 새 물음이 떴으면
-// (``item.askOf`` 가 지금의 것이 아니면) 새 물음은 접지 않는다.
-function mainAskAlreadyClosed(item) {
-  if (session.mainAsk === item.askOf) ovFoldMainAsk();
-  attachMessage(ALREADY_CLOSED_NOTICE);
-}
-
-// ── Confirm stall visibility ───────────────
-// A confirm click normally resolves in well under a second (POST →
-// worker unblocks → input_resolved). When nothing comes back — e.g.
-// the browser's 6-connections-per-origin pool is starved by SSE tabs
-// and the POST is silently queued — the button just looks broken.
-// Surface that state instead of staying silent.
-const CONFIRM_STALL_MS = 3000;
-let confirmStallTimer = null;
-
-// stall 타이머를 멈추고, ``item`` 을 주면 그 항목의 경고 줄도 지운다(항목이 접힐 때는 항목째 사라진다).
-function clearConfirmStall(item) {
-  if (confirmStallTimer) {
-    clearTimeout(confirmStallTimer);
-    confirmStallTimer = null;
-  }
-  const w = item && item.querySelector(":scope > .confirm-stall");
-  if (w) w.remove();
-}
-
-// main confirm 결정 — 트레이 항목의 옵션 버튼에서 호출(key + 선택 코멘트). 지연·네트워크 오류는 상한도
-// 끊기도 없이 둔다 — 늦게라도 닿은 확인 클릭은 적용되는 것이 맞다(3초 stall 경고가 보인다). 서버가
-// 거절하면(409 밖) 항목 안에 사유가 서고 코멘트는 남는다.
-export function ovSubmitMainConfirm(item, key, comment) {
-  clearConfirmStall(item);
-  clearAnswerNote(item);
-  confirmStallTimer = setTimeout(function () {
-    if (!session.mainAsk || session.mainAsk.kind !== "confirm" || !item.isConnected) return;
-    if (item.querySelector(".confirm-stall")) return;
-    const warn = el("div", ["confirm-stall"]);
-    warn.textContent =
-      "⚠ No response from the server yet — the connection may be " +
-      "stalled (e.g. too many open tabs holding connections to this " +
-      "host). The click applies as soon as it gets through; closing " +
-      "unused tabs can help.";
-    item.appendChild(warn);
-  }, CONFIRM_STALL_MS);
-  // 상한 없는 보내기 — 누를 때마다 새 자리(여러 번 눌러도 막지 않는다, 종전과 같다)
-  sendOnce(
-    { sending: false },
-    function (signal) {
-      return postInput({ kind: "confirm", key: key, comment: comment || "" }, signal);
-    },
-    function (failure, status) {
-      if (status === 0) return; // 네트워크 오류 — 지연 경고가 보이는 사실이다(종전과 같다)
-      clearConfirmStall(item); // 답이 왔다 — 지연 경고는 끝났다
-      if (!failure) return;
-      if (status === 409) return mainAskAlreadyClosed(item);
-      noteOnAnswer(item, "⚠ Not sent — " + failure);
-    },
-    { limit: false }
-  );
-}
 
 // ── Input bindings ─────────────────────────
 function requestStop(scope) {
@@ -335,54 +263,6 @@ $input.addEventListener("keydown", function (e) {
     if ($send.disabled) return;
     submitChatOrPrompt(); // chat (queues if busy). Stop 은 별도 버튼.
   }
-});
-
-// ── Abort button visibility ────────────────
-// Shown only during ``input_required`` waits (ask answer / confirm
-// decision) — POST /api/abort releases the worker thread's blocking
-// input wait via an EOF sentinel. NOT shown during LLM streaming:
-// the abort endpoint can't cancel a streaming provider call, and
-// a button that doesn't do what it says undermines trust. True
-// streaming cancellation is a Phase D concern (provider-level).
-function setAbortVisible(visible) {
-  $abort.hidden = !visible;
-}
-$abort.addEventListener("click", function () {
-  fetch("api/abort", {
-    method: "POST",
-  });
-});
-
-// 재접속 스냅샷 안에 main 의 물음이 있었나 (v10.149.2). 스냅샷은 늘 ``identity`` 로 시작해
-// ``snapshot_end`` 로 끝나고(서버 `EventHub.register`, 라이브 이벤트는 그 뒤), 떠 있는 물음은 스티키라 반드시
-// 그 사이에 온다. 끊긴 사이 물음이 풀렸으면 ``input_resolved`` 는 아무에게도 가지 않았다 — 스냅샷에 물음이
-// 없으면 남은 항목을 접는다(라이브 ``input_resolved`` 와 같게, 알림 없음).
-let askSeenInSnapshot = false;
-es.addEventListener("identity", function () {
-  askSeenInSnapshot = false;
-});
-es.addEventListener("snapshot_end", function () {
-  if (!askSeenInSnapshot && session.mainAsk) ovFoldMainAsk();
-});
-
-es.addEventListener("input_required", function (e) {
-  const d = JSON.parse(e.data);
-  askSeenInSnapshot = true;
-  // 같은 물음이 다시 왔다(재접속 스냅샷의 재생) — 항목을 그대로 둔다(쓰던 답·지연 경고가 산다). 물음마다
-  // 서버가 새 ``ask_id`` 를 싣는다(v10.147.4).
-  if (session.mainAsk && session.mainAsk.data.ask_id === d.ask_id) return;
-  // 3b: main 의 확인 대화를 글로벌 ask 트레이 항목으로(입력창은 chat 유지).
-  clearConfirmStall();
-  session.mainAsk = { kind: d.kind, data: d };
-  ovRenderAskTray();
-  updateSendEnabled(); // ovMainAsk 반영 → #chat-stop 숨김(두 Stop 방지)
-  // Allow aborting a stuck confirm wait. Worker side surfaces this as
-  // ``(default_key, "")``.
-  setAbortVisible(true);
-});
-
-es.addEventListener("input_resolved", function () {
-  ovFoldMainAsk();
 });
 
 es.addEventListener("worker_state", function (e) {

@@ -226,7 +226,7 @@ def _edit_part(ed: dict, lo: int, hi: int, repl: list[str], original: list[str])
 
 
 def apply_edits_batch_parts(
-    path: str, edits: list[dict]
+    path: str, edits: list[dict], *, owner: str = "main", stopped=None
 ) -> tuple[ToolResult, list[dict]]:
     """Apply SEVERAL edits to ONE file against a single original read.
 
@@ -256,7 +256,7 @@ def apply_edits_batch_parts(
             {"success": False, "content": err} for _ in edits
         ]
 
-    denial = _confine.guard([path], "edit_file")
+    denial = _confine.guard([path], "edit_file", owner=owner, stopped=stopped)
     if denial:
         return _all(denial)
     try:
@@ -479,7 +479,7 @@ def _validate_semantics(args: dict) -> str | None:
     return None
 
 
-def tool_edit_file(args: dict) -> ToolResult:
+def tool_edit_file(args: dict, *, owner: str = "main", stopped=None) -> ToolResult:
     """Apply ONE hashline edit — a batch of one through the shared core.
 
     Flat-native (consolidation roadmap Step 3): one op = one edit. Several
@@ -489,7 +489,9 @@ def tool_edit_file(args: dict) -> ToolResult:
     semantic_err = _validate_semantics(args)
     if semantic_err:
         return ToolResult(False, error=semantic_err)
-    result, _parts = apply_edits_batch_parts(args.get("path", ""), [args])
+    result, _parts = apply_edits_batch_parts(
+        args.get("path", ""), [args], owner=owner, stopped=stopped
+    )
     return result
 
 
@@ -576,4 +578,8 @@ class EditFileTool(Tool):
         return _validate_semantics(args)
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        return tool_edit_file(args)
+        return tool_edit_file(
+            args,
+            owner=getattr(ctx, "owner", None) or "main",
+            stopped=getattr(ctx, "stopped", None),
+        )

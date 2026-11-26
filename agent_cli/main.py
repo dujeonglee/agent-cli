@@ -23,6 +23,7 @@ from agent_cli.command_table import (
     looks_like_slash_command,
     run_input_is_command,
 )
+from agent_cli.confirm import answer_command as answer_confirm_command
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT, is_blank_words
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import (
@@ -44,6 +45,7 @@ from agent_cli.providers import (
 )
 from agent_cli.render import C, console, get_renderer
 from agent_cli.render.base import interactive_lock
+from agent_cli.session_slots import get_agent_registry
 from agent_cli.terminate import SigTerm, Terminated, wait_left
 
 app = typer.Typer(
@@ -921,6 +923,13 @@ def try_dispatch_agent_or_skill(
         return True
     if command_kind(message) == "question":
         _dispatch_question(message, output, agent_registry, author)
+        return True
+    if command_kind(message) == "confirm":
+        # 확인의 답은 보통 들어오는 문에서 바로 처리된다(`read_terminal_line`·웹 `/api/input`) — 여기 오는 것은 큐를
+        # 지난 것(`run` 의 argv 질의)뿐이다. 함수는 같다
+        output.agent_dispatch_result(
+            *answer_confirm_command(message, agent_registry, author)
+        )
         return True
 
     if message.startswith("/") and looks_like_slash_command(message):
@@ -2180,10 +2189,6 @@ def run(
             # 한가한 동안에도 친 줄을 읽는다 — main 이 결과를 낸 뒤에도 `/answer`·새 말을 받는다(6c)
             on_idle_input=lambda t: read_terminal_line(main_input, t),
         )
-        # 프롬프트가 뜨기 전에 친 줄은 그 프롬프트의 답이 아니다 — main 의 요청으로(답은 명시적 UI 로만)
-        get_renderer().on_typeahead = lambda lines: hand_typeahead_to_main(
-            main_input, lines
-        )
 
         agent_registry = owners.agent_registry
         if wired.revived:
@@ -2396,7 +2401,6 @@ def _install_ctrl_c(surface, agent_registry):
             main_stop=surface.bound_stop(),
             registry=agent_registry,
             say=say,
-            awaiting_input=get_renderer().is_awaiting_input(),
         )
 
     return signal.signal(signal.SIGINT, on_sigint)
@@ -2408,8 +2412,8 @@ def _terminal_steer_input(main_input, surface):
     보고, 터미널이면 그 사이 친 한 줄을 같은 판정으로: 명령이 아니면 main 앞에 넣고 참(꺼내는 것은 다음 턴 경계의
     흡수다). 터미널이 아니면 줄 선 말만 본다.
 
-    친 줄은 `read_terminal_line` 하나로 읽는다 — 프롬프트(`ask`·확인 대화)가 표준입력을 쥐고 있으면 읽지 않는다(그
-    줄은 프롬프트의 것이다), 표준입력이 터미널이 아니면 줄 선 말만 본다.
+    친 줄은 `read_terminal_line` 하나로 읽는다 — 다른 스레드가 읽고 있으면 이번엔 읽지 않는다, 표준입력이 터미널이
+    아니면 줄 선 말만 본다.
 
     친 줄도 main 앞에 넣는다(들어오는 문 하나 — 명령인가는 거기서 판정한다). 명령(``/stop agt-3`` 등)은 줄 선 것이든
     친 것이든 그 자리에서 ``surface.route`` 하고
@@ -2430,33 +2434,16 @@ def _terminal_steer_input(main_input, surface):
     return wait
 
 
-#: 프롬프트가 뜨기 전에 친 줄을 main 에게 넘겼다는 한 줄 (사람이 읽는 글)
-TYPEAHEAD_SENT_TO_MAIN = (
-    "  ↪ typed before this prompt — sent to main as a new message: {line}"
-)
-
-
-def hand_typeahead_to_main(main_input, lines: list[str]) -> None:
-    """프롬프트가 뜨기 전에 터미널에 친 줄(`Renderer._hand_over_typeahead`)을 main 앞에 넣는다 — 그 밖의 입력처럼 보통의
-    요청이다(명령인가는 들어오는 문이 판정한다). 줄마다 한 줄 알린다 — 친 사람이 그 줄이 프롬프트의 답이 아님을 안다."""
-    for line in lines:
-        main_input.enqueue(None, line)
-        console.print(
-            TYPEAHEAD_SENT_TO_MAIN.format(line=line),
-            style=C["muted"],
-            markup=False,
-            highlight=False,
-        )
-
-
 def read_terminal_line(main_input, timeout: float) -> bool | None:
-    """터미널에서 친 한 줄을 main 앞에 넣는다 — 넣었으면 True, 시한 안에 줄이 없으면 False, 읽지 않았으면 None(6c).
+    """터미널에서 친 한 줄을 main 앞에 넣는다 — 넣었으면 True, 시한 안에 줄이 없거나 넣지 않았으면 False, 읽지
+    않았으면 None(6c). 세션 동안 표준입력을 읽는 곳은 여기 하나다.
 
-    읽지 않는 때: 표준입력이 터미널이 아니다("친 줄을 읽을 수 있나" 의 판정은 여기 하나 — 파이프·하니스) · 프롬프트
-    (`ask`·확인 대화)가 표준입력을 쥐고 있다 — 그 읽기와 같은 잠금(`interactive_lock`, `Renderer._guarded_read`)을 못
-    잡으면 그 줄은 프롬프트의 것이다 · 표준입력을 고를 수 없다. 넣은 줄은 들어오는 문(`MainInput.enqueue`)이 명령인가를
-    판정한다 — 명령이 아닌 말은 언제나 main 의 요청이다(열린 질문의 답으로 짐작하지 않는다). 부르는 자리는 둘이다:
-    main 의 제자리 대기(`_terminal_steer_input`)와 `run` 이 한가한 동안(`pump.MainActor.take`)."""
+    읽지 않는 때: 표준입력이 터미널이 아니다("친 줄을 읽을 수 있나" 의 판정은 여기 하나 — 파이프·하니스) · 다른 스레드가
+    지금 읽고 있다 — 같은 잠금(`interactive_lock`)을 못 잡으면 읽지 않는다(한 줄은 한 스레드만 읽는다) · 표준입력을 고를
+    수 없다. 확인 명령(`/approve`·`/allow`·`/deny`)은 넣지 않고 이 자리에서 답이 된다(6d — 기다리는 호출이 막혀 있다).
+    그 밖에 넣은 줄은 들어오는 문(`MainInput.enqueue`)이 명령인가를 판정한다 — 명령이 아닌 말은 언제나 main 의
+    요청이다(열린 질문·확인의 답으로 짐작하지 않는다). 부르는 자리: main 의 제자리 대기(`_terminal_steer_input`),
+    `run` 이 한가한 동안(`pump.MainActor.take`), 스킬의 대기, 확인을 기다리는 호출(`ConfirmsMixin.ask_confirm`)."""
     if not sys.stdin.isatty() or not interactive_lock.acquire(blocking=False):
         return None
     try:
@@ -2470,6 +2457,12 @@ def read_terminal_line(main_input, timeout: float) -> bool | None:
     finally:
         interactive_lock.release()
     if is_blank_words(text):
+        return False
+    if command_kind(text) == "confirm":
+        # 확인의 답은 들어오는 문에서 바로 — 기다리는 호출이 막혀 있어 줄 세우지 않는다(main 의 차례를 기다리지 않는다)
+        _ConsoleDispatchOutput().agent_dispatch_result(
+            *answer_confirm_command(text, get_agent_registry(), "user")
+        )
         return False
     main_input.enqueue(None, text)
     return True

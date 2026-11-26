@@ -164,7 +164,7 @@ v10.116.0 의 `test_app_markdown` 은 `js_text("main")` 을 `(function(){ … })
 |---|---|---|---|
 | `boot.js` | [1] | 30 | 주소창 `?token=` 걷기·`showSetupHelp`. 첫 import |
 | `dom.js` | [2]+[5] | 33 | 공유 DOM 참조 + `el`·`elHtml` (+ v10.143.0 `foldOnClick`) |
-| `state.js` | [3] 의 상태 넷 | 33 | `export const session = { mainAsk, connId, workerBusy, stopRequested }` |
+| `state.js` | [3] 의 상태 넷 | 33 | `export const session = { mainAsk, connId, workerBusy, stopRequested }` (6d·v10.177.0: `mainAsk` 를 지워 셋) |
 | `markdown.js` | [4] + `imageUrl` | 309 | 이스케이프·마크다운·diff 색칠·그림 주소. 순수 모듈 |
 | `scroll.js` | [7] | 156 | 따라가기 |
 | `sse.js` | [24] | 108 | `export const es`·연결 표시·`copyToClipboard` |
@@ -310,8 +310,8 @@ boot dom state markdown scroll sse copy attach ledger stuck | progress thumbs ca
 ### 8.5 SSE 핸들러 등록 시점
 
 `es` 는 `sse.js` 에서 만들고, 핸들러(`es.addEventListener`)는 각 소유 모듈이 `import { es }`
-해서 건다 — timeline 의 `scope_*`, share 의 대화 카드 이벤트들, input 의 `input_required`·
-`input_resolved`·`worker_state`, roster 의 `snapshot_end`·`identity`·`viewers`·`queue`, ledger 의 `open_items`(v10.119.0), stuck 의 `stuck`(v10.120.0).
+해서 건다 — timeline 의 `scope_*`, share 의 대화 카드 이벤트들(6d·v10.177.0: `open_confirms` 도 — input 의 `input_required`·
+`input_resolved` 는 지웠다), input 의 `worker_state`, roster 의 `snapshot_end`·`identity`·`viewers`·`queue`, ledger 의 `open_items`(v10.119.0), stuck 의 `stuck`(v10.120.0).
 top-level await 가 없는 모듈 그래프는 한 작업(task) 안에서 동기로 끝까지 평가된다. EventSource
 의 이벤트는 그 뒤의 작업으로 디스패치되므로, 첫 이벤트가 오기 전에 모든 모듈의 등록이 끝나
 있다. 옛 단일 파일에서 [24] 뒤에 등록하던 것과 같다.

@@ -108,31 +108,15 @@ class TestStopForCtrlC:
         with pytest.raises(KeyboardInterrupt):
             stop_for_ctrl_c(MAIN, main_stop=None, registry=None, say=print)
 
-    def test_a_waiting_prompt_is_interrupted_as_before(self):
-        """`ask`·확인 프롬프트가 입력을 기다리는 중이면 종전대로 KeyboardInterrupt — 아무것도 멈추지 않는다."""
+    def test_a_waiting_confirm_is_stopped_not_interrupted(self):
+        """6d: 확인(`c-N`)을 기다리는 호출은 정지 검사에 닿는다 — Ctrl+C 는 프롬프트를 끊는 예외가 아니라 정지다. 일하는 main
+        이면 한 번에 그 런이(그 확인이) 멈추고, 두 번이면 에이전트의 확인까지 멈춘다."""
         reg, stop = FakeRegistry(["agt-3"]), threading.Event()
-        for scope in (MAIN, ALL):
-            with pytest.raises(KeyboardInterrupt):
-                stop_for_ctrl_c(
-                    scope, main_stop=stop, registry=reg, say=print, awaiting_input=True
-                )
-        assert not stop.is_set() and reg.calls == []
-
-    def test_renderer_reports_a_waiting_prompt_only_during_the_read(self):
-        import io
-
-        from rich.console import Console
-
-        from agent_cli.render.minimal import MinimalRenderer
-
-        r = MinimalRenderer(Console(file=io.StringIO()))
-        seen = []
-        assert not r.is_awaiting_input()
-        r._guarded_read(lambda: seen.append(r.is_awaiting_input()))
-        assert seen == [True] and not r.is_awaiting_input()
-        with pytest.raises(EOFError):
-            r._guarded_read(lambda: (_ for _ in ()).throw(EOFError()))
-        assert not r.is_awaiting_input()
+        said: list[str] = []
+        stop_for_ctrl_c(MAIN, main_stop=stop, registry=reg, say=said.append)
+        assert stop.is_set() and reg.calls == [] and said == [STOPPED_MAIN]
+        stop_for_ctrl_c(ALL, main_stop=threading.Event(), registry=reg, say=said.append)
+        assert reg.calls == [("all", "user", False)]
 
     def test_press_while_main_is_already_stopping_is_the_escape(self):
         stop = threading.Event()
@@ -405,28 +389,6 @@ class TestStopEverythingDoesNotWakeMain:
             lambda: s["reg"].arrived_for("main", waking_only=True, words=False)
         )
         assert "mail" in main_input.wait_to_open(0)  # 그 회신이 main 의 런을 연다
-
-
-class TestCtrlCDuringAPrompt:
-    def test_both_presses_interrupt_the_prompt_and_stop_nothing(self):
-        """주입 시계로 두 번 누름(창 안) — 프롬프트 입력 대기 중이면 둘 다 종전대로 KeyboardInterrupt."""
-        clock = Clock()
-        presses = CtrlCPresses(clock=clock)
-        reg, stop = FakeRegistry(["agt-3"]), threading.Event()
-        for _ in range(2):
-            scope = presses.press()
-            clock.now += 0.5
-            with pytest.raises(KeyboardInterrupt):
-                stop_for_ctrl_c(
-                    scope, main_stop=stop, registry=reg, say=print, awaiting_input=True
-                )
-        assert not stop.is_set() and reg.calls == []
-        # 프롬프트가 끝나면 같은 누름이 다시 main 을 멈춘다
-        clock.now += 5
-        stop_for_ctrl_c(
-            presses.press(), main_stop=stop, registry=reg, say=lambda _t: None
-        )
-        assert stop.is_set() and reg.calls == []
 
 
 class TestCommandsTypedDuringTheWait:

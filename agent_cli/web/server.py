@@ -3,18 +3,18 @@
 Endpoints (not exhaustive — see the route decorators):
   - ``GET  /api/health`` — liveness probe (no auth)
   - ``GET  /api/stream`` — SSE event stream (auth via ``token`` query)
-  - ``POST /api/input``  — submit chat message / confirm reply
-    (``chat`` may carry ``images: [path]`` — workspace images, v10.60.0)
+  - ``POST /api/input``  — submit a chat message (``images: [path]`` — workspace images, v10.60.0);
+    a confirmation command (``/approve|/allow|/deny <c-N>``) is answered here, not queued (6d)
   - ``POST /api/images/upload?name=`` — stage one image under
     ``.agent-cli/tmp/uploads/`` and return its ``ImageRef`` (v10.60.0)
   - ``GET  /api/images/support`` — ``{supported: true|false|null}`` without probing
   - ``GET  /api/workspace/file?path=`` — serve one workspace **image** (thumbnails)
-  - ``POST /api/abort``  — interrupt the pending ``confirm``
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn; body ``{"scope"}`` (v10.142.0):
     ``"main"`` (default) · ``"agents"`` (every working agent's run) · ``"all"`` (both)
   - ``POST /api/agent/{key}/stop`` — ■ stop that agent's run (a run agent comes down, v10.142.0)
   - ``POST /api/questions/{qid}/answer`` · ``POST /api/questions/{qid}/close`` — answer or close (without an answer)
     one open question to the person (6b)
+  - ``POST /api/confirms/{cid}/approve|allow|deny`` — answer one open confirmation (6d)
   - ``POST /api/jobs/stop`` — a viewer stops one background job (v10.121.0)
   - ``GET  /api/changes`` · ``GET /api/changes/diff?path=`` · ``POST /api/changes/clear``
     · ``POST /api/changes/undo`` · ``POST /api/changes/notices/dismiss`` — the Changes
@@ -61,7 +61,8 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
 
 from agent_cli import images as _images
-from agent_cli.command_table import web_input_is_command
+from agent_cli.command_table import IMAGES_NOT_TAKEN, command_kind, web_input_is_command
+from agent_cli.confirm import ACTION_OF, answer_command
 from agent_cli.constants import EMPTY_WORDS, is_blank_words
 from agent_cli.knobs import web_states
 from agent_cli.main_input import EmptyWords, MainInput, human_addr
@@ -72,6 +73,7 @@ from agent_cli.snapshot import get_snapshot, snapshot_off
 
 # C3: 도메인 로직은 분리 모듈 소유 — server 는 전송(라우팅·SSE·미들웨어) 전용.
 from agent_cli.web.directives import generate_directive_section
+from agent_cli.web.slash import WebDispatchOutput
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -340,6 +342,20 @@ class WebServer:
         ``images`` (v10.60.0) — ``ImageRef`` dicts from :meth:`image_refs`."""
         nickname = self.renderer.hub.nickname_for(conn_id)
         return self.main_input.enqueue(conn_id, text, nickname=nickname, images=images)
+
+    def answer_confirm_command(
+        self, conn_id: str | None, text: str, *, images: list[dict]
+    ) -> None:
+        """입력창에 친 확인 명령 하나를 이 자리에서 답한다 (6d) — 말풍선을 내고(다른 명령처럼 그 사람의 말로), 결과를
+        카드 한 줄로. 함수는 터미널·`run` 의 argv 와 같다(`confirm.answer_command`)."""
+        nickname = self.renderer.hub.nickname_for(conn_id)
+        self.renderer.push_user_message(f"[{nickname}]: {text}", author=nickname)
+        output = WebDispatchOutput(self.renderer)
+        output.agent_dispatch_result(
+            *answer_command(text, self.agent_registry, human_addr(nickname))
+        )
+        if images:
+            output.agent_dispatch_result(IMAGES_NOT_TAKEN, False)
 
     def image_refs(self, paths: list) -> list[dict]:
         """``/api/input`` 의 ``images: [path]`` → ``ImageRef`` dict 목록 (v10.60.0).
@@ -1483,6 +1499,25 @@ def create_app(server: WebServer) -> FastAPI:
             raise HTTPException(status_code=409, detail=error)
         return JSONResponse({"accepted": True})
 
+    @app.post("/api/confirms/{cid}/{action}")
+    async def confirm_action(cid: str, action: str, request: Request):
+        """❓ 트레이의 확인 하나 (6d) — ``approve``·``allow``·``deny`` (본문 ``note`` 는 남긴 말). 확인 번호가 기다리는
+        호출을 정한다. `user*` 는 하나의 주체라 어느 뷰어든 — 먼저 한 쪽이 답한다(뒤의 것은 409)."""
+        registry = server.agent_registry
+        if registry is None:
+            raise HTTPException(status_code=503, detail="agent registry not ready")
+        if f"/{action}" not in ACTION_OF:
+            raise HTTPException(status_code=404, detail=f"unknown action '{action}'")
+        body = await _json_object(request)
+        note = body.get("note", "")
+        if not isinstance(note, str):
+            raise HTTPException(status_code=400, detail="note must be a string")
+        author = human_addr(server.renderer.hub.nickname_for(body.get("conn_id")))
+        error = registry.answer_confirm(cid, ACTION_OF[f"/{action}"], note, by=author)
+        if error:
+            raise HTTPException(status_code=409, detail=error)
+        return JSONResponse({"accepted": True})
+
     @app.post("/api/agent/{key}/resume")
     async def agent_resume(key: str):
         """죽은 teammate 를 이전 컨텍스트 그대로 부활 (대화 창의 ↻)."""
@@ -1524,56 +1559,43 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.post("/api/input")
     async def input_endpoint(request: Request):
-        """User input → renderer queue.
+        """User chat input → main's box.
 
         Body shape::
 
-            {"kind": "confirm", "key": "y", "comment": "..."}
             {"kind": "chat", "content": "...", "images": ["path", ...]}
 
-        ``chat`` is the only kind that advances the AgentLoop directly;
-        ``prompt`` / ``confirm`` answer an in-flight render call. Every
-        authenticated connection may send input (no controller gate).
+        Every authenticated connection may send input (no controller gate).
         ``images`` (v10.60.0, optional): workspace paths — normally the ones
         ``/api/images/upload`` returned — re-validated and turned into
         ``ImageRef`` dicts here (:meth:`WebServer.image_refs`); a message may
         be images only (empty ``content``).
+
+        확인 명령(``/approve|/allow|/deny <c-N>``, 6d)은 줄 세우지 않고 이 문에서 바로 답한다 — 기다리는 호출이 막혀
+        있어 main 의 차례를 기다리지 않는다. 말풍선과 결과 카드는 다른 명령과 같다.
         """
         body = await _json_object(request)
         kind = body.get("kind")
-        if kind == "chat":
-            content = body.get("content", "")
-            if not isinstance(content, str):
-                raise HTTPException(
-                    status_code=400, detail="chat content must be a string"
-                )
-            images = server.image_refs(body.get("images") or [])
-            # Enqueue (no immediate echo): the message shows in the live queue
-            # display until it's dequeued — by the worker to START a run, or by
-            # the running loop at a turn boundary to INJECT — at which point it
-            # is rendered as a conversation card.
-            try:
-                server.enqueue(body.get("conn_id"), content, images=images)
-            except (
-                EmptyWords
-            ) as e:  # 글도 이미지도 없다 — 말이 아니다(에이전트 창과 같은 글)
-                raise HTTPException(status_code=400, detail=str(e)) from None
+        if kind != "chat":
+            raise HTTPException(status_code=400, detail=f"unknown kind '{kind}'")
+        content = body.get("content", "")
+        if not isinstance(content, str):
+            raise HTTPException(status_code=400, detail="chat content must be a string")
+        images = server.image_refs(body.get("images") or [])
+        if command_kind(content) == "confirm":
+            server.answer_confirm_command(body.get("conn_id"), content, images=images)
             return JSONResponse({"accepted": True})
-        if kind == "confirm" and server.renderer.awaiting_input_kind() != kind:
-            # Gate: accept an answer only while a wait of the SAME kind is
-            # outstanding. A keyless answer (flushed stale clicks from a
-            # connection-starved browser, the loser of a two-viewers race)
-            # must not sit in the input queue and auto-answer the NEXT
-            # prompt; a kind mismatch would feed a confirm tuple to a
-            # prompt wait expecting a string (or vice versa).
-            raise HTTPException(
-                status_code=409,
-                detail=f"no pending {kind} — already answered or aborted",
-            )
-        if kind == "confirm":
-            server.renderer.push_confirm(body)
-            return JSONResponse({"accepted": True})
-        raise HTTPException(status_code=400, detail=f"unknown kind '{kind}'")
+        # Enqueue (no immediate echo): the message shows in the live queue
+        # display until it's dequeued — by the worker to START a run, or by
+        # the running loop at a turn boundary to INJECT — at which point it
+        # is rendered as a conversation card.
+        try:
+            server.enqueue(body.get("conn_id"), content, images=images)
+        except (
+            EmptyWords
+        ) as e:  # 글도 이미지도 없다 — 말이 아니다(에이전트 창과 같은 글)
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        return JSONResponse({"accepted": True})
 
     @app.post("/api/queue/cancel")
     async def queue_cancel(request: Request):
@@ -1591,12 +1613,6 @@ def create_app(server: WebServer) -> FastAPI:
         body = await _json_object(request)
         ok = server.renderer.hub.set_nickname(body.get("conn_id"), body.get("name", ""))
         return JSONResponse({"ok": ok})
-
-    @app.post("/api/abort")
-    async def abort():
-        """Interrupt the pending ``confirm`` wait."""
-        server.renderer.push_abort()
-        return JSONResponse({"accepted": True})
 
     @app.post("/api/jobs/stop")
     def stop_job(body: dict):

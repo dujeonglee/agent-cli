@@ -104,7 +104,7 @@ def test_close_is_a_question_command():
 @pytest.mark.parametrize("asker", ["main", "agent", "skill"])
 def test_the_board_sees_an_open_question(reg, tmp_path, monkeypatch, asker):
     """status.json·health 의 ``awaiting_input`` ("답변 필요") 은 확인 대화가 떠 있거나 열린 질문이 있을 때 참이다(6b 결정
-    G) — 누가 물었든. 닫히면 내린다. 막는 물음만 보는 `is_awaiting_input` (Ctrl+C 의 갈래)은 그대로 거짓."""
+    G) — 누가 물었든. 닫히면 내린다."""
     r = WebRenderer(session_dir=str(tmp_path))
     monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
     port = {
@@ -119,7 +119,6 @@ def test_the_board_sees_an_open_question(reg, tmp_path, monkeypatch, asker):
         return json.loads((tmp_path / "status.json").read_text())["awaiting_input"]
 
     assert board() is True and r.needs_answer() is True
-    assert r.is_awaiting_input() is False
     server = WebServer(r, token="t")
     assert TestClient(create_app(server)).get("/api/health").json()["awaiting_input"]
     assert reg.close_question(qid, by="user:dj") == ""

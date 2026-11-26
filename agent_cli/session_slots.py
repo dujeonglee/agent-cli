@@ -1,4 +1,4 @@
-"""세션 슬롯 — 세션 조립(`runtime.build_*`)이 넣고 도구·엔진·웹 서버가 꺼내는 프로세스 전역 객체 다섯.
+"""세션 슬롯 — 세션 조립(`runtime.build_*`)이 넣고 도구·엔진·웹 서버가 꺼내는 프로세스 전역 객체 다섯과 대기 중 입력을 보는 법 둘.
 
 타입은 TYPE_CHECKING 으로만 안다(맨 아래 층, 모듈 수준 agent_cli import 0). 여기서 만들지 않는다.
 없으면 None — 꺼내는 쪽이 None 을 처리한다. 필요할 때 만드는 싱글턴(snapshot·browser)과 렌더러는
@@ -32,6 +32,8 @@ _HOOKS: HookRunner | None = None
 _AGENTS: AgentRegistry | None = None
 #: 스킬 런이 제자리에서 기다리는 동안 사람의 입력을 보는 법 (6b) — ``(timeout) -> bool``. 호스트가 세운다
 _NESTED_WAIT_INPUT = None
+#: 확인을 기다리는 동안 터미널에서 친 한 줄을 읽는 법 (6d) — ``(timeout) -> …``, 터미널이 없는 표면(웹)은 None
+_CONFIRM_WAIT_INPUT = None
 
 
 def set_job_registry(registry: JobRegistry | None) -> None:
@@ -95,11 +97,23 @@ def get_nested_wait_input():
     return _NESTED_WAIT_INPUT
 
 
+def set_confirm_wait_input(fn) -> None:
+    """확인을 기다리는 동안 터미널을 읽는 법 — 읽은 줄은 들어오는 문이 판정한다(확인 명령은 그 자리에서 답, 그 밖은
+    main 앞에). 세션을 세우는 곳(`runtime.wire_session`)이 세운다."""
+    global _CONFIRM_WAIT_INPUT
+    _CONFIRM_WAIT_INPUT = fn
+
+
+def get_confirm_wait_input():
+    return _CONFIRM_WAIT_INPUT
+
+
 def clear_session_slots() -> None:
-    """여섯을 None 으로 — 세션 정리(`runtime.teardown_session`)의 맨 마지막."""
+    """일곱을 None 으로 — 세션 정리(`runtime.teardown_session`)의 맨 마지막."""
     set_job_registry(None)
     set_monitor_registry(None)
     set_schedule_registry(None)
     set_hook_runner(None)
     set_agent_registry(None)
     set_nested_wait_input(None)
+    set_confirm_wait_input(None)

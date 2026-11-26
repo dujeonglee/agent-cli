@@ -226,6 +226,8 @@ def _read_one(
     *,
     oversized_cap: int = 0,
     tools_available: frozenset[str] = frozenset(),
+    owner: str = "main",
+    stopped=None,
 ) -> ToolResult:
     """Read a single file with optional stat, search, or partial read modes.
 
@@ -267,7 +269,9 @@ def _read_one(
     # `check_workspace=False`.
     from agent_cli.tools._confine import guard as _path_guard
 
-    denied = _path_guard([path], "read_file", check_workspace=False)
+    denied = _path_guard(
+        [path], "read_file", check_workspace=False, owner=owner, stopped=stopped
+    )
     if denied:
         return ToolResult(False, error=denied)
 
@@ -418,4 +422,6 @@ class ReadFileTool(Tool):
             args,
             oversized_cap=ctx.oversized_cap if ctx else 0,
             tools_available=ctx.tools_available if ctx else frozenset(),
+            owner=getattr(ctx, "owner", None) or "main",
+            stopped=getattr(ctx, "stopped", None),
         )

@@ -458,62 +458,46 @@ class TestAuditFixes:
         assert "retrying (2/5)" in line.first.inner_text()
 
     def test_confirm_says_what_it_is_asking_about(self, stack, page):
-        """워크스페이스 이탈 승인에서 **위반이 위반으로 고지**되어야 한다.
-        종전엔 `data.prompt` 를 아무도 안 읽어 헤더+버튼만 남았다."""
-        from agent_cli.render.base import ConfirmOption
+        """워크스페이스 이탈 승인에서 **위반이 위반으로 고지**되어야 한다 — 머리와 자세히(경로 목록)가 트레이에 선다."""
+        from agent_cli import confirm
 
         stack.emit_ready()
         page.goto(stack.url)
-        reason = (
-            "\n⚠ edit_file touches path(s) OUTSIDE the workspace\n"
-            "  (workspace: /ws):\n  /etc/hosts\n"
-        )
-        threading.Thread(
-            target=lambda: stack.renderer.confirm(
-                reason,
-                [
-                    ConfirmOption(key="y", label="once"),
-                    ConfirmOption(key="n", label="deny"),
-                ],
-                default_key="n",
+        t = threading.Thread(
+            target=lambda: confirm.ask_person(
+                "edit_file touches path(s) OUTSIDE the workspace",
+                "  (workspace: /ws):\n  /etc/hosts",
+                confirm.safety_choices("once", "always"),
+                owner="main",
+                stopped=lambda: stack._uv.should_exit,
             ),
             daemon=True,
-        ).start()
+        )
+        stack._workers.append(t)
+        t.start()
         why = page.locator("#ask-tray .confirm-why")
         assert _wait(lambda: why.count() > 0)
         text = why.inner_text()
         assert "OUTSIDE the workspace" in text and "/etc/hosts" in text
-        stack.renderer.push_abort()
 
 
 class TestInfoDedup:
     """같은 정보가 두 곳에 나오던 것들 — 잃는 게 없어 바로 제거한 셋 (v9.8.0)."""
 
     def test_main_confirm_does_not_repeat_the_lines_above_it(self, stack, page):
-        """main confirm 의 `💭 reasoning` / `⚡ action` 은 바로 위 타임라인
-        행의 복사본이다. **CLI 엔 이미 이 게이트가 있었다** —
-        `base._format_prompt_meta`: *"the main agent already prints its
-        thought/action inline right above the prompt"*. 웹에만 없었다."""
-        from agent_cli.render.base import ConfirmOption
-
+        """main 확인의 `💭 reasoning` / `⚡ action` 은 바로 위 타임라인
+        행의 복사본이다 — 묻는 쪽이 main 이면 메타 블록을 그리지 않는다."""
         stack.emit_ready()
         page.goto(stack.url)
         stack.renderer.thought("위험한 명령을 쓰겠다", 1)
         stack.renderer.action("shell", '{"command":"rm -rf /tmp/x"}', 1)
         assert _wait(lambda: page.locator("#messages .row.act").count() > 0)
 
-        threading.Thread(
-            target=lambda: stack.renderer.confirm(
-                "⚠ Dangerous command detected",
-                [
-                    ConfirmOption(key="y", label="once"),
-                    ConfirmOption(key="n", label="deny"),
-                ],
-                default_key="n",
-                command="rm -rf /tmp/x",
-            ),
-            daemon=True,
-        ).start()
+        t = threading.Thread(
+            target=lambda: stack.ask(command="rm -rf /tmp/x"), daemon=True
+        )
+        stack._workers.append(t)
+        t.start()
         assert _wait(lambda: page.locator("#ask-tray .ask-item").count() > 0)
         tray = page.locator("#ask-tray")
         assert tray.locator(".prompt-meta").count() == 0, (
@@ -521,7 +505,6 @@ class TestInfoDedup:
         )
         # 승인 대상(명령)은 여전히 보여야 한다 — 그건 중복이 아니다.
         assert "rm -rf /tmp/x" in tray.inner_text()
-        stack.renderer.push_abort()
 
     def test_sender_name_shows_only_with_more_than_one_viewer(self, stack, page):
         """단독 세션에선 오른쪽 파란 말풍선이 이미 "나"라 `[닉]:` 접두가 순수

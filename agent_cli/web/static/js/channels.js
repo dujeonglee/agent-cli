@@ -18,7 +18,6 @@ import {
   clearAnswerNote,
   highlightDangerHtml,
   noteOnAnswer,
-  ovSubmitMainConfirm,
 } from "./input.js";
 import { sendOnce } from "./send.js";
 import {
@@ -36,6 +35,8 @@ import {
 export var ovRoster = []; // agent_roster
 // 사람에게 온 열린 질문 — main·에이전트·스킬 런의 것이 한 목록(6b, sticky ``open_questions``). ❓ 트레이의 출처다.
 var ovQuestions = [];
+// 사람에게 건 열린 확인 — 도구 호출 하나가 그 자리에서 기다린다(6d, sticky ``open_confirms``). 트레이 맨 위에 선다.
+var ovConfirms = [];
 // 일하는 에이전트인가 — 런 중이거나 일을 끝내지 않은 run (서버 `AgentRegistry.working_agents` 와 같은 판정).
 // 입력창 옆 Stop ▾ 와 채널 줄 끝 ■ all 이 이것을 본다 (v10.142.0).
 export function ovAgentWorking(t) {
@@ -121,58 +122,48 @@ export function ovOnQuestions(d) {
   ovQuestions = (d && d.questions) || [];
   ovRenderAskTray();
 }
-// 글로벌 ask 트레이: 열린 질문 목록을 채널 무관하게 렌더. 답·닫기는 질문 번호의 길(api/questions/<q-N>/…) —
-// 서버 공유 상태라 누가 먼저 답하거나 닫으면 질문이 닫혀 → 모든 뷰어에서 사라짐(선착순).
-// main 의 확인 대화(confirm)를 트레이 항목(DOM)으로 — 검증된 조각 재사용
-// (buildPromptMetaEl·highlightDangerHtml·confirm-btn). 3b. 막는 물음은 확인 대화뿐이다.
-function ovBuildMainAskEl() {
-  var data = session.mainAsk.data || {};
-  var item = el("div", ["ask-item", "ask-main"]);
-  // 이 항목이 맡은 물음 — 서버는 물음에 id 를 주지 않아 ``input_required`` 한 번이 만든 객체가 곧
-  // 그 물음이다(같은 물음인 동안 다시 만들지 않는다). 보내는 중 상태는 항목마다 하나.
-  item.askOf = session.mainAsk;
+// 열린 확인 목록이 바뀌었다(6d) — 확인이 열리고, 답·기다리던 호출의 정지로 닫힐 때마다.
+export function ovOnConfirms(d) {
+  ovConfirms = (d && d.confirms) || [];
+  ovRenderAskTray();
+}
+// 글로벌 ask 트레이: 열린 확인·질문 목록을 채널 무관하게 렌더. 답·닫기는 그 번호의 길(api/confirms/<c-N>/…,
+// api/questions/<q-N>/…) — 서버 공유 상태라 누가 먼저 답하면 항목이 닫혀 → 모든 뷰어에서 사라짐(선착순).
+// 확인 항목 하나(6d) — 확인은 id 로 불변이라 한 번 만든다. 이름표만 명단을 따라 바뀐다(`ovLabelQuestionEl`).
+// 답은 버튼뿐이다 — 기본값이 없고 말 칸의 Enter 는 아무것도 보내지 않는다(명시적 UI 로만).
+function ovBuildConfirmEl(c) {
+  var item = el("div", ["ask-item", "ask-confirm"]);
+  item.setAttribute("data-key", c.asker || "");
+  item.setAttribute("data-cid", c.id);
   item.sendSlot = { sending: false };
   var head = el("div", ["ask-q"]);
-  head.textContent = "⚠ main — confirmation needed";
+  head.appendChild(document.createTextNode("⚠ "));
+  head.appendChild(el("b"));
+  head.appendChild(document.createTextNode(" — confirmation " + c.id));
   item.appendChild(head);
-  var meta = buildPromptMetaEl(data);
+  var meta = buildPromptMetaEl(c);
   if (meta) item.appendChild(meta);
-  // **무엇을 승인하는지**를 먼저 보인다. 종전엔 이 줄이 없어서, 워크스페이스
-  // 밖 경로에 쓰려는 것을 승인할 때 화면에 남는 게 헤더+버튼뿐이었다 —
-  // 이게 이탈 가드라는 사실도, 어느 경로가 밖인지도, 루트가 뭔지도 없이
-  // `a` 버튼만 "always allow these locations" 라고 말했다(감사 발견).
-  // `shell` 은 `command` 를 따로 실어 강조 렌더가 되지만 edit/write_file 은
-  // 안 싣는다. `prompt` 는 그 사유의 유일한 전달자다.
-  if (typeof data.prompt === "string" && data.prompt.trim()) {
-    item.appendChild(el("div", ["confirm-why"], data.prompt.trim()));
-  }
-  if (typeof data.command === "string" && data.command) {
+  // **무엇을 승인하는지**를 먼저 보인다 — 머리 한 줄과 자세히(경로 목록·반복 호출). 명령은 따로 강조해 그린다.
+  var why = [c.title || "", c.detail || ""].filter(Boolean).join("\n");
+  if (why) item.appendChild(el("div", ["confirm-why"], why));
+  if (typeof c.command === "string" && c.command) {
     item.appendChild(
       elHtml("pre", ["action-shell", "confirm-cmd"],
-        highlightDangerHtml(data.command, data.danger_spans))
+        highlightDangerHtml(c.command, c.danger_spans))
     );
   }
-  var cmt = el("input", ["ask-answer"]);
-  cmt.type = "text";
-  cmt.placeholder = "Optional comment";
   var btns = el("div", ["ask-confirm-btns"]);
-  (data.options || []).forEach(function (opt) {
-    var b = el("button", ["confirm-btn"]);
-    if (opt.key === data.default_key) b.classList.add("default");
-    b.textContent = opt.key + " — " + opt.label;
-    b.addEventListener("click", function () {
-      ovSubmitMainConfirm(item, opt.key, cmt.value.trim());
-    });
+  (c.choices || []).forEach(function (ch) {
+    var b = el("button", ["confirm-btn"], ch.label);
+    b.type = "button";
+    b.setAttribute("data-action", ch.action);
     btns.appendChild(b);
-  });
-  cmt.addEventListener("keydown", function (e) {
-    if (e.key === "Enter" && !e.isComposing) {
-      e.preventDefault();
-      ovSubmitMainConfirm(item, data.default_key, cmt.value.trim());
-    }
   });
   item.appendChild(btns);
   var cw = el("div", ["ask-in"]);
+  var cmt = el("input", ["ask-answer"]);
+  cmt.type = "text";
+  cmt.placeholder = "Optional comment";
   cw.appendChild(cmt);
   item.appendChild(cw);
   return item;
@@ -221,28 +212,24 @@ function ovLabelQuestionEl(item, key, q) {
 export function ovRenderAskTray() {
   var tray = document.getElementById("ask-tray");
   if (!tray) return;
-  // 비동기 질문(docs/agent-ask/DESIGN.md §3.6): 열린 질문이 뜬다 — 주소는
-  // 언제나 사람이다(v10.77.0). 상대가 막혀 있지 않으므로 state 로는 알 수
-  // 없고 질문 자체가 진실이다 — 한 에이전트가 동시에 여럿 물을 수 있어 항목도
-  // 질문 단위.
-  var open = ovQuestions.map(function (q) {
-    return { key: q.asker, q: q };
-  });
-  var have = {};
-  var mainEl = null;
+  // 비동기 질문(docs/agent-ask/DESIGN.md §3.6)과 확인(6d): 주소는 언제나 사람이다. 상대의 state 로는 알 수
+  // 없고 목록 자체가 진실이다 — 항목은 번호 단위.
+  var haveC = {};
+  var haveQ = {};
   Array.prototype.forEach.call(tray.children, function (c) {
-    if (c.classList.contains("ask-main")) mainEl = c;
-    else if (c.hasAttribute("data-qid")) have[c.getAttribute("data-qid")] = c;
+    if (c.hasAttribute("data-cid")) haveC[c.getAttribute("data-cid")] = c;
+    else if (c.hasAttribute("data-qid")) haveQ[c.getAttribute("data-qid")] = c;
   });
-  // main ask 항목(DOM)은 맨 위에 — 검증된 confirm/prompt 조각 재사용.
+  // 확인이 맨 위 — 도구 호출이 그 자리에서 기다린다. 그 뒤 질문.
   var want = [];
-  if (session.mainAsk) {
-    if (!mainEl || mainEl.askOf !== session.mainAsk) mainEl = ovBuildMainAskEl();
-    want.push(mainEl);
-  }
-  open.forEach(function (it) {
-    var item = have[it.q.id] || ovBuildQuestionEl(it.key, it.q);
-    ovLabelQuestionEl(item, it.key, it.q);
+  ovConfirms.forEach(function (c) {
+    var item = haveC[c.id] || ovBuildConfirmEl(c);
+    ovLabelQuestionEl(item, c.asker || "", c);
+    want.push(item);
+  });
+  ovQuestions.forEach(function (q) {
+    var item = haveQ[q.id] || ovBuildQuestionEl(q.asker, q);
+    ovLabelQuestionEl(item, q.asker, q);
     want.push(item);
   });
   Array.prototype.slice.call(tray.children).forEach(function (c) {
@@ -252,6 +239,41 @@ export function ovRenderAskTray() {
     if (tray.children[i] !== item) tray.insertBefore(item, tray.children[i] || null);
   });
   tray.hidden = !want.length;
+}
+// 확인의 답(6d) — 확인 번호의 길(``api/confirms/<c-N>/<action>``)로 **그 확인의 답**으로 짝짓는다. 질문 항목과 같은
+// 보내기: 받으면 목록이 항목을 거두고, 409(이미 답했거나 닫힌 확인)는 항목의 입력을 닫고 알린다.
+function ovSubmitConfirm(item, action) {
+  if (item.sendSlot.sending) {
+    noteOnAnswer(item, "Still sending the previous answer");
+    return;
+  }
+  clearAnswerNote(item);
+  var cid = item.getAttribute("data-cid");
+  var note = item.querySelector(".ask-answer").value.trim();
+  sendOnce(
+    item.sendSlot,
+    function (signal) {
+      return fetch("api/confirms/" + encodeURIComponent(cid) + "/" + action, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conn_id: session.connId, note: note }),
+        signal: signal,
+      });
+    },
+    function (failure, status) {
+      if (!failure) return;
+      if (status === 409) {
+        var inp = item.querySelector(".ask-answer");
+        inp.value = "";
+        inp.disabled = true;
+        item.querySelectorAll(".confirm-btn").forEach(function (b) { b.disabled = true; });
+        attachMessage(ALREADY_CLOSED_NOTICE);
+        return;
+      }
+      if (!item.isConnected) return attachMessage(ALREADY_CLOSED_NOTICE);
+      noteOnAnswer(item, "⚠ Not sent — " + failure);
+    }
+  );
 }
 // 질문의 답 — 질문 번호의 길(``api/questions/<q-N>/answer``, 6b)로 **그 질문의 답**으로 짝짓는다(묻는 쪽은 번호가 정한다).
 // 입력창과 같은 규칙: 받았을 때만 비우고(항목은 목록이 닫는다), 실패면 항목 안에 사유·글 남김. 409 는
@@ -314,12 +336,15 @@ function ovPostQuestion(item, action, extra, onDone) {
 (function () {
   var tray = document.getElementById("ask-tray");
   if (!tray) return;
-  // 에이전트 질문 항목만(``data-qid``) — main 의 물음 항목은 자기 입력에 듣는다.
+  // 질문 항목(``data-qid``)의 보내기·닫기·Enter, 확인 항목(``data-cid``)의 버튼.
   function questionItemOf(target) {
     var item = target.closest(".ask-item");
     return item && item.hasAttribute("data-qid") ? item : null;
   }
   tray.addEventListener("click", function (e) {
+    var btn = e.target.closest(".confirm-btn");
+    var citem = btn && btn.closest(".ask-item[data-cid]");
+    if (citem) return ovSubmitConfirm(citem, btn.getAttribute("data-action"));
     var item = questionItemOf(e.target);
     if (!item) return;
     if (e.target.classList.contains("ask-send")) ovSubmitAsk(item);

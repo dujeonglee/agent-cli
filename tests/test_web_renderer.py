@@ -9,9 +9,8 @@ Coverage axes:
 3. **Assistant turn bundling** — ``thought()`` is held and emitted as
    part of the next ``action()`` / ``final()`` so each LLM emission
    produces exactly one persistent ``assistant_turn`` event.
-4. **Input flow** — ``prompt_user`` / ``confirm`` block until the
-   server pushes input. Abort raises ``EOFError`` from ``prompt_user``
-   and returns the safe default from ``confirm``.
+4. **Open confirmations** — 확인(`c-N`, 6d)은 장부의 항목이고 렌더러는 목록 sticky(``open_confirms``)만 낸다 —
+   늦게 온 뷰어가 받고, status.json 의 ``awaiting_input`` 이 그것을 본다.
 """
 
 from __future__ import annotations
@@ -23,15 +22,43 @@ from typing import ClassVar
 
 import pytest
 
+from agent_cli import session_slots
 from agent_cli.instance_file import read_status_file
 from agent_cli.main_input import CLOSED
 from agent_cli.providers.credentials import Credentials
-from agent_cli.render.base import ConfirmOption
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
+from agent_cli.tools.shell import tool_shell
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
+from tests.test_agents_live import make_registry
 from tests.web_static import js_text
+
+
+@pytest.fixture
+def web_confirms(tmp_path, monkeypatch):
+    """웹 렌더러 + 확인을 걸 레지스트리 — ``(렌더러, 레지스트리, 확인이 열렸음)``. 위험 명령이 저장소에 닿지 않게
+    임시 폴더에서, 임시 루트를 비워(그 안의 대상은 묻지 않는 것이 제품 동작이다) 언제나 묻게 한다."""
+    import agent_cli.render as render_mod
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("agent_cli.tools._confine.temp_roots", frozenset)
+    r = WebRenderer()
+    opened = threading.Event()
+    shown = r.open_confirms
+
+    def open_confirms(confirms):
+        shown(confirms)
+        if confirms:
+            opened.set()
+
+    r.open_confirms = open_confirms
+    monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
+    reg = make_registry(tmp_path / "reg")
+    session_slots.set_agent_registry(reg)
+    yield r, reg, opened
+    session_slots.set_agent_registry(None)
+    reg.shutdown_all()
 
 
 def _qget(conn, timeout=0.5):
@@ -66,9 +93,9 @@ class TestStatusPublishing:
 
     def test_awaiting_toggle_published(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))
-        r.set_sticky("input_required", "input_required", {"q": "?"})
+        r.open_confirms([{"id": "c-1"}])
         assert read_status_file(tmp_path)["awaiting_input"] is True
-        r.clear_sticky("input_required")
+        r.open_confirms([])
         assert read_status_file(tmp_path)["awaiting_input"] is False
 
     def test_agent_roster_published_as_agents_summary(self, tmp_path):
@@ -151,7 +178,7 @@ class TestStatusPublishing:
         assert read_status_file(tmp_path)["viewers"] == 1
 
     def test_unrelated_sticky_does_not_flip_status(self, tmp_path):
-        # only worker_state/input_required stickies republish
+        # only worker_state/open_confirms/… stickies republish
         r = WebRenderer(session_dir=str(tmp_path))
         r.worker_busy()  # seed a file
         r.set_sticky("token_usage", "token_usage", {"n": 5})
@@ -170,8 +197,8 @@ class TestCanPrompt:
     ``hub.has_live_connections()`` 가 따로 답한다."""
 
     def test_true_even_without_connection(self):
-        """뷰어 0명이어도 True — ask/confirm 은 대기하고, 늦게 접속한
-        클라이언트가 input_required sticky replay 로 질문을 받는다."""
+        """뷰어 0명이어도 True — 질문·확인은 열린 채 기다리고, 늦게 접속한
+        클라이언트가 그 목록 sticky 의 replay 로 받는다."""
         r = WebRenderer()
         assert r.can_prompt() is True
 
@@ -180,33 +207,29 @@ class TestCanPrompt:
         r.hub.register(WebConnection(id="c1"))
         assert r.can_prompt() is True
 
-    def test_late_viewer_gets_pending_prompt_and_can_answer(self):
-        """핵심 시나리오: 뷰어 0명 상태에서 확인 대화 대기 시작 → 나중에 접속한
-        클라이언트의 snapshot 에 pending input_required 가 replay → 답을
-        밀어넣으면 worker 가 그 답으로 해제. (6b: 남은 막는 물음은 확인 대화뿐이다)"""
-        r = WebRenderer()
+    def test_late_viewer_gets_the_open_confirm_and_can_answer(self, web_confirms):
+        """핵심 시나리오: 뷰어 0명 상태에서 확인이 열리고 → 나중에 접속한 클라이언트의 snapshot 에 열린 확인 목록이
+        replay → 그 번호로 답하면 기다리던 호출이 그 답으로 풀린다."""
+        r, reg, opened = web_confirms
         result: list = []
-
-        def worker():
-            result.append(
-                r.confirm(
-                    "Allow?", [ConfirmOption(key="y", label="yes")], default_key="n"
-                )
-            )
-
-        t = threading.Thread(target=worker, daemon=True)
+        t = threading.Thread(
+            target=lambda: result.append(
+                tool_shell({"command": "rm -f ./agentcli-test-x"})
+            ),
+            daemon=True,
+        )
         t.start()
-        time.sleep(0.2)
-        assert t.is_alive(), "뷰어가 없어도 대기해야 한다 (즉시 포기 금지)"
-
-        conn = WebConnection(id="late")
-        snapshot = r.hub.register(conn)
-        pending = [ev for ev, data in snapshot if ev == "input_required"]
-        assert pending, "늦게 온 뷰어의 snapshot 에 pending 질문이 있어야 한다"
-
-        r.push_confirm({"key": "y"})
-        t.join(timeout=2.0)
-        assert result == [("y", "")]
+        assert opened.wait(5)
+        snapshot = r.hub.register(WebConnection(id="late"))
+        (pending,) = [d for ev, d in snapshot if ev == "open_confirms"]
+        (item,) = pending["confirms"]
+        assert (
+            reg.answer_confirm(item["id"], "deny", "위험해서 거부", by="user:late")
+            == ""
+        )
+        t.join(5)
+        assert result[0].success is False
+        assert result[0].error.startswith("User denied command containing `rm`")
 
 
 class TestWebInstanceIsActive:
@@ -281,35 +304,6 @@ class TestDangerousShellWaitsForViewer:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr("agent_cli.tools._confine.temp_roots", frozenset)
 
-    def test_shell_confirm_waits_and_accepts_late_answer(self, monkeypatch):
-        import agent_cli.render as render_mod
-        from agent_cli.tools.shell import tool_shell
-
-        r = WebRenderer()
-        monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
-        results = []
-
-        def worker():
-            results.append(tool_shell({"command": "rm -f ./agentcli-test-x"}))
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.3)
-        assert t.is_alive(), "뷰어 0명이어도 confirm 은 대기해야 한다"
-
-        # 늦게 접속 → snapshot 에 pending confirm replay
-        conn = WebConnection(id="late")
-        snapshot = r.hub.register(conn)
-        kinds = [d.get("kind") for ev, d in snapshot if ev == "input_required"]
-        assert "confirm" in kinds
-
-        r.push_confirm({"key": "n", "comment": "위험해서 거부"})
-        t.join(timeout=3.0)
-        assert results and results[0].success is False
-        assert "denied" in (results[0].error or "").lower() or "거부" in (
-            results[0].error or ""
-        )
-
     def test_auto_approve_skips_confirm_and_records_observation(self, monkeypatch):
         """⚡ 자동 승인 ON: 위험 shell confirm 이 프롬프트/대기 없이 즉시 허용되고,
         무엇이 확인 없이 실행됐는지 관찰로 남는다. 안전 기본값(deny)이 아니라 허용
@@ -324,6 +318,8 @@ class TestDangerousShellWaitsForViewer:
             recorded.append(content)
         )
         monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
+        # 답이 올 수 있는 세션(확인을 걸 장부가 있다) — 자동 승인은 그 안에서만 묻지 않는다
+        monkeypatch.setattr(session_slots, "get_agent_registry", lambda: object())
         # 위험 명령이지만 자동 승인이라 즉시 반환(대기 스레드 불필요).
         res = tool_shell({"command": "echo hi && rm -f ./agentcli-test-nope"})
         # deny 였으면 success False + 'denied'. 허용됐으니 shell 이 실제 실행됨.
@@ -346,35 +342,22 @@ class TestDangerousShellWaitsForViewer:
         cm = [d for ev, d in snap if ev == "knob" and d.get("name") == "auto_approve"]
         assert cm and cm[0].get("value") is True
 
-    def test_confirm_payload_carries_command_and_danger_spans(self, monkeypatch):
-        """The confirm event payload includes the raw command and the
-        dangerous-token ranges so the web dialog can highlight them — the web
-        dialog otherwise never shows the command text."""
-        import agent_cli.render as render_mod
-        from agent_cli.tools.shell import tool_shell
-
-        r = WebRenderer()
-        monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
-
-        def worker():
-            tool_shell({"command": "rm -rf ./agentcli-test-x"})
-
-        t = threading.Thread(target=worker, daemon=True)
+    def test_confirm_payload_carries_command_and_danger_spans(self, web_confirms):
+        """The open-confirm payload includes the raw command and the
+        dangerous-token ranges so the tray can highlight them."""
+        r, reg, opened = web_confirms
+        t = threading.Thread(
+            target=lambda: tool_shell({"command": "rm -rf ./agentcli-test-x"}),
+            daemon=True,
+        )
         t.start()
-        time.sleep(0.3)
-        try:
-            conn = WebConnection(id="late")
-            snapshot = r.hub.register(conn)
-            payload = next(
-                d
-                for ev, d in snapshot
-                if ev == "input_required" and d.get("kind") == "confirm"
-            )
-            assert payload["command"] == "rm -rf ./agentcli-test-x"
-            assert [tuple(s) for s in payload["danger_spans"]] == [(0, 2)]
-        finally:
-            r.push_confirm({"key": "n", "comment": ""})
-            t.join(timeout=3.0)
+        assert opened.wait(5)
+        snapshot = r.hub.register(WebConnection(id="late"))
+        (payload,) = next(d for ev, d in snapshot if ev == "open_confirms")["confirms"]
+        assert payload["command"] == "rm -rf ./agentcli-test-x"
+        assert [tuple(sp) for sp in payload["danger_spans"]] == [(0, 2)]
+        reg.answer_confirm(payload["id"], "deny", "", by="user")
+        t.join(5)
 
 
 class TestEventDistribution:
@@ -596,38 +579,25 @@ class TestConnectionLifecycle:
         assert kinds == ["assistant_turn", "observation"]
         assert snapshot[-1][0] == "snapshot_end"  # v10.8.1: 스냅샷의 끝 표시
 
-    def test_pending_prompt_replays_to_reconnecting_client(self):
-        # A pending confirm must be sticky: a client that connects WHILE
-        # the worker waits (reconnect, second browser, board proxy) replays the
-        # prompt — else the worker blocks on an answer the UI never offered.
+    def test_open_confirms_replay_to_a_reconnecting_client(self):
+        # 열린 확인은 sticky — 기다리는 동안 붙은 클라이언트(재접속·두 번째 브라우저·보드 프록시)가 받는다. 닫히면
+        # 목록이 비어 새 클라이언트는 낡은 항목을 받지 않는다.
         r = WebRenderer()
-        r.hub.register(WebConnection(id="live"))  # a connection exists
-        seen = {}
-
-        def fake_wait():
-            late = WebConnection(id="late")
-            seen["events"] = [e for e, _ in r.hub.register(late)]
-            return ("y", "")
-
-        r._wait_for_input = fake_wait
-        out = r.confirm(
-            "Allow?", [ConfirmOption(key="y", label="yes")], default_key="n"
-        )
-        assert out == ("y", "")
-        assert "input_required" in seen["events"]  # replayed while pending
-
-        # Resolved → a freshly connecting client must NOT replay the stale prompt.
-        after = [e for e, _ in r.hub.register(WebConnection(id="after"))]
-        assert "input_required" not in after
+        r.open_confirms([{"id": "c-1"}])
+        snap = dict(r.hub.register(WebConnection(id="late")))
+        assert snap["open_confirms"] == {"confirms": [{"id": "c-1"}]}
+        r.open_confirms([])
+        snap2 = dict(r.hub.register(WebConnection(id="after")))
+        assert snap2["open_confirms"] == {"confirms": []}
 
     def test_clear_sticky_removes_slot_from_snapshot(self):
         r = WebRenderer()
-        r.set_sticky("input_required", "input_required", {"kind": "prompt"})
+        r.set_sticky("stuck", "stuck", {"turns": 3})
         snap = [e for e, _ in r.hub.register(WebConnection(id="a"))]
-        assert "input_required" in snap
-        r.clear_sticky("input_required")
+        assert "stuck" in snap
+        r.clear_sticky("stuck")
         snap2 = [e for e, _ in r.hub.register(WebConnection(id="b"))]
-        assert "input_required" not in snap2
+        assert "stuck" not in snap2
 
     def test_all_connections_receive_the_fanout(self):
         r = WebRenderer()
@@ -855,90 +825,6 @@ class TestUserMessageEcho:
         assert event == "user_message"
         assert data["content"] == "hello world"
         assert r.hub.persistent_count == 1
-
-
-# ── Input flow ─────────────────────────────────────
-
-
-class TestConfirmInput:
-    options: ClassVar[list] = [
-        ConfirmOption(key="y", label="yes", aliases=("yes",)),
-        ConfirmOption(key="n", label="no", aliases=("no",)),
-    ]
-
-    def test_confirm_drains_stale_queue_before_announcing(self):
-        """announce(sticky emit) 전에 큐에 있던 답변은 정의상 stale —
-        (이전 프롬프트가 해결된 뒤 도착한 잔여 클릭 등) 새 confirm 이
-        그걸 즉시 소비해 자동 응답되면 안 된다 (v7.2.0 ⓓ drain)."""
-        r = WebRenderer()
-        r._input_queue.put(("y", "stale click"))
-        result: list[tuple[str, str]] = []
-
-        def worker():
-            result.append(r.confirm("?", self.options, default_key="n"))
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.2)
-        # stale 답변으로 즉시 리턴했으면 안 된다 — 아직 대기 중이어야.
-        assert t.is_alive(), f"confirm consumed a stale answer: {result}"
-        r.push_confirm({"key": "n", "comment": "fresh"})
-        t.join(timeout=2.0)
-        assert result == [("n", "fresh")]
-
-    def test_awaiting_input_kind_reflects_pending_prompt(self):
-        """서버 /api/input 게이트가 읽는 표면: 대기 중인 프롬프트의 kind
-        (없으면 None)."""
-        r = WebRenderer()
-        assert r.awaiting_input_kind() is None
-        r.set_sticky("input_required", "input_required", {"kind": "confirm"})
-        assert r.awaiting_input_kind() == "confirm"
-        r.clear_sticky("input_required")
-        assert r.awaiting_input_kind() is None
-
-    def test_confirm_returns_pushed_value(self):
-        r = WebRenderer()
-        result: list[tuple[str, str]] = []
-
-        def worker():
-            result.append(r.confirm("?", self.options, default_key="n"))
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-        r.push_confirm({"key": "y", "comment": "go"})
-        t.join(timeout=2.0)
-        assert result == [("y", "go")]
-
-    def test_confirm_abort_returns_default(self):
-        r = WebRenderer()
-        result: list[tuple[str, str]] = []
-
-        def worker():
-            result.append(r.confirm("?", self.options, default_key="n"))
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        time.sleep(0.05)
-        r.push_abort()
-        t.join(timeout=2.0)
-        assert result == [("n", "")]
-
-
-class TestAwaitHumanSkeleton:
-    """ask·confirm 의 뼈대는 한 곳 (v10.120.1) — 드레인·스티키·대기·정리가 두 벌로
-    갈라지지 않게 소스로 고정한다. 두 공개 메서드에는 payload 와 결과 해석만."""
-
-    def test_sticky_lives_only_in_the_skeleton(self):
-        import inspect
-        import re
-
-        sticky = re.compile(r'set_sticky\(\s*"input_required"')
-        for name in ("confirm",):
-            src = inspect.getsource(getattr(WebRenderer, name))
-            assert not sticky.search(src), name
-            assert "_await_human(" in src, name
-        assert sticky.search(inspect.getsource(WebRenderer._await_human))
 
 
 # ── Sanity: Renderer ABC conformance ───────────────
@@ -3553,11 +3439,11 @@ class TestNoteNext:
         r.note_next("무시됨")  # 예외 없음
 
     def test_approval_gates_record_the_session_policy_change(self):
-        """`a`(세션 내내 허용)는 정책이 바뀌는 순간이라 흔적을 남긴다.
+        """always(`/allow` — 세션 내내 허용)는 정책이 바뀌는 순간이라 흔적을 남긴다.
 
         이후 같은 키워드/경로는 묻지도 않으므로, 대화에 기록이 없으면 나중에
         추적이 불가능하다. 소스 핀 — 감사 흔적이 조용히 사라지는 걸 막는다.
-        (`y`=1회는 일부러 안 남긴다: 바로 위 도구 카드가 맥락을 준다.
+        (once 는 일부러 안 남긴다: 바로 위 도구 카드가 맥락을 준다.
         거절은 이미 `ToolResult.error` 로 남는다.)"""
         import pathlib
 
@@ -3566,9 +3452,11 @@ class TestNoteNext:
         root = pathlib.Path(agent_cli.__file__).parent
         for mod in ("tools/shell.py", "tools/_confine.py"):
             src = (root / mod).read_text()
-            assert 'decision == "a"' in src, f"{mod}: 승인 분기가 사라졌다"
+            assert "decision.action == confirm.ALLOW" in src, (
+                f"{mod}: 승인 분기가 사라졌다"
+            )
             assert "note_next(" in src, (
-                f"{mod}: `a` 승인이 화면에 기록되지 않는다 — "
+                f"{mod}: always 승인이 화면에 기록되지 않는다 — "
                 f"세션 내내 재확인 없이 통과하는 정책 변경은 흔적을 남겨야 한다"
             )
 

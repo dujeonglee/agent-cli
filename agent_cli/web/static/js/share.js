@@ -3,7 +3,7 @@
 
 import { $tokenUsage, el } from "./dom.js";
 import { copyToClipboard, es } from "./sse.js";
-import { ovOnQuestions, ovOnRoster } from "./channels.js";
+import { ovOnConfirms, ovOnQuestions, ovOnRoster } from "./channels.js";
 import { channelOf, finishCard, MAIN } from "./timeline.js";
 import {
   ctxApplyView,
@@ -104,6 +104,11 @@ es.addEventListener("agent_roster", function (e) {
 es.addEventListener("open_questions", function (e) {
   // 사람에게 온 열린 질문 sticky (6b) — ❓ 트레이의 출처 하나(main·에이전트·스킬 런).
   ovOnQuestions(JSON.parse(e.data));
+});
+
+es.addEventListener("open_confirms", function (e) {
+  // 사람에게 건 열린 확인 sticky (6d) — 트레이 맨 위의 확인 항목들(main·에이전트).
+  ovOnConfirms(JSON.parse(e.data));
 });
 
 es.addEventListener("agent_msg", function (e) {

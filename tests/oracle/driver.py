@@ -70,6 +70,8 @@ EVENTS = frozenset(
         "note_request",
         "note_items_closed_after",
         "push_user_message",
+        # 6d: 확인 줄(터미널) — 확인이 열린 사실과 그 순서
+        "confirm_line",
     }
 )
 
@@ -584,7 +586,7 @@ class Session:
 
 # ── 정규화 ───────────────────────────────────────────────────
 
-_ID = re.compile(r"\b([unrq])-(\d+)\b")
+_ID = re.compile(r"\b([unrqc])-(\d+)\b")
 #: 키 앞의 경계 — 단어 경계, 또는 직렬화된 줄바꿈(``\\n``) 바로 뒤(died 통지는 줄 머리가 키다: ``…──\\nagt-…``
 #: 에서 ``n`` 과 ``a`` 사이는 단어 경계가 아니다). 기존 기대값 20개에는 그 모양이 없어 바이트가 그대로다.
 _AGENT = re.compile(r"(?:\b|(?<=\\n))agt-[0-9a-f]{8}\b")
@@ -632,7 +634,7 @@ def normalize(doc: dict, *, root: str, agents: list[str] = ()) -> dict:
 
 
 def renumber_ids(text: str) -> str:
-    """``u-/n-/r-/q-`` 접두별로 첫 등장 순 1, 2, … 로 다시 번호를 붙인다(전역 할당기의 번호가 밀려도 같은 판)."""
+    """``u-/n-/r-/q-/c-`` 접두별로 첫 등장 순 1, 2, … 로 다시 번호를 붙인다(전역 할당기의 번호가 밀려도 같은 판)."""
     seen: dict[tuple[str, str], int] = {}
     per: dict[str, int] = {}
 
@@ -2998,6 +3000,40 @@ def s37_command_queued_before_wait(root: Path) -> dict:
     return s.collect()
 
 
+def s47_confirm_waits_then_stop_and_close(root: Path) -> dict:
+    """6d: 확인(`c-N`)을 기다리는 호출은 그 자리에서 기다리고, 런의 정지와 세션 종료가 깨운다(web 길).
+
+    main 이 위험 명령(`xargs rm` — 대상을 알 수 없어 임시 폴더 안이라도 묻는다)을 부르면 확인이 열린다(동기 지점:
+    `confirm_line` 사건). ■(그 런의 정지)를 누르면 그 호출의 결과는 정지 문장이고 명령은 돌지 않으며 런이 끝난다.
+    사람이 새로 말하면 같은 명령의 확인이 다시 열리고, 방을 닫으면(웹 호스트 순서) 그 확인도 깨어 같은 문장이 기록에
+    남는다 — 닫는 도중 모델 호출 0."""
+    cmd = "echo oracle-s47-nothing | xargs rm -rf"
+    p = Provider(
+        {
+            "MAIN": [call("shell", command=cmd), call("shell", command=cmd)]
+            + [complete_all("main after")] * 3
+        }
+    )
+    s = Session(root, p, path="web")
+    facts: dict = {}
+
+    def confirms_shown() -> int:
+        return s.recorder.counts.get("confirm_line", 0)
+
+    s.say("MAIN go", nickname="dj")
+    t = s.pump_in_thread()
+    until(lambda: confirms_shown() == 1, "first confirm")
+    s.surface.stop.set()  # ■ — 그 런의 정지
+    until(lambda: runs_ended(s) >= 1, "the stopped run ended")
+    s.say("MAIN two", nickname="dj")
+    until(lambda: confirms_shown() == 2, "second confirm")
+    before = len(p.calls.get("MAIN", []))
+    s.close()
+    t.join(10)
+    facts["main_calls_during_close"] = len(p.calls.get("MAIN", [])) - before
+    return s.collect(facts)
+
+
 def s38_close_while_main_waits(root: Path) -> dict:
     """웹 방을 닫을 때 main 이 상주 aa 의 회신을 제자리에서 기다리고 있다 — 웹 호스트와 같은 순서로 닫는다: main 상자를
     닫고(`stop_pump`), 정리(`close` — 에이전트를 멈춘다). aa 는 main 의 요청을 집었고(busy) 첫 모델 호출 전에 정리가
@@ -3453,6 +3489,8 @@ SCENARIOS = {
     "s44_main_asks_and_waits": s44_main_asks_and_waits,
     "s45_main_asks_then_completes": s45_main_asks_then_completes,
     "s46_close_wakes_the_asker": s46_close_wakes_the_asker,
+    # 6d: 확인을 기다리는 호출 — ■ 와 닫기가 깨운다
+    "s47_confirm_waits_then_stop_and_close": s47_confirm_waits_then_stop_and_close,
 }
 
 

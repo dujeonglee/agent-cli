@@ -1,10 +1,8 @@
-"""Base renderer interface — override methods to customize output and input.
+"""Base renderer interface — override methods to customize output.
 
-A renderer is the agent loop's window onto the user: it both emits events
-(prompts, observations, status) and reads the user's responses (chat
-queries, confirmations, ask-tool answers). Wrapping input here means a
-web-UI renderer can satisfy the same Protocol just by streaming events
-over SSE and receiving form submissions, with no change to the loop.
+렌더러는 루프가 사람을 보는 창이다: 사건(프롬프트·관찰·상태)을 내고, 사람을 기다리는 것(열린 질문·열린 확인)을
+그린다. 답은 렌더러가 아니라 명령과 웹 트레이로 돌아온다(6b·6d). 렌더러에 남은 읽기는 부팅 마법사의
+``prompt_user``(CLI) 하나다.
 """
 
 from __future__ import annotations
@@ -15,14 +13,10 @@ import sys
 import threading
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 
-# Serializes every interactive user read (``confirm`` y/n/a AND ``ask``'s
-# free-text ``prompt_user``) across threads. Parallel delegate runs each
-# task in its own worker thread; without one shared lock two workers could
-# prompt at once and a single answer could be consumed by the wrong one.
-# Re-entrant so a caller that already holds it (e.g. the dangerous-shell
-# guard re-checking its allowlist around ``confirm``) can nest the read.
+# 터미널을 읽는 이는 한 번에 하나 (6d): 세션의 터미널 읽기(`main.read_terminal_line` — main 의 대기들과 확인을
+# 기다리는 호출, 여러 스레드가 부른다)는 막지 않고 잡아 보고 못 잡으면 이번엔 읽지 않는다 — 친 줄은 한 스레드가 한
+# 번만 읽는다. 부팅 마법사의 ``prompt_user`` 는 ``input()`` 동안 쥔다. 재진입 가능.
 interactive_lock = threading.RLock()
 
 try:
@@ -31,23 +25,6 @@ except (
     ImportError
 ):  # 터미널 제어가 없는 곳(Windows) — 먼저 친 입력을 거르지 않는다(종전 동작)
     termios = None
-
-
-@dataclass(frozen=True)
-class ConfirmOption:
-    """One choice in a multi-option confirmation.
-
-    Used by :meth:`Renderer.confirm` to describe each selectable
-    option without committing the renderer to a particular UI shape
-    (CLI: typed token; web: button). ``aliases`` lists additional
-    accepted typed tokens for CLI ergonomics (e.g. ``"yes"`` for the
-    ``"y"`` key) — case-insensitive match. Web renderers typically
-    only render ``label`` and submit ``key``.
-    """
-
-    key: str
-    label: str
-    aliases: tuple[str, ...] = field(default_factory=tuple)
 
 
 class Renderer(ABC):
@@ -90,10 +67,10 @@ class Renderer(ABC):
     def auto_approved(self, label: str) -> bool:
         """⚡ 자동 승인이 켜져 있으면 무엇을 묻지 않고 허용했는지 남기고 ``True`` (v10.120.0).
 
-        안전 확인(위험 셸 `shell._ask_confirmation`·경로 `_confine`)이 ``confirm`` **전에**
-        부른다. 종전엔 이 검사가 ``confirm`` 안에 있어 모든 확인이 자동으로 답해졌다 —
+        안전 확인(위험 셸 `shell.confirm_dangerous`·경로 `_confine.guard`)이 확인을 열기 **전에**
+        부른다. 종전엔 이 검사가 확인 안에 있어 모든 확인이 자동으로 답해졌다 —
         StaleGuard 의 멈춤 질문(런을 세우고 사람의 결정을 받는 확인)까지. 자동 승인의 뜻은
-        "위험 확인을 묻지 마라" 라 정책은 그 호출자의 것이고, ``confirm`` 은 언제나 묻는다.
+        "위험 확인을 묻지 마라" 라 정책은 그 호출자의 것이고, 열린 확인은 언제나 사람의 답을 기다린다.
         기록 모양은 렌더러가 정한다(`_note_auto_approved`)."""
         if not self.auto_approve:
             return False
@@ -253,12 +230,6 @@ class Renderer(ABC):
         (``run`` 은 사람 없이 끝나는 것이 결정이다). Default ``False``; web 만 ``True``."""
         return False
 
-    def confirm_author(self) -> str:
-        """이 스레드가 방금 받은 ``confirm`` 답을 누가 냈는가 — 뷰어의 닉네임, 모르면 ``""``
-        (v10.120.0). 확인의 코멘트를 그 사람의 메시지로 넣는 쪽(StaleGuard 의 Hint)이 쓴다.
-        Default ``""`` — CLI 의 답은 터미널의 한 사람이다."""
-        return ""
-
     def prompt_meta(self) -> dict[str, str]:
         """Provenance for an interactive prompt on the current thread:
         ``agent`` (delegate label, empty for the main agent), ``reasoning``
@@ -269,27 +240,6 @@ class Renderer(ABC):
             "reasoning": self._thread_thought.get(tid, ""),
             "action": self._thread_action.get(tid, ""),
         }
-
-    def _format_prompt_meta(self) -> str:
-        """One compact block naming the asking agent + its reasoning and
-        action, or ``""`` when there's nothing to show. Used by CLI
-        renderers to print a header before a confirm.
-
-        Gated on an agent label: the main agent already prints its
-        thought/action inline right above the prompt, so a header would
-        just duplicate it. Delegate workers (whose output is captured into
-        a panel, not shown inline at prompt time) are exactly the case the
-        user can't otherwise attribute — so the header fires there."""
-        meta = self.prompt_meta()
-        if not meta["agent"]:
-            return ""
-        lines: list[str] = [f"↳ from [{meta['agent']}]"]
-        if meta["reasoning"]:
-            first = meta["reasoning"].split("\n", 1)[0]
-            lines.append(f"  💭 {first}")
-        if meta["action"]:
-            lines.append(f"  ⚡ {meta['action']}")
-        return "\n".join(lines)
 
     # ── Nested scope lifecycle ───────────────────────
     #
@@ -419,6 +369,14 @@ class Renderer(ABC):
         self, asker: str, qid: str, text: str, *, to: str = "user"
     ) -> None:
         """사람에게 건 질문 한 줄 (6b) — 터미널이 그린다(번호·답하는 법). web 은 no-op: 트레이와 `ask` 카드가 보인다."""
+
+    def open_confirms(self, confirms: list) -> None:
+        """열린 확인 목록 (6d) — 확인이 열리고 닫힐 때마다(`ConfirmsMixin._notify_confirms` 의 모양). web 은 sticky(❓
+        트레이의 출처), CLI 는 no-op."""
+
+    def confirm_line(self, asker: str, item) -> None:
+        """사람에게 건 확인 한 줄 (6d) — 터미널이 그린다(번호·무엇·답하는 법). ``item`` 은 `agent_cli.confirm.Confirm`.
+        web 은 no-op: 트레이가 보인다."""
 
     def agent_roster(self, roster: list) -> None:
         """teammate 목록/상태 스냅샷 (P4) — spawn/kill/상태 전이마다 호출.
@@ -768,17 +726,8 @@ class Renderer(ABC):
     # ── User input ──────────────────────────────────
 
     def can_prompt(self) -> bool:
-        """Whether an interactive prompt — a ``confirm`` y/n/a or ``ask``'s
-        free-text question — can actually be shown to the user right now.
-
-        Callers check this before blocking on a read: a renderer that
-        can't surface a prompt (no TTY, no connected client) reports
-        ``False`` so the caller refuses / substitutes a default instead of
-        hanging on input that will never arrive. Default ``True`` — most
-        renderers are attached to a live interactive surface; those whose
-        ability depends on runtime state (a terminal, an open connection)
-        override this.
-        """
+        """사람에게 물은 것(``ask`` 의 질문·확인 `c-N`)에 답이 올 수 있는 표면인가 — 거짓이면 묻는 쪽이 묻지 않고
+        거절한다(오지 않을 답을 기다리지 않게). Default ``True``; 터미널에 달린 렌더러(CLI)는 터미널 여부로 답한다."""
         return True
 
     @contextmanager
@@ -794,91 +743,24 @@ class Renderer(ABC):
         yield
 
     def _guarded_read(self, read):
-        """Run a blocking user read under the shared serialization lock and
-        the renderer's display guard. ``confirm`` and ``prompt_user`` both
-        route their read through here so they serialize against each other
-        (one outstanding prompt at a time → answers can't cross wires) and
-        share one display-quieting policy. ``read`` is a zero-arg callable
-        performing the actual blocking read; its return value is passed
-        through, its exceptions (EOF/abort) propagate to the caller."""
+        """막는 읽기 하나를 터미널을 읽는 잠금(`interactive_lock`)과 화면 가드 아래서 — 부팅 마법사의 ``prompt_user``
+        가 쓴다(세션의 터미널 읽기와 겹치지 않는다). ``read`` 는 인자 없는 막는 읽기, 그 값을 그대로 돌려주고 예외
+        (EOF·Ctrl+C)는 부르는 쪽으로 올린다."""
         with interactive_lock, self._prompt_display_guard():
-            self._hand_over_typeahead()
-            self._reads_waiting = getattr(self, "_reads_waiting", 0) + 1
-            try:
-                return read()
-            finally:
-                self._reads_waiting -= 1
+            self._drop_typeahead()
+            return read()
 
-    #: 프롬프트가 뜨기 전에 터미널에 친 완성된 줄을 받을 곳 ``(lines) -> None`` — `run` 이 건다(main 의 요청으로,
-    #: `main.hand_typeahead_to_main`). 없으면 버린다(웹·부트 질문 — 넘길 main 이 없다)
-    on_typeahead = None
-
-    def _hand_over_typeahead(self) -> None:
+    def _drop_typeahead(self) -> None:
         """프롬프트는 뜬 뒤에 그 프롬프트에 친 것만 받는다(사람의 답은 명시적 UI 로만 — 사용자 결정). 프롬프트가 터미널을
-        쥔 순간(`_guarded_read` 의 잠금 안, 프롬프트 글을 찍기 전) 그 전에 친 입력을 프롬프트에서 뗀다 — 완성된 줄은
-        `on_typeahead` 로 넘기고, 덜 친 줄(줄바꿈 전)은 버린다. 표준입력이 터미널이 아니거나 터미널 제어가 없으면 할 일이
-        없다."""
+        쥔 순간(`_guarded_read` 의 잠금 안, 프롬프트 글을 찍기 전) 그 전에 친 입력을 버린다 — 부팅 마법사뿐이라 넘길 main
+        이 아직 없다. 표준입력이 터미널이 아니거나 터미널 제어가 없으면 할 일이 없다."""
         if termios is None or not sys.stdin.isatty():
             return
-        data = b""
         try:
             fd = sys.stdin.fileno()
             while select.select([fd], [], [], 0)[0]:
-                chunk = os.read(fd, 65536)
-                if not chunk:
+                if not os.read(fd, 65536):
                     break
-                data += chunk
             termios.tcflush(fd, termios.TCIFLUSH)
         except (OSError, ValueError):
             return
-        lines = [ln.strip() for ln in data.decode(errors="replace").splitlines()]
-        lines = [ln for ln in lines if ln]
-        if lines and self.on_typeahead is not None:
-            self.on_typeahead(lines)
-
-    def is_awaiting_input(self) -> bool:
-        """`ask`·확인 프롬프트가 사람의 입력을 기다리는 중인가 — `_guarded_read` 안 (v10.142.0). CLI 의 Ctrl+C
-        처리기(`ctrl_c.stop_for_ctrl_c`)가 그때는 종전대로 입력을 끊는다. 읽기만 한다. web 은 자기 것(sticky)."""
-        return getattr(self, "_reads_waiting", 0) > 0
-
-    @abstractmethod
-    def confirm(
-        self,
-        prompt: str,
-        options: list[ConfirmOption],
-        *,
-        default_key: str,
-        command: str | None = None,
-        danger_spans: list[tuple[int, int]] | None = None,
-    ) -> tuple[str, str]:
-        """Ask the user to pick one of ``options`` and optionally add
-        a free-text comment.
-
-        CLI implementations parse the first token of the typed line
-        against each option's ``key`` and ``aliases`` (case-
-        insensitive). Web implementations render one button per
-        option and submit ``(key, comment)`` directly.
-
-        Args:
-            prompt: Prompt string shown to the user.
-            options: Options the user can pick from. Must be non-empty.
-            default_key: Returned when the user submits empty input or
-                EOF, and when the typed token matches no option key /
-                alias.
-            command: Optional command/action text to display prominently
-                alongside the prompt (the dangerous-shell guard passes the
-                command here instead of embedding it in ``prompt``). ``None``
-                → nothing extra shown, prompt-only (path-escape confirm).
-            danger_spans: Optional ``(start, end)`` character ranges within
-                ``command`` to highlight as dangerous (the triggered keyword
-                tokens). Renderers paint these ranges — bold-red in the CLI,
-                a ``.danger`` span on the web — and leave the rest plain. The
-                ranges are pre-computed at the origin so renderers never
-                re-derive token boundaries.
-
-        Returns:
-            ``(key, comment)``. ``key`` is one of ``options``' keys
-            (or ``default_key`` on no match). ``comment`` is the rest
-            of the typed line (everything after the first token),
-            stripped, empty when no comment was given.
-        """

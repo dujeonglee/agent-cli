@@ -76,7 +76,7 @@ agent-cli run "pytest is failing. Find the cause and fix it." --auto-approve
 - 맨 아래 `Session … saved.` 줄의 id 로 나중에 이어서 할 수 있습니다.
 
 `--auto-approve` 는 확인 질문을 모두 건너뛰고 허락합니다.
-빼면 위험한 셸 명령(`rm` 등)이나 작업 폴더 밖 경로를 쓰기 전에 `y/n/a` 로 묻습니다.
+빼면 위험한 셸 명령(`rm` 등)이나 작업 폴더 밖 경로를 쓰기 전에 번호(`c-3`)를 단 확인을 띄웁니다. `/approve c-3`(이번만)·`/allow c-3`(이 세션 내내)·`/deny c-3 <이유>` 로 답합니다.
 
 스크립트에서 쓸 때는 종료 코드를 봅니다: `0` 답함 · `1` 실패 · `2` 설정·사용법 오류 · `130` 중단.
 

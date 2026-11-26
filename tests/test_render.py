@@ -962,62 +962,9 @@ class TestConsoleColorIsolation:
         assert "\x1b[" in buf.getvalue()
 
 
-class TestConfirm:
-    """``Renderer.confirm`` — single-line confirmation with options +
-    optional comment. Powers the dangerous-command y/n/a prompt today;
-    a web renderer would render one button per option."""
-
-    def _make(self):
-        from agent_cli.render.base import ConfirmOption
-
-        buf = StringIO()
-        console = Console(file=buf, force_terminal=True, width=120)
-        return MinimalRenderer(console), [
-            ConfirmOption(key="y", label="yes", aliases=("yes",)),
-            ConfirmOption(key="n", label="no", aliases=("no",)),
-            ConfirmOption(key="a", label="always", aliases=("always",)),
-        ]
-
-    def test_exact_key_match(self, monkeypatch):
-        r, opts = self._make()
-        monkeypatch.setattr("builtins.input", lambda _p: "y")
-        assert r.confirm("?", opts, default_key="n") == ("y", "")
-
-    def test_alias_match_case_insensitive(self, monkeypatch):
-        r, opts = self._make()
-        monkeypatch.setattr("builtins.input", lambda _p: "YES")
-        assert r.confirm("?", opts, default_key="n") == ("y", "")
-
-    def test_match_preserves_comment(self, monkeypatch):
-        r, opts = self._make()
-        monkeypatch.setattr("builtins.input", lambda _p: "y  go ahead  ")
-        assert r.confirm("?", opts, default_key="n") == ("y", "go ahead")
-
-    def test_empty_returns_default(self, monkeypatch):
-        r, opts = self._make()
-        monkeypatch.setattr("builtins.input", lambda _p: "   ")
-        assert r.confirm("?", opts, default_key="n") == ("n", "")
-
-    def test_eof_returns_default(self, monkeypatch):
-        r, opts = self._make()
-
-        def raise_eof(_p):
-            raise EOFError
-
-        monkeypatch.setattr("builtins.input", raise_eof)
-        assert r.confirm("?", opts, default_key="n") == ("n", "")
-
-    def test_unrecognized_returns_default_with_full_raw_as_comment(self, monkeypatch):
-        # User typed something we don't recognize as a yes/no/always —
-        # the renderer preserves their full text as a comment so the
-        # caller (e.g. shell danger prompt) can surface it to the LLM.
-        r, opts = self._make()
-        monkeypatch.setattr(
-            "builtins.input", lambda _p: "wait, I don't trust this command"
-        )
-        key, comment = r.confirm("?", opts, default_key="n")
-        assert key == "n"
-        assert comment == "wait, I don't trust this command"
+class TestConfirmLine:
+    """터미널 확인 줄(`MinimalRenderer.confirm_line`, 6d) — 위험 낱말 강조와 명령 줄의 있고 없음. 줄 전체의 바이트는
+    `tests/test_confirms.py` 가 고정한다."""
 
     def test_danger_command_text_styles_only_the_spans(self):
         # The highlighted command line: plain text is "  $ <command>" and the
@@ -1039,35 +986,32 @@ class TestConfirm:
         text = r._danger_command_text("rm x", [(0, 99)])
         assert text.plain == "  $ rm x"
 
-    def test_confirm_prints_highlighted_command_line(self, monkeypatch):
-        # When a command is supplied, confirm prints it before reading — the
-        # user sees what will run. (Mutation guard: drop the print and the
-        # command no longer appears in the console output.)
-        # Non-terminal console → styling is stripped, so the command text is
-        # contiguous plain text (with force_terminal the ANSI style codes split
-        # the highlighted token from the rest).
-        buf = StringIO()
-        console = Console(file=buf, width=120)
-        r = MinimalRenderer(console)
-        from agent_cli.render.base import ConfirmOption
+    def _item(self, command):
+        from agent_cli import confirm
 
-        opts = [ConfirmOption(key="y", label="yes"), ConfirmOption(key="n", label="no")]
-        monkeypatch.setattr("builtins.input", lambda _p: "y")
-        r.confirm(
-            "?", opts, default_key="n", command="rm -rf foo", danger_spans=[(0, 2)]
+        return confirm.Confirm(
+            id="c-3",
+            asker="main",
+            title="t",
+            detail="",
+            choices=confirm.safety_choices("once", "always"),
+            command=command,
+            danger_spans=[(0, 2)] if command else [],
         )
-        assert "rm -rf foo" in buf.getvalue()
 
-    def test_confirm_without_command_prints_nothing_extra(self, monkeypatch):
-        # A prompt-only confirm (e.g. path-escape guard) shows no "$ " line.
+    def test_confirm_line_prints_the_highlighted_command(self):
+        # 명령이 있으면 그 줄을 찍는다 — 무엇이 돌지 보인다. (변이 가드: 찍기를 빼면 명령이 출력에 없다.)
+        # 터미널이 아닌 콘솔 → 스타일이 빠져 명령이 이어진 글이다.
         buf = StringIO()
-        console = Console(file=buf, force_terminal=True, width=120)
-        r = MinimalRenderer(console)
-        from agent_cli.render.base import ConfirmOption
+        r = MinimalRenderer(Console(file=buf, width=120))
+        r.confirm_line("main", self._item("rm -rf foo"))
+        assert "  $ rm -rf foo" in buf.getvalue()
 
-        opts = [ConfirmOption(key="y", label="yes"), ConfirmOption(key="n", label="no")]
-        monkeypatch.setattr("builtins.input", lambda _p: "y")
-        r.confirm("?", opts, default_key="n")
+    def test_confirm_line_without_command_prints_no_command_line(self):
+        # 경로 확인(write_file 등)은 "$ " 줄이 없다.
+        buf = StringIO()
+        r = MinimalRenderer(Console(file=buf, force_terminal=True, width=120))
+        r.confirm_line("main", self._item(None))
         assert "$ " not in buf.getvalue()
 
 

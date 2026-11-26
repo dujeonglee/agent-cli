@@ -74,7 +74,7 @@ def _small_overwrite_analysis(path: str, new_content: str):
     return (True, old, nudge)
 
 
-def tool_write_file(args: dict) -> ToolResult:
+def tool_write_file(args: dict, *, owner: str = "main", stopped=None) -> ToolResult:
     """Create or overwrite a file with raw content.
 
     Returns the written content in hashline format (LINE#HASH:content) so
@@ -96,7 +96,7 @@ def tool_write_file(args: dict) -> ToolResult:
     content = args.get("content", "")
     from agent_cli.tools import _confine
 
-    denial = _confine.guard([path], "write_file")
+    denial = _confine.guard([path], "write_file", owner=owner, stopped=stopped)
     if denial:
         return ToolResult(False, error=denial)
     try:
@@ -210,4 +210,8 @@ class WriteFileTool(Tool):
     # the body stays verbatim on re-feed. See docs/ARCHITECTURE.md §5.4.
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
-        return tool_write_file(args)
+        return tool_write_file(
+            args,
+            owner=getattr(ctx, "owner", None) or "main",
+            stopped=getattr(ctx, "stopped", None),
+        )

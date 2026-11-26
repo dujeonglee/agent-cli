@@ -731,6 +731,7 @@ message → r-)이었다.
 - **E1 — 닫힘의 글** `(The user closed it without an answer. Go on with what you have, and say what you assumed.)`
 - **F 가 — 같은 질문은 열려 있는 동안 접는다**(묻는 쪽·런과 무관). 접힌 질문의 런에도 "열린 질문" 알림이 선다.
 - **G 가 — 보드의 "답변 필요"**(`awaiting_input`)는 확인 대화 또는 열린 질문. `is_awaiting_input`(Ctrl+C 갈래)은 그대로.
+  (6d·v10.177.0 에서 바뀜: 확인도 번호 항목 `c-N` — "답변 필요" 는 열린 확인 or 열린 질문, `is_awaiting_input` 은 지웠다.)
 - **지운 것** — 막는 `ask` 의 길 전부: `dispatch._handle_ask`, `Renderer.announce_ask`·추상 `prompt_user`(터미널의 한 줄
   읽기만 부팅 마법사용으로 남는다), `WebRenderer.prompt_user`, `/api/input` 의 `prompt` 종류, 트레이의 main prompt 항목,
   `input_history.py`(여러 줄 읽기·readline 히스토리 — 막는 `ask` 만 썼다)와 `AGENT_CLI_NO_READLINE`.

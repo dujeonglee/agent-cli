@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_cli import confirm
 from agent_cli import render as render_mod
 from agent_cli.loop.state import LoopState
 from agent_cli.loop.tool_bridge import ToolBridge
@@ -29,8 +30,9 @@ DENY = "[User note when denying: {}]"
 
 
 class _Scripted:
-    """confirm 에 대본대로 답하는 렌더러 — 묻는 순서대로 ``(key, comment)`` 를 꺼낸다.
-    ``answers`` 가 dict 면 스레드 이름으로 고른다."""
+    """확인에 대본대로 답한다 — 묻는 순서대로 ``(key, comment)`` 를 꺼낸다(``y`` once · ``n`` deny · ``a`` always).
+    ``answers`` 가 dict 면 스레드 이름으로 고른다. 확인은 `agent_cli.confirm.ask_person` 이 열고(6d) 여기는 그 답만
+    정한다 — 물은 것(머리 + 자세히)은 ``asked`` 에."""
 
     auto_approve = False
 
@@ -47,7 +49,7 @@ class _Scripted:
     def auto_approved(self, label: str) -> bool:
         return self.auto
 
-    def confirm(self, prompt, options, *, default_key, command=None, danger_spans=None):
+    def answer(self, prompt):
         self.asked.append(prompt)
         if isinstance(self.answers, dict):
             ans = self.answers[threading.current_thread().name]
@@ -88,6 +90,14 @@ def _answer(monkeypatch, *answers, auto=False) -> _Scripted:
         answers = answers[0]
     r = _Scripted(answers, auto=auto)
     monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
+    action_of = {"y": confirm.APPROVE, "n": confirm.DENY, "a": confirm.ALLOW}
+
+    def ask_person(title, detail, choices, *, owner, stopped, **_kw):
+        key, comment = r.answer(f"{title}\n{detail}")
+        return "c-1", confirm.Decision(action_of[key], comment, "user")
+
+    monkeypatch.setattr(confirm, "answerable", r.can_prompt)
+    monkeypatch.setattr(confirm, "ask_person", ask_person)
     return r
 
 

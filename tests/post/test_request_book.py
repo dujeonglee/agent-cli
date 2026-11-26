@@ -17,7 +17,7 @@ HOWS = (
     "run_ended", "user_answered", "undeliverable",
 )  # fmt: skip
 OPS = ("pick",) + tuple(f"close:{h}" for h in HOWS)
-KINDS = ("r", "u", "q")
+KINDS = ("r", "u", "q", "c")
 STATES = ("none", "queued", "picked", "closed")
 
 #: 허용 칸 — (종류, 상태, 연산) → 결과("picked" | "closed" 남음 | "gone" 지워짐). 나머지 칸은 RowError.
@@ -38,10 +38,13 @@ EXPECT = {
     ("u", "picked", "close:dropped"): "gone",
     ("q", "picked", "close:user_answered"): "gone",
     ("q", "picked", "close:undeliverable"): "gone",
+    # 확인(6d): 사람의 답, 또는 기다리던 호출이 떠났다 — 둘 다 바로 지워진다
+    ("c", "picked", "close:user_answered"): "gone",
+    ("c", "picked", "close:undeliverable"): "gone",
 }
 
-#: 세울 수 없는 칸 — q 는 줄 서지 않고(봉투 없음), 닫히면 바로 지워진다
-UNREACHABLE = {("q", "queued"), ("q", "closed")}
+#: 세울 수 없는 칸 — q·c 는 줄 서지 않고(봉투 없음), 닫히면 바로 지워진다
+UNREACHABLE = {("q", "queued"), ("q", "closed"), ("c", "queued"), ("c", "closed")}
 
 
 def _book_with(kind: str, state: str) -> RequestBook:
@@ -50,6 +53,9 @@ def _book_with(kind: str, state: str) -> RequestBook:
         return book
     if kind == "q":
         book.open_question("x-1", "agent:a", "user:dj", "?")
+        return book
+    if kind == "c":
+        book.open_confirm("x-1", "main", "rm?")
         return book
     env = {
         "r": E.request("x-1", "main", "agent:a", "do"),
@@ -94,8 +100,8 @@ def test_row_transition_table(kind, state, op):
 
 def test_table_size():
     """칸 수 — 보고용 숫자를 고정한다(허용 칸 + 금지 칸 = 전체)."""
-    assert len(CELLS) == 3 * 4 * 10 - 2 * 10
-    assert len([c for c in CELLS if c in EXPECT]) == len(EXPECT) == 14
+    assert len(CELLS) == 4 * 4 * 10 - 4 * 10
+    assert len([c for c in CELLS if c in EXPECT]) == len(EXPECT) == 16
 
 
 @pytest.mark.parametrize(
@@ -184,6 +190,21 @@ class TestQuestions:
 
     def test_open_questions(self):
         assert [r.rid for r in self._book().open_questions()] == ["q-6"]
+
+    def test_a_confirm_is_neither_a_question_nor_a_debt(self):
+        """c 줄(6d)은 질문·빚·요청 목록 어디에도 들지 않는다 — 모델 입력을 짓는 목록이 c 를 모른다."""
+        book = self._book()
+        book.open_confirm("c-9", "agent:a", "rm?")
+        assert [r.rid for r in book.open_confirms()] == ["c-9"]
+        assert [r.rid for r in book.open_questions()] == ["q-6"]
+        everyone = {r.src for r in book.rows()} | {r.dst for r in book.rows()}
+        for addr in everyone:
+            for rows in (
+                book.owed_by(addr),
+                book.awaited_by(addr),
+                book.open_requests(addr),
+            ):
+                assert "c-9" not in [r.rid for r in rows]
 
     def test_open_human_is_picked_at_once_without_an_envelope(self):
         book = RequestBook()

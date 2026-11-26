@@ -1,4 +1,4 @@
-"""헤더 칩·팝오버 렌더링 + confirm-stall 경고 — CSS/타이밍 부류 회귀 가드.
+"""헤더 칩·팝오버 렌더링 + 연결 고갈 속 확인 클릭 — CSS/타이밍 부류 회귀 가드.
 
 칩 사가(v7.1.0)의 실버그 두 개 — 칩 overflow 세로 클리핑, flex 컨테이너
 ellipsis 무동작 — 는 레이아웃 엔진 없이는 원리적으로 못 잡는 부류라
@@ -346,16 +346,18 @@ class TestMcpChip:
         )
 
 
-class TestConfirmStallWarning:
-    def test_warning_appears_when_starved_and_clears_on_recovery(self, browser, stack):
-        """origin 당 6연결 고갈 실재현(수용된 잔여 케이스) — 클릭이 갇히면
-        3초 뒤 경고, 연결이 풀리면 해결+경고 정리 (v7.2.0 ⓔ)."""
+class TestConfirmUnderStarvation:
+    def test_a_click_stuck_behind_a_starved_pool_lands_when_it_frees(
+        self, browser, stack
+    ):
+        """origin 당 6연결 고갈 실재현(수용된 잔여 케이스) — 갇힌 확인 클릭은 연결이 풀리면 닿는다(v7.2.0 ⓔ).
+        6d: 확인만의 3초 지연 경고는 없다 — 질문 항목과 같은 보내기다."""
         results: list = []
         stack.start_confirm_loop(results)
         ctx = browser.new_context()
         victim = ctx.new_page()
         victim.goto(stack.url)
-        victim.wait_for_selector(".ask-main .confirm-btn", timeout=8000)
+        victim.wait_for_selector(".ask-confirm .confirm-btn", timeout=8000)
         holders = []
         for _ in range(5):
             t = ctx.new_page()
@@ -365,11 +367,9 @@ class TestConfirmStallWarning:
                 pass  # 풀 경계에서 로드가 밀릴 수 있음 — 보유만 하면 됨
             holders.append(t)
         victim.wait_for_timeout(800)
-        victim.click(".ask-main .confirm-btn >> nth=0")
-        victim.wait_for_selector(".ask-main .confirm-stall", timeout=8000)
+        victim.click(".ask-confirm .confirm-btn >> nth=0")
+        victim.wait_for_timeout(500)
         holders[0].close()  # 슬롯 해방 → 갇힌 POST flush
         assert _wait(lambda: bool(results), timeout=8)
-        assert _wait(
-            lambda: victim.locator(".ask-main .confirm-stall").count() == 0, timeout=8
-        )
+        assert victim.locator(".confirm-stall").count() == 0
         ctx.close()

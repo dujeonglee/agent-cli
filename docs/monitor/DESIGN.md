@@ -409,7 +409,8 @@ web_instance_is_active(renderer, server, agent_registry, monitors)
 `renderer.confirm` 을 부르면 안 된다.** `interactive_lock`(`render/base.py`)이
 모든 사용자 읽기를 직렬화하는데, 턴이 도는 중에 백그라운드 스레드가 그 락을
 잡으면 교착이다. 등록 시점 확인은 그 호출이 **메인 스레드에서만** 일어남을
-보장한다.
+보장한다. (6d·v10.177.0 에서 바뀜: 확인은 번호 항목 `c-N` 이고 그 호출을 건 루프의 스레드가 그 자리에서 기다린다 —
+잠금 교착은 없어졌지만, 폴링 스레드에는 기다릴 호출도 멈출 런도 없어 등록 시점 확인은 그대로다.)
 
 **초판의 "`shell.py` 와 똑같이 거부"는 실제로 같지 않았다** (2판 정정). shell
 확인은 위험 **키워드 게이트**(`rm`/`rmdir`/`mv`, `shell.py:20`)이고

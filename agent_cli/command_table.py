@@ -49,6 +49,15 @@ COMMANDS: tuple[Command, ...] = (
         "Close an open question without an answer",
         frozenset({WEB, RUN}),
     ),
+    Command(
+        "/approve <c-N> [note]", "Approve a confirmation once", frozenset({WEB, RUN})
+    ),
+    Command(
+        "/allow <c-N> [note]",
+        "Approve, and do not ask again this session",
+        frozenset({WEB, RUN}),
+    ),
+    Command("/deny <c-N> [reason]", "Deny a confirmation", frozenset({WEB, RUN})),
     Command("@agents", "List available agents", frozenset({WEB, RUN})),
     Command("@<agent> <task>", "Delegate a task to an agent", frozenset({WEB, RUN})),
     Command(
@@ -128,6 +137,8 @@ def command_kind(message: str) -> str | None:
         return "stop"
     if head and head[0] in ("/questions", "/answer", "/close"):
         return "question"
+    if head and head[0] in ("/approve", "/allow", "/deny"):
+        return "confirm"
     if message.startswith("/") and looks_like_slash_command(message):
         return "skill"
     return None

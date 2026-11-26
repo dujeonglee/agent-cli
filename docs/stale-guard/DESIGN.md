@@ -127,6 +127,8 @@ history.jsonl 에서 `bench/harbor/atif.py` 가 만든다:
 2. **두 번째 발화부터 — 웹의 main 런에서만 멈추고 묻는다.** 조건:
    `Renderer.can_pause_for_human()`(기본 False, `WebRenderer` True — CLI 의 `can_prompt` 를 쓰지
    않는다: `run` 은 묻지 않는 것이 결정이다) 그리고 `kind.tracks_run_authors`(main).
+   - (6d·v10.177.0 에서 바뀜: 멈춤 질문도 번호 항목 `c-N` — Continue=approve·Stop=deny, 기본값 없음, 작성자는 답의
+     `Decision.by`, 기다리는 동안의 정지(■·띠의 Stop — 언제나 `/api/stop`)도 Stop 과 같은 `stop_note`. 아래는 종전 서술.)
    - 기존 `confirm` 그대로(새 입력 종류 없음): options `c` "Continue" · `s` "Stop",
      `default_key="c"`, 프롬프트에 N·시작 턴·반복 호출 세 줄까지(`도구 인자 → 결과 첫 줄`). 트레이의
      코멘트 칸이 Hint 다.

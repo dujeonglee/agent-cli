@@ -81,7 +81,13 @@ class ViewImageTool(Tool):
         # 민감 경로 게이트 — read_file 과 같은 축(자격증명 사전)만 건다.
         from agent_cli.tools._confine import guard as _path_guard
 
-        denied = _path_guard([path], "view_image", check_workspace=False)
+        denied = _path_guard(
+            [path],
+            "view_image",
+            check_workspace=False,
+            owner=getattr(ctx, "owner", None) or "main",
+            stopped=getattr(ctx, "stopped", None),
+        )
         if denied:
             return ToolResult(False, error=denied)
         try:

@@ -6,7 +6,7 @@
 - 쌍: 턴이 ctx 에 남긴 레코드 → (op 이름, 관찰 본문). 묶음은 op 별 조각. 저장 안 된 시도는 턴이
   아니다(None).
 - 개입: 모든 발화 = failures.jsonl ``stale_loop`` + 렌더러 ``stale_loop(info)``. 웹 main 은 두
-  번째 발화부터 기존 confirm 으로 멈추고 묻는다(c+코멘트 = Hint 가 입력 큐로, s = Stop).
+  번째 발화부터 확인(`c-N`, 6d)으로 멈추고 묻는다(Continue+말 = Hint 가 입력 큐로, Stop·정지 = Stop).
   run(Minimal)은 묻지 않는다. 모델 입력은 Hint 의 사용자 메시지 외에 그대로다.
 """
 
@@ -24,7 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 from rich.console import Console
 
-from agent_cli import render
+from agent_cli import confirm, render, session_slots
 from agent_cli.context.manager import ContextManager
 from agent_cli.instance_file import read_status_file
 from agent_cli.main_input import MainInput, intake_item
@@ -36,7 +36,6 @@ from agent_cli.recovery.detectors import (
     StaleGuard,
     stale_turn_pairs,
 )
-from agent_cli.render.base import interactive_lock
 from agent_cli.render.minimal import MinimalRenderer
 from agent_cli.render.web import WebRenderer
 from agent_cli.render.web_hub import WebConnection
@@ -44,6 +43,7 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.web.server import WebServer, create_app
 from tests.loop_ports import TEST_PORTS, make_ports
 from tests.loopkit import run_loop
+from tests.test_agents_live import make_registry
 
 
 def _feed(guard: StaleGuard, turns, *, work=None) -> list[int]:
@@ -295,21 +295,6 @@ class TestWebRenderer:
             MinimalRenderer(Console(file=io.StringIO())).can_pause_for_human() is False
         )
 
-    def test_confirm_author_is_the_answering_viewer(self):
-        r = WebRenderer()
-        conn = WebConnection(id="c1")
-        r.hub.register(conn)
-        r.hub.set_nickname("c1", "dj")
-        threading.Timer(
-            0.2,
-            lambda: r.push_confirm({"key": "c", "comment": "hint", "conn_id": "c1"}),
-        ).start()
-        from agent_cli.render.base import ConfirmOption
-
-        got = r.confirm("q", [ConfirmOption("c", "Continue")], default_key="c")
-        assert got == ("c", "hint") and r.confirm_author() == "dj"
-        assert r.confirm_author() == ""  # 한 번 읽으면 비운다
-
 
 class TestMinimalRenderer:
     def test_one_dim_line_per_fire(self):
@@ -369,6 +354,7 @@ def _complete(result="done", answers=None) -> LLMResponse:
 
 @pytest.fixture
 def web(tmp_path):
+    """웹 렌더러 + 확인을 걸 레지스트리(세션 슬롯) — 멈춤 질문은 장부의 확인이다(6d)."""
     r = WebRenderer(session_dir=str(tmp_path / "status"))
     (tmp_path / "status").mkdir()
     conn = WebConnection(id="c1")
@@ -376,7 +362,11 @@ def web(tmp_path):
     r.hub.set_nickname("c1", "dj")
     prev = render.get_renderer()
     render.set_renderer(r)
+    reg = make_registry(tmp_path / "reg")
+    session_slots.set_agent_registry(reg)
     yield r, conn
+    session_slots.set_agent_registry(None)
+    reg.shutdown_all()
     render.set_renderer(prev)
 
 
@@ -409,17 +399,19 @@ def _status_once_awaiting(status_dir, deadline: float) -> dict | None:
     return status
 
 
-def _answer_when_asked(r: WebRenderer, key: str, comment: str, seen: dict):
-    """뷰어 대역 — confirm 이 뜨면 그때의 상태를 적고 답한다."""
+def _answer_when_asked(r: WebRenderer, action: str, comment: str, seen: dict):
+    """뷰어 대역 — 확인이 열리면 그때의 상태를 적고 그 번호로 답한다(트레이의 길, 뷰어 ``dj``)."""
+    reg = session_slots.get_agent_registry()
 
     def run():
         deadline = time.time() + 20
         while time.time() < deadline:
-            if r.awaiting_input_kind() == "confirm":
+            items = (r.hub.sticky_payload("open_confirms") or {}).get("confirms")
+            if items:
                 seen["stuck"] = r.hub.sticky_payload("stuck")
-                seen["prompt"] = r.hub.sticky_payload("input_required")
+                seen["item"] = items[0]
                 seen["status"] = _status_once_awaiting(r._status_dir, deadline)
-                r.push_confirm({"key": key, "comment": comment, "conn_id": "c1"})
+                reg.answer_confirm(items[0]["id"], action, comment, by="user:dj")
                 return
             time.sleep(0.02)
 
@@ -464,7 +456,9 @@ class TestWebMain:
             "asking": False,
         }
         assert r.hub.sticky_payload("stuck") is None
-        assert r.awaiting_input_kind() is None  # 첫 발화는 묻지 않는다
+        assert (
+            not session_slots.get_agent_registry().open_human_confirms()
+        )  # 첫 발화는 묻지 않는다
         recs = _failures(ctx)
         assert [x["failure_signal"] for x in recs] == ["stale_loop"]
         assert recs[0]["turn"] == 4
@@ -494,7 +488,7 @@ class TestWebMain:
         provider.call.side_effect = respond
         q = MainInput()
         seen: dict = {}
-        viewer = _answer_when_asked(r, "c", "read the WAL file instead", seen)
+        viewer = _answer_when_asked(r, "approve", "read the WAL file instead", seen)
         result = run_loop(
             ports=_main_ports(q),
             query="count",
@@ -506,12 +500,15 @@ class TestWebMain:
         )
         viewer.join(5)
         assert result.success, result.error
-        # 두 번째 발화(7턴)에서 기존 confirm 으로 멈췄다
-        prompt = seen["prompt"]
-        assert prompt["kind"] == "confirm" and prompt["default_key"] == "c"
-        assert [o["key"] for o in prompt["options"]] == ["c", "s"]
-        assert "No new results for 6 turns" in prompt["prompt"]
-        assert "→ 17" in prompt["prompt"]
+        # 두 번째 발화(7턴)에서 확인(c-N)으로 멈췄다 — Continue(approve)·Stop(deny), 기본값 없음
+        item = seen["item"]
+        assert re.fullmatch(r"c-\d+", item["id"]) and item["asker"] == "main"
+        assert item["choices"] == [
+            {"action": "approve", "label": "Continue"},
+            {"action": "deny", "label": "Stop"},
+        ]
+        assert "No new results for 6 turns" in item["title"]
+        assert "→ 17" in item["detail"]
         assert seen["stuck"]["asking"] is True
         assert seen["status"]["awaiting_input"] is True
         assert seen["status"]["stuck"]["asking"] is True
@@ -541,7 +538,7 @@ class TestWebMain:
         provider = MagicMock()
         provider.call.side_effect = [_shell(i) for i in range(1, 8)] + [_complete()]
         seen: dict = {}
-        viewer = _answer_when_asked(r, "s", "", seen)
+        viewer = _answer_when_asked(r, "deny", "", seen)
         result = run_loop(
             ports=_main_ports(MainInput()),
             query="count",
@@ -563,36 +560,30 @@ class TestWebMain:
             for e in ends
         )
 
-    def test_confirm_is_called_without_holding_the_interactive_lock(
-        self, caps, tmp_path, monkeypatch
+    def test_a_stop_while_paused_ends_the_run_like_stop(
+        self, web, caps, tmp_path, monkeypatch
     ):
-        """락 순서: 디스패처의 이 자리는 락을 잡지 않은 채 confirm 을 부른다 —
-        confirm 이 `interactive_lock` 을 처음 잡는다(ask·위험 셸 확인과 같은 순서)."""
-        r = WebRenderer()
-        held: list[bool] = []
-
-        def confirm(prompt, options, *, default_key, **kw):
-            held.append(interactive_lock._is_owned())
-            return ("c", "")
-
-        monkeypatch.setattr(r, "confirm", confirm)
-        prev = render.get_renderer()
-        render.set_renderer(r)
-        try:
-            provider = MagicMock()
-            provider.call.side_effect = [_shell(i) for i in range(1, 8)] + [_complete()]
-            run_loop(
-                ports=_main_ports(MainInput()),
-                query="count",
-                provider=provider,
-                capabilities=caps,
-                model="m",
-                ctx=ContextManager(session_dir=tmp_path / "s"),
-                max_turns=20,
-            )
-        finally:
-            render.set_renderer(prev)
-        assert held == [False]
+        """멈춰 묻는 동안의 정지(■·띠의 Stop — `/api/stop`)는 Stop 과 같다(E12·E13): 같은 런 끝 줄로 끝난다."""
+        monkeypatch.setattr(
+            confirm,
+            "ask_person",
+            lambda *a, **k: ("c-1", confirm.Decision(confirm.STOPPED)),
+        )
+        provider = MagicMock()
+        provider.call.side_effect = [_shell(i) for i in range(1, 8)] + [_complete()]
+        result = run_loop(
+            ports=_main_ports(MainInput()),
+            query="count",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ContextManager(session_dir=tmp_path / "s"),
+            max_turns=20,
+            graceful_interrupt=True,
+        )
+        assert not result.success
+        assert "Stopped by the user after 6 turns without new results." in result.error
+        assert provider.call.call_count == 7
 
 
 class TestNotAsked:
@@ -611,10 +602,16 @@ class TestNotAsked:
         )
         return result, ctx
 
-    def test_run_minimal_prints_lines_and_records_but_never_asks(self, caps, tmp_path):
+    def test_run_minimal_prints_lines_and_records_but_never_asks(
+        self, caps, tmp_path, monkeypatch
+    ):
         buf = io.StringIO()
         r = MinimalRenderer(Console(file=buf, force_terminal=False, width=120))
-        r.confirm = MagicMock(side_effect=AssertionError("run 은 묻지 않는다"))
+        monkeypatch.setattr(
+            confirm,
+            "ask_person",
+            MagicMock(side_effect=AssertionError("run 은 묻지 않는다")),
+        )
         prev = render.get_renderer()
         render.set_renderer(r)
         try:
@@ -629,9 +626,14 @@ class TestNotAsked:
         ]
         assert [x["failure_signal"] for x in _failures(ctx)] == ["stale_loop"] * 2
 
-    def test_non_main_web_loop_records_but_does_not_ask(self, web, caps, tmp_path):
-        r, _conn = web
-        r.confirm = MagicMock(side_effect=AssertionError("서브루프는 묻지 않는다"))
+    def test_non_main_web_loop_records_but_does_not_ask(
+        self, web, caps, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            confirm,
+            "ask_person",
+            MagicMock(side_effect=AssertionError("서브루프는 묻지 않는다")),
+        )
         result, ctx = self._run(caps, tmp_path, ports=TEST_PORTS)
         assert result.success
         assert [x["detail"]["fires"] for x in _failures(ctx)] == [1, 2]
@@ -644,7 +646,8 @@ class TestWebSource:
         js = js_text("stuck")
         assert 'es.addEventListener("stuck"' in js
         assert '"🔁 No new results for "' in js
-        assert '"api/stop"' in js and 'kind: "confirm", key: "s"' in js
+        # Stop 은 언제나 정지 하나 — 멈춰 묻는 중이어도 확인에 답하지 않는다(정지가 기다림을 깨운다, 6d)
+        assert '"api/stop"' in js and '"confirm"' not in js and "api/input" not in js
         order = module_order()
         assert order.index("stuck") < order.index("channels")
 
@@ -660,7 +663,7 @@ class TestAutoApproveDoesNotSkipThePause:
         provider = MagicMock()
         provider.call.side_effect = [_shell(i) for i in range(1, 8)] + [_complete()]
         seen: dict = {}
-        viewer = _answer_when_asked(r, "s", "", seen)
+        viewer = _answer_when_asked(r, "deny", "", seen)
         result = run_loop(
             ports=_main_ports(MainInput()),
             query="count",
@@ -672,8 +675,8 @@ class TestAutoApproveDoesNotSkipThePause:
             graceful_interrupt=True,
         )
         viewer.join(5)
-        # input_required 가 떴고 워커가 사람의 답(s)까지 멈췄다 — 자동 Continue 가 아니다
-        assert seen["prompt"]["kind"] == "confirm"
+        # 확인이 열렸고 워커가 사람의 답(Stop)까지 멈췄다 — 자동 Continue 가 아니다
+        assert seen["item"]["choices"][0]["label"] == "Continue"
         assert seen["stuck"]["asking"] is True
         assert "Stopped by the user after 6 turns" in (result.error or "")
         assert not any(
@@ -683,7 +686,8 @@ class TestAutoApproveDoesNotSkipThePause:
         )
 
     def test_dangerous_shell_confirm_is_still_auto_approved(self, monkeypatch):
-        from agent_cli.tools.shell import _ask_confirmation
+        from agent_cli.tools import _confine
+        from agent_cli.tools import shell as shell_mod
 
         r = WebRenderer()
         r.set_auto_approve(True)
@@ -691,9 +695,16 @@ class TestAutoApproveDoesNotSkipThePause:
         r.observation = lambda content, turn, tool_name=None, success=True: (
             recorded.append((content, tool_name))
         )
-        r.confirm = MagicMock(side_effect=AssertionError("⚡ 에서는 묻지 않는다"))
         monkeypatch.setattr(render, "get_renderer", lambda: r)
-        assert _ask_confirmation("rm -rf build", "rm") == ("y", "")
+        monkeypatch.setattr(confirm, "answerable", lambda: True)
+        monkeypatch.setattr(
+            confirm,
+            "ask_person",
+            MagicMock(side_effect=AssertionError("⚡ 에서는 묻지 않는다")),
+        )
+        monkeypatch.setattr(_confine, "temp_targets_only", lambda c, k: False)
+        monkeypatch.setattr(shell_mod, "_session_allowlist", set())
+        assert shell_mod.confirm_dangerous("rm -rf build") is None
         assert recorded == [
             ("⚡ Auto-approved (no confirmation): rm -rf build", "confirm")
         ]
@@ -714,33 +725,32 @@ class TestAutoApproveDoesNotSkipThePause:
         r.observation = lambda content, turn, tool_name=None, success=True: (
             recorded.append(content)
         )
-        r.confirm = MagicMock(side_effect=AssertionError("⚡ 에서는 묻지 않는다"))
         monkeypatch.setattr(render, "get_renderer", lambda: r)
+        monkeypatch.setattr(confirm, "answerable", lambda: True)
+        monkeypatch.setattr(
+            confirm,
+            "ask_person",
+            MagicMock(side_effect=AssertionError("⚡ 에서는 묻지 않는다")),
+        )
         assert _confine.guard([str(outside / "x")], "write_file") is None
         want = "⚡ Auto-approved (no confirmation): ⚠ write_file touches path(s)"
         assert recorded == [f"{want} outside the workspace"]
 
-    def test_confirm_itself_never_auto_answers(self):
-        """정책은 호출자의 것 — confirm 은 ⚡ 와 무관하게 input_required 를 띄운다."""
-        from agent_cli.render.base import ConfirmOption
-
-        r = WebRenderer()
+    def test_the_confirm_itself_never_auto_answers(self, web):
+        """정책은 호출자의 것 — 확인(레지스트리의 `ask_confirm`)은 ⚡ 와 무관하게 열리고 사람의 답을 기다린다."""
+        r, _conn = web
         r.set_auto_approve(True)
-        threading.Timer(
-            0.3, lambda: r.push_confirm({"key": "s", "comment": ""})
-        ).start()
-        asked: list = []
-        orig = r.set_sticky
-
-        def spy(name, event, payload, **kw):
-            if name == "input_required":
-                asked.append(payload["kind"])
-            return orig(name, event, payload, **kw)
-
-        r.set_sticky = spy
-        got = r.confirm(
+        seen: dict = {}
+        viewer = _answer_when_asked(r, "deny", "", seen)
+        _cid, decision = confirm.ask_person(
             "pause?",
-            [ConfirmOption("c", "Continue"), ConfirmOption("s", "Stop")],
-            default_key="c",
+            "",
+            (
+                confirm.Choice(confirm.APPROVE, "Continue"),
+                confirm.Choice(confirm.DENY, "Stop"),
+            ),
+            owner="main",
+            stopped=None,
         )
-        assert got == ("s", "") and asked == ["confirm"]
+        viewer.join(5)
+        assert decision.action == confirm.DENY and seen["item"]["title"] == "pause?"

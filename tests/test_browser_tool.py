@@ -1235,7 +1235,8 @@ class TestToolDispatch:
             (
                 [str((tmp_path / "r.html").resolve())],
                 "browser",
-                {"check_workspace": False},
+                # 6d: 확인은 이 호출의 소유자·런 정지를 싣는다(직접 부른 run 은 ctx 가 없다)
+                {"check_workspace": False, "owner": "main", "stopped": None},
             )
         ]
         assert len(page.gotos) == n

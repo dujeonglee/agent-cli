@@ -7,6 +7,7 @@ import os
 import re
 import time
 
+from agent_cli import confirm
 from agent_cli import render as render_surface
 from agent_cli.constants import format_duration
 from agent_cli.dialects import try_foreign_parse
@@ -547,6 +548,7 @@ class TurnDispatcher:
             guard.fires >= 2
             and self.cfg.kind.owns_main_view
             and get_renderer().can_pause_for_human()
+            and confirm.answerable()
         )
         self._stale_shown = True
         self._show_stale(asking=asking)
@@ -637,22 +639,16 @@ class TurnDispatcher:
     def _ask_stale(self, calls: list[str]) -> None:
         """웹 main 의 두 번째 발화부터 — 런을 세우고 사람에게 Continue/Stop 을 묻는다.
 
-        기존 ``confirm`` 경로 그대로다(새 입력 종류 없음): 트레이의 확인 항목, 코멘트 칸이
-        Hint. 락: 이 자리(턴 디스패치가 끝난 뒤, `_handle_text_path` 꼬리)의 워커는 락을 하나도
-        잡지 않는다 — ``confirm`` 이 ``interactive_lock`` 을 잡고 그 안에서 렌더러·허브 락을
-        잠깐씩 잡는 순서는 ``ask``·위험 셸 확인과 같다. abort/EOF 는 confirm 규칙대로 기본값
-        Continue."""
-        from agent_cli.render import get_renderer
-        from agent_cli.render.base import ConfirmOption
-
+        안전 확인과 같은 확인(`c-N`, 6d): 트레이의 확인 항목, 말 칸이 Hint. Continue(approve) 는 런을 잇고 남긴 말을
+        사람의 말로 넣는다. Stop(deny) 과 기다리는 동안의 정지(■·띠의 Stop — `/api/stop`)는 같다: 런 끝 줄(``stop_note``)
+        을 남기고 멈춘다. 세션 종료로 멈추면 그 줄은 쓰이지 않는다(`_on_interrupt` 가 먼저 끝난다)."""
         g = self.stale_guard
         n = g.turns_without_new
-        lines = [
-            (
-                f"🔁 No new results for {n} turns (since turn {g.since_turn}) "
-                "— the model may be going in circles."
-            ),
-        ]
+        title = (
+            f"🔁 No new results for {n} turns (since turn {g.since_turn}) "
+            "— the model may be going in circles."
+        )
+        lines = []
         if calls:
             lines.append("Repeated calls:")
             lines.extend(f"  {c}" for c in calls)
@@ -660,14 +656,17 @@ class TurnDispatcher:
             "Continue lets the run go on — a comment is sent to the model as a hint. "
             "Stop ends the run."
         )
-        renderer = get_renderer()
-        key, comment = renderer.confirm(
+        _cid, decision = confirm.ask_person(
+            title,
             "\n".join(lines),
-            [ConfirmOption("c", "Continue"), ConfirmOption("s", "Stop")],
-            default_key="c",
+            (
+                confirm.Choice(confirm.APPROVE, "Continue"),
+                confirm.Choice(confirm.DENY, "Stop"),
+            ),
+            owner=self.cfg.kind.ports.owner,
+            stopped=self.state.stop_event.is_set,
         )
-        author = renderer.confirm_author()
-        if key == "s":
+        if decision.action != confirm.APPROVE:
             self.state.stop_note = (
                 f"Stopped by the user after {n} turns without new results."
             )
@@ -676,10 +675,12 @@ class TurnDispatcher:
             return
         g.acknowledge()
         self._show_stale(asking=False)
-        hint = (comment or "").strip()
+        hint = decision.note
         enqueue = getattr(self.cfg.kind.ports, "enqueue_user_message", None)
         if hint and enqueue is not None:
-            # 사람이 입력창에 친 메시지와 같은 길 — 다음 턴 경계가 흡수해 `u-N` 이 된다
+            # 사람이 입력창에 친 메시지와 같은 길 — 다음 턴 경계가 흡수해 `u-N` 이 된다. 답한 사람의 별명으로
+            # (``user:<별명>`` → 별명, 터미널의 ``user`` → 별명 없음)
+            author = decision.by.partition(":")[2]
             enqueue(hint, author or STALE_HINT_AUTHOR)
 
     def _dispatch_turn(self, llm_text: str, turn, outcome: dict):

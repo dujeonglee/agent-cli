@@ -239,7 +239,11 @@ class MonitorTool(Tool):
             except ValueError as exc:
                 return ToolResult(False, error=BAD_DEADLINE.format(why=exc))
 
-        gate = _gate_command(cond)
+        gate = _gate_command(
+            cond,
+            owner=getattr(ctx, "owner", None) or "main",
+            stopped=getattr(ctx, "stopped", None),
+        )
         if gate:
             return ToolResult(False, error=gate)
         # `command` 는 셸 권한이다 — `shell` 이 없는 루프(감사자처럼 읽기 전용
@@ -283,16 +287,14 @@ class MonitorTool(Tool):
         )
 
 
-def _gate_command(cond) -> str | None:
+def _gate_command(cond, *, owner: str = "main", stopped=None) -> str | None:
     """`command` 조건은 임의 명령을 돈다 — **등록 시점에** 게이트한다.
 
     발화 시점이 아닌 이유 둘:
 
     1. 사람은 에이전트가 monitor 를 거는 순간엔 있지만 새벽 3시 발화 때는 없다.
-    2. **폴링 스레드에서 `renderer.confirm` 을 부르면 안 된다.** `interactive_lock`
-       이 모든 사용자 읽기를 직렬화하는데, 턴이 도는 중에 백그라운드 스레드가
-       그 락을 잡으면 교착이다. 등록 시점 확인은 그 호출이 메인 스레드에서만
-       일어남을 보장한다.
+    2. 확인은 그 도구 호출이 그 자리에서 기다리는 일이다(6d — `c-N`). 폴링 스레드에는
+       기다릴 호출도, 멈출 런도 없다 — 등록 시점 확인은 그 호출을 건 루프의 것이다.
 
     정책은 `shell` 과 **같은 함수를 재사용**한다. 초판 설계는 "shell.py 와
     똑같이 거부"라고 적었지만 실제로는 달랐다 — shell 확인은 위험 키워드
@@ -310,11 +312,17 @@ def _gate_command(cond) -> str | None:
     from agent_cli.tools.shell import confirm_dangerous
 
     cmd = cond.command
-    denied = confirm_dangerous(cmd)
+    denied = confirm_dangerous(cmd, owner=owner, stopped=stopped)
     if denied:
         return denied
     if _confine.enabled():
-        err = _confine.guard(_confine.extract_shell_paths(cmd), "monitor", command=cmd)
+        err = _confine.guard(
+            _confine.extract_shell_paths(cmd),
+            "monitor",
+            command=cmd,
+            owner=owner,
+            stopped=stopped,
+        )
         if err:
             return err
     return None

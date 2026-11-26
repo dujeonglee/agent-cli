@@ -149,7 +149,7 @@ class TestDispatchEditBatchHooks:
         런이 죽지 않고, post/이력도 단건 동형으로 실행된다."""
         import agent_cli.tools.edit_file as ef
 
-        def boom(path, edits):
+        def boom(path, edits, **_kw):
             raise TypeError("kaboom")
 
         monkeypatch.setattr(ef, "apply_edits_batch_parts", boom)

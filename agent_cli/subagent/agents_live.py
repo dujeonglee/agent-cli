@@ -75,6 +75,7 @@ from agent_cli.subagent.agent_mail import (
     view_of_main_mail,
 )
 from agent_cli.subagent.agents_state import WAITING
+from agent_cli.subagent.confirms import ConfirmsMixin
 from agent_cli.subagent.delegation_checks import depth_or_recursion_refusal
 from agent_cli.subagent.question_port import (
     REPLY_REQUESTER_GONE,
@@ -313,7 +314,7 @@ class AgentInstance:
         }
 
 
-class AgentRegistry(QuestionsMixin):
+class AgentRegistry(QuestionsMixin, ConfirmsMixin):
     """main 루프 수명의 teammate 소유자 + 회신 mailbox.
 
     ``runner`` 는 종류(`ResidentLoop`)의 엔진 — 기본 `run_loop`; 테스트가 가짜

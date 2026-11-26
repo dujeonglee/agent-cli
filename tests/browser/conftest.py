@@ -20,8 +20,6 @@ import time
 
 import pytest
 
-from agent_cli.render.base import ConfirmOption
-
 pytestmark = pytest.mark.browser
 
 
@@ -61,7 +59,7 @@ def wait_held(page, held: list, n: int, timeout: float = 8.0) -> bool:
 class WebStack:
     """실 uvicorn 위의 WebRenderer+WebServer — 브라우저가 붙는 대상.
 
-    worker 는 테스트가 직접 건다 (``start_confirm_loop`` / ``start_confirm``)
+    worker 는 테스트가 직접 건다 (``start_confirm_loop`` / ``start_confirm`` / ``ask``)
     — 시나리오마다 필요한 대기 상대가 다르므로 픽스처는 전송층만 소유.
     """
 
@@ -97,6 +95,12 @@ class WebStack:
             self.renderer, token=self.token, ctx=self.ctx, binding=self.binding
         )
         self.server.agent_registry = AgentRegistry(pathlib.Path(self._ctxdir))
+        # 확인(6d)은 세션의 레지스트리에 걸고 렌더러로 그린다 — 실 부트와 같은 두 전역
+        from agent_cli import render, session_slots
+
+        self._prev_renderer = render.get_renderer()
+        render.set_renderer(self.renderer)
+        session_slots.set_agent_registry(self.server.agent_registry)
         self.auditor = SimpleNamespace(enabled=False, in_flight=0)
         self.server.auditor = self.auditor
         # 실 부트(main.py web)와 같은 배선 — 감사 진행 수가 바뀌면 노브 상태를 다시 낸다
@@ -141,44 +145,44 @@ class WebStack:
         return True
 
     def stop(self):
-        # ★worker 가 다음 confirm/ask 에서 블록된 채 남으면 모듈-전역
-        # interactive_lock 을 쥐고 있어 다음 테스트가 락을 못 얻는다
-        # (테스트 간 간섭). should_exit + push_abort 로 블록을 풀어
-        # 워커 루프가 빠져나가게 한다.
+        # 확인을 기다리는 워커는 그 런의 정지(`should_exit`)로 깬다 — 제품의 정지와 같은 길(6d)
+        from agent_cli import render, session_slots
+
         self._uv.should_exit = True
-        for _ in range(len(self._workers) + 1):
-            self.renderer.push_abort()
         for w in self._workers:
             w.join(timeout=3)
         self._thread.join(timeout=5)
+        session_slots.set_agent_registry(None)
+        render.set_renderer(self._prev_renderer)
 
     # ── worker 헬퍼 ──
+    def ask(self, title="Dangerous command detected (`rm`)", *, choices=None, **kw):
+        """확인 하나를 열고 답을 기다린다 — ``(답, 남긴 말)``, 정지로 깨면 ``("stopped", "")``."""
+        from agent_cli import confirm
+
+        _cid, d = confirm.ask_person(
+            title,
+            "",
+            choices or confirm.safety_choices("once", "always"),
+            owner="main",
+            stopped=lambda: self._uv.should_exit,
+            **kw,
+        )
+        return (d.action, d.note)
+
     def start_confirm_loop(self, results: list, command=None, danger_spans=None):
-        """접속자가 생기면 y/n/a confirm 을 반복해서 묻는 worker —
-        해결된 (key, comment) 를 results 에 적재 (confirm_repro 승격).
+        """접속자가 생기면 확인을 거듭 여는 worker — 답 ``(답, 남긴 말)`` 을 results 에 적재.
 
         ``command``/``danger_spans`` 를 주면 위험 명령 강조 경로를 구동한다
-        (구조화 필드로 confirm 에 전달 → 다이얼로그가 명령을 강조 렌더)."""
-        options = [
-            ConfirmOption(key="y", label="once", aliases=("yes",)),
-            ConfirmOption(key="n", label="deny", aliases=("no",)),
-            ConfirmOption(key="a", label="always", aliases=("always",)),
-        ]
+        (구조화 필드로 확인에 실림 → 트레이가 명령을 강조 렌더)."""
 
         def worker():
             if not self.wait_connected():
                 return
             while not self._uv.should_exit:
-                try:
-                    res = self.renderer.confirm(
-                        "\n⚠ Dangerous command detected. Allow?",
-                        options,
-                        default_key="n",
-                        command=command,
-                        danger_spans=danger_spans,
-                    )
-                except EOFError:
-                    return  # stop() 의 push_abort — 락 해제하고 종료
+                res = self.ask(command=command, danger_spans=danger_spans)
+                if res[0] == "stopped":
+                    return
                 results.append(res)
                 time.sleep(0.1)
 
@@ -187,17 +191,11 @@ class WebStack:
         t.start()
 
     def start_confirm(self, results: list, question: str = "Allow this?"):
-        """확인 대화 1회 — ``(key, comment)`` 를 results 에 적재(6b: main 의 막는 물음은 확인 대화뿐이다)."""
-        options = [
-            ConfirmOption(key="y", label="once"),
-            ConfirmOption(key="n", label="deny"),
-        ]
+        """확인 1회 — ``(답, 남긴 말)`` 을 results 에 적재."""
 
         def worker():
             if self.wait_connected():
-                results.append(
-                    self.renderer.confirm(question, options, default_key="n")
-                )
+                results.append(self.ask(question))
 
         t = threading.Thread(target=worker, daemon=True)
         self._workers.append(t)
