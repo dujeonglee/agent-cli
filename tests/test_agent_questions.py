@@ -786,7 +786,7 @@ class TestFlipToolMount:
                 active_tools=["shell"],
                 ports=make_ports(questions=questions, message_handler=message_handler),
             )
-            return list(loop.tools_list)
+            return list(loop._config.tools_list)
 
         assert "answer" not in _BUILTIN_ORDER
         for port in (None, reg.question_port(a), reg.question_port(None)):
@@ -906,7 +906,7 @@ class TestFlipPrompt:
                 ports=make_ports(questions=questions),
             )
             loop._prompt.rebuild()  # __init__ 은 조립만 — 빌드는 런 시작에
-            assert "ask" in loop.tools_list
+            assert "ask" in loop._config.tools_list
             return loop.system
 
         resident = system_for(reg.question_port(a), "r")

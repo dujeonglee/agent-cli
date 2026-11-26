@@ -277,22 +277,26 @@ def _loop(active=None, **kw):
 class TestAdvertised:
     def test_advertised_in_a_main_loop(self):
         """v10.110.0: 전체 도구의 루프엔 지연 도구가 있으니 `tool_help` 가 붙는다."""
-        assert "tool_help" in _loop().tools_list
+        assert "tool_help" in _loop()._config.tools_list
 
     def test_not_advertised_without_deferred_tools(self):
-        assert "tool_help" not in _loop(active=["read_file", "shell"]).tools_list
+        assert (
+            "tool_help" not in _loop(active=["read_file", "shell"])._config.tools_list
+        )
 
     def test_mounted_when_a_deferred_tool_remains(self, monkeypatch):
         """allowed-tools 에 없어도 붙는다(force_mount) — 지연 도구가 남은 루프면."""
         _defer(monkeypatch, "fetch")
-        assert "tool_help" in _loop(active=["read_file", "fetch"]).tools_list
+        assert "tool_help" in _loop(active=["read_file", "fetch"])._config.tools_list
         # 지연 도구가 목록에 없으면 붙지 않는다
-        assert "tool_help" not in _loop(active=["read_file", "shell"]).tools_list
+        assert (
+            "tool_help" not in _loop(active=["read_file", "shell"])._config.tools_list
+        )
 
     def test_the_loop_binds_its_own_guide(self):
         loop = _loop()
         guide = loop._tools._run_ctx().tool_guide("shell")
-        assert guide == tool_guide_text("shell", loop.tools_list, loop.dialect)
+        assert guide == tool_guide_text("shell", loop._config.tools_list, loop.dialect)
 
 
 def _fake_tool(name: str) -> Tool:

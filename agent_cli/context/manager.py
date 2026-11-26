@@ -190,7 +190,7 @@ def clamp_compaction_ratio(ratio: float) -> float:
 
 # NOTE: oversized single-output protection lives in the loop now, not here.
 # A tool observation larger than ``context_window / 10`` is replaced with a
-# narrow-it nudge at the result→observation seam (``AgentLoop._tool_observation``)
+# narrow-it nudge at the result→observation seam (``ToolBridge._tool_observation``)
 # before it ever reaches ``add`` — per-tool via ``Tool.apply_oversized_cap`` /
 # ``Tool.render_observation``. ``add`` is therefore pure storage: no message it
 # receives can blow past the window. (Replaced the earlier chunked-spill record.)

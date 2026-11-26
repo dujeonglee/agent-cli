@@ -1984,7 +1984,7 @@ class TestToolPolicyDeclarations:
             active_tools=list(active_tools) if active_tools else None,
             ports=make_ports(message_handler=message_handler),
         )
-        return list(loop.tools_list)
+        return list(loop._config.tools_list)
 
     def test_equivalent_to_legacy_for_all_combinations(self, tmp_path):
         """(depth 상한 여부) × (ctx 유무) × (handler 유무) × (active_tools
@@ -2278,10 +2278,10 @@ class TestAskToolAvailability:
         )
 
     def test_ask_available_with_a_question_port(self, caps, tmp_path):
-        assert "ask" in self._loop(caps, tmp_path, object()).tools_list
+        assert "ask" in self._loop(caps, tmp_path, object())._config.tools_list
 
     def test_ask_hidden_without_a_question_port(self, caps, tmp_path):
-        assert "ask" not in self._loop(caps, tmp_path, None).tools_list
+        assert "ask" not in self._loop(caps, tmp_path, None)._config.tools_list
 
 
 class TestGracefulInterrupt:
@@ -2444,11 +2444,11 @@ class TestGracefulInterrupt:
             model="m",
             stop_event=parent.stop_event,
         )
-        assert parent._interrupt_check() is False
-        assert child._interrupt_check() is False
+        assert parent._llm._interrupt_check() is False
+        assert child._llm._interrupt_check() is False
         parent.stop_event.set()
-        assert parent._interrupt_check() is True
-        assert child._interrupt_check() is True  # one Ctrl+C reaches the child
+        assert parent._llm._interrupt_check() is True
+        assert child._llm._interrupt_check() is True  # one Ctrl+C reaches the child
 
     def test_interrupt_midstream_discards_partial(self, caps, tmp_path):
         """A stream broken mid-generation (provider returns
@@ -3128,7 +3128,7 @@ class TestAgentLoopClass:
         assert loop.model == "m"
         assert loop.verbose is True
         assert loop.skill_name == "summarize"
-        assert "summarize" in loop.skill_stack
+        assert "summarize" in loop._config.skill_stack
 
     def test_derived_state(self, caps):
         from tests.loopkit import make_loop
@@ -3143,7 +3143,7 @@ class TestAgentLoopClass:
             max_depth=2,
         )
         # include_delegate removed — delegate in tools_list
-        assert "complete" in loop.tools_list
+        assert "complete" in loop._config.tools_list
 
     def test_should_continue(self, caps):
         from tests.loopkit import make_loop
@@ -4561,7 +4561,7 @@ class TestLoopConfigStateOwnership:
 
     def test_config_properties_are_read_only(self):
         loop = self._bare()
-        assert loop.model == "m1" and loop.tools_list == ["shell"]
+        assert loop.model == "m1" and loop._config.tools_list == ["shell"]
         try:
             loop.model = "other"
         except AttributeError:
@@ -4706,14 +4706,12 @@ class TestPR3Collaborators:
         assert llm._interrupt_check() is True
         assert llm.overflow_retries == 0
 
-    def test_sentinels_are_module_constants_shared_via_loop(self):
-        from agent_cli.loop.state import _CONTINUE, _RETRY
+    def test_loop_parts_share_one_config_and_state(self):
         from tests.loopkit import make_loop
 
         loop = make_loop(
             ports=TEST_PORTS, query="q", provider=None, capabilities=None, model="m"
         )
-        assert loop._CONTINUE is _CONTINUE and loop._RETRY is _RETRY
         # 위임 표면: loop 의 브리지/디스패처/LLM 콜러가 같은 cfg/state 공유
         assert loop._dispatch.cfg is loop._config and loop._llm.cfg is loop._config
         assert loop._dispatch.state is loop._state is loop._llm.state

@@ -525,7 +525,7 @@ class TestLoopHookIntegration:
         runner = HookRunner(hook_dirs=[d])
         loop = self._make_loop(tmp_path, hook_runner=runner)
 
-        result = loop._dispatch_tool_with_hooks("shell", {"command": "rm -rf /"})
+        result = loop._tools._dispatch_tool_with_hooks("shell", {"command": "rm -rf /"})
         assert not result.success
         assert "not allowed" in result.error
 
@@ -546,7 +546,7 @@ class TestLoopHookIntegration:
 
         with patch("agent_cli.loop.tool_bridge._execute_tool") as mock_exec:
             mock_exec.return_value = ToolResult(True, output="ok")
-            loop._dispatch_tool_with_hooks("shell", {"command": "rm -rf /"})
+            loop._tools._dispatch_tool_with_hooks("shell", {"command": "rm -rf /"})
             # The modified input should have been used, forwarded via a
             # RunContext whose session_dir defaults to None (loop has no ctx).
             mock_exec.assert_called_once()
@@ -576,6 +576,8 @@ class TestLoopHookIntegration:
 
         with patch("agent_cli.loop.tool_bridge._execute_tool") as mock_exec:
             mock_exec.return_value = ToolResult(True, output="file contents")
-            result = loop._dispatch_tool_with_hooks("read_file", {"path": "test.py"})
+            result = loop._tools._dispatch_tool_with_hooks(
+                "read_file", {"path": "test.py"}
+            )
         assert result.success
         assert result.output == "file contents"

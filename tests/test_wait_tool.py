@@ -177,7 +177,7 @@ class TestAdvertisedOnlyWhereAWakeExists:
             model="m",
             dialect=get_dialect("json_fc"),
         )
-        return list(loop.tools_list)
+        return list(loop._config.tools_list)
 
     def test_unwired_ports_hide_wait(self):
         assert "wait" not in self._tools(TEST_PORTS)
