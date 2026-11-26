@@ -58,7 +58,7 @@
 | `tools/registry.py` | `openai_function_schemas(tool_names)` — `TOOLS[n].parameters` + 설명(가이드 첫 문단) → OpenAI 함수 형식 | ~40줄 |
 | `loop/llm.py` | 방언이 `server_parsed` 면 `settings.tools` 채움, 문법 비활성 | ~20줄 |
 | `loop/core.py` | `response.tool_calls` 를 배열 텍스트로 렌더(v10.1.4 `_render_server_tool_calls`) — 이미 있음. `call_id` 를 op 에 보존해 레코드로 | ~30줄 |
-| `context/render.py` | `_to_natural_language`: 방언이 `server_parsed` 면 관찰을 `tool` 역할 + `tool_call_id` 로, 같은 턴의 op 여러 개 → 관찰 여러 개 매핑(지금 배치 관찰은 `[k/N]` 한 덩어리 — op 별 분할 필요) | ~120줄 |
+| `context/render.py` | `render_history_message`(구현 때 `_to_natural_language` 를 대신했고, 그 함수는 뒤에 지웠다): 방언이 `server_parsed` 면 관찰을 `tool` 역할 + `tool_call_id` 로, 같은 턴의 op 여러 개 → 관찰 여러 개 매핑(지금 배치 관찰은 `[k/N]` 한 덩어리 — op 별 분할 필요) | ~120줄 |
 | `loop/dispatch.py` `_append_observation` | 배치 관찰을 op 별 레코드로 쪼개 `call_id` 를 심는다(텍스트 방언은 종전처럼 한 덩어리로 합쳐 내보냄) | ~60줄 |
 | `prompts/system_prompt.py` | `server_parsed` 면 `Available Tools`·포맷 규칙 섹션 생략 | ~20줄 |
 | `main.py` / 보드 | 없음(바인딩 체인·드롭다운 자동). 경고 문구 분기 `loop/core.py` | ~10줄 |

@@ -12,6 +12,9 @@ never shipped):
 - `scripts/bakeoff/proto_md_array.py` — the **current** design (markdown
   envelope + action array). `BAKEOFF_NO_BATCH=1` selects the no-batch variant.
 
+두 스크립트(와 `phase1.py`·`phase2.py`·`wire_fenced.py`)는 지웠다 — 이미 import 에서 깨져 돌지 않았다.
+측정 기록은 `scripts/bakeoff/results/` 에 남아 있다.
+
 ---
 
 ## 1. The design
