@@ -45,7 +45,7 @@ class Renderer(ABC):
 
     def __init__(self) -> None:
         self._depth: int = 0
-        self._captures: dict[int, list[str]] = {}  # thread_id → captured lines
+        self._captures: set[int] = set()  # 출력을 숨기는 스레드 (캡처 중)
         self._capture_lock = threading.Lock()
         # Per-thread prompt provenance, so an interactive confirm/ask can
         # show WHO is asking and WHY. The loop calls thought()/action() on
@@ -101,33 +101,22 @@ class Renderer(ABC):
         (web 은 스레드 스코프 기준)."""
         return self._depth > 0 or self.is_capturing
 
-    # ── Capture (parallel buffering) ─────────────────
+    # ── Capture (이 스레드의 출력 숨김) ─────────────────
 
     def start_capture(self) -> None:
-        """Start capturing output for the current thread."""
+        """이 스레드의 출력을 숨긴다 — 에이전트·하니스 작업의 전문은 그 세션 디렉터리에 남는다."""
         with self._capture_lock:
-            self._captures[threading.get_ident()] = []
+            self._captures.add(threading.get_ident())
 
-    def stop_capture(self) -> list[str]:
-        """Stop capturing and return collected lines for the current thread."""
+    def stop_capture(self) -> None:
+        """이 스레드의 출력 숨김을 끝낸다."""
         with self._capture_lock:
-            tid = threading.get_ident()
-            return self._captures.pop(tid, [])
+            self._captures.discard(threading.get_ident())
 
     @property
     def is_capturing(self) -> bool:
-        """True if the current thread is in capture mode."""
+        """True if the current thread's output is hidden (capture mode)."""
         return threading.get_ident() in self._captures
-
-    def _capture_line(self, line: str) -> bool:
-        """Append line to capture buffer if capturing. Returns True if captured."""
-        tid = threading.get_ident()
-        with self._capture_lock:
-            buf = self._captures.get(tid)
-            if buf is None:
-                return False
-            buf.append(line)
-        return True
 
     def set_thread_status(self, status: str) -> None:
         """The live status line of the current thread — the web renderer shows it on the scope's card; others ignore it."""
