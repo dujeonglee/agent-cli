@@ -350,7 +350,7 @@ def tool_shell(
                 proc, timeout, stopped or (lambda: False)
             )
         except BaseException:
-            # 기다리는 도중 끊겼다(CLI 의 창 밖 Ctrl+C 가 던지는 KeyboardInterrupt, SIGTERM 의
+            # 기다리는 도중 끊겼다(CLI 의 창 밖 Ctrl+C 가 던지는 KeyboardInterrupt, 시한을 넘긴 SIGTERM 의 안전망
             # Terminated) — 자기 세션의 명령이 고아로 남지 않게 그룹을 끝내고 그대로 던진다 (v10.146.2).
             _stop_group(proc)
             raise

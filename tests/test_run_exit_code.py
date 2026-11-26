@@ -9,16 +9,21 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
+import threading
 from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
 
+import agent_cli.main as M
 from agent_cli.main import app
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import DEFAULT_CAPABILITIES
 from tests.binding_support import make_binding
+from tests.oracle.driver import until
 
 
 class _Provider:
@@ -88,6 +93,56 @@ def test_ctrl_c_is_130(isolated):
     r = _run(_Provider(KeyboardInterrupt()), "hi")
     assert r.exit_code == 130, r.output
     assert "Interrupted" in r.output
+
+
+def test_ctrl_c_with_nothing_to_stop_closes_then_is_130(isolated):
+    """6d-3 — main 이 한가하고(백그라운드 작업을 기다리는 중) 멈출 것이 없을 때의 Ctrl+C 는 main 상자를 닫는다: 펌프가
+    돌아오고 정리한 뒤 `⚡ Interrupted.` · 130 — 종전의 `KeyboardInterrupt` 와 바깥에서 보이는 것이 같다. 처리기는 실제
+    run 이 건 것을 그대로 부른다(신호는 보내지 않는다)."""
+    pidfile = isolated / "job.pid"
+    p = _Provider(
+        json.dumps(
+            {
+                "action": "shell",
+                "command": f"echo $$ > {pidfile}; sleep 30",
+                "background": True,
+            }
+        ),
+        _complete("started"),
+    )
+    seen: dict = {}
+
+    def install(surface, agent_registry, close):
+        seen["surface"] = surface
+        prev = real_install(surface, agent_registry, close)
+        seen["handler"] = signal.getsignal(signal.SIGINT)
+        return prev
+
+    def press_when_idle():
+        until(
+            lambda: (
+                "surface" in seen
+                and p.calls >= 2
+                and seen["surface"].bound_stop() is None
+            ),
+            "main idle, waiting for the job",
+        )
+        seen["handler"](signal.SIGINT, None)
+
+    real_install = M._install_ctrl_c
+    presser = threading.Thread(target=press_when_idle, daemon=True)
+    presser.start()
+    try:
+        with patch("agent_cli.main._install_ctrl_c", install):
+            r = _run(p, "hi")
+    finally:
+        presser.join(timeout=5)
+        try:
+            os.killpg(int(pidfile.read_text()), signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
+    assert r.exit_code == 130, r.output
+    assert "⚡ Interrupted." in r.output
 
 
 def test_unknown_command_is_1_and_listing_is_0(isolated):

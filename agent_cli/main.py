@@ -46,7 +46,7 @@ from agent_cli.providers import (
 from agent_cli.render import C, console, get_renderer
 from agent_cli.render.base import interactive_lock
 from agent_cli.session_slots import get_agent_registry
-from agent_cli.terminate import SigTerm, Terminated, wait_left
+from agent_cli.terminate import CLOSE_WAIT_S, SigTerm, Terminated, wait_left
 
 app = typer.Typer(
     name="agent-cli",
@@ -2220,22 +2220,39 @@ def run(
             )
         surface.query_id = main_input.enqueue(None, query, images=query_images)["id"]
         warn_stuck = True
-        prev_term = sigterm.install_unwind()
-        prev_int = _install_ctrl_c(surface, agent_registry)
+        # SIGTERM 은 main 상자를 닫는다(6d-3 — 웹의 닫기와 같은 길): main 이 멈추면 펌프가 돌아온다. 시한 안에 멈추지
+        # 않으면 안전망이 `Terminated` 로 푼다
+        prev_term = sigterm.install_close(main_input.close)
+        # 멈출 것이 없는 Ctrl+C 도 닫는다 — 사람이 끝냈다는 표시가 130 을 정한다. 창 밖 Ctrl+C 의 안전망은 예외
+        closed_by_ctrl_c = threading.Event()
+
+        def close_for_ctrl_c() -> None:
+            closed_by_ctrl_c.set()
+            main_input.close()
+
+        prev_int = _install_ctrl_c(surface, agent_registry, close_for_ctrl_c)
+        interrupted = False
         try:
             wired.pump.run()
             exit_code = surface.exit_code
+            interrupted = closed_by_ctrl_c.is_set()
         except KeyboardInterrupt:
-            console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
-            exit_code = 130
+            interrupted = True
         except Terminated:
-            console.print(f"\n[{C['accent']}]⚡ Terminated — cleaning up.[/]")
+            pass  # 안전망 — 아래에서 정리한다
         finally:
+            sigterm.cancel_safety_net()
             signal.signal(signal.SIGINT, prev_int)
-            if not sigterm.received:
+            if sigterm.received:
+                SigTerm.default()  # 정리 중 두 번째 SIGTERM 은 즉시 죽음
+                console.print(f"\n[{C['accent']}]⚡ Terminated — cleaning up.[/]")
+            else:
                 SigTerm.restore(
                     prev_term
                 )  # 정상·Ctrl-C 경로의 정리는 종전 처리기 그대로
+        if interrupted:
+            console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
+            exit_code = 130
     finally:
         _finalize_run(
             spec, stores, owners, warn_stuck=warn_stuck, deadline=sigterm.deadline()
@@ -2247,18 +2264,12 @@ def run(
     raise typer.Exit(exit_code)
 
 
-#: 웹 방을 닫을 때 main 이 멈추기를 기다리는 상한(초) — SIGTERM 으로 들어왔으면 그 시한(`terminate.TEARDOWN_BUDGET_S`)
-#: 안에서다. 전경 셸의 정지(정지를 보는 0.2초 + TERM 뒤 3초 + KILL 뒤 3초 — `tools.shell._stop_group`)와 그 결과 기록을
-#: 덮는다. 응답 머리를 기다리는 모델 호출처럼 정지를 보지 않는 대기는 이 상한에서 끊긴다
-WEB_CLOSE_WAIT_S = 7.0
-
-
 def wait_for_main_to_stop(worker: threading.Thread, deadline: float | None) -> None:
-    """웹 방을 닫을 때 main(``agent-loop`` 스레드)이 멈추기를 기다린다 — 상한 `WEB_CLOSE_WAIT_S`, SIGTERM 의 시한이
+    """웹 방을 닫을 때 main(``agent-loop`` 스레드)이 멈추기를 기다린다 — 상한 `terminate.CLOSE_WAIT_S`, SIGTERM 의 시한이
     있으면 그 안에서(`wait_left`). 정리(`close_session`)는 이 뒤에 돈다. 기다리는 도중 Ctrl+C 를 한 번 더 누르면
     기다림만 그만둔다 — 정리·세션 저장은 부르는 쪽이 그대로 한다."""
     try:
-        worker.join(timeout=wait_left(deadline, WEB_CLOSE_WAIT_S))
+        worker.join(timeout=wait_left(deadline, CLOSE_WAIT_S))
     except KeyboardInterrupt:
         pass
 
@@ -2401,9 +2412,9 @@ def _announce_agent_boot(renderer, revived: int, auto: int, *, auditor=None) -> 
         renderer.status("running", _auditor_boot_line(auditor))
 
 
-def _install_ctrl_c(surface, agent_registry):
+def _install_ctrl_c(surface, agent_registry, close):
     """run 의 Ctrl+C 처리기를 건다 (v10.142.0, `agent_cli.ctrl_c`) — 한 번 = main 의 런만, 2초 안에 두 번 =
-    전부. 멈출 것이 없으면 종전처럼 ``KeyboardInterrupt``. 종전 처리기를 돌려준다(``finally`` 가 되돌린다)."""
+    전부. 멈출 것이 없으면 ``close()``(6d-3). 종전 처리기를 돌려준다(``finally`` 가 되돌린다)."""
     from agent_cli.ctrl_c import CtrlCPresses, stop_for_ctrl_c
 
     presses = CtrlCPresses()
@@ -2417,6 +2428,7 @@ def _install_ctrl_c(surface, agent_registry):
             main_stop=surface.bound_stop(),
             registry=agent_registry,
             say=say,
+            close=close,
         )
 
     return signal.signal(signal.SIGINT, on_sigint)
