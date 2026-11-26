@@ -6,7 +6,7 @@ from typing import ClassVar
 import pytest
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.context.render import _to_natural_language
+from agent_cli.context.render import render_history_message
 from agent_cli.session.records import _classify_record, iter_record_ops
 
 # ── Fixtures ──────────────────────────────────────────
@@ -52,10 +52,10 @@ class TestCompactionRatio:
 
 @pytest.fixture
 def wf():
-    """ReAct dialect plugin used by ``_to_natural_language`` tests.
+    """json_fc dialect used by the record-render tests.
 
-    The function takes the plugin as a parameter so the assistant
-    branch can delegate to ``render_assistant_from_history``. Tests
+    ``render_history_message`` takes the dialect as a parameter so the
+    assistant branch can delegate to ``render_assistant_from_history``. Tests
     against the plugin's behavior live in ``test_dialects_json_fc``;
     here we only need a real plugin that produces the same string
     shapes the legacy free function used to."""
@@ -246,6 +246,12 @@ class TestSessionResume:
 # ── Natural Language Conversion ───────────────────────
 
 
+def _render_one(msg: dict, dialect) -> dict:
+    """A text dialect renders one record as exactly one request message."""
+    [rendered] = render_history_message(msg, dialect, index=0, assistant_index=None)
+    return rendered
+
+
 def _parse_json_fc(content: str):
     """json_fc 렌더('thought\n\n[array]')를 (thought, ops-list) 로 분해."""
     if "\n\n" in content:
@@ -258,7 +264,7 @@ def _parse_json_fc(content: str):
 class TestNaturalLanguageConversion:
     def test_user_input(self, wf):
         msg = {"role": "user", "content": "인증 시스템을 리팩토링 해줘"}
-        result = _to_natural_language(msg, wf)
+        result = _render_one(msg, wf)
         assert result["role"] == "user"
         assert result["content"] == "인증 시스템을 리팩토링 해줘"
 
@@ -268,7 +274,7 @@ class TestNaturalLanguageConversion:
             "thought": "auth.py를 읽어 구조를 파악해야 한다",
             "ops": [{"action": "read_file", "action_input": {"path": "src/auth.py"}}],
         }
-        result = _to_natural_language(msg, wf)
+        result = _render_one(msg, wf)
         assert result["role"] == "assistant"
         # json_fc 는 ops 레코드를 캐노니컬(산문+배열)로 재방출 — live/resume
         # 어느 경로든 모델이 같은 emission shape 를 본다.
@@ -284,7 +290,7 @@ class TestNaturalLanguageConversion:
                 {"action": "complete", "action_input": {"result": "JWT 리팩토링 완료"}}
             ],
         }
-        result = _to_natural_language(msg, wf)
+        result = _render_one(msg, wf)
         assert result["role"] == "assistant"
         # complete 도 같은 wire shape — 특례 없음.
         _, ops = _parse_json_fc(result["content"])
@@ -303,7 +309,7 @@ class TestNaturalLanguageConversion:
                 }
             ],
         }
-        result = _to_natural_language(msg, wf)
+        result = _render_one(msg, wf)
         _, ops = _parse_json_fc(result["content"])
         assert ops[0]["action"] == "delegate"
         assert ops[0]["tasks"][0]["agent"] == "explorer"
@@ -316,7 +322,7 @@ class TestNaturalLanguageConversion:
                 {"action": "shell", "action_input": {"command": "pytest tests/ -v"}}
             ],
         }
-        result = _to_natural_language(msg, wf)
+        result = _render_one(msg, wf)
         _, ops = _parse_json_fc(result["content"])
         assert ops == [{"action": "shell", "command": "pytest tests/ -v"}]
 
@@ -331,7 +337,7 @@ class TestNaturalLanguageConversion:
                 }
             ],
         }
-        result = _to_natural_language(msg, wf)
+        result = _render_one(msg, wf)
         _, ops = _parse_json_fc(result["content"])
         assert ops[0]["action"] == "run_skill"
         assert ops[0]["name"] == "summarize"
@@ -347,7 +353,7 @@ class TestNaturalLanguageConversion:
             "tool": "read_file",
             "content": "import hashlib\nclass AuthManager:\n    pass",
         }
-        result = _to_natural_language(msg, wf)
+        result = _render_one(msg, wf)
         assert result["role"] == "user"
         assert "[read_file]" in result["content"]
         assert "import hashlib" in result["content"]
@@ -360,7 +366,7 @@ class TestNaturalLanguageConversion:
             "content": "auth.py는 3곳에서 import됨",
             "artifact": "delegate_explorer_b7c1_20260405T143045567/",
         }
-        result = _to_natural_language(msg, wf)
+        result = _render_one(msg, wf)
         assert "[delegate]" in result["content"]
         assert "auth.py는 3곳에서 import됨" in result["content"]
         assert "→ delegate_explorer_b7c1_20260405T143045567/" in result["content"]
@@ -371,7 +377,7 @@ class TestNaturalLanguageConversion:
             "tool": "shell",
             "content": "12 passed, 1 failed",
         }
-        result = _to_natural_language(msg, wf)
+        result = _render_one(msg, wf)
         assert "[shell]" in result["content"]
         assert "12 passed, 1 failed" in result["content"]
 
@@ -384,7 +390,7 @@ class TestNaturalLanguageConversion:
             "role": "assistant",
             "ops": [{"action": "read_file", "action_input": {"path": "test.py"}}],
         }
-        result = _to_natural_language(msg, wf)
+        result = _render_one(msg, wf)
         # thought 없는 레코드 — json_fc 는 배열만 렌더 (산문 슬롯 생략)
         assert json.loads(result["content"]) == [
             {"action": "read_file", "path": "test.py"}
@@ -393,7 +399,7 @@ class TestNaturalLanguageConversion:
     def test_assistant_plain_content(self, wf):
         """Fallback: assistant message with only content field."""
         msg = {"role": "assistant", "content": "plain response"}
-        result = _to_natural_language(msg, wf)
+        result = _render_one(msg, wf)
         assert result["content"] == "plain response"
 
 
@@ -765,7 +771,7 @@ class TestGetMessagesIncrementalCache:
         """Ground truth: render every dynamic record from scratch."""
         cache = ctx.get_raw_messages()
         rest = cache[1:] if cache and cache[0].get("role") == "system" else cache
-        return [_to_natural_language(m, ctx.dialect) for m in rest]
+        return [_render_one(m, ctx.dialect) for m in rest]
 
     def test_matches_full_rerender_after_adds(self, ctx):
         for m in self._msgs():
@@ -817,7 +823,7 @@ class TestGetMessagesIncrementalCache:
         out = resumed.get_messages()
         cache = resumed.get_raw_messages()
         rest = cache[1:] if cache[0].get("role") == "system" else cache
-        expected = [_to_natural_language(m, resumed.dialect) for m in rest]
+        expected = [_render_one(m, resumed.dialect) for m in rest]
         assert out[-len(expected) :] == expected
 
     def test_returned_list_is_independent(self, ctx):

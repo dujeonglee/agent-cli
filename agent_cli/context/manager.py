@@ -342,7 +342,7 @@ class ContextManager:
         self._token_ratio_samples: int = 0
         # Rendered (natural-language) mirror of the cache's dynamic slice —
         # everything after the optional leading system message, in order.
-        # ``get_messages`` used to re-run ``_to_natural_language`` over the
+        # ``get_messages`` used to re-render over the
         # WHOLE cache on every call (3-4×/turn from the loop) — O(n) per turn,
         # O(n²) per session. Now each record is rendered ONCE: ``add`` appends
         # its rendered form here, and every bulk cache mutation (compaction
@@ -683,7 +683,7 @@ class ContextManager:
         # the synthesised summary / file-list messages slot in
         # immediately after it so the LLM sees ``system → summary →
         # files → dynamic`` in that order. System messages stay
-        # verbatim (no dialect conversion); ``_to_natural_language``
+        # verbatim (no dialect conversion); ``render_history_message``
         # only handles user / assistant records and would misroute a
         # system entry through the assistant rendering path.
         rest_start = self._render_rest_start()
