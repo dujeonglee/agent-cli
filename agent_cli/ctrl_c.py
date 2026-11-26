@@ -2,9 +2,10 @@
 
 웹의 정지 버튼과 같은 범위다(docs/agent-engine/DESIGN.md §2.3): Stop = main 만, Stop everything = 전부. main 의
 런은 그 런의 stop Event 로 멈춘다(웹 ``/api/stop`` 과 같은 길 — 기록은 ``[interrupt]``), 에이전트는 레지스트리의
-"모두 정지"(`AgentRegistry.stop_all_runs`)로. 멈출 것이 없으면(main 이 한가하고 일하는 에이전트도 없음) 종전처럼
-``KeyboardInterrupt`` 로 끝난다. main 이 이미 멈추는 중인데 창 밖에서 또 누르면 역시 ``KeyboardInterrupt`` —
-도구 하나가 멈춤 검사에 닿지 못할 때의 탈출구다(종전 두 번째 Ctrl+C 의 강제 종료). 확인(`c-N`)을 기다리는 호출은
+"모두 정지"(`AgentRegistry.stop_all_runs`)로. 멈출 것이 없으면(main 이 한가하고 일하는 에이전트도 없음) main 상자를
+닫는다(6d-3 — 웹의 닫기·SIGTERM 과 같은 길: 펌프가 돌아오고 run 이 정리한 뒤 130). main 이 이미 멈추는 중인데 창 밖에서
+또 누르거나 2초 안 두 번인데 멈출 것이 없으면 ``KeyboardInterrupt`` — 도구 하나가 멈춤 검사에 닿지 못할 때의
+안전망이다(종전 두 번째 Ctrl+C 의 강제 종료). 확인(`c-N`)을 기다리는 호출은
 멈춤 검사에 닿는다 — 한 번은 main 의 확인을, 두 번은 에이전트의 확인도 깨운다(6d).
 
 시계는 주입한다 — 두 번 누름의 창을 테스트가 시각 없이 정한다.
@@ -54,11 +55,13 @@ def stop_for_ctrl_c(
     main_stop,
     registry,
     say: Callable[[str], None],
+    close: Callable[[], None],
 ):
-    """누름 하나의 범위대로 멈춘다 — 멈출 것이 없으면 ``KeyboardInterrupt``.
+    """누름 하나의 범위대로 멈춘다 — 한 번인데 멈출 것이 없으면 ``close()``(main 상자를 닫는다), 그 밖에 멈출 것이
+    없으면 ``KeyboardInterrupt``(안전망).
 
     ``main_stop`` 은 지금 main 런의 stop Event(한가하면 None), ``registry`` 는 에이전트 레지스트리(없으면
-    None), ``say`` 는 사람에게 한 줄. 에이전트 각자의 결과 줄(``■ agt-3 │ stopped by user — …``)은 레지스트리의
+    None), ``say`` 는 사람에게 한 줄, ``close`` 는 run 을 끝내는 닫기. 에이전트 각자의 결과 줄(``■ agt-3 │ stopped by user — …``)은 레지스트리의
     정지가 따로 찍는다. "전부"(두 번)는 main 을 먼저 멈추고, 그 정지 회신들은 main 을 깨우지 않는다(사용자 결정 — 다음 입력 런에)."""
     working = bool(registry is not None and registry.working_agents())
     main_running = main_stop is not None and not main_stop.is_set()
@@ -78,5 +81,8 @@ def stop_for_ctrl_c(
         return
     if main_stop is None and working:
         say(MAIN_IDLE)
+        return
+    if scope == MAIN and main_stop is None:
+        close()
         return
     raise KeyboardInterrupt

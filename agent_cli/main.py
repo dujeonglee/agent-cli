@@ -2223,13 +2223,21 @@ def run(
         # SIGTERM 은 main 상자를 닫는다(6d-3 — 웹의 닫기와 같은 길): main 이 멈추면 펌프가 돌아온다. 시한 안에 멈추지
         # 않으면 안전망이 `Terminated` 로 푼다
         prev_term = sigterm.install_close(main_input.close)
-        prev_int = _install_ctrl_c(surface, agent_registry)
+        # 멈출 것이 없는 Ctrl+C 도 닫는다 — 사람이 끝냈다는 표시가 130 을 정한다. 창 밖 Ctrl+C 의 안전망은 예외
+        closed_by_ctrl_c = threading.Event()
+
+        def close_for_ctrl_c() -> None:
+            closed_by_ctrl_c.set()
+            main_input.close()
+
+        prev_int = _install_ctrl_c(surface, agent_registry, close_for_ctrl_c)
+        interrupted = False
         try:
             wired.pump.run()
             exit_code = surface.exit_code
+            interrupted = closed_by_ctrl_c.is_set()
         except KeyboardInterrupt:
-            console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
-            exit_code = 130
+            interrupted = True
         except Terminated:
             pass  # 안전망 — 아래에서 정리한다
         finally:
@@ -2242,6 +2250,9 @@ def run(
                 SigTerm.restore(
                     prev_term
                 )  # 정상·Ctrl-C 경로의 정리는 종전 처리기 그대로
+        if interrupted:
+            console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
+            exit_code = 130
     finally:
         _finalize_run(
             spec, stores, owners, warn_stuck=warn_stuck, deadline=sigterm.deadline()
@@ -2401,9 +2412,9 @@ def _announce_agent_boot(renderer, revived: int, auto: int, *, auditor=None) -> 
         renderer.status("running", _auditor_boot_line(auditor))
 
 
-def _install_ctrl_c(surface, agent_registry):
+def _install_ctrl_c(surface, agent_registry, close):
     """run 의 Ctrl+C 처리기를 건다 (v10.142.0, `agent_cli.ctrl_c`) — 한 번 = main 의 런만, 2초 안에 두 번 =
-    전부. 멈출 것이 없으면 종전처럼 ``KeyboardInterrupt``. 종전 처리기를 돌려준다(``finally`` 가 되돌린다)."""
+    전부. 멈출 것이 없으면 ``close()``(6d-3). 종전 처리기를 돌려준다(``finally`` 가 되돌린다)."""
     from agent_cli.ctrl_c import CtrlCPresses, stop_for_ctrl_c
 
     presses = CtrlCPresses()
@@ -2417,6 +2428,7 @@ def _install_ctrl_c(surface, agent_registry):
             main_stop=surface.bound_stop(),
             registry=agent_registry,
             say=say,
+            close=close,
         )
 
     return signal.signal(signal.SIGINT, on_sigint)

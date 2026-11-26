@@ -69,6 +69,10 @@ class FakeRegistry:
         return f'unknown agent "{key}"'
 
 
+def _no_close():
+    raise AssertionError("closed")
+
+
 class TestCtrlCPresses:
     def test_one_press_is_main_two_within_the_window_is_all(self):
         clock = Clock()
@@ -85,38 +89,67 @@ class TestCtrlCPresses:
 class TestStopForCtrlC:
     def test_main_running_one_press_stops_main_only(self):
         said, reg, stop = [], FakeRegistry(["agt-3"]), threading.Event()
-        stop_for_ctrl_c(MAIN, main_stop=stop, registry=reg, say=said.append)
+        stop_for_ctrl_c(
+            MAIN, main_stop=stop, registry=reg, say=said.append, close=_no_close
+        )
         assert stop.is_set() and reg.calls == [] and said == [STOPPED_MAIN]
 
     def test_double_press_stops_main_and_every_agent(self):
         said, reg, stop = [], FakeRegistry(["agt-3", "agt-5"]), threading.Event()
-        stop_for_ctrl_c(ALL, main_stop=stop, registry=reg, say=said.append)
+        stop_for_ctrl_c(
+            ALL, main_stop=stop, registry=reg, say=said.append, close=_no_close
+        )
         # "전부" — 그 정지 회신은 main 을 깨우지 않는다 (사용자 결정)
         assert stop.is_set() and reg.calls == [("all", "user", False)]
         assert said == ["■ stopping everything — main and 2 working agents"]
 
     def test_main_idle_agents_working(self):
         said, reg = [], FakeRegistry(["agt-3"])
-        stop_for_ctrl_c(MAIN, main_stop=None, registry=reg, say=said.append)
+        stop_for_ctrl_c(
+            MAIN, main_stop=None, registry=reg, say=said.append, close=_no_close
+        )
         assert said == [MAIN_IDLE] and reg.calls == []
-        stop_for_ctrl_c(ALL, main_stop=None, registry=reg, say=said.append)
+        stop_for_ctrl_c(
+            ALL, main_stop=None, registry=reg, say=said.append, close=_no_close
+        )
         assert reg.calls == [("all", "user", False)]
 
-    def test_nothing_to_stop_exits_as_before(self):
-        """6d-3 전의 값 — 멈출 것이 없으면 처리기가 `KeyboardInterrupt` 를 던져 run 을 끝낸다(130)."""
+    def test_nothing_to_stop_closes(self):
+        """6d-3 — 멈출 것이 없으면 main 상자를 닫는다(예외 없음): 펌프가 돌아오고 run 이 정리한 뒤 130. 종전엔
+        `KeyboardInterrupt` 가 main 이 어디 있든 그 자리에서 풀었다."""
+        for reg in (FakeRegistry(), None):
+            closed: list[int] = []
+            stop_for_ctrl_c(
+                MAIN,
+                main_stop=None,
+                registry=reg,
+                say=print,
+                close=lambda closed=closed: closed.append(1),
+            )
+            assert closed == [1]
+
+    def test_double_press_with_nothing_to_stop_is_the_escape(self):
         with pytest.raises(KeyboardInterrupt):
-            stop_for_ctrl_c(MAIN, main_stop=None, registry=FakeRegistry(), say=print)
-        with pytest.raises(KeyboardInterrupt):
-            stop_for_ctrl_c(MAIN, main_stop=None, registry=None, say=print)
+            stop_for_ctrl_c(
+                ALL, main_stop=None, registry=FakeRegistry(), say=print, close=_no_close
+            )
 
     def test_a_waiting_confirm_is_stopped_not_interrupted(self):
         """6d: 확인(`c-N`)을 기다리는 호출은 정지 검사에 닿는다 — Ctrl+C 는 프롬프트를 끊는 예외가 아니라 정지다. 일하는 main
         이면 한 번에 그 런이(그 확인이) 멈추고, 두 번이면 에이전트의 확인까지 멈춘다."""
         reg, stop = FakeRegistry(["agt-3"]), threading.Event()
         said: list[str] = []
-        stop_for_ctrl_c(MAIN, main_stop=stop, registry=reg, say=said.append)
+        stop_for_ctrl_c(
+            MAIN, main_stop=stop, registry=reg, say=said.append, close=_no_close
+        )
         assert stop.is_set() and reg.calls == [] and said == [STOPPED_MAIN]
-        stop_for_ctrl_c(ALL, main_stop=threading.Event(), registry=reg, say=said.append)
+        stop_for_ctrl_c(
+            ALL,
+            main_stop=threading.Event(),
+            registry=reg,
+            say=said.append,
+            close=_no_close,
+        )
         assert reg.calls == [("all", "user", False)]
 
     def test_press_while_main_is_already_stopping_is_the_escape(self):
@@ -124,7 +157,11 @@ class TestStopForCtrlC:
         stop.set()
         with pytest.raises(KeyboardInterrupt):
             stop_for_ctrl_c(
-                MAIN, main_stop=stop, registry=FakeRegistry(["agt-3"]), say=print
+                MAIN,
+                main_stop=stop,
+                registry=FakeRegistry(["agt-3"]),
+                say=print,
+                close=_no_close,
             )
 
 
