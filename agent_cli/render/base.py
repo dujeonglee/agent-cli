@@ -528,8 +528,9 @@ class Renderer(ABC):
     ) -> None:
         """Tool result (observation).
 
-        `success` is the authoritative outcome from `ToolResult.success`
-        and drives the ✓/✗ icon and `success`/`error` label.
+        `success` is the observation record's ``success`` and drives the ✓/✗ icon and `success`/`error`
+        label — except ``tool_name == "interrupt"`` (the stop/restart fact record, not a tool call's
+        result), drawn neutral ■ with no label (IMPL-mark-icons).
 
         ``images`` (v10.60.0): the observation record's ``ImageRef`` dicts —
         web draws thumbnails from them; CLI reads the placeholder lines in

@@ -367,7 +367,17 @@ export function renderAssistantTurn(d) {
   finishCard(card, d);
 }
 
-/** 스텝 카드의 마크다운: 💭 생각 → ⚡ 도구 + 입력(JSON) → ✓/✗ 도구 + 관찰 원문. */
+/** 관찰 줄의 표시 — 그 줄의 레코드 ``success`` 로 ✓/✗, 단 `[interrupt]`(정지·재시작)는 도구 호출의 결과가 아니라
+ *  사실 기록이라 중립 ■ (IMPL-mark-icons). 빨간 ✗ 는 도구 호출이 실패했을 때만이다. ``mark`` 는 글자, ``cls`` 는
+ *  줄·배지의 색 클래스(중립은 없음), ``failed`` 는 실패로 칠할지. */
+function obsMark(tool, success) {
+  if (tool === "interrupt") return { mark: "■", cls: [], failed: false };
+  return success
+    ? { mark: "✓", cls: ["ok"], failed: false }
+    : { mark: "✗", cls: ["bad"], failed: true };
+}
+
+/** 스텝 카드의 마크다운: 💭 생각 → ⚡ 도구 + 입력(JSON) → ✓/✗/■ 도구 + 관찰 원문. */
 function stepMarkdown(md) {
   const parts = [];
   if (md.thought) parts.push("💭 " + md.thought);
@@ -377,7 +387,7 @@ function stepMarkdown(md) {
     parts.push("⚡ `" + (a.tool || "?") + "`" + (input ? "\n" + fence(input, "json") : ""));
   });
   md.obs.forEach(function (o) {
-    parts.push((o.success ? "✓" : "✗") + " `" + (o.tool || "result") + "`" + (o.content ? "\n" + fence(o.content) : ""));
+    parts.push(obsMark(o.tool, o.success).mark + " `" + (o.tool || "result") + "`" + (o.content ? "\n" + fence(o.content) : ""));
   });
   return parts.join("\n\n");
 }
@@ -530,10 +540,11 @@ function markItemCard(card, item) {
 
 export function renderObservation(d) {
   const card = el("div", ["card", "card-observation"]);
-  card.classList.add(d.success ? "ok" : "fail");
-  if (d.hidx != null) card.dataset.hidx = String(d.hidx);
   const content = d.content || "";
   const tool = d.tool_name || "";
+  const shown = obsMark(tool, d.success);
+  if (shown.cls.length) card.classList.add(shown.failed ? "fail" : "ok");
+  if (d.hidx != null) card.dataset.hidx = String(d.hidx);
   // An `agent` observation is a subagent's prose answer (run 결과의
   // STATUS/RESULT/[Task N]/[Duration] wrapper, 상주 회신 배달), so
   // render it through the markdown pipeline like an assistant turn. Every
@@ -565,8 +576,8 @@ export function renderObservation(d) {
   // 배지 줄(✗ 앞), 단독 카드면 관찰 행의 꼬리 칸.
   const cause = fetchCauseChip(tool, content, d.success);
   const row = makeRow(
-    d.success ? "✓" : "✗", tool || "result", obsSummary(content, !d.success), body,
-    [d.success ? "ok" : "bad"], attach ? null : cause
+    shown.mark, tool || "result", obsSummary(content, shown.failed), body,
+    shown.cls, attach ? null : cause
   );
   // 턴이 다르면 남의 카드다 — 개입 턴이 `state.turn` 을 되돌려 번호가
   // 재사용될 수 있고, 블로킹 `ask` 는 관찰 없이 카드를 열어 둔 채 남는다.
@@ -575,10 +586,8 @@ export function renderObservation(d) {
     step.md.obs.push({ tool: tool, content: content, success: !!d.success });
     step.body.appendChild(row);
     if (cause) step.badges.appendChild(cause);
-    step.badges.appendChild(
-      el("span", ["badge", d.success ? "ok" : "bad"], d.success ? "✓" : "✗")
-    );
-    if (!d.success) {
+    step.badges.appendChild(el("span", ["badge"].concat(shown.cls), shown.mark));
+    if (shown.failed) {
       // 카드는 접힌 채 — 빨간 표시와 원인 한 줄만 낸다. 펼치면 관찰 본문이
       // 바로 보이게 그 행은 열어 둔다(실패를 보러 연 것이므로).
       step.card.classList.add("failed");
@@ -602,7 +611,7 @@ export function renderObservation(d) {
   // 종전대로 단독 카드로 떨어뜨린다 — 최악이 "안 묶임" 이지 "유실" 이 아니다.
   card.appendChild(row);
   card._md = function () {
-    return (d.success ? "✓" : "✗") + " `" + (tool || "result") + "`" + (content ? "\n" + fence(content) : "");
+    return shown.mark + " `" + (tool || "result") + "`" + (content ? "\n" + fence(content) : "");
   };
   finishCard(card, d);
   markItemCard(card, d.item);

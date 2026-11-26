@@ -135,17 +135,18 @@ def _console():
 
 
 class TestTerminalInterrupt:
-    def test_main_line_is_a_failure_mark(self):
-        """지금 값 — `[interrupt]` 는 터미널에 ``✗ interrupt  error`` 로 찍힌다."""
+    def test_main_line_is_neutral(self):
+        """`[interrupt]` 는 ✓/✗ 도 상태 낱말도 없이 ``■ interrupt`` — 종전 ``✗ interrupt  error``."""
         r, buf = _console()
         r.observation(INTERRUPT_NOTICE, 1, "interrupt", success=False)
-        assert "  ✗ interrupt  error" in buf.getvalue()
+        assert "  ■ interrupt\n" in buf.getvalue()
+        assert "✗" not in buf.getvalue() and "error" not in buf.getvalue()
 
-    def test_agent_line_is_a_failure_mark(self):
+    def test_agent_line_is_neutral(self):
         r, buf = _console()
         r.begin_agent_work(key="agt-3", item="r-1", profile="", message="go")
         r.observation(INTERRUPT_NOTICE, 1, "interrupt", success=False)
-        assert "  agt-3 │ interrupt  ✗" in buf.getvalue()
+        assert "  agt-3 │ interrupt  ■" in buf.getvalue()
 
 
 @pytest.mark.parametrize("success, mark", [(True, "✓"), (False, "✗")])
