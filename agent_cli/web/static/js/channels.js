@@ -74,10 +74,12 @@ function ovAgentHash(key) {
   for (var i = 0; i < key.length; i++) s += key.charCodeAt(i);
   return s;
 }
+// export: tests/test_app_markdown.py 가 node 로 읽는다 (다른 모듈은 import 하지 않는다)
 export function ovAgentIcon(key) {
   if (!key) return OV_AGENT_ICONS[0];
   return OV_AGENT_ICONS[ovAgentHash(key) % OV_AGENT_ICONS.length];
 }
+// export: tests/test_app_markdown.py 가 node 로 읽는다 (다른 모듈은 import 하지 않는다)
 export function ovAgentNickname(key) {
   var h = ovAgentHash(key);
   return (

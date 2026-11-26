@@ -57,6 +57,7 @@ export function colorizeDiffBody(escaped) {
  * sealed leaf — restore is a literal string replace. Input must be
  * already-escaped HTML; the code body inside fences IS the escaped
  * text, so no further escaping is needed when we wrap it. */
+// export: tests/test_app_markdown.py 가 node 로 읽는다 (다른 모듈은 import 하지 않는다)
 export function extractCodeFences(s) {
   const blocks = [];
   const stripped = s.replace(
@@ -145,6 +146,7 @@ function splitTableRow(line) {
  * deeper are left as literal text (FR-MD-1). The regex is anchored
  * to line start with the ``m`` flag so headers inside paragraphs
  * don't accidentally match. */
+// export: tests/test_app_markdown.py 가 node 로 읽는다 (다른 모듈은 import 하지 않는다)
 export function renderHeadings(s) {
   return s.replace(/^(#{1,3})\s+(.+?)\s*$/gm, function (_m, hashes, body) {
     const level = hashes.length;

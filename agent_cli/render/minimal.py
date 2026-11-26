@@ -418,9 +418,6 @@ class MinimalRenderer(Renderer):
     def thought(self, content: str, turn: int) -> None:
         # 확인의 출처(웹 트레이의 메타 블록 — who/why)로 남긴다
         self.note_thought(content)
-        # Update live status (first line of thought, shown in parallel progress panel)
-        first_line = content.strip().split("\n", 1)[0]
-        self.set_thread_status(f"💭 {first_line}")
         self._p("")
         self._render_markdown("💭", content)
         # No trailing blank — let the action/observation pair visually below
@@ -737,7 +734,6 @@ class MinimalRenderer(Renderer):
         kind: str = "run",
         label: str = "",
         agent: str = "",
-        index: int = 0,
         parent: str | None = None,
         ts: float | None = None,
         ctx_dir: str | None = None,

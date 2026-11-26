@@ -46,7 +46,6 @@ class Renderer(ABC):
     def __init__(self) -> None:
         self._depth: int = 0
         self._captures: dict[int, list[str]] = {}  # thread_id → captured lines
-        self._thread_status: dict[int, str] = {}  # thread_id → last status line
         self._capture_lock = threading.Lock()
         # Per-thread prompt provenance, so an interactive confirm/ask can
         # show WHO is asking and WHY. The loop calls thought()/action() on
@@ -113,13 +112,7 @@ class Renderer(ABC):
         """Stop capturing and return collected lines for the current thread."""
         with self._capture_lock:
             tid = threading.get_ident()
-            self._thread_status.pop(tid, None)
             return self._captures.pop(tid, [])
-
-    def get_thread_status(self, tid: int) -> str:
-        """Return the last captured status line for a given thread."""
-        with self._capture_lock:
-            return self._thread_status.get(tid, "")
 
     @property
     def is_capturing(self) -> bool:
@@ -137,11 +130,7 @@ class Renderer(ABC):
         return True
 
     def set_thread_status(self, status: str) -> None:
-        """Update the live status line for the current thread."""
-        tid = threading.get_ident()
-        with self._capture_lock:
-            if tid in self._captures:  # only when capturing
-                self._thread_status[tid] = status
+        """The live status line of the current thread — the web renderer shows it on the scope's card; others ignore it."""
 
     # ── Prompt provenance (who/why behind a confirm or ask) ──
 
@@ -258,7 +247,6 @@ class Renderer(ABC):
         kind: str = "run",
         label: str = "",
         agent: str = "",
-        index: int = 0,
         parent: str | None = None,
         ts: float | None = None,
         ctx_dir: str | None = None,

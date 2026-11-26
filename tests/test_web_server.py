@@ -381,7 +381,6 @@ class TestPromptInspectorDynamic:
         tool_sec = data["sections"][1]
         assert tool_sec["name"] == "function: read_file"
         assert '"description": "Read a file."' in tool_sec["text"]
-        assert data["est_tokens"] == sum(s["est_tokens"] for s in data["sections"])
         # 예산은 서버 실측만 — 아직 실측이 없으니 칸은 비어 있다
         assert data["budget"]["measured"] is False and data["budget"]["tools"] is None
         # 텍스트 방언(tools 없음)은 시스템만.
@@ -448,8 +447,6 @@ class TestPromptInspectorDynamic:
             "parent": "",
             "ended": False,
         }
-        # 프롬프트 토큰 합계(est_tokens)는 대화를 포함하지 않는다
-        assert data["est_tokens"] == sum(x["est_tokens"] for x in data["sections"])
 
     def test_tail_prev_rotates_per_scope_for_the_diff(self):
         """꼬리 diff 의 재료: 같은 스코프의 직전 스냅샷 꼬리가 ``tail_prev`` 와
@@ -849,15 +846,9 @@ class TestStaticUI:
         ).read_text()
 
         cli_only = {
-            # 터미널 전용 진행 해설 — 웹엔 worker_state·스코프 카드가 이미 있다
-            "spinner": "worker_state 가 대체",
             # 부트스트랩이 uvicorn 보다 먼저 돌아 브라우저가 붙기 전에 끝난다
             "model_detected": "서버 기동 전에 방출 — 웹에 도달 불가",
             "model_loaded": "서버 기동 전에 방출 — 웹에 도달 불가",
-            # 사고 원문은 웹에서 thinking_tick(카운터)으로 갈음
-            "thinking": "웹은 thinking_tick 카운터로 갈음",
-            # 폐기 신호 — 프론트는 stream_tick 만 쓰므로 들을 것이 없다
-            "stream_reset": "카운터 리셋은 서버 쪽 상태 (프론트 무관)",
         }
 
         emitted = set(re.findall(r'_emit\(\s*"([a-z_]+)"', web_src))
@@ -2244,15 +2235,11 @@ class TestDebugPromptEndpoint:
         for s in body["sections"]:
             assert s["chars"] == len(s["text"])
             assert s["est_tokens"] > 0
-        # totals are consistent with the per-section figures + join overhead
-        assert body["total_chars"] == sum(s["chars"] for s in body["sections"]) + 2
-        assert body["est_tokens"] == sum(s["est_tokens"] for s in body["sections"])
+        # 합계 칸은 없다 — 프런트가 섹션의 est_tokens 로 센다
+        assert "total_chars" not in body and "est_tokens" not in body
 
-    def test_grammar_rides_beside_the_prompt_outside_the_totals(
-        self, server_and_client
-    ):
-        """📐 디코딩 문법은 kind=grammar 로 목록 끝에 보이되 프롬프트 토큰이
-        아니므로 total_chars/est_tokens 에 들어가지 않는다."""
+    def test_grammar_rides_beside_the_prompt(self, server_and_client):
+        """📐 디코딩 문법은 kind=grammar 로 목록 끝에 보인다 — 프롬프트 섹션이 아니다."""
         _, renderer, client = server_and_client
         renderer.note_system_prompt(
             [("Role", "## Role\nYou are an agent.")],
@@ -2264,8 +2251,7 @@ class TestDebugPromptEndpoint:
         (g,) = [s for s in body["sections"] if s.get("kind") == "grammar"]
         assert body["sections"][-1] is g and g["name"] == "Decoding grammar"
         assert g["thinking_open"] is True and g["chars"] == len(g["text"])
-        assert body["est_tokens"] == sum(s["est_tokens"] for s in prompt)
-        assert body["total_chars"] == sum(s["chars"] for s in prompt)
+        assert [s["name"] for s in prompt] == ["Role"]
         # 문법 없는 콜은 grammar 섹션도 없다
         renderer.note_system_prompt([("Role", "x")], turn=4)
         body = client.get("/api/debug/prompt?token=testtoken").json()
@@ -2278,19 +2264,6 @@ class TestDebugPromptEndpoint:
         body = client.get("/api/debug/prompt?token=testtoken").json()
         assert body["turn"] == 2
         assert body["sections"][0]["text"] == "new"
-
-
-def _note_agent_scope(renderer, *, task_id, index, agent, sections, turn):
-    """Populate an agent-scoped snapshot via the real thread→task routing
-    (a delegate worker captures its prompt on its own thread)."""
-
-    def worker():
-        renderer.begin_scope(task_id=task_id, index=index, agent=agent, label="t")
-        renderer.note_system_prompt(sections, turn=turn)
-
-    th = threading.Thread(target=worker)
-    th.start()
-    th.join(timeout=2.0)
 
 
 class TestWorkspaceDownload:
@@ -3815,7 +3788,7 @@ class TestChangesEndpoints:
         assert first["enabled"] is True and first["files"] == []
         assert first["baseline"]["kind"] == "session"
         assert isinstance(first["baseline"]["when"], int)
-        assert "commit" in first["baseline"]  # 읽는 이 없는 칸 — 지금 값 고정
+        assert set(first["baseline"]) == {"kind", "when"}  # 프런트가 읽는 둘만
         (w / "a.py").write_text("one\nTWO\n")
         (w / "new.md").write_text("x\n")
         got = client.get("/api/changes" + q).json()["files"]

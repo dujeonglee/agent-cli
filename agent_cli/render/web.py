@@ -211,16 +211,10 @@ class WebRenderer(Renderer):
         # persist after the agent finishes so its prompt stays inspectable
         # post-mortem.
         self._prompt_snapshots: dict[str, dict[str, Any]] = {}
-        # Scope-label metadata (task_id → {"agent", "index"}) captured at
+        # Scope-label metadata (task_id → {"agent", "kind", "parent"}) captured at
         # ``begin_scope`` so the inspector chip row can name each
         # sub-agent ("code-analyst·1") without re-deriving it from the timeline.
         self._prompt_scope_labels: dict[str, dict[str, Any]] = {}
-        # Nesting depth per OPEN scope (task_id → 0 for a scope directly under
-        # main). ``begin_scope`` reads its parent's entry to derive its own, so
-        # the depth on the wire is exact instead of inferred by the frontend
-        # from event order (which cannot tell a nested scope from a sibling).
-        # Entries are dropped in ``end_scope``.
-        self._scope_depths: dict[str, int] = {}
         # 스레드 → 다음 카드에 붙일 표시 전용 주석 (``note_next``)
         self._pending_notes: dict[int, str] = {}
         # 다음 카드 이벤트가 가리킬 history 레코드 서수 (v10.6.0, 모델 시점) —
@@ -500,7 +494,6 @@ class WebRenderer(Renderer):
         kind: str = "run",
         label: str = "",
         agent: str = "",
-        index: int = 0,
         parent: str | None = None,
         ts: float | None = None,
         ctx_dir: str | None = None,
@@ -513,10 +506,9 @@ class WebRenderer(Renderer):
         Persistent (not transient): pairs with ``scope_end`` to bound the card
         in the replay buffer, so a mid-scope reconnect still draws it.
 
-        The event carries ``parent`` + ``depth``: the timeline nests the child's
-        card inside its parent's body. ``parent`` defaults to the enclosing scope on
-        this thread's stack; ``depth`` is derived from the parent's own depth,
-        so a caller never computes it. ``ts``, when given, becomes the event's
+        The event carries ``parent``: the timeline nests the child's card inside its
+        parent's body. ``parent`` defaults to the enclosing scope on this thread's
+        stack. ``ts``, when given, becomes the event's
         timestamp instead of emit-time (one shared value per parallel batch).
 
         ``ctx_dir`` — the scope's own context directory relative to the session
@@ -536,11 +528,6 @@ class WebRenderer(Renderer):
             # Same-thread nesting (skill → skill, skill → single run) reads the
             # parent off the stack; a cross-thread worker gets it passed in.
             eff_parent = stack[-1] if parent is None and stack else (parent or "")
-            # depth = parent's depth + 1. An unknown parent (its scope already
-            # ended, or a caller inventing an id) still counts as one level of
-            # nesting rather than collapsing the child onto main's slot.
-            depth = 0 if not eff_parent else self._scope_depths.get(eff_parent, 0) + 1
-            self._scope_depths[task_id] = depth
             caller_hidx = self._container_hidx.get(eff_parent)
             self._thread_to_task[tid] = task_id
             stack.append(task_id)
@@ -548,20 +535,17 @@ class WebRenderer(Renderer):
             # arrives later (first LLM call) keyed by the same task_id.
             self._prompt_scope_labels[task_id] = {
                 "agent": agent or label,
-                "index": index,
                 "kind": kind,
                 "parent": eff_parent or "",
             }
         # Tag this thread so a confirm/ask it triggers can name it.
-        self.set_thread_agent(agent or label or f"scope #{index + 1}")
+        self.set_thread_agent(agent or label or "scope")
         payload = {
             "task_id": task_id,
             "kind": kind,
             "label": label,
             "agent": agent,
-            "index": index,
             "parent": eff_parent,
-            "depth": depth,
         }
         if ts is not None:
             payload["ts"] = ts
@@ -597,10 +581,6 @@ class WebRenderer(Renderer):
                 # 스코프를 다 닫은 스레드의 잔여 pending thought 정리 —
                 # thought() 후 action/final 없이 죽은 워커의 슬롯 누수 방지 (P0-5).
                 self._pending_thoughts.pop(tid, None)
-            # This scope can no longer be anyone's parent — drop its depth entry
-            # so a long session doesn't accumulate one per scope. Children were
-            # opened while it was live and already carry their own depth.
-            self._scope_depths.pop(task_id, None)
         self._finalize_prompt_scope(task_id)  # 동적 컨텍스트 live→고정
         self.set_thread_agent("")  # worker's prompt label no longer applies
         payload = {
@@ -655,7 +635,6 @@ class WebRenderer(Renderer):
             # its run block lives in that agent's channel. Emitted anyway so
             # every scope_start has one shape.
             "parent": "",
-            "depth": 0,
             # 이 스코프가 곧 채널이다 — 프런트가 이 키의 채널에 런 블록을 연다.
             "channel": key,
             # An agent's turns (run or spawn) accumulate in agents/<key>/history.jsonl —
@@ -817,10 +796,8 @@ class WebRenderer(Renderer):
         self._emit("agent_cleared", {"key": key}, persistent=False)
 
     def set_thread_status(self, status: str) -> None:
-        """Record the status in the base ``_thread_status`` dict AND emit a
-        transient ``scope_status`` event so the frontend's task card header
-        can update its live status line."""
-        super().set_thread_status(status)
+        """Emit a transient ``scope_status`` event so the frontend's task card
+        header can update its live status line."""
         tid = threading.get_ident()
         task_id = self._thread_to_task.get(tid)
         if task_id is not None:
@@ -1215,17 +1192,6 @@ class WebRenderer(Renderer):
         self._replay_ts = data.get("ts")
         self._emit(event, data, persistent=True)
 
-    def replay_scopes(self) -> None:
-        """Re-emit the sidecar's ``scope_start``/``scope_end`` on their own —
-        the swimlane bars without the interleaved history turns.
-
-        :meth:`replay_session` is what the resume path uses (it interleaves both
-        streams by time so each scope's card exists before its turns arrive).
-        This entry point stays for callers that only want the bars."""
-        for item in self._scope_replay_events():
-            self._emit_scope_replay(item)
-        self._replay_ts = None
-
     def replay_session(self, ctx) -> None:
         """Full resume replay: history turns AND scope lifecycle, **interleaved
         by timestamp**, so the frontend rebuilds the same nesting the live run
@@ -1447,17 +1413,11 @@ class WebRenderer(Renderer):
         토큰 수가 부풀었다(감사 발견). v9.9.0 부터 카운터가 스코프별이라
         **이 스코프 것만** 버린다 — 옆 에이전트의 진행은 재전송과 무관하다.
 
-        아래는 이벤트 자체에 대한 원래 주석:
-
-        ``stream_end`` 는 못 쓴다 — 프론트가 그걸 "곧 assistant_turn 이
-        대체한다"로 읽어 카드를 남기기 때문이다. 여기선 대체가 아니라 폐기다.
-        ``persistent=False``: 재접속 replay 에서 되살릴 이유가 없다(폐기된
-        부분 출력은 버퍼에도 남지 않는다). ``_emit`` 이 스코프 task_id 를
-        자동으로 붙여 서브에이전트 카드도 제 것만 지워진다."""
+        웹은 사건을 내지 않는다 — 프런트가 들을 것이 없다(라이브 타이핑이 없어 버릴 부분 출력이 없다). 카운터 리셋은
+        서버 쪽 상태다."""
         # 카운터 리셋 — 생성 중 줄(`_tick`)이 누적분을 쓰므로, 재전송 시
         # 0 으로 되돌리지 않으면 옛 시도분을 이어 세서 부풀어 보인다.
         self._tick_state.pop(self._tick_key(), None)
-        self._emit("stream_reset", {}, persistent=False)
 
     def stream_stall(
         self,
@@ -1571,7 +1531,6 @@ class WebRenderer(Renderer):
         payload = {
             "turns": n,
             "since_turn": int(info.get("since_turn") or 0),
-            "fires": int(info.get("fires") or 0),
             "asking": bool(info.get("asking")),
         }
         if prev != payload:
@@ -1694,7 +1653,6 @@ class WebRenderer(Renderer):
                 "phase": phase,
                 "old_tokens": old_tokens,
                 "new_tokens": new_tokens,
-                "evicted_count": evicted_count,
                 "reason": reason,
             },
             persistent=False,
@@ -1739,12 +1697,6 @@ class WebRenderer(Renderer):
             },
             persistent=False,
         )
-
-    def spinner_start(self, message: str = "") -> None:
-        self._emit("spinner", {"state": "start", "message": message}, persistent=False)
-
-    def spinner_stop(self) -> None:
-        self._emit("spinner", {"state": "stop"}, persistent=False)
 
     def worker_busy(self) -> None:
         """Signal that the chat worker just picked up a user message
@@ -1934,9 +1886,6 @@ class WebRenderer(Renderer):
         scope = self._current_prompt_scope(threading.get_ident())
         snapshot = {
             "turn": turn,
-            "total_chars": sum(len(t) for _, t in sections)
-            + 2 * max(0, len(sections) - 1),
-            "est_tokens": sum(estimate_tokens(t) for _, t in sections),
             "sections": [
                 {
                     "name": name,
@@ -1947,7 +1896,7 @@ class WebRenderer(Renderer):
                 for name, text in sections
             ],
             # 📐 서버가 강제하는 디코딩 문법 — 프롬프트 섹션이 아니라 곁에 두는
-            # 것: 총합(total_chars/est_tokens)에 들어가지 않는다.
+            # 것.
             "grammar": (
                 {
                     "thinking_open": grammar[0],

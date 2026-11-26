@@ -175,7 +175,7 @@ def test_badge_recounts_at_run_end(stack, page, ws):
 
     # 에이전트·스킬 런: scope_end
     def body():
-        r.begin_scope(task_id="t1", kind="run", index=0, agent="tester", label="t")
+        r.begin_scope(task_id="t1", kind="run", agent="tester", label="t")
         (ws / "new.md").write_text("x\n")
         r.end_scope(task_id="t1", kind="run", success=True, duration_s=0.1)
 

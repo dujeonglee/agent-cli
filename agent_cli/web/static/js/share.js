@@ -59,6 +59,7 @@ export function fmtTok(n) {
 
 // 상단 사용량 칩의 글 — ctx 점유·이 턴의 출력(+디코드 속도)·이 루프의 입력/출력 합.
 // v8.57.0: ↑(턴 입력)은 ctx 분자와 동일 값이라 생략. 0/없는 조각은 뺀다.
+// export: tests/test_app_markdown.py 가 node 로 읽는다 (다른 모듈은 import 하지 않는다)
 export function usageLine(d) {
   const parts = [];
   const inTok = d.in || 0;
@@ -77,6 +78,7 @@ export function usageLine(d) {
 
 // 상단 사용량 칩의 툴팁 — 줄에 없는 것(ttft·prefill 속도·캐시 적중 합·호출 수)까지.
 // 0/없는 조각은 뺀다(시간을 안 주는 경로는 속도·ttft 가 자연히 빠진다).
+// export: tests/test_app_markdown.py 가 node 로 읽는다 (다른 모듈은 import 하지 않는다)
 export function usageTooltip(d) {
   const lines = ["context " + fmtTok(d.in) + " / " + fmtTok(d.context_window)];
   let turn = "turn out " + fmtTok(d.out);

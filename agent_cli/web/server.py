@@ -786,8 +786,6 @@ def create_app(server: WebServer) -> FastAPI:
         tool_sections = list(snapshot.get("tools") or [])
         tail_sections = list(snapshot.get("tail") or [])
         sections = system_sections + tool_sections + tail_sections
-        est_tokens = sum(s["est_tokens"] for s in sections)
-        total_chars = sum(s["chars"] for s in sections) + 2 * max(0, len(sections) - 1)
         grammar = snapshot.get("grammar")
         if grammar:
             sections = [
@@ -822,8 +820,6 @@ def create_app(server: WebServer) -> FastAPI:
             "task_id": task_id,
             "turn": snapshot.get("turn") or 0,
             "sections": sections,
-            "total_chars": total_chars,
-            "est_tokens": est_tokens,
             "tail_prev": snapshot.get("tail_prev") or [],
             "prev_turn": snapshot.get("prev_turn"),
             "closed_after": list(snapshot.get("closed_after") or []),
@@ -1372,7 +1368,7 @@ def create_app(server: WebServer) -> FastAPI:
             return _changes_off("unreadable", store.stats.failure or "git diff failed")
         return {
             "enabled": True,
-            "baseline": {"kind": base[1], "when": base[2], "commit": base[0][:8]},
+            "baseline": {"kind": base[1], "when": base[2]},
             # 하위 저장소 안의 항목만 `repo` 를 싣는다 — 워크스페이스 것은 null 로 채운다
             "files": [{"repo": None, **f} for f in rep.files],
             "repos": rep.repos,

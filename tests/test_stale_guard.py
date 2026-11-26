@@ -254,7 +254,6 @@ class TestWebRenderer:
         assert r.hub.sticky_payload("stuck") == {
             "turns": 3,
             "since_turn": 2,
-            "fires": 1,
             "asking": False,
         }
         assert read_status_file(tmp_path)["stuck"] == {
@@ -449,10 +448,9 @@ class TestWebMain:
         assert result.success
         stuck = [d for ev, d in _events(conn) if ev == "stuck"]
         assert [d["turns"] for d in stuck] == [3, 4, 0]
-        assert {k: stuck[0][k] for k in ("turns", "since_turn", "fires", "asking")} == {
+        assert {k: v for k, v in stuck[0].items() if k != "ts"} == {
             "turns": 3,
             "since_turn": 2,
-            "fires": 1,
             "asking": False,
         }
         assert r.hub.sticky_payload("stuck") is None
