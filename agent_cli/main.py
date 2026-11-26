@@ -46,7 +46,7 @@ from agent_cli.providers import (
 from agent_cli.render import C, console, get_renderer
 from agent_cli.render.base import interactive_lock
 from agent_cli.session_slots import get_agent_registry
-from agent_cli.terminate import SigTerm, Terminated, wait_left
+from agent_cli.terminate import CLOSE_WAIT_S, SigTerm, Terminated, wait_left
 
 app = typer.Typer(
     name="agent-cli",
@@ -2247,18 +2247,12 @@ def run(
     raise typer.Exit(exit_code)
 
 
-#: 웹 방을 닫을 때 main 이 멈추기를 기다리는 상한(초) — SIGTERM 으로 들어왔으면 그 시한(`terminate.TEARDOWN_BUDGET_S`)
-#: 안에서다. 전경 셸의 정지(정지를 보는 0.2초 + TERM 뒤 3초 + KILL 뒤 3초 — `tools.shell._stop_group`)와 그 결과 기록을
-#: 덮는다. 응답 머리를 기다리는 모델 호출처럼 정지를 보지 않는 대기는 이 상한에서 끊긴다
-WEB_CLOSE_WAIT_S = 7.0
-
-
 def wait_for_main_to_stop(worker: threading.Thread, deadline: float | None) -> None:
-    """웹 방을 닫을 때 main(``agent-loop`` 스레드)이 멈추기를 기다린다 — 상한 `WEB_CLOSE_WAIT_S`, SIGTERM 의 시한이
+    """웹 방을 닫을 때 main(``agent-loop`` 스레드)이 멈추기를 기다린다 — 상한 `terminate.CLOSE_WAIT_S`, SIGTERM 의 시한이
     있으면 그 안에서(`wait_left`). 정리(`close_session`)는 이 뒤에 돈다. 기다리는 도중 Ctrl+C 를 한 번 더 누르면
     기다림만 그만둔다 — 정리·세션 저장은 부르는 쪽이 그대로 한다."""
     try:
-        worker.join(timeout=wait_left(deadline, WEB_CLOSE_WAIT_S))
+        worker.join(timeout=wait_left(deadline, CLOSE_WAIT_S))
     except KeyboardInterrupt:
         pass
 

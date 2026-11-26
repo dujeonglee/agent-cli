@@ -1,7 +1,7 @@
 """웹 방을 닫을 때 — 정리는 main 이 멈춘 뒤 (6d-2).
 
 `main.web` 의 ``finally`` 는 main 상자를 닫고(`WebServer.shutdown` → `MainInput.close`) main 이 멈추기를 기다린 뒤
-(`wait_for_main_to_stop`) 정리한다(`close_session`). 기다림의 상한은 `WEB_CLOSE_WAIT_S`, SIGTERM 이면 그 시한 안이다.
+(`wait_for_main_to_stop`) 정리한다(`close_session`). 기다림의 상한은 `terminate.CLOSE_WAIT_S`, SIGTERM 이면 그 시한 안이다.
 가짜 worker 는 받은 ``timeout`` 을 적는다 — 시간을 재지 않는다.
 """
 
@@ -13,6 +13,7 @@ import time
 import pytest
 
 import agent_cli.main as M
+from agent_cli.terminate import CLOSE_WAIT_S
 
 
 class _Worker:
@@ -29,7 +30,7 @@ class _Worker:
 def test_without_a_deadline_it_waits_up_to_the_cap():
     w = _Worker()
     M.wait_for_main_to_stop(w, None)
-    assert w.timeouts == [M.WEB_CLOSE_WAIT_S]
+    assert w.timeouts == [CLOSE_WAIT_S]
 
 
 def test_the_cap_covers_the_shell_stop():
@@ -38,8 +39,8 @@ def test_the_cap_covers_the_shell_stop():
     from agent_cli.jobs import KILL_GRACE_S
     from agent_cli.tools.shell import STOP_POLL_S
 
-    assert M.WEB_CLOSE_WAIT_S == 7.0
-    assert M.WEB_CLOSE_WAIT_S > STOP_POLL_S + 2 * KILL_GRACE_S
+    assert CLOSE_WAIT_S == 7.0
+    assert CLOSE_WAIT_S > STOP_POLL_S + 2 * KILL_GRACE_S
 
 
 def test_a_passed_deadline_does_not_wait():
@@ -53,7 +54,7 @@ def test_a_second_ctrl_c_ends_only_the_wait():
     6d-2 전엔 `KeyboardInterrupt` 가 그대로 나가 정리·저장을 건너뛰고 130 으로 끝났다."""
     w = _Worker(raises=KeyboardInterrupt())
     M.wait_for_main_to_stop(w, None)
-    assert w.timeouts == [M.WEB_CLOSE_WAIT_S]
+    assert w.timeouts == [CLOSE_WAIT_S]
 
 
 def test_the_web_host_waits_for_main_before_the_teardown():

@@ -10,6 +10,8 @@ import textwrap
 import time
 from unittest.mock import MagicMock
 
+import pytest
+
 from agent_cli.terminate import TEARDOWN_BUDGET_S, SigTerm, Terminated, wait_left
 
 
@@ -53,8 +55,6 @@ class TestRunUnwind:
     def test_the_first_sigterm_raises_at_once(self):
         """6d-3 전의 값 — run 의 처리기는 첫 SIGTERM 에 곧바로 `Terminated` 를 던진다(main 이 어디 있든 그 자리에서 풀려
         돌던 호출과 결과가 기록에 남지 않는다)."""
-        import pytest
-
         t = SigTerm()
         prev = t.install_unwind()
         try:
