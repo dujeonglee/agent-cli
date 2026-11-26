@@ -1,11 +1,8 @@
-"""Dropped-field recovery: the ``action_required`` flag.
+"""Dropped-field recovery.
 
-The dialect flag governs what happens when an emission is missing its
-action:
-
-  - ``action_required=False`` → a dropped/empty action is recovered by the
-    loop via ``infer_action`` on the *preserved* action_input (wire-key
-    prefix → tool). ``True`` → straight to NO_ACTION recovery.
+A dropped/empty action is recovered by the loop via ``infer_action`` on the
+*preserved* action_input (wire-key prefix → tool); when inference is
+ambiguous/empty, NO_ACTION recovery asks the model again.
 
 A missing *thought* is always tolerated (v9.23.3): the NO_THOUGHT recovery and
 its ``thought_required`` flag were removed as dead code — both shipped
@@ -13,14 +10,12 @@ formats set it False and none implemented ``format_no_thought_retry``.
 
 The parser-side invariant (``DialectBase.parse`` contract) is that
 action_input is preserved even when the action slot is empty/invalid, so
-both flag branches have something to work with. This file pins:
+the recovery has something to work with. This file pins:
 
   1. Both shipped parsers (json_fc / xml_fc) preserve action_input across
      dropped-action shapes (v7.0.0 — react 제거로 쌍이 json_fc/xml_fc 로).
   2. Cross-wire parity: same semantic emission → same recovery outcome.
-  3. The loop honors the flag: False → infer, True → recover. The shipped
-     plugins both set False, so the True branch is pinned against a
-     synthetic strict plugin.
+  3. The loop infers a prefixed input and falls to NO_ACTION on a flat one.
 """
 
 from __future__ import annotations
@@ -58,18 +53,6 @@ def _make_provider(*responses):
 
 def _complete(result: str) -> str:
     return f'done\n\n[{{"action": "complete", "result": "{result}"}}]'
-
-
-class _StrictJson(Dialect):
-    """Synthetic dialect pinning the True branch of ``action_required``. The
-    shipped specs are False, so without this the recovery path for a
-    *required* action would be untested. parse 는 상속 — loop 의
-    플래그-게이트 분기만 다르다."""
-
-    action_required = True
-
-    def __init__(self):
-        super().__init__(JSON_FC)
 
 
 # ── 1. Parser preserves action_input across dropped-action shapes ──
@@ -146,22 +129,20 @@ class TestCrossWireParity:
             == "shell"
         )
 
-    def test_shipped_plugins_optional_by_default(self):
+    def test_shipped_plugins_have_no_thought_flag(self):
         for name in ("json_fc", "xml_fc"):
-            plugin = get(name)
-            assert plugin.action_required is False, name
-            assert not hasattr(plugin, "thought_required"), name  # v9.23.3 제거
+            assert not hasattr(get(name), "thought_required"), name  # v9.23.3 제거
 
 
-# ── 3. Loop honors the flags ─────────────────────────
+# ── 3. Loop recovers dropped actions ─────────────────────────
 # 복구 여부는 도구의 파일 부수효과로 측정 (메시지 텍스트 스캔 금지 —
 # NO_ACTION 개입이 raw 를 echo 하므로 텍스트는 오탐).
 
 
-class TestActionRequiredGate:
-    def test_false_flat_dropped_action_falls_to_no_action(self, caps, tmp_path):
+class TestDroppedActionRecovery:
+    def test_flat_dropped_action_falls_to_no_action(self, caps, tmp_path):
         # flat input 의 dropped action 은 infer 불가(다수 도구가 `path` 공유)
-        # → action_required=False 여도 NO_ACTION 복구로 (자동 디스패치 없음).
+        # → NO_ACTION 복구로 (자동 디스패치 없음).
         target = tmp_path / "made.txt"
         provider = _make_provider(
             f'x\n\n[{{"path": "{target}", "content": "data"}}]',
@@ -187,24 +168,6 @@ class TestActionRequiredGate:
             == "write_file"
         )
         assert infer_action({"path": "x"}) is None  # flat = ambiguous
-
-    def test_true_skips_infer_and_recovers(self, caps, tmp_path):
-        target = tmp_path / "made.txt"
-        provider = _make_provider(
-            f'x\n\n[{{"path": "{target}", "content": "data"}}]',
-            _complete("done"),
-        )
-        result = run_loop(
-            ports=TEST_PORTS,
-            query="go",
-            provider=provider,
-            capabilities=caps,
-            model="m",
-            dialect=_StrictJson(),
-        )
-        assert result.success
-        assert provider.call.call_count == 2  # NO_ACTION retry happened
-        assert not target.exists()
 
 
 class TestMissingThoughtIsTolerated:

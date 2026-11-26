@@ -44,7 +44,6 @@ class _MultiOpFormat(DialectBase):
     syntax so the tests drive the LOOP, not a parser."""
 
     name = "_multi_op_test"
-    action_required = False
     # Completion is an explicit `complete` op (json_fc's model), not a
     # terminal flag — parse_turn never sets terminal.
 

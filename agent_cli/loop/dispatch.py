@@ -395,21 +395,13 @@ class TurnDispatcher:
         # flat action-less payload like ``{path}`` is ambiguous → NO_ACTION,
         # the documented extension point for a future schema-based resolver).
         # Ambiguous/none leaves it to the NO_ACTION recovery below.
-        #
-        # Gated on ``action_required``: when the dialect requires an
-        # explicit action (action_required=True), a dropped action is a
-        # drift to be corrected by the model, so we skip inference and fall
-        # through to the NO_ACTION recovery below. When False (the namespaced
-        # format), the action is recoverable from the
-        # preserved action_input, so we infer it.
         action_inferred = False
-        if not self.cfg.dialect.action_required:
-            for op in turn.ops:
-                if not op.action and isinstance(op.action_input, dict):
-                    inferred = infer_action(op.action_input)
-                    if inferred:
-                        op.action = inferred
-                        action_inferred = True
+        for op in turn.ops:
+            if not op.action and isinstance(op.action_input, dict):
+                inferred = infer_action(op.action_input)
+                if inferred:
+                    op.action = inferred
+                    action_inferred = True
 
         # 도구를 바꾸는 층 (v10.77.0, loop/reroute.py): 결과가 똑같은 다른 도구로
         # 바꾼다 — 기록·컨텍스트에는 바뀐 호출이 남는다(아래 ops shape 레코드).

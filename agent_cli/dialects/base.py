@@ -196,19 +196,6 @@ class DialectBase(ABC):
     summary: str = ""
     """사람이 읽는 한 줄 (v10.127.0) — 스펙 구동 방언은 ``DialectSpec.summary``."""
 
-    action_required: bool = True
-    """Whether a missing ``action`` triggers recovery vs. inference.
-
-    True (default, conservative): an emission whose ``action`` slot is
-    empty/invalid goes straight to NO_ACTION recovery — the loop asks the
-    model to re-emit with an action. False: the loop first tries
-    ``infer_action`` on the preserved ``action_input`` (wire-key prefix →
-    tool) and only falls back to NO_ACTION recovery when inference is
-    ambiguous/empty. Plugins whose ``action_input`` keys are namespaced —
-    so a dropped action name is unambiguously recoverable — set False.
-    The recovery path depends on the parser preserving ``action_input``
-    (see :meth:`parse`)."""
-
     # ─── Prompt (abstract) ──────────────────────────────────────
 
     @abstractmethod
@@ -269,9 +256,8 @@ class DialectBase(ABC):
         Preservation invariant (recovery paths depend on it): when an op's
         ``action`` slot is empty or invalid but an ``action_input`` was
         still identified, the parser MUST keep the op with its
-        ``action_input`` rather than dropping it. ``infer_action`` (for
-        ``action_required=False``) and the NO_ACTION recovery echo (for
-        ``action_required=True``) both read it. ``parse_stage`` should be
+        ``action_input`` rather than dropping it. ``infer_action`` and the
+        NO_ACTION recovery echo both read it. ``parse_stage`` should be
         > 0 whenever an ``action_input`` was recovered this way (the exact
         value stays observability-only).
         """

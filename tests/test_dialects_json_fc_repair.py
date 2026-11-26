@@ -38,7 +38,6 @@ class TestFlags:
         # caused a recurring class of finish bugs, fixed at the origin by
         # reviving complete). v10.11.1: the opt-out flag itself is gone.
         assert not hasattr(WF, "exposes_complete")
-        assert WF.action_required is False
 
     def test_registered(self):
         from agent_cli.dialects import list_names

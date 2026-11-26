@@ -417,7 +417,7 @@ def _op_signature(value) -> int:
     1 — carries an ``action`` key (an op, or a batch containing one).
     2 — a bare dict WITHOUT ``action``: an op whose action field the model
         dropped (the loop recovers it via ``infer_action`` on the preserved
-        input, ``action_required=False`` — tests/test_dropped_field_recovery).
+        input — tests/test_dropped_field_recovery).
         Only the dict form needs this tier: an actionless ARRAY still starts
         with ``[{``, so the fallback anchor finds it, whereas a bare
         ``{"path": …}`` matches no opener pattern and would otherwise be lost.
