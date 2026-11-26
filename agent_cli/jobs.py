@@ -57,11 +57,6 @@ LOG_DIR = Path(".agent-cli") / "tmp" / "jobs"
 SHELL: str | None = shutil.which("bash")
 
 
-def shell_name() -> str:
-    """Environment 절이 적는 이름 — ``"bash"`` 또는 ``"sh"``."""
-    return "bash" if SHELL else "sh"
-
-
 class ProcHandle:
     """셸 명령 하나 — 자기 세션(`start_new_session`)의 ``Popen``."""
 

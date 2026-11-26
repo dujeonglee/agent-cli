@@ -200,7 +200,6 @@ class AgentInstance:
         home_dir: Path,
         instance_name: str = "",
         description: str = "",
-        instructions: str = "",
         ends_after_task: bool = False,
         caller_runtime: dict | None = None,
         agent_stack: list[str] | None = None,
@@ -232,10 +231,6 @@ class AgentInstance:
         self.instance_name = instance_name
         # 역할 md 의 description — Live Teammates 광고의 전문영역 요약.
         self.description = description
-        # instant-agent (U4): spawn 시 인라인으로 받은 추가 지시 원본 —
-        # 합성 결과는 role_prompt 에 이미 들어있고, 이 필드는 manifest
-        # 영속·인스펙터 가시성용.
-        self.instructions = instructions
         self.allowed_tools = allowed_tools
         self.model = model
         self.hooks_config = hooks_config
@@ -277,7 +272,6 @@ class AgentInstance:
         self.restarted = False
         # 지금 처리 중인 요청의 화자 — `reply` 거절 사유가 읽는다(`reply_facts`).
         self.current_author = "main"
-        self.created_at = time.time()
         self.handled = 0  # 처리 완료한 request 수 (화면용 숫자)
         # 지금 도는 런의 이름 = 그 런을 연 배달의 id — 질문의 런 스코프
         # (Question.asked_in)가 이 값을 찍는다. 유휴는 "".
@@ -686,7 +680,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
 
     def queued_for(self, addr: str) -> tuple[MailView, ...]:
         """``addr`` 앞에 줄 서 아직 꺼내 가지 않은 배달 — main 메일함·에이전트 받은편지함(미러)·private 메일함,
-        도착 순서. 읽기만 한다 — 락 안에서 사본을 뜬다."""
+        도착 순서. 읽기만 한다 — 락 안에서 사본을 뜬다. 테스트가 보는 창 — 제품은 부르지 않는다."""
         if addr == "main" or is_private_owner(addr):
             return tuple(
                 view_of_main_mail(dict(e.payload)) for e in self._post.mail(addr)
@@ -696,7 +690,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
 
     def taken_by(self, addr: str) -> tuple[MailView, ...]:
         """``addr`` 의 런이 꺼내 들고 있는 배달 — 에이전트의 지금 런이 시작·흡수한 항목(런이 끝나면 빈다).
-        main·private 은 꺼낸 것을 들고 있지 않다. 읽기만 한다."""
+        main·private 은 꺼낸 것을 들고 있지 않다. 읽기만 한다. 테스트가 보는 창 — 제품은 부르지 않는다."""
         tm = (
             self._agents.get(addr.split(":", 1)[1])
             if addr.startswith("agent:")
@@ -853,8 +847,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
           빚뿐).
         - 그 밖(보통의 끝): :meth:`end_run` — 남은 빚을 라벨 붙은 런 요약으로.
 
-        종전엔 이 판정(``not stop_event``)이 호출부 셋에 흩어져 있었다. ``meta`` 의 ``run`` 키는 그 런을 연 배달
-        id 이다. 체크인 타이머는 여기서 풀 것이 없다 — 거는 곳은 제자리 대기 하나이고 깨면 그 ``finally`` 가 푼다."""
+        종전엔 이 판정(``not stop_event``)이 호출부 셋에 흩어져 있었다. 체크인 타이머는 여기서 풀 것이 없다 — 거는 곳은 제자리 대기 하나이고 깨면 그 ``finally`` 가 푼다."""
         if stopped:
             # 버린 빚 — 요청자는 더 기다리지 않는다(dropped).
             self._post.end_run(debtor, run_id=self._run_of(debtor), outcome="stopped")
@@ -1230,7 +1223,6 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
             home_dir=self.session_dir / AGENTS_DIR / key,
             instance_name=name,
             description=description,
-            instructions=instructions,
             ends_after_task=ends_after_task,
             caller_runtime=rt,
             agent_stack=agent_stack,
@@ -2267,14 +2259,12 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
             home_dir=tm.home_dir,
             instance_name=tm.instance_name,
             description=tm.description,
-            instructions=tm.instructions,
             ends_after_task=tm.ends_after_task,
             caller_runtime=tm.caller_runtime,
             agent_stack=tm.agent_stack,
             parent=tm.parent,
         )
         fresh.handled = tm.handled
-        fresh.created_at = tm.created_at
         fresh.revive = True  # worker 가 ctx 를 resume 모드로 (이력 이어받기)
         self._agents[key] = fresh
         self._post.reopen(f"agent:{key}")  # 끝낼 때 닫은 상자 — 새 워커가 기다린다
@@ -2376,8 +2366,6 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
             )
             tm.task_id = str(e.get("task_id") or "")
             tm.handled = int(e.get("handled", 0) or 0)
-            if isinstance(e.get("created_at"), (int, float)):
-                tm.created_at = e["created_at"]
             self._agents[key] = tm
             if e.get("state") == "dead" or tm.ends_after_task:
                 tm.state = "dead"

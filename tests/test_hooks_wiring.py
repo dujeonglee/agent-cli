@@ -77,12 +77,10 @@ class TestSessionRunner:
         runner = build_hook_runner()
         for name, ports in _all_ports().items():
             assert ports.hook_runner is runner, name
-            assert "hook_runner" not in ports.unwired, name
 
-    def test_without_bootstrap_the_port_is_unwired_with_a_reason(self):
+    def test_without_bootstrap_the_port_is_none(self):
         for name, ports in _all_ports().items():
             assert ports.hook_runner is None, name
-            assert "build_hook_runner" in ports.unwired["hook_runner"], name
 
     def test_teardown_clears_it(self, tmp_path):
         from unittest.mock import MagicMock, patch
@@ -183,7 +181,7 @@ class TestBuiltinHooksDir:
 
         build_hook_runner()
         ports = MainLoop.make_ports(
-            agent_registry=None,
+            agent_registry=_Reg(),
             mcp_manager=None,
             enqueue_user_message=None,
             route_message=None,

@@ -136,13 +136,6 @@ def request_bytes(messages, tools=None) -> int:
     return total
 
 
-def _sum_message_tokens(messages) -> int:
-    """Estimated token total for a message list — the single expression for
-    ``sum(_estimate_message_tokens(...))`` used across the cache (re)builds
-    (resume restore, compaction evict, force_fit)."""
-    return sum(_estimate_message_tokens(m) for m in messages)
-
-
 def render_history_message(
     msg: dict,
     dialect,

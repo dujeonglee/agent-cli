@@ -25,7 +25,7 @@ def _build_tall_task_group(stack, page):
     r = stack.renderer
     # begin_scope 는 호출 스레드를 task 에 등록 — 이후 같은 스레드의
     # observation 이 그 그룹 카드로 라우팅된다(_thread_to_task).
-    r.begin_scope(task_id="t1", kind="run", index=0, agent="explorer", label="dig in")
+    r.begin_scope(task_id="t1", kind="run", agent="explorer", label="dig in")
     for i in range(30):
         r.observation(
             f"관찰 {i}: " + ("긴 내용 " * 12),

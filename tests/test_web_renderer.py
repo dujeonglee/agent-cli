@@ -687,7 +687,7 @@ class TestCompaction:
         assert data["phase"] == "done"
         assert data["old_tokens"] == 12400
         assert data["new_tokens"] == 5100
-        assert data["evicted_count"] == 8
+        assert "evicted_count" not in data  # 프런트가 안 읽는다 — CLI 만 쓴다
 
     def test_compaction_is_transient_not_buffered(self):
         """A compaction is a live timeline marker — not replayed on reconnect."""
@@ -1047,19 +1047,17 @@ class TestDelegateTaskVisibility:
         r = WebRenderer()
         conn = WebConnection(id="c")
         r.hub.register(conn)
-        r.begin_scope(task_id="t-1", index=0, agent="explorer", label="find X")
+        r.begin_scope(task_id="t-1", agent="explorer", label="find X")
         event, data = conn.queue.get(timeout=1.0)
         assert event == "scope_start"
         data.pop("ts", None)  # server-stamped emit time — not under test here
         assert data == {
             "task_id": "t-1",
             "kind": "run",
-            "index": 0,
             "agent": "explorer",
             "label": "find X",
-            # Nesting is on the wire: top-level scope → no parent, depth 0.
+            # Nesting is on the wire: top-level scope → no parent.
             "parent": "",
-            "depth": 0,
         }
         # Persistent so a late-joining client replays the open card.
         assert any(ev == "scope_start" for (ev, _) in r.hub.events)
@@ -1068,7 +1066,7 @@ class TestDelegateTaskVisibility:
         r = WebRenderer()
         conn = WebConnection(id="c")
         r.hub.register(conn)
-        r.begin_scope(task_id="t-1", index=0, agent="", label="t")
+        r.begin_scope(task_id="t-1", agent="", label="t")
         # Drain start.
         conn.queue.get(timeout=1.0)
         r.end_scope(task_id="t-1", success=True, duration_s=4.2)
@@ -1085,7 +1083,7 @@ class TestDelegateTaskVisibility:
         r = WebRenderer()
         conn = WebConnection(id="c")
         r.hub.register(conn)
-        r.begin_scope(task_id="t-1", index=0, agent="", label="t")
+        r.begin_scope(task_id="t-1", agent="", label="t")
         conn.queue.get(timeout=1.0)
         r.end_scope(task_id="t-1", success=False, duration_s=1.0, error="timed out")
         _, data = conn.queue.get(timeout=1.0)
@@ -1106,7 +1104,7 @@ class TestDelegateTaskVisibility:
         _, baseline = conn.queue.get(timeout=1.0)
         assert "task_id" not in baseline
 
-        r.begin_scope(task_id="t-7", index=0, agent="", label="")
+        r.begin_scope(task_id="t-7", agent="", label="")
         conn.queue.get(timeout=1.0)  # drain start
 
         # Within the window: every emit picks up task_id.
@@ -1133,7 +1131,7 @@ class TestDelegateTaskVisibility:
         conn = WebConnection(id="c")
         r.hub.register(conn)
 
-        r.begin_scope(task_id="outer", index=0, agent="", label="")
+        r.begin_scope(task_id="outer", agent="", label="")
         conn.queue.get(timeout=1.0)  # drain start
         # Now inside outer's thread, emit with an explicit (different)
         # task_id — must survive intact.
@@ -1149,7 +1147,7 @@ class TestDelegateTaskVisibility:
         r = WebRenderer()
         conn = WebConnection(id="c")
         r.hub.register(conn)
-        r.begin_scope(task_id="t-1", index=0, agent="", label="")
+        r.begin_scope(task_id="t-1", agent="", label="")
         conn.queue.get(timeout=1.0)  # drain start
 
         r.set_thread_status("reading file...")
@@ -1169,28 +1167,6 @@ class TestDelegateTaskVisibility:
         r.set_thread_status("orphan status")
         assert conn.queue.empty()
 
-    def test_set_thread_status_preserves_base_dict(self):
-        """Override must call ``super()`` so the ``_thread_status``
-        dict is still populated — CLI's parallel-delegate Live panel
-        polls ``get_thread_status`` from main thread and would
-        otherwise see empty status. Even on the web renderer this
-        invariant has to hold for the CLI-rendered subagent logs."""
-        r = WebRenderer()
-        r.start_capture()  # base requires capture mode for status write
-        try:
-            r.set_thread_status("from worker")
-        finally:
-            r.stop_capture()
-        # Status was written into base dict (and stop_capture popped it).
-        # Re-create the window and verify the path round-trips.
-        r.start_capture()
-        r.set_thread_status("again")
-        tid = threading.get_ident()
-        # ``get_thread_status`` reads from the dict; same thread reads
-        # the value it just wrote.
-        assert r.get_thread_status(tid) == "again"
-        r.stop_capture()
-
 
 class TestRendererBaseDelegateTaskNoOp:
     """``MinimalRenderer`` (and any future CLI-only renderer) must
@@ -1206,7 +1182,7 @@ class TestRendererBaseDelegateTaskNoOp:
 
         r = MinimalRenderer(Console(file=StringIO(), force_terminal=False))
         # Should not raise — no-op implementations on base.
-        r.begin_scope(task_id="t", index=0, agent="a", label="t")
+        r.begin_scope(task_id="t", agent="a", label="t")
         r.end_scope(task_id="t", success=True, duration_s=1.0)
         r.end_scope(task_id="t", success=False, duration_s=2.0, error="x")
 
@@ -1812,14 +1788,14 @@ class TestWorkerLoopIntegration:
 # ── Prompt Inspector per-agent scopes ──────────────
 
 
-def _note_in_delegate_scope(r, *, task_id, index, agent, sections, turn):
+def _note_in_delegate_scope(r, *, task_id, agent, sections, turn):
     """Capture a system-prompt snapshot AS a delegate worker would: run
     ``begin_delegate_task`` + ``note_system_prompt`` on a fresh thread so the
     renderer's thread→task routing resolves the scope to ``task_id`` (exactly
     the path a parallel-delegate worker takes)."""
 
     def worker():
-        r.begin_scope(task_id=task_id, index=index, agent=agent, label="t")
+        r.begin_scope(task_id=task_id, agent=agent, label="t")
         r.note_system_prompt(sections, turn=turn)
 
     th = threading.Thread(target=worker)
@@ -1847,7 +1823,6 @@ class TestPromptInspectorScopes:
         _note_in_delegate_scope(
             r,
             task_id="task-A",
-            index=0,
             agent="explorer",
             sections=[("Role", "explorer role")],
             turn=1,
@@ -1865,7 +1840,6 @@ class TestPromptInspectorScopes:
         _note_in_delegate_scope(
             r,
             task_id="task-A",
-            index=0,
             agent="explorer",
             sections=[("Role", "A")],
             turn=1,
@@ -1873,7 +1847,6 @@ class TestPromptInspectorScopes:
         _note_in_delegate_scope(
             r,
             task_id="task-B",
-            index=1,
             agent="coder",
             sections=[("Role", "B")],
             turn=1,
@@ -1886,7 +1859,7 @@ class TestPromptInspectorScopes:
         r = WebRenderer()
 
         def worker():
-            r.begin_scope(task_id="task-A", index=0, agent="explorer", label="t")
+            r.begin_scope(task_id="task-A", agent="explorer", label="t")
             r.note_system_prompt([("Role", "A")], turn=1)
             r.end_scope(task_id="task-A", success=True, duration_s=0.1)
 
@@ -2155,7 +2128,7 @@ class TestPromptScopeStack:
 
     def test_nested_delegate_then_skill_resolves_top(self):
         r = WebRenderer()
-        r.begin_scope(task_id="delegate-1-x", index=0, agent="explorer", label="t")
+        r.begin_scope(task_id="delegate-1-x", agent="explorer", label="t")
         r.begin_prompt_scope("skill-opt-1", label="skill:opt")
         r.note_system_prompt([("Base", "NESTED")], turn=1)
         r.end_prompt_scope("skill-opt-1")
@@ -2232,6 +2205,16 @@ class TestTeammateWindowEvents:
         assert data["direction"] == "out" and data["text"] == "hi"
 
 
+class _NoTurns:
+    """턴이 없는 세션 — `replay_session` 이 사이드카의 scope 사건만 다시 낸다."""
+
+    def get_raw_messages(self):
+        return []
+
+
+_NO_TURNS = _NoTurns()
+
+
 class TestScopePersistenceAndReplay:
     """Team-swimlane resume: scope_start/scope_end have no other on-disk
     source (unlike agent_msg→conversation.jsonl), so they are logged to a
@@ -2278,7 +2261,7 @@ class TestScopePersistenceAndReplay:
 
         # Fresh process (empty buffer) → replay restores the scope events.
         r2 = WebRenderer(session_dir=str(tmp_path))
-        r2.replay_scopes()
+        r2.replay_session(_NO_TURNS)
         starts = [d for e, d in r2.hub.events if e == "scope_start"]
         assert starts and starts[0]["task_id"] == "w1#u-0"
         assert starts[0]["replay"] is True  # frontend skips timeline card
@@ -2286,7 +2269,7 @@ class TestScopePersistenceAndReplay:
 
     def test_replay_noop_without_sidecar(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))  # no scopes.jsonl yet
-        r.replay_scopes()
+        r.replay_session(_NO_TURNS)
         assert len(r.hub.events) == 0  # pre-feature/fresh session → unchanged
 
     def test_replay_synthesizes_end_for_open_scope(self, tmp_path):
@@ -2294,7 +2277,7 @@ class TestScopePersistenceAndReplay:
         r1 = WebRenderer(session_dir=str(tmp_path))
         r1.begin_scope(task_id="sk1", kind="skill", label="plan")
         r2 = WebRenderer(session_dir=str(tmp_path))
-        r2.replay_scopes()
+        r2.replay_session(_NO_TURNS)
         evs = [e for e, _ in r2.hub.events]
         assert evs.count("scope_start") == 1
         assert evs.count("scope_end") == 1  # synthesized so bar isn't perpetual
@@ -2306,63 +2289,61 @@ class TestScopePersistenceAndReplay:
         path = tmp_path / "scopes.jsonl"
         n_before = len([x for x in path.read_text().splitlines() if x.strip()])
         r2 = WebRenderer(session_dir=str(tmp_path))
-        r2.replay_scopes()
+        r2.replay_session(_NO_TURNS)
         n_after = len([x for x in path.read_text().splitlines() if x.strip()])
         assert n_after == n_before  # replay reads, never re-logs
 
 
 class TestScopeNesting:
-    """``scope_start`` carries the ENCLOSING scope + nesting depth, so both web
-    surfaces can show containment (swimlane slot, nested timeline card). Before
-    this, a nested skill was drawn at the same x/width as its parent — i.e.
-    invisible — and its card landed at the timeline root as a sibling.
+    """``scope_start`` carries the ENCLOSING scope, so the timeline can show
+    containment (nested timeline card). Before this, a nested skill's card
+    landed at the timeline root as a sibling.
 
     Parent comes off the calling thread's scope stack; a cross-thread worker
-    passes it explicitly (its own stack is empty). Depth is always derived from
-    the parent's depth, never from the caller.
+    passes it explicitly (its own stack is empty).
     """
 
     @staticmethod
     def _starts(r):
         return [d for e, d in r.hub.events if e == "scope_start"]
 
-    def test_same_thread_nesting_derives_parent_and_depth(self):
+    def test_same_thread_nesting_derives_parent(self):
         r = WebRenderer()
         r.begin_scope(task_id="outer", kind="skill", label="skill:plan")
         r.begin_scope(task_id="inner", kind="skill", label="skill:create-team")
         r.begin_scope(task_id="run", kind="run", label="agent:explorer")
         outer, inner, run = self._starts(r)
-        assert (outer["parent"], outer["depth"]) == ("", 0)
-        assert (inner["parent"], inner["depth"]) == ("outer", 1)
-        assert (run["parent"], run["depth"]) == ("inner", 2)
+        assert outer["parent"] == ""
+        assert inner["parent"] == "outer"
+        assert run["parent"] == "inner"
 
-    def test_sequential_siblings_share_depth(self):
+    def test_sequential_siblings_share_the_parent(self):
         """Skill/run block their caller, so a second child opened AFTER the
-        first closed is a sibling at the same depth — not a grandchild."""
+        first closed is a sibling under the same parent — not a grandchild."""
         r = WebRenderer()
         r.begin_scope(task_id="outer", kind="skill", label="skill:plan")
         r.begin_scope(task_id="a", kind="run", label="first")
         r.end_scope(task_id="a", kind="run")
         r.begin_scope(task_id="b", kind="run", label="second")
         a, b = self._starts(r)[1:]
-        assert (a["parent"], a["depth"]) == ("outer", 1)
-        assert (b["parent"], b["depth"]) == ("outer", 1)
+        assert a["parent"] == "outer"
+        assert b["parent"] == "outer"
 
     def test_explicit_parent_overrides_thread_stack(self):
         """A parallel worker runs on its own (empty-stack) thread, so the
         spawning thread hands the parent over."""
         r = WebRenderer()
         r.begin_scope(task_id="sk", kind="skill", label="skill:plan")
-        depths = {}
+        seen = {}
 
         def worker():
             r.begin_scope(task_id="w", kind="run", label="task", parent="sk")
-            depths["w"] = self._starts(r)[-1]
+            seen["w"] = self._starts(r)[-1]
 
         t = threading.Thread(target=worker)
         t.start()
         t.join()
-        assert (depths["w"]["parent"], depths["w"]["depth"]) == ("sk", 1)
+        assert seen["w"]["parent"] == "sk"
 
     def test_worker_thread_without_parent_is_top_level(self):
         """No parent passed and nothing on the worker's own stack → the scope
@@ -2378,7 +2359,7 @@ class TestScopeNesting:
         t = threading.Thread(target=worker)
         t.start()
         t.join()
-        assert (seen["w"]["parent"], seen["w"]["depth"]) == ("", 0)
+        assert seen["w"]["parent"] == ""
 
     def test_current_scope_reports_innermost_then_unwinds(self):
         r = WebRenderer()
@@ -2413,17 +2394,10 @@ class TestScopeNesting:
         r = WebRenderer()
         r.begin_scope(task_id="w", kind="run", label="t", parent="ghost")
         start = self._starts(r)[-1]
-        assert (start["parent"], start["depth"]) == ("ghost", 1)
+        assert start["parent"] == "ghost"
 
-    def test_depth_entry_released_on_end(self):
-        r = WebRenderer()
-        r.begin_scope(task_id="sk", kind="skill", label="o")
-        assert "sk" in r._scope_depths
-        r.end_scope(task_id="sk", kind="skill")
-        assert "sk" not in r._scope_depths  # no per-scope leak over a session
-
-    def test_reopened_sibling_id_gets_fresh_depth(self):
-        """Depth must come from the CURRENT parent chain, not a stale entry."""
+    def test_reopened_sibling_id_is_top_level(self):
+        """The parent must come from the CURRENT scope chain, not a stale entry."""
         r = WebRenderer()
         r.begin_scope(task_id="outer", kind="skill", label="o")
         r.begin_scope(task_id="x", kind="run", label="t")
@@ -2431,7 +2405,7 @@ class TestScopeNesting:
         r.end_scope(task_id="outer", kind="skill")
         r.begin_scope(task_id="x", kind="run", label="t again")
         again = self._starts(r)[-1]
-        assert (again["parent"], again["depth"]) == ("", 0)
+        assert again["parent"] == ""
 
     def test_teammate_work_is_not_nested(self):
         """A resident teammate's request goes to that agent's OWN lane (routed
@@ -2442,7 +2416,7 @@ class TestScopeNesting:
         r.begin_agent_work(key="w1", item="u-0", profile="code-writer", message="do")
         work = self._starts(r)[-1]
         assert work["task_id"] == "w1#u-0"
-        assert (work["parent"], work["depth"]) == ("", 0)
+        assert work["parent"] == ""
 
     def test_explicit_ts_survives_to_event_and_sidecar(self, tmp_path):
         """A parallel batch shares ONE start time so the swimlane puts its
@@ -3247,48 +3221,39 @@ class TestStreamStallDisplay:
 
 
 class TestStreamResetWeb:
-    """v8.61.0: 재전송 전 부분 출력 폐기 (웹 쪽).
+    """v8.61.0: 재전송 전 누적 카운터를 버린다 (웹 쪽). 사건은 내지 않는다 — 프런트가 들을 것이 없다."""
 
-    ``stream_end`` 를 재사용할 수 없다 — 프론트가 그걸 "곧 assistant_turn 이
-    대체한다"로 읽어 카드를 남기기 때문. 여기선 대체가 아니라 폐기다."""
-
-    def test_emits_dedicated_event(self, tmp_path):
-        r = WebRenderer(session_dir=str(tmp_path))
-        conn = WebConnection(id="c1")
-        r.hub.register(conn)
-        r.stream_reset()
-        events = []
+    @staticmethod
+    def _ticks(conn) -> list[int]:
+        out = []
         while not conn.queue.empty():
-            events.append(conn.queue.get_nowait())
-        assert [e[0] for e in events] == ["stream_reset"]
+            ev, p = conn.queue.get_nowait()
+            assert ev != "stream_reset"
+            if ev == "stream_tick":
+                out.append(p["tokens"])
+        return out
 
-    def test_is_transient_not_replayed(self, tmp_path):
-        """폐기된 부분 출력은 되살릴 이유가 없다 — 재접속 스냅샷에서
-        빈 reset 이 날아오면 프론트가 멀쩡한 카드를 지울 수도 있다."""
-        r = WebRenderer(session_dir=str(tmp_path))
-        r.stream_reset()
-        snap = r.hub.register(WebConnection(id="late"))
-        assert not [p for ev, p in snap if ev == "stream_reset"]
-
-    def test_carries_scope_task_id(self, tmp_path):
-        """서브에이전트 스트림이면 그 카드만 지워져야 한다 — task_id 가
-        빠지면 메인 타임라인의 카드가 날아간다."""
+    def test_reset_restarts_the_counter_from_zero(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))
         conn = WebConnection(id="c1")
         r.hub.register(conn)
-        import threading
+        r.stream_chunk("a" * 400)
+        assert self._ticks(conn) == [100]
+        r.stream_reset()
+        r.stream_chunk("a" * 40)  # 옛 시도분(400)을 이어 세지 않는다
+        assert self._ticks(conn) == [10]
 
+    def test_reset_clears_only_its_own_scope(self, tmp_path):
+        """서브에이전트의 재전송은 그 스코프의 카운터만 — 옆(main)의 진행은 그대로."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.stream_chunk("a" * 400)  # main
         r._thread_to_task[threading.get_ident()] = "task-7"
         try:
+            r.stream_chunk("a" * 400)
             r.stream_reset()
         finally:
             r._thread_to_task.pop(threading.get_ident(), None)
-        payloads = []
-        while not conn.queue.empty():
-            ev, p = conn.queue.get_nowait()
-            if ev == "stream_reset":
-                payloads.append(p)
-        assert payloads and payloads[0].get("task_id") == "task-7"
+        assert "task-7" not in r._tick_state and "" in r._tick_state
 
     def test_frontend_no_longer_needs_to_discard(self):
         """v9.4.0 ④: 프론트에 **버릴 부분 출력이 없다**.
@@ -3297,16 +3262,14 @@ class TestStreamResetWeb:
         뒤에 이어붙는 것이었는데, 라이브 타이핑을 버리면서 그 문제 자체가
         사라졌다 — 화면에 쌓이는 부분 출력이 없으니 지울 것도 없다.
 
-        서버 방출은 **유지**한다: CLI 마르퀴는 여전히 스트리밍하고 재전송 시
-        제자리 줄을 걷어야 한다(render/minimal.py). 이벤트가 살아 있되 웹만
-        듣지 않는 상태가 계약이다."""
+        웹은 사건도 내지 않는다(카운터 리셋만 — 위). CLI 마르퀴는 여전히 스트리밍하고
+        재전송 시 제자리 줄을 걷는다(render/minimal.py — `TestStreamResetCli`)."""
         from pathlib import Path
 
         js = js_text()
         assert 'es.addEventListener("stream_reset"' not in js
-        # 서버는 계속 낸다 — CLI 쪽 계약(TestStreamResetCli)이 그걸 쓴다
         web = Path("agent_cli/render/web.py").read_text()
-        assert "def stream_reset" in web
+        assert "def stream_reset" in web  # 카운터 리셋은 남는다
 
 
 class TestReplayContract:

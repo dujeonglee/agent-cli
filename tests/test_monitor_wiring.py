@@ -12,7 +12,8 @@ import time
 
 import pytest
 
-from agent_cli.monitor import MonitorRegistry, build
+from agent_cli.monitor import build
+from agent_cli.monitor.registry import MonitorRegistry
 from agent_cli.tools.monitor_tool import NO_MONITORS
 from tests.monitor_delivery import RecordingDelivery
 

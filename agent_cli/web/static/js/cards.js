@@ -105,6 +105,7 @@ function absorbedSummary(lines) {
   return "[" + m[1] + "] " + m[2] + ": " + (body ? body.trim() : "");
 }
 
+// export: tests/test_app_markdown.py 가 node 로 읽는다 (다른 모듈은 import 하지 않는다)
 export function obsSummary(content, failed) {
   const lines = String(content || "").split("\n").filter((l) => l.trim());
   if (!lines.length) return "(no output)";

@@ -61,7 +61,7 @@ def _tools_list():
         max_depth=3,
         ports=make_ports(),
     )
-    return list(loop.tools_list)
+    return list(loop._config.tools_list)
 
 
 class TestSkillsSection:

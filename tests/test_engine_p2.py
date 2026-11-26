@@ -872,7 +872,8 @@ class TestResume:
             reg.shutdown_all()
 
     def test_old_p1_file_with_run_dir_home_reads_as_a_tombstone(self, tmp_path):
-        """하위 호환: v10.140.0 의 agents.json(run 에이전트 = ``home`` 이 ``run_…``, dead)."""
+        """v10.140.0 의 agents.json(run 에이전트 = ``home`` 이 ``run_…``, dead) — 묘비로 읽는다. ``home`` 은 읽지 않는다
+        (v10.177.4): 집은 다른 에이전트와 같은 ``agents/<key>``."""
         sdir = tmp_path / "s"
         self._write(
             sdir,
@@ -889,7 +890,7 @@ class TestResume:
         assert reg.restore() == 0
         tm = reg.get("agt-old")
         assert tm.state == "dead" and tm.ends_after_task
-        assert tm.home_dir == sdir / "run_task_ab12_20260101T000000000"
+        assert tm.home_dir == sdir / "agents" / "agt-old"
 
     def test_hooks_survive_the_round_trip(self, tmp_path):
         """에이전트의 훅은 agents.json 에 JSON 으로 남고 되살 때 객체로 돌아온다 (v10.141.0 —

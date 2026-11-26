@@ -1589,27 +1589,6 @@ class TestEstimateMessageTokensOps:
         assert _estimate_message_tokens(rec) >= estimate_tokens(big)
 
 
-class TestSumMessageTokens:
-    def test_sum_matches_manual(self):
-        from agent_cli.context.render import (
-            _estimate_message_tokens,
-            _sum_message_tokens,
-        )
-
-        msgs = [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "world world"},
-        ]
-        assert _sum_message_tokens(msgs) == sum(
-            _estimate_message_tokens(m) for m in msgs
-        )
-
-    def test_empty(self):
-        from agent_cli.context.render import _sum_message_tokens
-
-        assert _sum_message_tokens([]) == 0
-
-
 class TestTokenRatio:
     """실측 토큰/바이트 비율 (v10.18.0). 종전 계수는 ``실측 ÷ 추정`` 이라 실측에
     든 고정 덩어리(매턴 꼬리) 때문에 짧은 대화에서 상한(8배)까지 부풀었다.

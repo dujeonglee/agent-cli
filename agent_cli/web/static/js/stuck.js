@@ -2,7 +2,7 @@
 // 순환 밖 잎이다 — dom·state·sse 만 import 한다.
 // (v10.120.0, docs/stale-guard/DESIGN.md §5)
 //
-// 띠는 스티키 `stuck` {turns, since_turn, fires, asking} 를 그린다. turns 0 이면 숨는다
+// 띠는 스티키 `stuck` {turns, since_turn, asking} 를 그린다. turns 0 이면 숨는다
 // (새 결과가 나왔거나 런이 끝났다). Stop 은 언제나 /api/stop(Stop 버튼과 같은 길) — 런이 멈춰 확인을
 // 기다리는 중(asking)이어도 그 정지가 기다림을 깨운다(6d).
 

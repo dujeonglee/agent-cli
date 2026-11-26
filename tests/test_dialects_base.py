@@ -17,13 +17,11 @@ import pytest
 
 from agent_cli.dialects import (
     DialectBase,
-    Op,
-    ParsedAction,
-    ParsedTurn,
     get,
     list_names,
     register,
 )
+from agent_cli.dialects.base import Op, ParsedAction, ParsedTurn
 
 # ─── ParsedAction ──────────────────────────────────
 
@@ -354,7 +352,7 @@ class TestRegistry:
         callers don't have to drill into ``base``. Caught by import-time
         symbol resolution — failing here means external callers break."""
         from agent_cli.dialects import DialectBase as WF
-        from agent_cli.dialects import ParsedAction as PA
+        from agent_cli.dialects.base import ParsedAction as PA
 
         assert PA is ParsedAction
         assert WF is DialectBase

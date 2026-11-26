@@ -33,8 +33,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from typing import Any
 
 from agent_cli.constants import is_private_owner
@@ -72,22 +71,8 @@ class LoopPorts:
     #: 런 도중 도착한 요청·통지가 다음 런까지 기다리지 않게 한다. main 은 입력 큐·메일박스다.
     mailbox: Any
 
-    #: 미연결 포트의 **사유** — 이름 → 왜. 값이 `None` 인 포트는 여기
-    #: 적혀 있어야 한다(테스트가 강제). 의도적 미연결과 빠뜨린 것이 둘 다
-    #: `None` 이던 것이 이 설계가 생긴 이유의 절반이다.
-    #:
-    #: 사유는 **문서**지 검증물이 아니다 — 문자열의 진위는 아무도 못
-    #: 잡는다(설계 2판이 `mcp_manager` 에 거짓 사유를 적었고 통과했다).
-    #: 강제되는 것은 "사유가 있다" 뿐이다.
-    #:
-    #: **빌더의 의도**를 적는 자리지 런타임 존재 여부가 아니다. 예컨대
-    #: `mcp_manager` 는 MCP 서버가 설정되지 않은 세션에서 `None` 이지만
-    #: 그건 미연결이 아니라 "연결됐고 저쪽에 아무도 없음" 이다 — 사유를
-    #: 적지 않는 것이 맞다.
-    unwired: Mapping[str, str] = field(default_factory=dict)
-
     #: ``Tool.requires_handler`` 가 보지 **않는** 필드 — 자원이 아니다.
-    _NON_RESOURCE = ("owner", "unwired")
+    _NON_RESOURCE = ("owner",)
 
     def wakeable(self) -> bool:
         """이 루프를 **깨울 길이 있는가** (v10.65.0, `wait` 의 전제) — 턴 경계에 흡수할 상자가 있는가
@@ -119,36 +104,14 @@ class LoopPorts:
 # 종전엔 다섯 곳이 각자 부분집합을 손으로 나열했고, 포트 여덟 중 일곱이
 # 어딘가에선 빠져 있었다 — 그게 의도인지 사고인지 코드 어디에도 없었다.
 # 지금은 종류 객체(`MainLoop`·`PrivateLoop`·`ResidentLoop`·`SkillLoop`)의
-# `make_ports` 가 그 자리다; 사유 상수·훅 포트 헬퍼는 여기 있어 종류들이 쓴다.
-#
-# ``LoopPorts`` 에 기본값이 없으므로 새 포트를 더하면 **네 `make_ports` 가 전부
-# 즉시 안 만들어진다** — 호스트마다 "연결" 또는 "이래서 미연결" 중 하나를
-# 쓸 수밖에 없다. 사유 문자열은 **문서**지 검증물이 아니다(진위는 아무도
-# 못 잡는다). 그래서 확인된 사실만 적고, 확인 못 한 것은 "종전 배선
-# 유지" 로 적어 둔다 — 지어낸 근거보다 낫다.
-
-_WEB_ONLY = "main 루프 전용 — 사람의 말을 받는 호스트(run·web)에만 있다"
-_NO_HOOK_RUNNER = (
-    "세션 부트스트랩(run/web 의 build_hook_runner)을 거치지 않은 직접 호출 경로"
-)
+# `make_ports` 가 그 자리다. ``LoopPorts`` 에 기본값이 없으므로 새 포트를 더하면 **네 `make_ports` 가
+# 전부 즉시 안 만들어진다** — 호스트마다 값 또는 ``None`` 을 적어야 하고, ``None`` 이면 그 줄 옆 주석이 왜인지 말한다.
 
 
 def _hook_runner_port():
-    """모든 종류의 `make_ports` 가 같은 세션 러너를 받는다 (v10.35.0)."""
+    """모든 종류의 `make_ports` 가 같은 세션 러너를 받는다 (v10.35.0). 세션 부트스트랩(run/web 의
+    ``build_hook_runner``)을 거치지 않은 직접 호출 경로면 None."""
     return get_hook_runner()
-
-
-def _hook_unwired() -> dict:
-    """러너가 없을 때만 `unwired` 에 사유를 싣는다 — 있으면 배선된 포트다."""
-    return {} if _hook_runner_port() is not None else {"hook_runner": _NO_HOOK_RUNNER}
-
-
-_NO_REGISTRY_IN_SUBLOOP = (
-    "에이전트를 띄우는 루프가 아니다(하니스 작업) — `agent` 도구의 권한이 포트의 "
-    "agent_registry 다. 에이전트(run·spawn)는 받는다(v10.141.0); 깊이는 엔진이 막는다"
-)
-_AS_BEFORE = "종전 배선 유지 — 이 호스트는 이 포트를 받은 적이 없다"
-_RESIDENT_ROSTER = "상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다 (v10.1.0)"
 
 
 # ── 세션 자원 — `Tool.requires_handler` 가 보는 것 ──

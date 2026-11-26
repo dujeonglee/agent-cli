@@ -90,7 +90,9 @@ class MailView:
 
     - ``src``: 보낸 주소 — ``"main"``·``"agent:<key>"``·``"user:<nick>"``, 하니스 통지는 그 종류(``"job"`` 등).
     - ``wakes``: 받는 쪽을 깨우는가 — "Stop everything" 의 정지 회신만 거짓.
-    - ``expects_reply``: 받는 쪽이 이것으로 `reply` 를 빚지는가 — 사람의 말·통지·회신은 거짓."""
+    - ``expects_reply``: 받는 쪽이 이것으로 `reply` 를 빚지는가 — 사람의 말·통지·회신은 거짓.
+
+    테스트가 보는 창 — 제품은 부르지 않는다."""
 
     id: str
     src: str

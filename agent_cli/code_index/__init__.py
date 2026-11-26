@@ -6,7 +6,6 @@ Public API (re-exported here):
 
     build(root, out_path, ...)        # incremental SQLite index builder
     load_index(path) -> IndexStore    # open an existing index for queries
-    definitions_named(store, name)    # function definitions of a name
     callers_of(store, definition)     # Edges from the stored resolution (v10.96.0)
     callees_of(store, definition)
     cmd_slice(idx, name, ...)         # LLM-context markdown blob renderer
@@ -32,38 +31,15 @@ contract.
 """
 
 from agent_cli.code_index.builder import build
-from agent_cli.code_index.callgraph import (
-    Edges,
-    Neighbor,
-    callees_of,
-    callers_of,
-    definitions_named,
-)
-from agent_cli.code_index.schema import (
-    CODE_NAME_KINDS,
-    NAME_KINDS,
-    REF_KINDS,
-    SCHEMA_VERSION,
-    Ref,
-    Symbol,
-)
+from agent_cli.code_index.callgraph import callees_of, callers_of
 from agent_cli.code_index.slice import cmd_slice
 from agent_cli.code_index.store import IndexStore, load_index
 
 __all__ = [
-    "CODE_NAME_KINDS",
-    "NAME_KINDS",
-    "REF_KINDS",
-    "SCHEMA_VERSION",
-    "Edges",
     "IndexStore",
-    "Neighbor",
-    "Ref",
-    "Symbol",
     "build",
     "callees_of",
     "callers_of",
     "cmd_slice",
-    "definitions_named",
     "load_index",
 ]

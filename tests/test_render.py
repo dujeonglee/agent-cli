@@ -270,15 +270,6 @@ class TestAnsweredIdsSurvive:
         assert "↳ answers [u-1] (dj) README 정리해 줘" in out
         assert "↳ answers [n-2] (mail) AUDIT" in out
 
-    def test_captured_lines_keep_ids_and_brackets(self):
-        r = MinimalRenderer(Console(file=StringIO()))
-        r.start_capture()
-        r.final("끝", 1, requests=list(self.REQS))
-        r._p('  ⚡ edit → {"ids": ["a", "b"]}', markup=False)
-        lines = r.stop_capture()
-        assert "  ↳ answers [u-1] (dj) README 정리해 줘" in lines
-        assert '  ⚡ edit → {"ids": ["a", "b"]}' in lines
-
 
 class TestRendererSwap:
     def test_set_and_get(self):
@@ -383,19 +374,17 @@ class TestGroupRendering:
         assert "skill:b" in out
         assert out.count("└─") == 2
 
-    def test_scope_captured_during_parallel(self):
-        """A skill scope inside capture mode goes to the buffer."""
+    def test_scope_hidden_during_capture(self):
+        """A skill scope inside capture mode prints nothing — the thread's output is hidden."""
 
         def run(r):
             r.start_capture()
             r.begin_scope(task_id="x", kind="skill", label="skill:x")
             r.thought("captured", 1)
             r.end_scope(task_id="x", kind="skill", success=True, duration_s=2.0)
-            captured = r.stop_capture()
-            assert captured  # non-empty
-            assert any("skill:x" in line for line in captured)
+            r.stop_capture()
 
-        _capture_direct(run)
+        assert "skill:x" not in _capture_direct(run)
 
 
 class TestDisplayWidth:

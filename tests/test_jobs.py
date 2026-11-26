@@ -16,8 +16,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from agent_cli import jobs as jobs_env
 from agent_cli.jobs import JobRegistry, JobsUnavailable
 from agent_cli.loop.ledger import Ledger
+from agent_cli.prompts.system_prompt import _build_environment_section
 from agent_cli.session_slots import get_job_registry, set_job_registry
 from tests.loop_kinds import make_kind
 from tests.loop_ports import make_ports
@@ -589,10 +591,13 @@ class TestBashExecutable:
         r = tool_shell({"command": "diff <(echo a) <(echo a) && echo psub"})
         assert r.success and r.output.strip() == "psub"
 
-    def test_shell_name_follows_the_executable(self, monkeypatch):
-        from agent_cli import jobs as jobs_mod
-
-        monkeypatch.setattr(jobs_mod, "SHELL", "/bin/bash")
-        assert jobs_mod.shell_name() == "bash"
-        monkeypatch.setattr(jobs_mod, "SHELL", None)
-        assert jobs_mod.shell_name() == "sh"
+    def test_the_environment_names_the_shell_that_runs_commands(self, monkeypatch):
+        """모델이 읽는 Environment 절의 셸 이름은 실행기(`jobs.SHELL`)를 따른다."""
+        monkeypatch.setattr(jobs_env, "SHELL", "/bin/bash")
+        assert "- Shell: bash (`shell` runs commands through it)" in (
+            _build_environment_section()
+        )
+        monkeypatch.setattr(jobs_env, "SHELL", None)
+        assert "- Shell: sh — there is no bash on this system" in (
+            _build_environment_section()
+        )

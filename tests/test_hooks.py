@@ -6,13 +6,11 @@ import json
 from unittest.mock import patch
 
 from agent_cli.hooks import (
-    HookEntry,
-    HookMatcher,
-    HookResult,
     load_hooks,
     merge_hooks_configs,
     run_hooks,
 )
+from agent_cli.hooks.shell import HookEntry, HookMatcher, HookResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
 from tests.loop_ports import TEST_PORTS

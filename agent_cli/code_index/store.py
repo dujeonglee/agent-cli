@@ -17,7 +17,6 @@ don't need to think about the class name.
 from __future__ import annotations
 
 import json
-from collections import Counter
 from pathlib import Path
 
 from agent_cli.code_index._sqlite import sqlite3
@@ -313,10 +312,6 @@ class IndexStore:
             out += [self._ref_row(r) for r in self._conn.execute(q, params)]
         return out
 
-    def function_definitions(self, name: str) -> list[dict]:
-        """함수 정의 — `definitions` 의 함수만."""
-        return self.definitions(name)
-
     def function_definitions_exact(self, name: str, language: str) -> list[dict]:
         """맨 이름·언어가 같은 함수 정의 전부 — 이름으로만 맞추는 언어의 한 노드."""
         return self._defs("name = ? AND +language = ?", (name, language))
@@ -487,46 +482,8 @@ class IndexStore:
             )
         }
 
-    def kind_counts(self) -> Counter:
-        return Counter(
-            {
-                r["kind"]: r["n"]
-                for r in self._conn.execute(
-                    "SELECT kind, COUNT(*) AS n FROM symbols GROUP BY kind ORDER BY n DESC"
-                )
-            }
-        )
-
-    def ref_kind_counts(self) -> Counter:
-        return Counter(
-            {
-                r["kind"]: r["n"]
-                for r in self._conn.execute(
-                    "SELECT kind, COUNT(*) AS n FROM refs GROUP BY kind ORDER BY n DESC"
-                )
-            }
-        )
-
-    def top_ref_names(self, kind: str, limit: int = 10):
-        return [
-            (r["name"], r["n"])
-            for r in self._conn.execute(
-                "SELECT name, COUNT(*) AS n FROM refs WHERE kind = ? "
-                "GROUP BY name ORDER BY n DESC LIMIT ?",
-                (kind, limit),
-            )
-        ]
-
     def n_symbols(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-
-    def n_refs(self) -> int:
-        return self._conn.execute("SELECT COUNT(*) FROM refs").fetchone()[0]
-
-    def n_definitions(self) -> int:
-        return self._conn.execute(
-            "SELECT COUNT(*) FROM symbols WHERE is_definition = 1"
-        ).fetchone()[0]
 
 
 def load_index(path: Path) -> IndexStore:

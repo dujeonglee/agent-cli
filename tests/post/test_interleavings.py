@@ -78,7 +78,11 @@ class TestOrders:
             assert (
                 twin.office.arrived("main", waking_only=True, words=True) > 0
             ) is not absorbed_after
-            assert twin.office.awaited_by("main") == ()
+            assert not [
+                r
+                for r in twin.office.rows()
+                if r.kind == "r" and r.state != "closed" and r.src == "main"
+            ]
 
         assert run(STARTED, main, agent, check) == 3
 

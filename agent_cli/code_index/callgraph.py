@@ -59,11 +59,6 @@ class Edges:
     registered: list = field(default_factory=list)
 
 
-def definitions_named(store, name: str) -> list[dict]:
-    """``name``(한정 이름 먼저, 없으면 맨 이름)인 함수 **정의** — 행 순."""
-    return store.function_definitions(name)
-
-
 def _dedupe(rows):
     """``[(key, file, line, kind)]`` → ``{key: [(file, line, kind)]}`` — 같은 자리의
     call+name 은 하나(call 우선), 첫 등장 순."""

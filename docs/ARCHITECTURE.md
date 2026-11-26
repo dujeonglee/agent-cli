@@ -648,7 +648,6 @@ assistant 턴 하나는 세 형태를 지난다 — (A) 모델이 낸 원문 · 
 ```
 
 fork 모드 서브에이전트는 부모 history.jsonl 을 복사해 이어 쓴다(`ContextManager.fork_history_to`).
-옛 세션에는 run 에이전트의 `run_<name>_<hash>_<ts>/` 도 있다(읽기는 같다 — agents.json 의 `home`).
 
 ---
 

@@ -177,7 +177,7 @@ class TestAdvertisedOnlyWhereAWakeExists:
             model="m",
             dialect=get_dialect("json_fc"),
         )
-        return list(loop.tools_list)
+        return list(loop._config.tools_list)
 
     def test_unwired_ports_hide_wait(self):
         assert "wait" not in self._tools(TEST_PORTS)
@@ -793,7 +793,7 @@ class TestRunEnded:
         from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg.note_owes("agent:a", "main", "일감", id="r-1")
-        assert reg.run_ended("agent:a", "요약", run="r-1", success=True) == 1
+        assert reg.run_ended("agent:a", "요약", success=True) == 1
         assert reg.reply_debts("agent:a") == []
         (mail,) = absorbed_mail(reg)
         assert mail["output"] == f"{_NO_REPLY_LABEL}\n요약" and mail["re"] == "r-1"

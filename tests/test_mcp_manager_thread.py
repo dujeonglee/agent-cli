@@ -130,31 +130,6 @@ def test_disconnect_all_ends_the_server_and_the_thread_quietly(tmp_path, mode):
             os.kill(pid, signal.SIGTERM)
 
 
-def test_disconnect_one_server_ends_that_server_only(tmp_path):
-    a, b = tmp_path / "a", tmp_path / "b"
-    m = McpClientManager()
-    assert m.connect_all({"a": _config("a", a), "b": _config("b", b)}, warn=False) == {
-        "a": "connected",
-        "b": "connected",
-    }
-    pa, pb = _pid(a), _pid(b)
-    try:
-        m.disconnect("a")
-        assert wait_until(lambda: not _alive(pa))
-        assert not m.is_connected("a")
-        r = McpTool(m, "b", "fast", "", {}).run({"text": "still"})
-        assert r.output == "fast:still"
-    finally:
-        m.disconnect_all()
-        for p in (pa, pb):
-            if _alive(p):
-                os.kill(p, signal.SIGTERM)
-    assert wait_until(lambda: not _alive(pb))
-
-
-# ── 동시 호출 ─────────────────────────────────────────
-
-
 def test_two_threads_call_the_same_server_at_once(connected):
     """종전엔 뒤의 호출이 ``This event loop is already running`` 이었다. 이제 둘 다 답을 받고, 먼저 간
     호출이 도는 사이 뒤의 호출이 답을 받는다. 먼저 간 호출(``wait_for_go``)은 뒤의 호출이 끝난 다음

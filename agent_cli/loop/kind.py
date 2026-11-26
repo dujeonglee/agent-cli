@@ -30,15 +30,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_cli.loop.ports import (
-    _AS_BEFORE,
-    _NO_REGISTRY_IN_SUBLOOP,
-    _RESIDENT_ROSTER,
-    _WEB_ONLY,
-    LoopPorts,
-    _hook_runner_port,
-    _hook_unwired,
-)
+from agent_cli.loop.ports import LoopPorts, _hook_runner_port
 from agent_cli.session_slots import get_agent_registry, get_hook_runner
 from agent_cli.wake import Mailbox, _private_inbox, release_owner
 
@@ -348,29 +340,20 @@ class PrivateLoop(LoopKind):
     def make_ports(owner: str) -> LoopPorts:
         return LoopPorts(
             owner=owner,
-            questions=None,
+            questions=None,  # 이 호스트는 이 포트를 받은 적이 없다
+            # 에이전트를 띄우는 루프가 아니다(하니스 작업) — `agent` 도구의 권한이 포트의 agent_registry 다
             agent_registry=None,
-            mcp_manager=None,
-            message_handler=None,
+            mcp_manager=None,  # 이 호스트는 이 포트를 받은 적이 없다
+            message_handler=None,  # 하니스 작업은 에이전트가 아니다 — 받을 상대가 없다
             hook_runner=_hook_runner_port(),
-            route_message=None,
-            enqueue_user_message=None,
-            peer_roster=None,
+            route_message=None,  # main 루프 전용 — 사람의 말을 받는 호스트(run·web)에만 있다
+            enqueue_user_message=None,  # main 루프 전용 — 사람의 말을 받는 호스트(run·web)에만 있다
+            peer_roster=None,  # 상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다
             mailbox=Mailbox(
                 get_agent_registry(),
                 owner,
                 take=_private_inbox(owner),
             ),
-            unwired={
-                "agent_registry": _NO_REGISTRY_IN_SUBLOOP,
-                "questions": _AS_BEFORE,
-                "mcp_manager": _AS_BEFORE,
-                "message_handler": "하니스 작업은 에이전트가 아니다 — 받을 상대가 없다",
-                **_hook_unwired(),
-                "route_message": _WEB_ONLY,
-                "enqueue_user_message": _WEB_ONLY,
-                "peer_roster": _RESIDENT_ROSTER,
-            },
         )
 
     def release(self) -> str:

@@ -190,7 +190,7 @@ def clamp_compaction_ratio(ratio: float) -> float:
 
 # NOTE: oversized single-output protection lives in the loop now, not here.
 # A tool observation larger than ``context_window / 10`` is replaced with a
-# narrow-it nudge at the result→observation seam (``AgentLoop._tool_observation``)
+# narrow-it nudge at the result→observation seam (``ToolBridge._tool_observation``)
 # before it ever reaches ``add`` — per-tool via ``Tool.apply_oversized_cap`` /
 # ``Tool.render_observation``. ``add`` is therefore pure storage: no message it
 # receives can blow past the window. (Replaced the earlier chunked-spill record.)
@@ -858,10 +858,12 @@ class ContextManager:
 
     @property
     def file_list(self) -> list[str]:
+        """테스트가 보는 창 — 제품은 부르지 않는다."""
         return list(self._file_list)
 
     @property
     def image_list(self) -> list[str]:
+        """테스트가 보는 창 — 제품은 부르지 않는다."""
         return list(self._image_list)
 
     def _shows_images(self) -> bool:

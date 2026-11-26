@@ -41,7 +41,6 @@ def agent_entry(tm) -> dict:
         "profile": tm.profile_name,
         "name": tm.instance_name,
         "description": tm.description,
-        "instructions": tm.instructions,
         # role_prompt 를 통째로 저장 — resume 시 역할 md 파일이
         # 지워졌어도 teammate 는 갖고 있던 역할 그대로 살아난다.
         "role_prompt": tm.role_prompt,
@@ -49,7 +48,6 @@ def agent_entry(tm) -> dict:
         "model": tm.model,
         "hooks_config": hooks_to_json(tm.hooks_config),
         "context_mode": tm.context_mode,
-        "created_at": tm.created_at,
         "handled": tm.handled,
         # 논리 생사: kill(revivable=False)·에러만 영구 dead —
         # 세션 종료로 멈춘 teammate 는 idle 로 남아 resume 대상.
@@ -91,8 +89,6 @@ def read_state(path: Path) -> dict | None:
 def instance_args(e: dict, *, session_dir: Path, runtime: dict) -> dict:
     """저장 항목 하나 → `AgentInstance` 의 키워드 인자(``key`` 밖). 숫자·상태 필드는 레지스트리가 따로 얹는다."""
     key = e.get("key")
-    # 집 — 옛 파일(v10.140.0)의 run 에이전트는 세션 디렉터리의 ``run_…`` 에 살았다(``home``)
-    home = str(e.get("home") or "")
     depth = int(e.get("depth", 0) or 0)
     return {
         "profile_name": e.get("profile", ""),
@@ -101,12 +97,9 @@ def instance_args(e: dict, *, session_dir: Path, runtime: dict) -> dict:
         "model": e.get("model", ""),
         "hooks_config": hooks_from_json(e.get("hooks_config")) or None,
         "context_mode": e.get("context_mode", "none"),
-        "home_dir": (
-            session_dir / Path(home).name if home else session_dir / AGENTS_DIR / key
-        ),
+        "home_dir": session_dir / AGENTS_DIR / key,
         "instance_name": e.get("name", ""),
         "description": e.get("description", ""),
-        "instructions": e.get("instructions", ""),
         "ends_after_task": bool(e.get("ends_after_task")),
         # 띄운 쪽이 main 이 아니었으면 그 깊이로 (배선은 지금 세션의 것)
         "caller_runtime": {**runtime, "depth": depth} if depth else None,

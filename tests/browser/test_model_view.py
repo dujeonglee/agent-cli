@@ -82,7 +82,7 @@ def _run_inline(stack, sid="t1", *, view=None):
     r = stack.renderer
 
     def body():
-        r.begin_scope(task_id=sid, kind="run", index=0, agent="tester", label="테스트")
+        r.begin_scope(task_id=sid, kind="run", agent="tester", label="테스트")
         r.note_system_prompt(
             [("Role", "sub agent")],
             2,
@@ -513,7 +513,7 @@ def _main_calls_one_shot_agent(stack):
     r.action("agent", '{"mode": "run", "task": "count lines"}', turn=1)
 
     def sub():
-        r.begin_scope(task_id="d1", kind="run", index=0, agent="", label="agent")
+        r.begin_scope(task_id="d1", kind="run", agent="", label="agent")
         r.thought("wc 로 센다", turn=1)
         r.action("shell", '{"command": "wc -l notes.txt"}', turn=1)
         r.observation("3 notes.txt", turn=1, tool_name="shell", success=True)

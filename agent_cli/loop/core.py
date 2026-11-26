@@ -49,7 +49,7 @@ from agent_cli.render import (
     render_usage_totals,
 )
 from agent_cli.session.records import interrupt_record
-from agent_cli.tools import TOOLS, RunContext
+from agent_cli.tools import TOOLS
 from agent_cli.tools.registry import strip_depth_gated
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
@@ -264,9 +264,6 @@ class AgentLoop:
         )
         # C1 PR-2: 도구 호출 브리지 — cfg/state/ctx/provider 명시 주입.
         self._tools = ToolBridge(self._config, self._state, ctx, self.provider)
-        # Sentinels — 모듈 상수 별칭 (C1 PR-3: dispatcher/LLM 콜과 공유)
-        self._CONTINUE = _CONTINUE
-        self._RETRY = _RETRY
 
         # Observability — per-turn record. Disabled when no session
         # (headless / subagent) or when user opted out.
@@ -322,20 +319,12 @@ class AgentLoop:
         return self._config.kind.max_turns
 
     @property
-    def tools_list(self):
-        return self._config.tools_list
-
-    @property
     def skill_name(self):
         return self._config.kind.skill_name
 
     @property
     def skill_args(self):
         return self._config.kind.skill_args
-
-    @property
-    def skill_stack(self):
-        return self._config.skill_stack
 
     @property
     def capabilities(self):
@@ -481,7 +470,7 @@ class AgentLoop:
                 self.turn += 1
                 self._begin_turn()
                 result = self._execute_turn()
-                if result is not self._CONTINUE:
+                if result is not _CONTINUE:
                     return result
             # Loop exited. Distinguish "interrupted between turns"
             # (stop_event set after the previous turn finished — the body's
@@ -867,13 +856,6 @@ class AgentLoop:
             item=str(rec.get("item") or ""),
         )
 
-    def _interrupt_check(self) -> bool:
-        """Zero-arg predicate the provider polls per chunk to break a
-        mid-generation stream (Ctrl+C / web stop). Both surfaces signal
-        through ``stop_event``; the streaming loop — which owns the HTTP
-        response and runs on the reading thread — closes it itself."""
-        return bool(self.stop_event and self.stop_event.is_set())
-
     def _begin_turn(self) -> None:
         """Render turn separator."""
         render_turn_sep(self.turn)
@@ -919,8 +901,8 @@ class AgentLoop:
                 error=str(response.error or response.output or ""),
             )
             return response  # ToolResult (LLM failure)
-        if response == self._RETRY:
-            return self._CONTINUE
+        if response == _RETRY:
+            return _CONTINUE
 
         # User interrupted mid-generation (Ctrl+C / web stop): the provider
         # broke the stream. The partial text was streamed to the UI but never
@@ -1205,7 +1187,7 @@ class AgentLoop:
             f"Output truncated (stop_reason={stop_reason}, {detail}) at turn "
             f"{self.turn}; action not dispatched"
         )
-        return self._CONTINUE
+        return _CONTINUE
 
     def _on_server_error(self, response):
         """An in-stream server error (v10.20.0): the server stopped the
@@ -1236,7 +1218,7 @@ class AgentLoop:
             call=self._llm.last_call,
         )
         _debug_log(f"Server stream error ({detail}) at turn {self.turn}")
-        return self._CONTINUE
+        return _CONTINUE
 
     def _on_runaway(self, llm_text: str, response):
         """The stream-side detector (providers/runaway.py) stopped the
@@ -1275,7 +1257,7 @@ class AgentLoop:
         _debug_log(
             f"Runaway stopped ({detail}) at turn {self.turn}; action not dispatched"
         )
-        return self._CONTINUE
+        return _CONTINUE
 
     def _handle_text_path(
         self,
@@ -1296,22 +1278,9 @@ class AgentLoop:
             call=call,
         )
 
-    def _dispatch_tool_with_hooks(self, tool_name: str, tool_input):
-        return self._tools._dispatch_tool_with_hooks(tool_name, tool_input)
-
-    def _tool_observation(self, tool_name: str, result, args) -> str:
-        return self._tools._tool_observation(tool_name, result, args)
-
-    def _run_ctx(self) -> RunContext:
-        return self._tools._run_ctx()
-
     @property
     def _oversized_cap(self):
         return self._tools._oversized_cap
-
-    @_oversized_cap.setter
-    def _oversized_cap(self, v):
-        self._tools._oversized_cap = v
 
     def _on_max_turns(self):
         """Handle max turns reached."""

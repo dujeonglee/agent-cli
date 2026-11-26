@@ -18,9 +18,10 @@ import time
 
 import pytest
 
-from agent_cli.monitor import MonitorRegistry, build, known_types
+from agent_cli.monitor import build
 from agent_cli.monitor import registry as reg_mod
-from agent_cli.monitor.conditions import infer_type
+from agent_cli.monitor.conditions import _REGISTRY, infer_type
+from agent_cli.monitor.registry import MonitorRegistry
 from tests.monitor_delivery import RecordingDelivery
 
 
@@ -45,7 +46,7 @@ def _add(reg, spec, **kw):
 class TestConditionRegistry:
     def test_exactly_three_types(self):
         """`exit`(구현 불가)와 `interval`(주기 command 가 상위집합)은 없다."""
-        assert known_types() == ["command", "match", "silence"]
+        assert sorted(_REGISTRY) == ["command", "match", "silence"]
 
     @pytest.mark.parametrize(
         ("spec", "kind"),

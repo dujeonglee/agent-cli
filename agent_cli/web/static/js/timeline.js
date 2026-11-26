@@ -167,7 +167,7 @@ function noteScopeChannel(taskId, parent, ctxDir, channel) {
  * `skill` → 🪄 보라 레일, `harness` → 🔎 하니스 작업. 에이전트(run·상주)는 여기
  * 오지 않는다 (``noteScopeChannel`` 참조) — 채널의 런 블록이다. 그 밖의 종류
  * (채널이 생기기 전 세션의 run 기록)는 레일 없는 카드 `agent: task` 로 재생한다. */
-function ensureTaskGroup(taskId, agent, taskText, kind, parent, depth, hidx) {
+function ensureTaskGroup(taskId, agent, taskText, kind, parent, hidx) {
   if (taskGroups[taskId]) return taskGroups[taskId];
 
   const card = el("div", ["card", "card-task-group"]);
@@ -176,7 +176,6 @@ function ensureTaskGroup(taskId, agent, taskText, kind, parent, depth, hidx) {
   // 컨텍스트에서 빠지면 카드째 "컨텍스트 밖 대화" 로 접힌다 (v10.24.1).
   if (hidx != null) card.dataset.hidx = String(hidx);
   card.dataset.kind = kind || "run";
-  card.dataset.depth = String(depth || 0);
   if (kind === "skill") card.classList.add("scope-skill");
   else if (kind === "harness") card.classList.add("scope-harness");
 
@@ -380,7 +379,6 @@ es.addEventListener("scope_start", function (e) {
         d.label || "",
         d.kind || "run",
         d.parent || "",
-        d.depth || 0,
         d.hidx,
       );
   // Register the parent link + light up the ancestors' "child running" hint.

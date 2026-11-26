@@ -139,7 +139,6 @@ class ChangeReport:
 @dataclass
 class SnapshotStats:
     seconds: float = 0.0
-    commits: int = 0
     #: 체크포인트가 실패하고 있으면 첫 실패 시각(epoch 초)과 마지막 이유 — 성공하면 지운다
     failing_since: int = 0
     failure: str = ""
@@ -490,7 +489,6 @@ class GitSnapshot:
                 self._note_checkpoint(git_error_line("git commit", c))
                 return None
             self._note_checkpoint("")
-            self.stats.commits += 1
             return self.head()
 
     # ── queries ──────────────────────────────────────────────
@@ -536,17 +534,6 @@ class GitSnapshot:
         if norm == "." or norm == "" or norm.startswith(".."):
             return None, f"{path.strip()!r} is not a path inside the working directory"
         return norm, ""
-
-    def changed_files(
-        self, since: str = "HEAD~1", to: str = "HEAD"
-    ) -> list[tuple[str, str]]:
-        r = self._git("diff", "--name-status", since, to)
-        out = []
-        for ln in r.stdout.splitlines():
-            parts = ln.split("\t")
-            if len(parts) >= 2:
-                out.append((parts[0], parts[-1]))
-        return out
 
     def commits_touching(self, path: str) -> list[str]:
         r = self._git("log", "--format=%H", "--", path)
@@ -881,14 +868,6 @@ class GitSnapshot:
                 }
             )
         return out
-
-    def changes(self) -> list[dict] | None:
-        """기준점 ↔ 지금 디스크의 바뀐 파일 — ``{path, status, added, deleted}``.
-        ``status`` 는 ``A``·``M``·``D``(이름 바뀜은 D+A, ``--no-renames``)·``T`` 등 git 의
-        글자, 바이너리는 ``added``·``deleted`` 가 None. 하위 저장소 안의 것은 ``repo``(그
-        저장소 경로)가, 요약 줄은 ``summary: True`` 가 더 붙는다. 비교할 수 없으면 None."""
-        rep = self.report()
-        return rep.files if rep is not None else None
 
     def change_diff(
         self, path: str, *, max_lines: int = CHANGE_DIFF_MAX_LINES

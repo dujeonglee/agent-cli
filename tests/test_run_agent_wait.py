@@ -349,7 +349,7 @@ class TestWaitInPlace:
             PrivateLoop.make_ports("harness:t1"),
             ctx=ctx,
         )
-        assert "wait" in loop.tools_list  # 깨울 길이 있으니 광고된다
+        assert "wait" in loop._config.tools_list  # 깨울 길이 있으니 광고된다
         res = loop.run()
         assert res.success and res.output == "done" and loop.turn == 2
         recs = _records(tmp_path)
@@ -385,7 +385,7 @@ class TestInlineLoopsRefuseWait:
             TEST_PORTS,
             ctx=ctx,
         )
-        assert "wait" not in loop.tools_list
+        assert "wait" not in loop._config.tools_list
         res = loop.run()
         assert res.success and res.output == "done" and loop.turn == 2
         texts = [r["content"] for r in _records(tmp_path) if r.get("tool") == "wait"]

@@ -425,14 +425,6 @@ class PostOffice:
         with self.cv:
             return self._book.owed_by(debtor)
 
-    def awaited_by(self, requester: str) -> tuple[Row, ...]:
-        with self.cv:
-            return self._book.awaited_by(requester)
-
-    def open_requests(self, addr: str) -> tuple[Row, ...]:
-        with self.cv:
-            return self._book.open_requests(addr)
-
     def open_questions(self) -> tuple[Row, ...]:
         with self.cv:
             return self._book.open_questions()

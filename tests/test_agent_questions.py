@@ -676,7 +676,6 @@ class TestUncoveredSurfaces:
         한쪽만 고치는 사고가 안 난다(`runtime.py` 가 있는 이유)."""
         from agent_cli.runtime import main_run_ended
 
-        assert main_run_ended(None) == 0  # 레지스트리 없는 부팅에서 안전
         reg = mkreg()
         a = spawn_idle(reg)
         reg.note_owes("main", f"agent:{a}", "결정해 줘")  # main 이 받은 message 요청
@@ -786,7 +785,7 @@ class TestFlipToolMount:
                 active_tools=["shell"],
                 ports=make_ports(questions=questions, message_handler=message_handler),
             )
-            return list(loop.tools_list)
+            return list(loop._config.tools_list)
 
         assert "answer" not in _BUILTIN_ORDER
         for port in (None, reg.question_port(a), reg.question_port(None)):
@@ -906,7 +905,7 @@ class TestFlipPrompt:
                 ports=make_ports(questions=questions),
             )
             loop._prompt.rebuild()  # __init__ 은 조립만 — 빌드는 런 시작에
-            assert "ask" in loop.tools_list
+            assert "ask" in loop._config.tools_list
             return loop.system
 
         resident = system_for(reg.question_port(a), "r")
@@ -1800,7 +1799,7 @@ class TestAskKeepsTheRequesterDebt:
             "사람에게 물었다고 main 빚이 사라졌다"
         )
         # 런 끝: main 은 라벨 붙은 런 요약을 폴백으로 받는다 — 침묵이 아니다
-        assert reg.end_run(me, "사용자 답을 기다립니다", run="r-1", success=True) == 1
+        assert reg.end_run(me, "사용자 답을 기다립니다", success=True) == 1
         (rec,) = [r for r in absorbed_mail(reg) if r.get("kind") == "reply"]
         assert rec["output"].startswith(_NO_REPLY_LABEL) and rec["re"] == "r-1"
 
@@ -1957,7 +1956,7 @@ class TestPerRequestDebts:
         a, b = spawn_idle(reg), spawn_idle(reg)
         me = self._two(reg, b, f"agent:{a}")
         with SubmitSpy(reg) as spy:
-            assert reg.end_run(me, "런 요약", run="r-1", success=True) == 2
+            assert reg.end_run(me, "런 요약", success=True) == 2
         assert len(spy.calls) == 2
         assert all(c["message"].startswith(_NO_REPLY_LABEL) for c in spy.calls)
         assert reg.reply_debts(me) == []

@@ -3014,9 +3014,10 @@ class TestResumeMode:
             lambda: reg.arrived_for("main", waking_only=False, words=False)
         )
         again = absorbed_mail(reg)[0]
-        assert again["run"] != "r-1"
+        assert Path(again["reply_path"]).name != "reply-r-1.md"
         assert (tm.home_dir / "replies" / "reply-r-1.md").is_file()
-        assert (tm.home_dir / "replies" / f"reply-{again['run']}.md").is_file()
+        assert Path(again["reply_path"]).is_file()
+        assert Path(again["reply_path"]).parent == tm.home_dir / "replies"
         reg.shutdown_all()
 
     def test_resume_guards(self, tmp_path, renderer):
@@ -3755,7 +3756,6 @@ class TestInstantAgent:
         assert err == ""
         tm = reg.get(key)
         assert tm.role_prompt == "너는 dialect 전문가다."
-        assert tm.instructions == "너는 dialect 전문가다."
         reg.shutdown_all()
 
     def test_profile_plus_instructions_overlay(self, tmp_path, renderer, monkeypatch):
@@ -3785,7 +3785,7 @@ class TestInstantAgent:
         reg2 = make_registry(tmp_path)
         assert reg2.restore() == 1
         tm = reg2.get(key)
-        assert tm.role_prompt == "INSTANT ROLE" and tm.instructions == "INSTANT ROLE"
+        assert tm.role_prompt == "INSTANT ROLE"
         wait_until(lambda: tm.state == "idle")
         reg2.kill(key)
         assert reg2.resume_teammate(key) == ""  # 부활도 동일 정체성

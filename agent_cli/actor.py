@@ -32,11 +32,6 @@ class RunEnd:
     result: Any = None
     error: BaseException | None = None
 
-    @property
-    def ok(self) -> bool:
-        """정상으로 끝났나 — ``done``(종전의 ``success``)."""
-        return self.outcome == "done"
-
     @classmethod
     def of(cls, finished: Any, *, stopped: bool = False) -> RunEnd:
         """종류의 반환에서 — 세션 종료로 끝났으면 ``session_end``, 정지가 섰으면 ``stopped``, 실패면 ``failed``,

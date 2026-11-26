@@ -625,7 +625,7 @@ class TestExitPathConvergence:
 
         wiring = (
             "schedules.enqueue = lambda prompt, nickname, schedule_id: main_input.enqueue(",
-            "take=agent_registry.absorb_main if agent_registry is not None else None,",
+            "take=agent_registry.absorb_main,",
             "enqueue_user_message=lambda text, nickname: main_input.enqueue(",
             "PumpDeps(main_input=main_input,",
             "post=stores.main_input.post,",

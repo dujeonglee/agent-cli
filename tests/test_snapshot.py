@@ -66,6 +66,11 @@ def _files(ws: Path) -> set[str]:
     }
 
 
+def _n_snapshots(store) -> int:
+    """저장소의 스냅샷 수 — `snapshot` 도구의 `list` 가 읽는 git 기록."""
+    return len(store.log(limit=1000))
+
+
 class TestShadowRepo:
     def test_leaves_no_trace_in_the_workspace(self, ws):
         before = _files(ws)
@@ -219,7 +224,6 @@ class TestRestore:
         s.checkpoint("edit", force=True)
         (ws / "gone.txt").unlink()
         s.checkpoint("delete", force=True)
-        assert ("D", "gone.txt") in s.changed_files()
         assert [m for _, m in s.log()][:2] == ["delete", "edit"]
         assert [m for _, m in s.log(path="gone.txt")] == ["delete", "edit"]
         assert [m for _, m in s.log(path="src/a.py")] == ["edit", "session start"]
@@ -516,12 +520,12 @@ class TestBuiltinHook:
         # 시작 커밋 뒤 간격이 지났다고 친다 — monotonic 은 부팅 기준이라 0.0 으로
         # 두면 갓 켜진 CI 러너(uptime < 3600s)에서 "아직 간격 안" 이 된다.
         store._last_checkpoint = time.monotonic() - 3601
-        n0 = store.stats.commits
+        n0 = _n_snapshots(store)
         hook = self._hook()
         for tool in ("shell", "edit_file", "write_file"):
             (ws / "src" / "a.py").write_text(f"by {tool}\n")
             hook.pre_tool_use(MagicMock(tool_name=tool, turn=4, tool_input={}))
-        assert store.stats.commits == n0 + 1
+        assert _n_snapshots(store) == n0 + 1
         assert next(m for _, m in store.log()) == "before shell (turn 4)"
 
     def test_an_op_after_the_interval_commits_again(self, ws, monkeypatch):
@@ -536,7 +540,7 @@ class TestBuiltinHook:
         # 간격이 지난 것은 시계를 기다리지 않고 마지막 체크포인트 시각을 물려서 만든다 — 짧은 간격과
         # `sleep` 에 기대면 느린 러너에서 첫 커밋이 간격보다 오래 걸려 둘째 op 도 커밋된다(CI 실패).
         store._last_checkpoint = time.monotonic() - 3601  # 시작 커밋 뒤 간격이 지났다
-        n0 = store.stats.commits
+        n0 = _n_snapshots(store)
         hook = self._hook()
         (ws / "src" / "a.py").write_text("v2\n")
         hook.pre_tool_use(MagicMock(tool_name="shell", turn=4, tool_input={}))
@@ -544,12 +548,12 @@ class TestBuiltinHook:
         hook.pre_tool_use(
             MagicMock(tool_name="edit_file", turn=4, tool_input={})
         )  # 간격 안 — 건너뜀
-        assert store.stats.commits == n0 + 1
+        assert _n_snapshots(store) == n0 + 1
         store._last_checkpoint = time.monotonic() - 3601  # 간격이 지났다
         hook.pre_tool_use(
             MagicMock(tool_name="write_file", turn=4, tool_input={})
         )  # 간격 지남
-        assert store.stats.commits == n0 + 2
+        assert _n_snapshots(store) == n0 + 2
         assert [m for _, m in store.log()][:2] == [
             "before write_file (turn 4)",
             "before shell (turn 4)",
@@ -562,11 +566,11 @@ class TestBuiltinHook:
         monkeypatch.chdir(ws)
         monkeypatch.delenv("AGENT_CLI_SNAPSHOT", raising=False)
         store = build_snapshot_store()
-        n = store.stats.commits
+        n = _n_snapshots(store)
         hook = self._hook()
         hook.on_session_start(MagicMock())
         hook.on_session_start(MagicMock())
-        assert get_snapshot(ws) is store and store.stats.commits == n
+        assert get_snapshot(ws) is store and _n_snapshots(store) == n
 
 
 class TestToolAdvertising:

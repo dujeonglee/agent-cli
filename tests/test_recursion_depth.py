@@ -150,8 +150,8 @@ class TestToolsListDepthCeiling:
 
     def test_below_ceiling_keeps_both(self):
         loop = self._make_loop(depth=0, max_depth=2)
-        assert "agent" in loop.tools_list  # 5.0.0: delegate → agent(run)
-        assert "run_skill" in loop.tools_list
+        assert "agent" in loop._config.tools_list  # 5.0.0: delegate → agent(run)
+        assert "run_skill" in loop._config.tools_list
 
     def test_at_ceiling_strips_both_symmetrically(self):
         loop = self._make_loop(depth=2, max_depth=2)
@@ -159,24 +159,24 @@ class TestToolsListDepthCeiling:
         # invariant is "both, or neither". A regression would let a
         # model emit ``run_skill`` at the ceiling and bounce off the
         # dispatch-time refusal instead.
-        assert "agent" not in loop.tools_list
-        assert "run_skill" not in loop.tools_list
+        assert "agent" not in loop._config.tools_list
+        assert "run_skill" not in loop._config.tools_list
 
     def test_above_ceiling_still_strips_both(self):
         # Defensive — somehow ``depth`` ran past ``max_depth``.
         # The strip is ``>=`` not ``==``, so anything beyond also
         # has them removed.
         loop = self._make_loop(depth=5, max_depth=2)
-        assert "agent" not in loop.tools_list
-        assert "run_skill" not in loop.tools_list
+        assert "agent" not in loop._config.tools_list
+        assert "run_skill" not in loop._config.tools_list
 
     def test_one_below_ceiling_keeps_both(self):
         # The interesting boundary case: depth=1, max_depth=2 means
         # this loop CAN still descend once more. Both tools must
         # remain.
         loop = self._make_loop(depth=1, max_depth=2)
-        assert "agent" in loop.tools_list
-        assert "run_skill" in loop.tools_list
+        assert "agent" in loop._config.tools_list
+        assert "run_skill" in loop._config.tools_list
 
 
 # ─── Dispatch-time depth check in _handle_run_skill (B) ───────

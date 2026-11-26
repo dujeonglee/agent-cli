@@ -162,10 +162,6 @@ class TestRoundTripInvariants:
     def test_n_symbols_matches_iteration(self, tmp_path, source):
         idx = _build_and_load(tmp_path, source)
         assert idx.n_symbols() == len(idx.all_symbols())
-        assert idx.n_refs() == len(idx.all_refs())
-        # n_definitions == count where is_definition is True
-        defs_via_iter = sum(1 for s in idx.all_symbols() if s["is_definition"])
-        assert idx.n_definitions() == defs_via_iter
 
     @settings(
         deadline=None,
@@ -204,17 +200,6 @@ class TestRoundTripInvariants:
             assert {(s["file"], s["line"]) for s in hit} == {
                 (s["file"], s["line"]) for s in idx.all_symbols() if s["name"] == n
             }
-
-    @settings(
-        deadline=None,
-        max_examples=30,
-        suppress_health_check=[HealthCheck.function_scoped_fixture],
-    )
-    @given(source=py_source_st)
-    def test_kind_counts_sum_to_total(self, tmp_path, source):
-        idx = _build_and_load(tmp_path, source)
-        assert sum(idx.kind_counts().values()) == idx.n_symbols()
-        assert sum(idx.ref_kind_counts().values()) == idx.n_refs()
 
 
 class TestIncrementalNoOpInvariant:

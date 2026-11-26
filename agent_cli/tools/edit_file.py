@@ -195,12 +195,6 @@ def _find_overlap(spans: list[tuple]) -> str | None:
     return None
 
 
-def apply_edits_batch(path: str, edits: list[dict]) -> ToolResult:
-    """``apply_edits_batch_parts`` 의 합친 결과만 — 단일 ToolResult 소비자용."""
-    result, _parts = apply_edits_batch_parts(path, edits)
-    return result
-
-
 _EDIT_PART_DIFF_LINES = 6  # op 별 조각에 보이는 -/+ 줄 수 상한 (한쪽당)
 
 

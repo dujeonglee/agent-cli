@@ -381,7 +381,6 @@ def render_begin_scope(
     kind: str = "run",
     label: str = "",
     agent: str = "",
-    index: int = 0,
     ctx_dir: str | None = None,
 ) -> None:
     """Enter a nested scope — single path for skill subloops and harness jobs.
@@ -392,7 +391,6 @@ def render_begin_scope(
         kind=kind,
         label=label,
         agent=agent,
-        index=index,
         ctx_dir=ctx_dir,
     )
 

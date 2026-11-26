@@ -22,7 +22,7 @@ from agent_cli.jobs import JobRegistry
 from agent_cli.loop.ledger import NAG_BUDGET
 from agent_cli.main import web_instance_is_active
 from agent_cli.main_input import MainInput
-from agent_cli.monitor import MonitorRegistry
+from agent_cli.monitor.registry import MonitorRegistry
 from agent_cli.post.office import PostOffice
 from agent_cli.pump import QuietPolicy
 from agent_cli.schedule.registry import ScheduleRegistry

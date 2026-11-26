@@ -53,7 +53,7 @@ def _loop(cap: int, tools: list[str] | None = None) -> AgentLoop:
     loop.ctx = None  # seam reads self.ctx.session_dir if self.ctx else None
     # C1 PR-2: 도구 seam 은 ToolBridge 소유 — cap 은 브리지에 직접 단다.
     loop._tools = ToolBridge(loop._config, loop._state, ctx=None, provider=None)
-    loop._oversized_cap = cap  # property → bridge 로 관통
+    loop._tools._oversized_cap = cap
     return loop
 
 
@@ -392,13 +392,13 @@ class TestToolObservationCap:
     def test_under_cap_passes_through_verbatim(self):
         loop = _loop(cap=1000)
         r = ToolResult(True, output="small")
-        assert loop._tool_observation("shell", r, {}) == "small"
+        assert loop._tools._tool_observation("shell", r, {}) == "small"
 
     def test_over_cap_is_replaced(self, tmp_path):
         loop = _loop(cap=100)
         loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
         big = "\n".join(f"line {i}" for i in range(4000))
-        obs = loop._tool_observation("shell", ToolResult(True, output=big), {})
+        obs = loop._tools._tool_observation("shell", ToolResult(True, output=big), {})
         assert obs != big
         assert "Full output saved to" in obs
 
@@ -406,13 +406,18 @@ class TestToolObservationCap:
         loop = _loop(cap=10)
         monkeypatch.setattr(type(TOOLS["shell"]), "apply_oversized_cap", False)
         big = "x" * 100_000
-        assert loop._tool_observation("shell", ToolResult(True, output=big), {}) == big
+        assert (
+            loop._tools._tool_observation("shell", ToolResult(True, output=big), {})
+            == big
+        )
 
     def test_unknown_tool_is_capped_too(self, tmp_path):
         loop = _loop(cap=100)
         loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
         big = "\n".join(f"line {i}" for i in range(4000))
-        obs = loop._tool_observation("srv.thing", ToolResult(True, output=big), {})
+        obs = loop._tools._tool_observation(
+            "srv.thing", ToolResult(True, output=big), {}
+        )
         assert obs.startswith("[srv.thing:")
         assert "Full output saved to" in obs
         assert GENERIC_RETRY_HINT in obs
@@ -425,7 +430,7 @@ class TestToolObservationCap:
             lambda self, result, args: "REWRITTEN",
         )
         r = ToolResult(True, output="original")
-        assert loop._tool_observation("shell", r, {}) == "REWRITTEN"
+        assert loop._tools._tool_observation("shell", r, {}) == "REWRITTEN"
 
 
 # ── per-TURN budget: N ops each under the cap ────────────────────────
@@ -486,7 +491,8 @@ class TestTurnBudget:
         loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
         body = self._obs(1000)
         assert (
-            loop._tool_observation("shell", ToolResult(True, output=body), {}) == body
+            loop._tools._tool_observation("shell", ToolResult(True, output=body), {})
+            == body
         )
 
     def test_suffix_survives_replacement(self, tmp_path):
@@ -509,7 +515,9 @@ class TestRunSkillCapped:
         loop = _loop(cap=100, tools=["run_skill", "agent"])
         loop._tools.ctx = type("C", (), {"session_dir": tmp_path})()
         big = "\n".join(f"line {i}" for i in range(4000))
-        obs = loop._tool_observation("run_skill", ToolResult(True, output=big), {})
+        obs = loop._tools._tool_observation(
+            "run_skill", ToolResult(True, output=big), {}
+        )
         assert "Full output saved to" in obs
         assert TOOLS["run_skill"].oversized_retry_hint in obs
 
@@ -658,7 +666,7 @@ class TestRunContext:
         # C1 PR-2: RunContext 조립은 ToolBridge 소유 — ctx 도 브리지에 주입
         loop.ctx = _C()
         loop._tools.ctx = _C()
-        c = loop._run_ctx()
+        c = loop._tools._run_ctx()
         assert isinstance(c, RunContext)
         assert c.session_dir == tmp_path
         assert c.oversized_cap == 4_096
@@ -666,7 +674,7 @@ class TestRunContext:
 
     def test_loop_run_ctx_headless_session_dir_none(self):
         loop = _loop(cap=0, tools=["read_file"])  # loop.ctx is None
-        c = loop._run_ctx()
+        c = loop._tools._run_ctx()
         assert c.session_dir is None and c.oversized_cap == 0
 
     def test_loop_run_ctx_cached_single_instance(self):
@@ -674,7 +682,7 @@ class TestRunContext:
         # _run_ctx builds ONCE and returns the same instance thereafter
         # (tool-call seam + oversized-render seam share it).
         loop = _loop(cap=4_096, tools=["read_file", "agent"])
-        assert loop._run_ctx() is loop._run_ctx()
+        assert loop._tools._run_ctx() is loop._tools._run_ctx()
 
 
 # ── read_file stat hint is cap-aware, threaded via RunContext, and the
@@ -754,7 +762,7 @@ class TestStatHintCapAwareThreading:
             says_over = "would exceed the context cap" in stat_out
             # the loop's real decision for a FULL read at the same cap
             loop = _loop(cap=cap, tools=["read_file"])
-            seam_out = loop._tool_observation(
+            seam_out = loop._tools._tool_observation(
                 "read_file", ToolResult(True, output=full_body), {"path": str(f)}
             )
             really_capped = "too large" in seam_out

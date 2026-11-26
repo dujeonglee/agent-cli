@@ -18,7 +18,8 @@ from types import SimpleNamespace
 import pytest
 
 from agent_cli.jobs import JobRegistry
-from agent_cli.monitor import MonitorRegistry, build
+from agent_cli.monitor import build
+from agent_cli.monitor.registry import MonitorRegistry
 from agent_cli.schedule.registry import ScheduleRegistry
 from agent_cli.session_slots import (
     set_agent_registry,
