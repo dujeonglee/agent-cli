@@ -2248,8 +2248,9 @@ def run(
 
 
 #: 웹 방을 닫을 때 main 이 멈추기를 기다리는 상한(초) — SIGTERM 으로 들어왔으면 그 시한(`terminate.TEARDOWN_BUDGET_S`)
-#: 안에서다
-WEB_CLOSE_WAIT_S = 2.0
+#: 안에서다. 전경 셸의 정지(정지를 보는 0.2초 + TERM 뒤 3초 + KILL 뒤 3초 — `tools.shell._stop_group`)와 그 결과 기록을
+#: 덮는다. 응답 머리를 기다리는 모델 호출처럼 정지를 보지 않는 대기는 이 상한에서 끊긴다
+WEB_CLOSE_WAIT_S = 7.0
 
 
 def wait_for_main_to_stop(worker: threading.Thread, deadline: float | None) -> None:
