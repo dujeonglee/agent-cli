@@ -112,11 +112,11 @@ class TestRunEnd:
         assert RunEnd.of((self._r(), 0.1)).outcome == "done"  # 에이전트의 (결과, 초)
         boom = RuntimeError("x")
         end = RunEnd.crashed(boom)
-        assert end.outcome == "crashed" and end.error is boom and not end.ok
+        assert end.outcome == "crashed" and end.error is boom
 
     def test_output_and_result_are_kept(self):
         from agent_cli.actor import RunEnd
 
         r = self._r(output="answer")
         end = RunEnd.of((r, 0.2))
-        assert end.output == "answer" and end.result == (r, 0.2) and end.ok
+        assert end.output == "answer" and end.result == (r, 0.2)

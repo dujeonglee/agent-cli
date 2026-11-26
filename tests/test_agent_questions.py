@@ -1800,7 +1800,7 @@ class TestAskKeepsTheRequesterDebt:
             "사람에게 물었다고 main 빚이 사라졌다"
         )
         # 런 끝: main 은 라벨 붙은 런 요약을 폴백으로 받는다 — 침묵이 아니다
-        assert reg.end_run(me, "사용자 답을 기다립니다", run="r-1", success=True) == 1
+        assert reg.end_run(me, "사용자 답을 기다립니다", success=True) == 1
         (rec,) = [r for r in absorbed_mail(reg) if r.get("kind") == "reply"]
         assert rec["output"].startswith(_NO_REPLY_LABEL) and rec["re"] == "r-1"
 
@@ -1957,7 +1957,7 @@ class TestPerRequestDebts:
         a, b = spawn_idle(reg), spawn_idle(reg)
         me = self._two(reg, b, f"agent:{a}")
         with SubmitSpy(reg) as spy:
-            assert reg.end_run(me, "런 요약", run="r-1", success=True) == 2
+            assert reg.end_run(me, "런 요약", success=True) == 2
         assert len(spy.calls) == 2
         assert all(c["message"].startswith(_NO_REPLY_LABEL) for c in spy.calls)
         assert reg.reply_debts(me) == []

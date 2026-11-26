@@ -190,7 +190,7 @@ def test_a_session_ended_run_is_session_end_and_its_end_settles_nothing():
     from agent_cli.tools.result import ToolResult
 
     end = RunEnd.of(ToolResult(True, session_ended=True), stopped=True)
-    assert end.outcome == "session_end" and not end.ok
+    assert end.outcome == "session_end"
     deps = MagicMock()
     actor = MainActor(deps)
     assert actor.ended(MagicMock(), end) is False

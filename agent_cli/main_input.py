@@ -158,6 +158,7 @@ class MainInput:
         return [self.item_of(e) for e in self.post.words(MAIN)]
 
     def pending_count(self) -> int:
+        """main 상자에 줄 선 사람의 말 수. 테스트가 보는 창 — 제품은 부르지 않는다."""
         return len(self.post.words(MAIN))
 
     def idle(self) -> bool:

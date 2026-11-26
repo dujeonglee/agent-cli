@@ -793,7 +793,7 @@ class TestRunEnded:
         from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg.note_owes("agent:a", "main", "일감", id="r-1")
-        assert reg.run_ended("agent:a", "요약", run="r-1", success=True) == 1
+        assert reg.run_ended("agent:a", "요약", success=True) == 1
         assert reg.reply_debts("agent:a") == []
         (mail,) = absorbed_mail(reg)
         assert mail["output"] == f"{_NO_REPLY_LABEL}\n요약" and mail["re"] == "r-1"

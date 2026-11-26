@@ -686,7 +686,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
 
     def queued_for(self, addr: str) -> tuple[MailView, ...]:
         """``addr`` 앞에 줄 서 아직 꺼내 가지 않은 배달 — main 메일함·에이전트 받은편지함(미러)·private 메일함,
-        도착 순서. 읽기만 한다 — 락 안에서 사본을 뜬다."""
+        도착 순서. 읽기만 한다 — 락 안에서 사본을 뜬다. 테스트가 보는 창 — 제품은 부르지 않는다."""
         if addr == "main" or is_private_owner(addr):
             return tuple(
                 view_of_main_mail(dict(e.payload)) for e in self._post.mail(addr)
@@ -696,7 +696,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
 
     def taken_by(self, addr: str) -> tuple[MailView, ...]:
         """``addr`` 의 런이 꺼내 들고 있는 배달 — 에이전트의 지금 런이 시작·흡수한 항목(런이 끝나면 빈다).
-        main·private 은 꺼낸 것을 들고 있지 않다. 읽기만 한다."""
+        main·private 은 꺼낸 것을 들고 있지 않다. 읽기만 한다. 테스트가 보는 창 — 제품은 부르지 않는다."""
         tm = (
             self._agents.get(addr.split(":", 1)[1])
             if addr.startswith("agent:")
@@ -853,8 +853,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
           빚뿐).
         - 그 밖(보통의 끝): :meth:`end_run` — 남은 빚을 라벨 붙은 런 요약으로.
 
-        종전엔 이 판정(``not stop_event``)이 호출부 셋에 흩어져 있었다. ``meta`` 의 ``run`` 키는 그 런을 연 배달
-        id 이다. 체크인 타이머는 여기서 풀 것이 없다 — 거는 곳은 제자리 대기 하나이고 깨면 그 ``finally`` 가 푼다."""
+        종전엔 이 판정(``not stop_event``)이 호출부 셋에 흩어져 있었다. 체크인 타이머는 여기서 풀 것이 없다 — 거는 곳은 제자리 대기 하나이고 깨면 그 ``finally`` 가 푼다."""
         if stopped:
             # 버린 빚 — 요청자는 더 기다리지 않는다(dropped).
             self._post.end_run(debtor, run_id=self._run_of(debtor), outcome="stopped")

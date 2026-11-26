@@ -71,7 +71,8 @@ class TestRuns:
         office.pay(A, "r-1", E.reply("n-2", A, "main", "done", re="r-1"), run_id="r-1")
         assert [e.id for e in office.queued("main")] == ["n-2"]
         assert _rows(office) == [("r-1", "closed", "reply")]  # 그 런 끝까지 남는다
-        assert office.awaited_by("main") == ()
+        # main 이 회신을 기다리는 r 줄이 없다 — 닫힌 줄만 남았다
+        assert not [r for r in office.rows() if r.kind == "r" and r.state != "closed"]
 
     def test_pay_unsent_closes_and_keeps_the_row_without_delivering(self, office):
         """갚았는데 회신이 가지 못했다(요청자가 사라짐) — 닫힌 채 그 런 끝까지 남는다("이미 회신했다"), 배달 없음."""
@@ -98,7 +99,9 @@ class TestRuns:
 
     def test_open_human_has_no_envelope(self, office):
         office.open_human("u-1", "user:dj", "main", "hello")
-        assert [r.rid for r in office.open_requests("main")] == ["u-1"]
+        assert [
+            r.rid for r in office.rows() if r.kind == "u" and r.state == "picked"
+        ] == ["u-1"]
         assert office.queued("main") == () == office.taken("main")
 
 

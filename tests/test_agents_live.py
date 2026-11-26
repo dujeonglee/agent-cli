@@ -3014,9 +3014,10 @@ class TestResumeMode:
             lambda: reg.arrived_for("main", waking_only=False, words=False)
         )
         again = absorbed_mail(reg)[0]
-        assert again["run"] != "r-1"
+        assert Path(again["reply_path"]).name != "reply-r-1.md"
         assert (tm.home_dir / "replies" / "reply-r-1.md").is_file()
-        assert (tm.home_dir / "replies" / f"reply-{again['run']}.md").is_file()
+        assert Path(again["reply_path"]).is_file()
+        assert Path(again["reply_path"]).parent == tm.home_dir / "replies"
         reg.shutdown_all()
 
     def test_resume_guards(self, tmp_path, renderer):

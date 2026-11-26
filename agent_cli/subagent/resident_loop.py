@@ -341,9 +341,7 @@ class ResidentLoop(LoopKind):
             me,
             output,
             stopped=stopped,
-            run=iid,
             success=success,
-            duration_s=secs,
             reply_path=reply_path,
             # 실패한 런의 사유(턴 상한·provider 오류) — 산출물이 비어 회신 머리 한 줄에만 남는다
             **({"error": str(result.error)} if not success and result.error else {}),
