@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from agent_cli.context.store import load_records
 from agent_cli.loop.ledger import NAG_BUDGET
 from agent_cli.render import get_renderer, set_renderer
 from agent_cli.runtime import build_snapshot_store
@@ -99,11 +100,8 @@ def history(s, owner: str = "main") -> list[dict]:
         if owner == "main"
         else next(p for p in s.sdir.rglob("history.jsonl") if owner in str(p))
     )
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    # 제품의 관용 읽기 — 펌프가 쓰는 중인 마지막 줄이 잘려 있을 수 있다(엄격 파싱이 v10.177.3 PR CI 에서 한 번 깨졌다)
+    return load_records(path)
 
 
 def work_cards(s, key: str) -> list[str]:
