@@ -103,6 +103,7 @@ class TestStopForCtrlC:
         assert reg.calls == [("all", "user", False)]
 
     def test_nothing_to_stop_exits_as_before(self):
+        """6d-3 전의 값 — 멈출 것이 없으면 처리기가 `KeyboardInterrupt` 를 던져 run 을 끝낸다(130)."""
         with pytest.raises(KeyboardInterrupt):
             stop_for_ctrl_c(MAIN, main_stop=None, registry=FakeRegistry(), say=print)
         with pytest.raises(KeyboardInterrupt):

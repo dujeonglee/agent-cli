@@ -50,6 +50,19 @@ class TestRunUnwind:
         assert r.returncode == -signal.SIGTERM
         assert r.stdout.split() == ["unwound", "dfl", "True", "cleanup"]
 
+    def test_the_first_sigterm_raises_at_once(self):
+        """6d-3 전의 값 — run 의 처리기는 첫 SIGTERM 에 곧바로 `Terminated` 를 던진다(main 이 어디 있든 그 자리에서 풀려
+        돌던 호출과 결과가 기록에 남지 않는다)."""
+        import pytest
+
+        t = SigTerm()
+        prev = t.install_unwind()
+        try:
+            with pytest.raises(Terminated):
+                signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+        finally:
+            SigTerm.restore(prev)
+
     def test_terminated_is_not_swallowed_by_common_handlers(self):
         assert not issubclass(Terminated, Exception)
         assert not issubclass(Terminated, KeyboardInterrupt)
