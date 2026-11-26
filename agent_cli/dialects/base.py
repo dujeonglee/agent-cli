@@ -39,8 +39,6 @@ Default implementations are provided for the common cases:
   - ``render_assistant_from_history`` — re-emit via ``self.render_full_example``;
     builds the next-turn prior (live AND resume).
   - ``render_action_input`` — dict → JSON via ``json.dumps``.
-  - ``provider_call_kwargs`` — empty dict.
-  - ``prefill`` — empty string.
 
 So a typical plugin only implements the wire-shape-specific abstract
 methods: ``parse_turn``(루프의 1차 파서 — v8.41.0 추상 승격),
@@ -187,8 +185,8 @@ class DialectBase(ABC):
       - **Prompt**: what the model is told to emit.
       - **Parsing**: how the emitted text becomes a ``ParsedAction``.
       - **Recovery**: what the model is told when parsing failed.
-      - **Provider / lifecycle**: prefill, provider kwargs, the (A)→(C)
-        normalization, and the (A)↔(B)↔(D) history round-trip.
+      - **Provider / lifecycle**: the (A)→(C) normalization and the
+        (A)↔(B)↔(D) history round-trip.
     """
 
     name: str
@@ -507,17 +505,6 @@ class DialectBase(ABC):
 
     # ─── Provider / lifecycle (default) ─────────────────────────
 
-    def provider_call_kwargs(self, capabilities) -> dict:
-        """Extra kwargs for ``provider.call()`` — wire-shape ⨯ capability 를
-        조합하는 단일 지점 (provider 는 capabilities 를 직접 안 본다).
-
-        기본 = 빈 dict. (json_mode 기계는 v7.0.0 에서 유일 소비자 react 와
-        함께 제거 — JSON-object 모드는 선두 ``{`` 를 강제해 산문-선행/태그
-        envelope 과 양립 불가했고, 실측 이점도 없었다. 미래 플러그인이
-        provider 힌트가 필요하면 이 훅을 override.)
-        """
-        return {}
-
     def grammar(
         self, tools: list[tuple[str, dict]], *, thinking_open: bool = False
     ) -> str | None:
@@ -533,22 +520,6 @@ class DialectBase(ABC):
         must let the model close it before the visible turn.
         """
         return None
-
-    def prefill(self) -> str:
-        """Return assistant-turn prefill string, or empty for no prefill.
-
-        Default no prefill — the model's prior produces the wire shape
-        on its own. Non-canonical formats override to force the wire
-        shape from the first generated token.
-
-        When non-empty, the loop appends
-        ``{"role":"assistant","content":<prefill>}`` as the last message
-        before the LLM call. The provider treats this as "continue from
-        here," forcing the dialect from the first generated token.
-        The loop prepends the prefill to the response so downstream
-        parsers see a complete emission.
-        """
-        return ""
 
     # ─── History / context-window ───────────────────────────────
     # (A → B) 저장과 관찰 재렌더는 추상 — 구현은 ``engine.Dialect`` 하나다

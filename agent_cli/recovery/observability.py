@@ -120,8 +120,7 @@ class CallMetrics:
     ``provider.call`` (the provider's own retries and stream reconnects
     included, request assembly before it excluded). ``output_chars`` /
     ``thinking_chars`` are the lengths of the content and thinking text the
-    provider returned (a cut generation's partial text included; a
-    dialect's prefill, which the client wrote, excluded)."""
+    provider returned (a cut generation's partial text included)."""
 
     llm_ms: int
     output_chars: int
