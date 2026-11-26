@@ -407,24 +407,12 @@ class LLMCaller:
         )
         self._grammar_used = bool(grammar)
 
-        # 방언이 정하는 provider 힌트 (지금 방언은 모두 빈 값).
-        extra_call_kwargs = self.cfg.dialect.provider_call_kwargs(self.cfg.capabilities)
-
-        # 방언이 정하는 prefill — provider 가 assistant 턴의 시작으로 보는 글
-        # (지금 방언은 모두 빈 문자열).
-        prefill = self.cfg.dialect.prefill()
-        call_messages = self.state.messages
-        if prefill:
-            call_messages = [
-                *self.state.messages,
-                {"role": "assistant", "content": prefill},
-            ]
         system, shared = self._request_head()
         self.last_call = None
         started = time.monotonic()
         try:
             response = self.provider.call(
-                messages=call_messages,
+                messages=self.state.messages,
                 system=system,
                 model=self.cfg.model,
                 capabilities=self.cfg.capabilities,
@@ -452,20 +440,12 @@ class LLMCaller:
                     # 같은 한 곳에서(``_request_head``).
                     **shared,
                 ),
-                **extra_call_kwargs,
             )
             self.last_call = CallMetrics(
                 llm_ms=round((time.monotonic() - started) * 1000),
                 output_chars=len(response.content or ""),
                 thinking_chars=len(response.thinking or ""),
             )
-            # Stitch the prefill back onto the response so downstream
-            # parsers see a complete emission. Use dataclasses.replace
-            # to keep usage / thinking / stop_reason intact.
-            if prefill:
-                from dataclasses import replace as _replace
-
-                response = _replace(response, content=prefill + response.content)
             # flow 1 (part B) — re-anchor the cache to the server's actual
             # input count and refresh the tokens-per-byte ratio from it, so an
             # estimate can't compound across turns. usage covers the whole
@@ -487,7 +467,7 @@ class LLMCaller:
             # turn — reset the counter so a later turn gets a fresh budget
             # of shrink-and-retry attempts.
             self.overflow_retries = 0
-            self._images_sent = _images.image_shas(call_messages)
+            self._images_sent = _images.image_shas(self.state.messages)
             self._image_retry_used = False
             return response
         except Exception as e:
@@ -526,7 +506,7 @@ class LLMCaller:
                 # 서버가 그림을 디코딩하지 못했다 — 마지막 성공 요청 뒤 새로 들어간 그림만
                 # 막고(사유 줄로) 한 번 재시도한다. 막을 새 그림이 없으면 아래 실패로.
                 fresh = (
-                    _images.image_shas(call_messages)
+                    _images.image_shas(self.state.messages)
                     - self._images_sent
                     - self._images_blocked
                 )
@@ -611,7 +591,7 @@ class LLMCaller:
         compaction instruction. Sent with the main call's request head
         (``_request_head``: same ``system``, same ``tools[]``, same
         capabilities / sampling) so the server's prefix cache covers it — no
-        grammar, no prefill, no ``json_mode``.
+        grammar.
 
         ``shape="transcript"``: a summarisation system prompt + one user
         message holding the natural-language transcript of the evicted
@@ -691,7 +671,7 @@ class LLMCaller:
 
         본 호출과 다른 것: ``thinking=False``(세션 🧠 이 켜져 있으면 스위치 값이 다르다 —
         템플릿이 그 값을 접두에 그리는지는 실측 대상, DESIGN §8.11), ``max_tokens``,
-        문법·prefill·``json_mode``(``provider_call_kwargs``) 없음, 화면 콜백 없음.
+        문법 없음, 화면 콜백 없음.
         """
         caps = self.cfg.capabilities
         system, shared = self._request_head()

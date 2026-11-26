@@ -301,11 +301,8 @@ def _to_summary_text(msg: dict) -> str:
         if not action:
             continue
         tool = TOOLS.get(action)
-        # Stored ops are FLAT (the model's emission, e.g. read_file `{path}`);
-        # summary_arg reads the tool's CANONICAL shape (`read_file_reads[]`).
-        # Normalize flat → canonical (idempotent on already-canonical input).
         ai = op.get("action_input") or {}
-        arg_summary = tool.summary_arg(tool.wrap_single_op(ai)) if tool else ""
+        arg_summary = tool.summary_arg(ai) if tool else ""
         action_lines.append(f"  → action: {action}({arg_summary})")
     head = f"Assistant: {thought}" if thought else "Assistant:"
     return head + "\n" + "\n".join(action_lines) if action_lines else head

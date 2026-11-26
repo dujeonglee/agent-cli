@@ -39,8 +39,6 @@ Default implementations are provided for the common cases:
   - ``render_assistant_from_history`` — re-emit via ``self.render_full_example``;
     builds the next-turn prior (live AND resume).
   - ``render_action_input`` — dict → JSON via ``json.dumps``.
-  - ``provider_call_kwargs`` — empty dict.
-  - ``prefill`` — empty string.
 
 So a typical plugin only implements the wire-shape-specific abstract
 methods: ``parse_turn``(루프의 1차 파서 — v8.41.0 추상 승격),
@@ -187,8 +185,8 @@ class DialectBase(ABC):
       - **Prompt**: what the model is told to emit.
       - **Parsing**: how the emitted text becomes a ``ParsedAction``.
       - **Recovery**: what the model is told when parsing failed.
-      - **Provider / lifecycle**: prefill, provider kwargs, the (A)→(C)
-        normalization, and the (A)↔(B)↔(D) history round-trip.
+      - **Provider / lifecycle**: the (A)→(C) normalization and the
+        (A)↔(B)↔(D) history round-trip.
     """
 
     name: str
@@ -197,32 +195,6 @@ class DialectBase(ABC):
 
     summary: str = ""
     """사람이 읽는 한 줄 (v10.127.0) — 스펙 구동 방언은 ``DialectSpec.summary``."""
-
-    action_required: bool = True
-    """Whether a missing ``action`` triggers recovery vs. inference.
-
-    True (default, conservative): an emission whose ``action`` slot is
-    empty/invalid goes straight to NO_ACTION recovery — the loop asks the
-    model to re-emit with an action. False: the loop first tries
-    ``infer_action`` on the preserved ``action_input`` (wire-key prefix →
-    tool) and only falls back to NO_ACTION recovery when inference is
-    ambiguous/empty. Plugins whose ``action_input`` keys are namespaced —
-    so a dropped action name is unambiguously recoverable — set False.
-    The recovery path depends on the parser preserving ``action_input``
-    (see :meth:`parse`)."""
-
-    multi_op: bool = False
-    """Whether the format expresses several tool ops in one turn.
-
-    False (default — 단일-action 포맷용; 내장 둘은 True): one action per turn; per-tool batch
-    fields (``read_file_reads`` etc.) let one turn touch several targets. The
-    prompt shows wire-key-prefixed params and the tools' batch prose.
-
-    True (multi-op formats): the turn carries an array of ops, so per-tool
-    batch is redundant. The prompt layer renders tool params with the prefix
-    stripped (the format's flat ``{action, params}`` convention) and drops the
-    batch-specific guide prose; the "one op per target" instruction lives once
-    in :meth:`format_rules`. See docs/inputs-array-schema/DESIGN.md §5."""
 
     # ─── Prompt (abstract) ──────────────────────────────────────
 
@@ -284,9 +256,8 @@ class DialectBase(ABC):
         Preservation invariant (recovery paths depend on it): when an op's
         ``action`` slot is empty or invalid but an ``action_input`` was
         still identified, the parser MUST keep the op with its
-        ``action_input`` rather than dropping it. ``infer_action`` (for
-        ``action_required=False``) and the NO_ACTION recovery echo (for
-        ``action_required=True``) both read it. ``parse_stage`` should be
+        ``action_input`` rather than dropping it. ``infer_action`` and the
+        NO_ACTION recovery echo both read it. ``parse_stage`` should be
         > 0 whenever an ``action_input`` was recovered this way (the exact
         value stays observability-only).
         """
@@ -507,17 +478,6 @@ class DialectBase(ABC):
 
     # ─── Provider / lifecycle (default) ─────────────────────────
 
-    def provider_call_kwargs(self, capabilities) -> dict:
-        """Extra kwargs for ``provider.call()`` — wire-shape ⨯ capability 를
-        조합하는 단일 지점 (provider 는 capabilities 를 직접 안 본다).
-
-        기본 = 빈 dict. (json_mode 기계는 v7.0.0 에서 유일 소비자 react 와
-        함께 제거 — JSON-object 모드는 선두 ``{`` 를 강제해 산문-선행/태그
-        envelope 과 양립 불가했고, 실측 이점도 없었다. 미래 플러그인이
-        provider 힌트가 필요하면 이 훅을 override.)
-        """
-        return {}
-
     def grammar(
         self, tools: list[tuple[str, dict]], *, thinking_open: bool = False
     ) -> str | None:
@@ -533,22 +493,6 @@ class DialectBase(ABC):
         must let the model close it before the visible turn.
         """
         return None
-
-    def prefill(self) -> str:
-        """Return assistant-turn prefill string, or empty for no prefill.
-
-        Default no prefill — the model's prior produces the wire shape
-        on its own. Non-canonical formats override to force the wire
-        shape from the first generated token.
-
-        When non-empty, the loop appends
-        ``{"role":"assistant","content":<prefill>}`` as the last message
-        before the LLM call. The provider treats this as "continue from
-        here," forcing the dialect from the first generated token.
-        The loop prepends the prefill to the response so downstream
-        parsers see a complete emission.
-        """
-        return ""
 
     # ─── History / context-window ───────────────────────────────
     # (A → B) 저장과 관찰 재렌더는 추상 — 구현은 ``engine.Dialect`` 하나다

@@ -6,8 +6,7 @@ multi-op 포맷이 read_file op 를 여러 개 내서 읽는다.
 
 - `_read_one(spec)`: 파일 하나를 읽는 per-file 단위 (모드 분기).
 - 스키마: flat `{path, line_start, line_end, search, context, stat}`, required `["path"]`.
-- `wrap_single_op` = identity (canonical 재포장 없음). `key_prefix` 유지 →
-  flat 키엔 strip no-op, `claims` 는 flat `{path}` 에 False.
+- `key_prefix` 유지 → flat 키엔 strip no-op, `claims` 는 flat `{path}` 에 False.
 """
 
 from __future__ import annotations
@@ -69,14 +68,6 @@ def test_schema_is_flat_single_file():
     # 옛 batch 배열 키·prefix 키는 전부 사라짐
     assert "read_file_reads" not in props
     assert "read_file_path" not in props
-
-
-# ── wrap_single_op = identity, dispatch 는 flat 직결 ──────────
-
-
-def test_wrap_single_op_is_identity():
-    flat = {"path": "a.py", "stat": True}
-    assert ReadFileTool().wrap_single_op(flat) == flat
 
 
 def test_run_dispatches_flat_input(sample):

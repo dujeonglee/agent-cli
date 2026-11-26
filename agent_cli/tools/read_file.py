@@ -362,7 +362,7 @@ class ReadFileTool(Tool):
     # single-file shape — no `read_file_reads` batch array and no
     # `read_file_` wire-key prefix. One op reads one file; to read several
     # files in a turn, a multi-op format emits one read_file op per file.
-    # `wrap_single_op` is identity (no canonical re-wrap); `key_prefix` is left
+    # `key_prefix` is left
     # at its default so strip_prefix is a no-op on these flat keys and `claims`
     # correctly returns False for a flat `{path}` (no `read_file_` key).
     parameters: ClassVar[dict] = {
@@ -396,9 +396,6 @@ class ReadFileTool(Tool):
         },
         "required": ["path"],
     }
-
-    def wrap_single_op(self, flat: dict) -> dict:
-        return flat
 
     def oversized_source_path(self, result, args, ctx: RunContext) -> str:
         """The file itself — an over-cap read needs no copy. Hashline tags carry

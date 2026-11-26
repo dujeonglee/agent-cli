@@ -79,20 +79,6 @@ class McpTool(Tool):
         self._server = server
         self._tool_name = tool_name
 
-    def wrap_single_op(self, flat: dict) -> dict:
-        # MCP is prefix-less (bare schema keys), so a multi-op flat op IS the
-        # canonical input — identity, like the flat-native builtin tools.
-        #
-        # This override predates the base default being flipped to identity
-        # (v9.12.0): back then the default was ``add_prefix``, which namespaced
-        # the bare keys (``{query}`` → ``{srv.tool_query}``) and made the
-        # prefixed schema-less input fail validate — MCP hit the same trap that
-        # killed ``monitor`` and worked around it here. The default no longer
-        # bites, so this is now redundant; kept as an explicit statement of the
-        # shape (a prefix-less tool's flat op needs no re-wrap), and pinned by
-        # tests/test_tool_wire_contract.py either way.
-        return flat
-
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # ctx (RunContext) 에서 쓰는 것은 런의 정지(`stopped`)뿐이다 — 기다리는 사이 서면
         # 호출을 그만둔다. 그만둔 이유는 사실 문장으로 돌려준다.

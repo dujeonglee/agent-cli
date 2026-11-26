@@ -16,8 +16,6 @@
  ],
  "flags": [
   "json_fc",
-  true,
-  false,
   "#",
   "(?m)^\\s*\\["
  ],

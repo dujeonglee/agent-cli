@@ -27,18 +27,13 @@ def _call(tool: str, params: dict) -> str:
     return "<tool_call>\n" + "\n".join(lines) + "\n</tool_call>"
 
 
-# ── 등록·플래그 ──────────────────────────────────────────────
+# ── 등록 ──────────────────────────────────────────────
 
 
 class TestRegistration:
     def test_registered_as_builtin(self):
         assert get_wf("xml_fc") is not None
         assert get_wf("xml_fc").name == "xml_fc"
-
-    def test_flags_mirror_json_fc(self, wf):
-        # multi-op flat 계열 공통 플래그 (json_fc 동형)
-        assert wf.multi_op is True
-        assert wf.action_required is False
 
 
 # ── 정상 파싱 (stage 1) ──────────────────────────────────────
@@ -553,7 +548,7 @@ class TestLenientToolNameTag:
 
 
 class TestLoopE2E:
-    """파서 유닛 밖의 실경로 — 프롬프트 조립(multi_op 가이드)·dispatch
+    """파서 유닛 밖의 실경로 — 프롬프트 조립(multi-op 가이드)·dispatch
     parse_turn·관찰 주입·히스토리 round-trip 이 xml_fc 로 한 바퀴 돈다."""
 
     def _provider(self, *responses):

@@ -146,7 +146,7 @@ class TestNonOpJsonIsNotAnOp:
         assert turn.thought and payload in turn.thought
 
     def test_actionless_dict_op_at_the_end_is_still_preserved(self):
-        # action 을 흘린 op 는 infer_action 재료로 보존 (action_required=False).
+        # action 을 흘린 op 는 infer_action 재료로 보존.
         turn = WF.parse_turn('읽습니다.\n[{"path": "a.py"}]')
         assert len(turn.ops) == 1
         assert turn.ops[0].action is None

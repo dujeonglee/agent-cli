@@ -208,8 +208,6 @@ class Dialect(DialectBase):
         # 의 json_fc_fenced) 그것이 이긴다. ABC 는 ``name: str`` 주석만 둔다.
         self.name = getattr(type(self), "name", None) or spec.name
         self.summary = spec.summary
-        self.action_required = spec.action_required
-        self.multi_op = spec.multi_op
         self.degeneration_trigger = spec.degeneration_trigger
         self._t = self._w = None
         if spec.args in (ArgStyle.TAGGED, ArgStyle.TAGGED_PAIR):
@@ -584,7 +582,7 @@ class Dialect(DialectBase):
         """``<call>{json}</call>`` 블록 순회 — 자격 = 세그먼트에 ``{`` 가 있다;
         인용(펜스·인라인) 안 후보는 자격 있는 비인용 후보가 있을 때만 제외."""
         w = self._w
-        fences = quote_spans(text) if self.spec.lenient.inline_quotes_exclude else []
+        fences = quote_spans(text)
         opens = list(w.call_open.finditer(text))
         cands: list[tuple[re.Match, int, bool]] = []
         for m in opens:
@@ -744,7 +742,7 @@ class Dialect(DialectBase):
         있을 때만 제외. 세그먼트 경계는 **raw** 구조 토큰으로 — 언급의 세그먼트가
         실호출의 파라미터를 삼키면 언급이 그 파라미터로 자격을 얻는다."""
         t = self._t
-        fences = quote_spans(text) if self.spec.lenient.inline_quotes_exclude else []
+        fences = quote_spans(text)
 
         def fenced(pos: int) -> bool:
             return any(a <= pos < b for a, b in fences)

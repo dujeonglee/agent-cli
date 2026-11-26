@@ -395,21 +395,13 @@ class TurnDispatcher:
         # flat action-less payload like ``{path}`` is ambiguous → NO_ACTION,
         # the documented extension point for a future schema-based resolver).
         # Ambiguous/none leaves it to the NO_ACTION recovery below.
-        #
-        # Gated on ``action_required``: when the dialect requires an
-        # explicit action (action_required=True), a dropped action is a
-        # drift to be corrected by the model, so we skip inference and fall
-        # through to the NO_ACTION recovery below. When False (the namespaced
-        # format), the action is recoverable from the
-        # preserved action_input, so we infer it.
         action_inferred = False
-        if not self.cfg.dialect.action_required:
-            for op in turn.ops:
-                if not op.action and isinstance(op.action_input, dict):
-                    inferred = infer_action(op.action_input)
-                    if inferred:
-                        op.action = inferred
-                        action_inferred = True
+        for op in turn.ops:
+            if not op.action and isinstance(op.action_input, dict):
+                inferred = infer_action(op.action_input)
+                if inferred:
+                    op.action = inferred
+                    action_inferred = True
 
         # 도구를 바꾸는 층 (v10.77.0, loop/reroute.py): 결과가 똑같은 다른 도구로
         # 바꾼다 — 기록·컨텍스트에는 바뀐 호출이 남는다(아래 ops shape 레코드).
@@ -1559,22 +1551,10 @@ class TurnDispatcher:
         return _CONTINUE
 
     def _op_execute_tool(self, llm_text: str, turn, op, outcome: dict, accumulate):
-        """일반 도구 op — wrap→truncation 가드→B1/A4/A5→실행→관찰 조립
+        """일반 도구 op — truncation 가드→B1/A4/A5→실행→관찰 조립
         (단독이면 자체 append, N-op 이면 accumulate)."""
         tool_name = op.action
         tool_input = op.action_input or {}
-
-        # Multi-op formats emit flat single-target ops (one file / edit /
-        # query / task per op); the tool re-wraps that into its canonical
-        # prefixed input so the validate → strip → run pipeline below is
-        # unchanged. Single-action formats bypass this (their input is
-        # already canonical).
-        if (
-            getattr(self.cfg.dialect, "multi_op", False)
-            and tool_name in TOOLS
-            and isinstance(tool_input, dict)
-        ):
-            tool_input = TOOLS[tool_name].wrap_single_op(tool_input)
 
         # Truncation guard: if JSON was repaired (truncated response),
         # strip the last element from edit_file's lines arrays
@@ -1693,14 +1673,9 @@ class TurnDispatcher:
                 store_emission=False,
             )
 
-        # Render the model's ACTUAL emission, not the dispatch-canonical
-        # form. `wrap_single_op` above re-wrapped the flat op into the
-        # tool's prefixed/batch shape (e.g. read_file `{path}` →
-        # `{read_file_reads:[...]}`) so the validate→strip→run pipeline is
-        # unchanged — but showing THAT misrepresents what the model wrote
-        # and diverges from history.jsonl / resume-replay (which store the
-        # raw op). The dispatch keeps `tool_input` (wrapped); only the card
-        # shows `op.action_input` (pre-wrap).
+        # Render the model's ACTUAL emission (`op.action_input`) — the same op
+        # history.jsonl / resume-replay store. The dispatch may have changed
+        # `tool_input` (the truncation guard above); the card does not show that.
         display_input = op.action_input if op.action_input is not None else {}
 
         def show_action() -> None:

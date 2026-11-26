@@ -108,16 +108,6 @@ class TestEveryRegisteredTool:
         _, unknown = TOOLS[name].schema_gaps({"__nope__": 1})
         assert unknown == ["__nope__"]
 
-    @pytest.mark.parametrize("name", sorted(TOOLS))
-    def test_flat_op_and_wrapped_op_give_the_same_answer(self, name):
-        """dispatch 는 감싼 뒤의 인자로 묻고 모델이 쓴 인자를 보여 준다 — 내장 도구는
-        flat-native 라 두 모양의 답이 같아야 요약의 이름과 값이 어긋나지 않는다."""
-        tool = TOOLS[name]
-        for flat in ({}, {"__nope__": 1}):
-            assert tool.schema_gaps(tool.wrap_single_op(dict(flat))) == (
-                tool.schema_gaps(flat)
-            )
-
 
 class TestValidationReadsTheMethod:
     def test_missing_message_names_the_fields_the_method_returned(self, monkeypatch):
@@ -171,9 +161,6 @@ class TestOverrides:
                 "required": ["items"],
             }
 
-            def wrap_single_op(self, flat: dict) -> dict:
-                return flat if "items" in flat else {"items": [flat]}
-
             def schema_gaps(self, action_input):
                 items = (
                     action_input.get("items")
@@ -184,8 +171,8 @@ class TestOverrides:
                 return ([] if "path" in first else ["path"]), []
 
         t = Batch()
-        assert t.schema_gaps(t.wrap_single_op({"mode": "x"})) == (["path"], [])
-        assert t.schema_gaps(t.wrap_single_op({"path": "a"})) == ([], [])
+        assert t.schema_gaps({"items": [{"mode": "x"}]}) == (["path"], [])
+        assert t.schema_gaps({"items": [{"path": "a"}]}) == ([], [])
 
 
 class TestLateRegisteredTools:

@@ -240,12 +240,10 @@ class TestTool:
         r = self._run({"mode": "add", "type": "note", "summary": "s"}, None)
         assert not r.success and "session" in (r.error or "").lower()
 
-    def test_registered_and_flat_native(self):
+    def test_registered(self):
         from agent_cli.tools.registry import TOOLS
 
         assert "memory" in TOOLS
-        t = TOOLS["memory"]
-        assert t.wrap_single_op({"mode": "add"}) == {"mode": "add"}  # identity
 
 
 class TestSystemPromptSection:

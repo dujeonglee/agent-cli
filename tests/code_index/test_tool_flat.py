@@ -7,7 +7,7 @@ read_file 와 동형: code_index 는 flat single-query 인터페이스다 — ba
 
 - `_dispatch_one(query)`: 단일 query 를 mode handler 로 dispatch (per-query 단위).
 - 스키마: flat `{mode, path?, name?, symbol_kind?, ...}`, required `["mode"]`.
-- `wrap_single_op` = identity, `key_prefix` 유지(latent).
+- `key_prefix` 유지(latent).
 """
 
 from __future__ import annotations
@@ -76,14 +76,6 @@ def test_schema_is_flat_single_query():
     # 옛 batch 배열 키·prefix 키는 사라짐
     assert "code_index_queries" not in props
     assert "code_index_mode" not in props
-
-
-# ── wrap_single_op = identity, dispatch 는 flat 직결 ──────────
-
-
-def test_wrap_single_op_is_identity():
-    flat = {"mode": "list", "path": "a.py"}
-    assert CodeIndexTool().wrap_single_op(flat) == flat
 
 
 def test_run_dispatches_flat_input(project):

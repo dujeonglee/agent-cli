@@ -89,9 +89,7 @@ for n in ('json_fc',)]"
 class _MultiOpFormat:
     """Minimal stand-in for a multi-op dialect (json_fc-style): flat
     ``{action, plain params}`` ops, no per-tool batch. Duck-typed — the
-    prompt layer only reads ``multi_op`` and calls ``prompt_example``."""
-
-    multi_op = True
+    prompt layer only calls ``render_action_input`` / ``prompt_example``."""
 
     def render_action_input(self, action_input: dict) -> str:
         import json as _json
@@ -187,12 +185,6 @@ class TestMultiOpPromptBranches:
         assert "Each run op gives ONE task" not in section
         assert 'Always use the "tasks" array format' not in section
 
-    # NOTE: the "singular format keeps batch + complete" inverse test was
-    # removed when react became multi-op (Step 2) — no shipped single-op
-    # format remains to exercise the non-multi_op branch. The single-op
-    # rendering branches are now reachable only by a synthetic format; their
-    # cleanup is a follow-up (consolidation roadmap Step 3/4).
-
     # ── Root fix (DESIGN Exp 8): the tool Input-JSON schema, not just the
     # inline guide, must advertise the FLAT single-op shape under multi-op.
     # The batch array param is unwrapped to its item fields; batch prose is
@@ -220,7 +212,7 @@ class TestMultiOpPromptBranches:
 
     def test_edit_file_input_json_flat_merges_scalar_and_item(self, section):
         flat = " ".join(section.split())
-        # scalar param kept + edit-item fields surfaced (matches wrap_single_op)
+        # scalar param kept + edit-item fields surfaced
         assert '"path": "string, required' in flat
         assert '"op": "string, required' in flat and '"pos":' in flat
         assert '"edits":' not in flat and '"edit_file_edits":' not in flat

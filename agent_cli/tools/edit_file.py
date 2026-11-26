@@ -510,7 +510,7 @@ class EditFileTool(Tool):
     # single-edit shape — no `edit_file_` wire-key prefix and no `edits` batch
     # array. One op applies one edit; several edits to one file are several
     # edit_file ops in a turn (hashline refs are content-addressed, so they
-    # survive line shifts from earlier ops). `wrap_single_op` is identity;
+    # survive line shifts from earlier ops).
     # `key_prefix` is left at its default so strip_prefix is a no-op on these
     # flat keys and `claims` returns False for a flat `{path}`.
     mounted_with = "write_file"
@@ -553,9 +553,6 @@ class EditFileTool(Tool):
         },
         "required": ["path", "op", "pos"],
     }
-
-    def wrap_single_op(self, flat: dict) -> dict:
-        return flat
 
     def touched_paths(self, action_input: dict) -> list[str]:
         p = self.strip_prefix(action_input).get("path")

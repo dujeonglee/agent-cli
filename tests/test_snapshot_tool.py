@@ -2,7 +2,7 @@
 
 고정하는 계약: 스키마(mode enum·path minLength) · validate 거부 문구 · 저장소 없음/꺼짐
 에러 · list 출력 · restore(기본 = 지금과 다른 최근 판 / `at` 지정) · 디렉터리 복구 ·
-레지스트리 등록과 자리(schedule 뒤) · 도구 왕복 계약(wrap_single_op) · 인벤토리 노출.
+레지스트리 등록과 자리(schedule 뒤) · 인벤토리 노출.
 """
 
 from __future__ import annotations
@@ -241,12 +241,6 @@ class TestListAndRestore:
 
 
 class TestWireAndPrompt:
-    def test_single_op_wrapping_keeps_the_verdict(self):
-        """도구 왕복 계약(test_tool_wire_contract 와 같은 축): flat op → wrap → 검증."""
-        t = TOOLS["snapshot"]
-        flat = {"mode": "restore", "path": "x"}
-        assert t.validate(t.wrap_single_op(dict(flat))) == t.validate(flat)
-
     def test_appears_in_the_prompt_inventory(self):
         from agent_cli.prompts.inventory import build_inventory
 

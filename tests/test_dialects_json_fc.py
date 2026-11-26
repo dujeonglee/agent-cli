@@ -19,13 +19,9 @@ def wf():
     return Dialect(JSON_FC)
 
 
-class TestRegistrationAndFlags:
+class TestRegistration:
     def test_registered(self):
         assert get_wf("json_fc").name == "json_fc"
-
-    def test_flags(self, wf):
-        assert wf.multi_op is True
-        assert wf.action_required is False
 
 
 class TestCanonicalParse:

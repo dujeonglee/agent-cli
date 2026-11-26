@@ -132,8 +132,6 @@ class TestParity:
         assert list(wf.system_user_prefixes()) == s["prefixes"]
         assert [
             wf.name,
-            wf.multi_op,
-            wf.action_required,
             wf.degeneration_trigger,
             wf.thinking_stop.pattern,
         ] == s["flags"]

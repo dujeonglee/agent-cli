@@ -865,7 +865,7 @@ class FetchTool(Tool):
         "the response itself as a file, fetch again with download_to."
     )
     # Flat-native: the schema is the plain ``{url, download_to?}`` shape.
-    # ``wrap_single_op`` is identity; ``key_prefix`` stays at its default so
+    # ``key_prefix`` stays at its default so
     # ``strip_prefix`` still tolerates a legacy ``fetch_url`` emission (old
     # sessions' re-fed priors) and ``claims`` is False for a flat ``{url}``.
     parameters: ClassVar[dict] = {
@@ -886,9 +886,6 @@ class FetchTool(Tool):
         },
         "required": ["url"],
     }
-
-    def wrap_single_op(self, flat: dict) -> dict:
-        return flat
 
     def oversized_file_body(self, body: str) -> str:
         if body.startswith(_HEADER_PREFIX) and "]\n\n" in body:

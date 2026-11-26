@@ -51,9 +51,6 @@ class Lenient:
     도구명이 줄에 혼자 있을 때만 호출로 인정(xml_fc 실측: 0-op 마찰의 83%)."""
     key_named_closer: bool = False
     """``<parameter=path>…</path>`` 처럼 키 이름으로 닫는 혼합 스타일 수용."""
-    inline_quotes_exclude: bool = True
-    """균형 ``` 쌍·인라인 `…` 안의 후보는 인용(예시)이다 — 자격 있는 비인용
-    후보가 있을 때만 제외 (v7.28.1 / v9.24.8)."""
 
 
 @dataclass(frozen=True)
@@ -112,8 +109,6 @@ class DialectSpec:
     """사고 구간에서 금지할 리터럴 (v9.24.8 — 태그 가족은 호출 여는 태그)."""
     lenient: Lenient = field(default_factory=Lenient)
     prose: Prose | None = None
-    action_required: bool = False
-    multi_op: bool = True
     #: v10.2.0 — 서버가 호출을 파싱한다(요청 `tools`, 응답 `tool_calls`). 문법·구제·
     #: 원문 기록 없음, 기록은 같은 `{thought, ops}`, 내보낼 때만 구조화 메시지.
     server_parsed: bool = False

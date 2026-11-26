@@ -479,8 +479,8 @@ class ShellTool(Tool):
     # single-command shape — no `shell_` wire-key prefix. (fetch turned out to
     # still carry its prefix after Step 3 and was flattened last, in v4.38.0 —
     # since then no builtin carries a prefix and the prefix machinery
-    # (strip/add/claims/infer/base wrap) is fully latent; it still serves MCP /
-    # future prefixed tools.) `wrap_single_op` is identity; `key_prefix` is
+    # (strip/add/claims/infer) is fully latent; it still serves MCP /
+    # future prefixed tools.) `key_prefix` is
     # left at its default (strip a no-op on flat keys, `claims` False for a
     # flat `{command}`).
     parameters: ClassVar[dict] = {
@@ -514,9 +514,6 @@ class ShellTool(Tool):
         },
         "required": ["command"],
     }
-
-    def wrap_single_op(self, flat: dict) -> dict:
-        return flat
 
     def summary_arg(self, action_input: dict) -> str:
         # 전문이다 (v9.22.3) — 종전 `[:60]` 은 압축 트랜스크립트에서 `-k`
