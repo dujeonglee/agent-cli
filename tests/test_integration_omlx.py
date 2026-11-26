@@ -141,7 +141,7 @@ class TestConstrainedDecoding:
             model=integration_model,
             capabilities=model_capabilities,
         )
-        parsed = _get_wf("json_fc").parse(response.content)
+        parsed = _get_wf("json_fc").parse_turn(response.content)
         # Should parse at stage 1 (direct JSON) or stage 2 (repair).
         assert parsed.parse_stage >= 1, (
             f"Failed to parse (stage={parsed.parse_stage}): {response.content[:200]}"

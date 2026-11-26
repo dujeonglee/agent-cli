@@ -120,9 +120,11 @@ class TestDialectStage0:
         from agent_cli.dialects import get as get_wf
 
         wf = get_wf("json_fc")
-        pa = wf.parse('<think>scratch</think>[{"action": "complete", "result": "r"}]')
-        assert pa.thinking is not None and "scratch" in pa.thinking
-        assert pa.action == "complete"
+        turn = wf.parse_turn(
+            '<think>scratch</think>[{"action": "complete", "result": "r"}]'
+        )
+        assert turn.thinking is not None and "scratch" in turn.thinking
+        assert turn.ops[0].action == "complete"
 
 
 class TestUnclosedOpenerLineAnchor:
