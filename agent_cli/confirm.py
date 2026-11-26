@@ -27,7 +27,7 @@ STOPPED = "stopped"
 #: 기다리는 동안 정지를 보는 간격(초) — 전경 `shell` 의 ``STOP_POLL_S`` 와 같은 값
 STOP_POLL_S = 0.2
 
-#: 기다리던 중 런이 멈췄다 — 그 도구 호출의 결과(모델이 읽는다, 일곱 도구 공통)
+#: 기다리던 중 런이 멈췄다 — 그 도구 호출의 결과(모델이 읽는다, 확인을 여는 모든 도구 공통)
 STOPPED_WHILE_WAITING = "This run was stopped while this call was waiting for approval [{cid}] — it did not run."
 
 #: 명령 이름 → 답

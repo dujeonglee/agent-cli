@@ -442,3 +442,24 @@ class TestToolsAsk:
         assert shell.confirm_dangerous("rm -rf build").startswith(
             "Refused: command contains `rm` but this interface can't prompt"
         )
+
+
+def test_every_tool_confirm_carries_its_runs_owner_and_stop(monkeypatch, tmp_path):
+    """확인을 여는 여덟 자리(셸·monitor·write_file·edit_file·fetch·read_file·view_image·browser)는 그 호출의 소유자와
+    런 정지를 싣는다 — browser 의 로컬 파일(민감 경로)도. 정지로 끝나면 결과는 정지 문장이다."""
+    from types import SimpleNamespace
+
+    from agent_cli.tools.browser_tool import BrowserTool
+    from tests.confirm_support import answer_confirms
+
+    monkeypatch.setenv("AGENT_CLI_WORKSPACE_CONFINE", "1")
+    asked = answer_confirms(monkeypatch, "stopped")
+    secret = tmp_path / ".ssh" / "id_rsa"
+    secret.parent.mkdir()
+    secret.write_text("k")
+    ctx = SimpleNamespace(owner="agent:agt-1", stopped=lambda: False)
+    _url, denied = BrowserTool._local_target(str(secret), ctx)
+    assert [a.owner for a in asked] == ["agent:agt-1"]
+    assert denied == (
+        "This run was stopped while this call was waiting for approval [c-1] — it did not run."
+    )
