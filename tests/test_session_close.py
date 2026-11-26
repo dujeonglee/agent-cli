@@ -19,6 +19,7 @@ from tests.oracle.driver import (
     Provider,
     Session,
     _agent_key,
+    _waits,
     call,
     complete_all,
     owed_id,
@@ -302,11 +303,11 @@ def _close_mid_work(home, scene: str, *, box_first: bool = True):
         )
     elif scene == "main_shell":
         until(flag.exists, "foreground shell running")
+    elif scene == "resident":
+        until(lambda: inside.is_set() and s.main_idle(), "agent in a call")
     else:
-        until(
-            lambda: inside.is_set() and (scene != "resident" or s.main_idle()),
-            "agent in a call",
-        )
+        # main 의 둘째 호출(`wait`)이 스냅샷 뒤에 시작하면 "닫기 시작 뒤 호출" 로 센다 — main 이 자기 `wait` 에 든 뒤에
+        until(lambda: inside.is_set() and _waits(s, "main"), "agent in a call")
     keys = s.agent_keys()
     before = {k: len(v) for k, v in p.calls.items()}
     closer = threading.Thread(target=s.close if box_first else s.teardown, daemon=True)

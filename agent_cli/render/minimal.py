@@ -448,18 +448,20 @@ class MinimalRenderer(Renderer):
     ) -> None:
         # ``images`` 는 쓰지 않는다 — 콘솔은 content 의 자리표시 줄을 🖼 로 찍는다. ``item`` 도(웹의 카드 찾기용).
         self._print_agent_step(tool_name, success)
-        status = "success" if success else "error"
-        icon = "✓" if success else "✗"
         tool_label = f" {tool_name}" if tool_name else ""
-
-        detail = ""
-        if not success:
-            for line in content.split("\n"):
-                if line.startswith("ERROR:"):
-                    detail = f"  {line}"
-                    break
-
-        self._p(f"  {icon}{tool_label}  {status}{detail}", highlight=False)
+        if tool_name == "interrupt":
+            # 정지·재시작의 사실 기록 — 도구 호출의 결과가 아니라 ✓/✗ 도 상태 낱말도 없다 (IMPL-mark-icons)
+            self._p(f"  ■{tool_label}", highlight=False)
+        else:
+            status = "success" if success else "error"
+            icon = "✓" if success else "✗"
+            detail = ""
+            if not success:
+                for line in content.split("\n"):
+                    if line.startswith("ERROR:"):
+                        detail = f"  {line}"
+                        break
+            self._p(f"  {icon}{tool_label}  {status}{detail}", highlight=False)
 
         # 이미지 관찰 (v10.59.0): 자리표시 줄 `[image: path (W×H)]` 을 한 줄로.
         for line in content.split("\n"):
@@ -1016,7 +1018,8 @@ class MinimalRenderer(Renderer):
         if not name:
             return
         body = f"{name}  {summary}" if summary else name
-        self._print_agent_line(key, f"{body}  {'✓' if success else '✗'}")
+        mark = "■" if tool_name == "interrupt" else "✓" if success else "✗"
+        self._print_agent_line(key, f"{body}  {mark}")
 
     def _print_agent_line(self, key: str, text: str) -> None:
         self.con.print(
