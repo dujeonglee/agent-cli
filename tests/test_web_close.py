@@ -48,10 +48,12 @@ def test_a_passed_deadline_does_not_wait():
     assert w.timeouts == [0.0]
 
 
-def test_a_second_ctrl_c_during_the_wait_escapes_the_close():
-    """6d-2 전의 값 — 닫는 도중 Ctrl+C 를 한 번 더 누르면 `KeyboardInterrupt` 가 그대로 나가 정리·저장을 건너뛴다."""
-    with pytest.raises(KeyboardInterrupt):
-        M.wait_for_main_to_stop(_Worker(raises=KeyboardInterrupt()), None)
+def test_a_second_ctrl_c_ends_only_the_wait():
+    """닫는 도중 Ctrl+C 를 한 번 더 누르면 기다림만 그만둔다 — 함수는 돌아오고, 부르는 쪽이 정리·저장을 그대로 한다.
+    6d-2 전엔 `KeyboardInterrupt` 가 그대로 나가 정리·저장을 건너뛰고 130 으로 끝났다."""
+    w = _Worker(raises=KeyboardInterrupt())
+    M.wait_for_main_to_stop(w, None)
+    assert w.timeouts == [M.WEB_CLOSE_WAIT_S]
 
 
 def test_the_web_host_waits_for_main_before_the_teardown():

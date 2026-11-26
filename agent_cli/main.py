@@ -2255,8 +2255,12 @@ WEB_CLOSE_WAIT_S = 7.0
 
 def wait_for_main_to_stop(worker: threading.Thread, deadline: float | None) -> None:
     """웹 방을 닫을 때 main(``agent-loop`` 스레드)이 멈추기를 기다린다 — 상한 `WEB_CLOSE_WAIT_S`, SIGTERM 의 시한이
-    있으면 그 안에서(`wait_left`). 정리(`close_session`)는 이 뒤에 돈다."""
-    worker.join(timeout=wait_left(deadline, WEB_CLOSE_WAIT_S))
+    있으면 그 안에서(`wait_left`). 정리(`close_session`)는 이 뒤에 돈다. 기다리는 도중 Ctrl+C 를 한 번 더 누르면
+    기다림만 그만둔다 — 정리·세션 저장은 부르는 쪽이 그대로 한다."""
+    try:
+        worker.join(timeout=wait_left(deadline, WEB_CLOSE_WAIT_S))
+    except KeyboardInterrupt:
+        pass
 
 
 def web_instance_is_active(
