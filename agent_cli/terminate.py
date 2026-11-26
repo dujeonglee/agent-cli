@@ -6,20 +6,22 @@
 
 처리기는 신호 문맥에서 표시만 한다 — 정리는 메인 스레드가 지금의 정상 정리 경로로 한다:
 
-- run: 처리기가 `Terminated` 를 던져 메인 스레드(펌프·런)를 푼다 — 두 번째 Ctrl-C 가
-  `KeyboardInterrupt` 로 푸는 것과 같은 자리. `BaseException` 이라 `except Exception`·
-  `except KeyboardInterrupt` 가 삼키지 않고, `run` 의 ``finally`` 가 정리한다.
+- run (6d-3): 처리기가 main 상자를 닫는다(`MainInput.close` — 웹의 닫기와 같은 길). main 이 멈추면 펌프가 돌아오고
+  ``finally`` 가 정리한다. 안전망: main 이 시한 안(`CLOSE_WAIT_S`, `TEARDOWN_BUDGET_S` 안)에 멈추지 않으면 메인
+  스레드에 SIGTERM 을 다시 보내고, 두 번째 SIGTERM 은 `Terminated` 로 메인 스레드를 푼다 — `BaseException` 이라
+  `except Exception`·`except KeyboardInterrupt` 가 삼키지 않는다.
 - web: uvicorn 이 SIGTERM 을 잡아 서버를 내린다 — 처리기는 받았다고 적고(``should_exit``),
   서버가 돌아오면 ``finally`` 가 정리한다.
 
 정리가 끝나면 `die` 가 기본 동작으로 되돌려 자기에게 SIGTERM 을 다시 보낸다 — 부모가 보는
-종료 상태는 종전과 같다(신호 15, 셸에선 143). 정리 중 두 번째 SIGTERM 은 기본 동작(즉시 죽음).
+종료 상태는 종전과 같다(신호 15, 셸에선 143). 정리 중(펌프가 돌아온 뒤) 두 번째 SIGTERM 은 기본 동작(즉시 죽음).
 """
 
 from __future__ import annotations
 
 import os
 import signal
+import threading
 import time
 
 #: SIGTERM 경로의 정리 대기 총예산(초) — 보드는 SIGTERM 8초 뒤 SIGKILL 한다. 나머지
@@ -41,6 +43,8 @@ class SigTerm:
 
     def __init__(self) -> None:
         self.at: float | None = None
+        #: run 의 안전망 타이머(`install_close`) — 걸지 않았으면 None
+        self._net: threading.Timer | None = None
 
     @property
     def received(self) -> bool:
@@ -54,15 +58,34 @@ class SigTerm:
         if self.at is None:
             self.at = time.monotonic()
 
-    def install_unwind(self):
-        """run — 받으면 `Terminated` 를 던진다. 돌려주는 것은 이전 처리기(`restore` 에)."""
+    def install_close(self, close, *, timer=threading.Timer):
+        """run — 첫 SIGTERM 은 ``close()``(main 상자를 닫는다)를 부르고 안전망을 건다: main 이 시한 안
+        (`wait_left(deadline, CLOSE_WAIT_S)`)에 멈추지 않으면 메인 스레드에 SIGTERM 을 다시 보낸다(`pthread_kill` —
+        막힌 시스템 호출을 깨운다. 없는 플랫폼은 안전망 없이 닫기만). 두 번째 SIGTERM(안전망의 것이든 밖의 것이든)은
+        `Terminated` 를 던져 메인 스레드를 푼다. ``timer`` 는 안전망을 거는 법(테스트가 주입한다). 돌려주는 것은 이전
+        처리기(`restore` 에). 펌프가 돌아오면 `cancel_safety_net`."""
+        main_ident = threading.main_thread().ident
 
         def _handler(signum, frame):
+            if self.received:
+                raise Terminated()
             self._mark()
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)  # 정리 중 두 번째는 즉시 죽음
-            raise Terminated()
+            close()
+            if hasattr(signal, "pthread_kill"):
+                self._net = timer(
+                    wait_left(self.deadline(), CLOSE_WAIT_S),
+                    signal.pthread_kill,
+                    (main_ident, signal.SIGTERM),
+                )
+                self._net.daemon = True
+                self._net.start()
 
         return signal.signal(signal.SIGTERM, _handler)
+
+    def cancel_safety_net(self) -> None:
+        """펌프가 돌아왔다 — 걸어 둔 안전망을 거둔다(정리 도중 울리지 않게). 걸지 않았으면 아무것도 안 한다."""
+        if self._net is not None:
+            self._net.cancel()
 
     def install_for_server(self, server):
         """web — uvicorn 이 신호를 잡아 서버를 내린다(버전마다 잡는 방식이 달라 ``handle_exit``

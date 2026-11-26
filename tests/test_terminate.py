@@ -7,12 +7,21 @@ import signal
 import subprocess
 import sys
 import textwrap
+import threading
 import time
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
 
-from agent_cli.terminate import TEARDOWN_BUDGET_S, SigTerm, Terminated, wait_left
+from agent_cli import terminate
+from agent_cli.terminate import (
+    CLOSE_WAIT_S,
+    TEARDOWN_BUDGET_S,
+    SigTerm,
+    Terminated,
+    wait_left,
+)
 
 
 def _child(code: str) -> subprocess.CompletedProcess:
@@ -25,43 +34,101 @@ def _child(code: str) -> subprocess.CompletedProcess:
     )
 
 
-class TestRunUnwind:
-    def test_sigterm_unwinds_the_main_thread_then_dies_with_15(self):
-        """run 의 모양 — 처리기가 메인 스레드를 풀고, finally 의 정리가 돈 뒤 신호 15."""
+class _Timer:
+    """안전망 대역 — 받은 것을 적고, 시작·취소만 센다(시간이 흐르지 않는다)."""
+
+    made: ClassVar[list] = []
+
+    def __init__(self, wait, fn, args):
+        self.wait, self.fn, self.args = wait, fn, args
+        self.daemon = False
+        self.started = self.cancelled = False
+        _Timer.made.append(self)
+
+    def start(self):
+        self.started = True
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class TestRunClose:
+    """run 의 SIGTERM (6d-3) — 첫 신호는 main 상자를 닫고 안전망을 건다, 두 번째는 `Terminated` 로 푼다."""
+
+    @pytest.fixture
+    def handler(self, monkeypatch):
+        _Timer.made = []
+        monkeypatch.setattr(terminate, "wait_left", lambda deadline, cap: ("left", cap))
+        closed: list[int] = []
+        t = SigTerm()
+        prev = t.install_close(lambda: closed.append(1), timer=_Timer)
+        yield t, signal.getsignal(signal.SIGTERM), closed
+        SigTerm.restore(prev)
+
+    def test_the_first_sigterm_closes_and_arms_the_net(self, handler):
+        t, h, closed = handler
+        h(signal.SIGTERM, None)  # 예외 없음 — main 은 제 걸음으로 멈춘다
+        assert t.received and closed == [1]
+        (net,) = _Timer.made
+        assert net.started and net.daemon
+        assert net.wait == ("left", CLOSE_WAIT_S)  # 시한(6초) 안의 상한 7초
+        assert net.fn is signal.pthread_kill
+        assert net.args == (threading.main_thread().ident, signal.SIGTERM)
+
+    def test_the_second_sigterm_unwinds(self, handler):
+        """안전망이 보낸 것이든 밖에서 또 온 것이든 — `Terminated` 로 메인 스레드를 푼다(정리·저장 뒤 신호 15)."""
+        _t, h, closed = handler
+        h(signal.SIGTERM, None)
+        with pytest.raises(Terminated):
+            h(signal.SIGTERM, None)
+        assert closed == [1]
+
+    def test_the_net_is_taken_down_when_the_pump_returns(self, handler):
+        t, h, _closed = handler
+        t.cancel_safety_net()  # 걸지 않았으면 아무것도 안 한다
+        h(signal.SIGTERM, None)
+        t.cancel_safety_net()
+        assert _Timer.made[0].cancelled
+
+    def test_without_pthread_kill_it_only_closes(self, monkeypatch):
+        monkeypatch.delattr(signal, "pthread_kill")
+        _Timer.made = []
+        closed: list[int] = []
+        t = SigTerm()
+        prev = t.install_close(lambda: closed.append(1), timer=_Timer)
+        try:
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+        finally:
+            SigTerm.restore(prev)
+        assert closed == [1] and _Timer.made == []
+
+    def test_the_net_wakes_a_blocked_main_thread_then_dies_with_15(self):
+        """실제 신호 — main 이 멈추지 않으면(막힌 기다림) 안전망이 메인 스레드에 SIGTERM 을 보내 `Terminated` 로 풀고,
+        정리 뒤 신호 15. 상한을 줄여 곧바로 울리게 한다."""
         r = _child(
             """
             import os, signal, threading
-            from agent_cli.terminate import SigTerm, Terminated
-            t = SigTerm()
-            t.install_unwind()
+            import agent_cli.terminate as T
+            T.CLOSE_WAIT_S = 0.05
+            t = T.SigTerm()
+            t.install_close(lambda: print("closed", flush=True))
             try:
                 try:
                     os.kill(os.getpid(), signal.SIGTERM)
-                    threading.Event().wait(30)  # 막혀 있던 메인 스레드
-                except Terminated:
+                    threading.Event().wait(30)  # 정지를 보지 않는 막힌 기다림
+                except T.Terminated:
                     print("unwound", flush=True)
-                    # 정리 중 두 번째 SIGTERM 은 기본 동작이어야 한다
-                    print("dfl", signal.getsignal(signal.SIGTERM) is signal.SIG_DFL, flush=True)
             finally:
+                t.cancel_safety_net()
+                T.SigTerm.default()
                 print("cleanup", flush=True)
             if t.received:
-                SigTerm.die()
+                T.SigTerm.die()
             print("not reached", flush=True)
             """
         )
         assert r.returncode == -signal.SIGTERM
-        assert r.stdout.split() == ["unwound", "dfl", "True", "cleanup"]
-
-    def test_the_first_sigterm_raises_at_once(self):
-        """6d-3 전의 값 — run 의 처리기는 첫 SIGTERM 에 곧바로 `Terminated` 를 던진다(main 이 어디 있든 그 자리에서 풀려
-        돌던 호출과 결과가 기록에 남지 않는다)."""
-        t = SigTerm()
-        prev = t.install_unwind()
-        try:
-            with pytest.raises(Terminated):
-                signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
-        finally:
-            SigTerm.restore(prev)
+        assert r.stdout.split() == ["closed", "unwound", "cleanup"]
 
     def test_terminated_is_not_swallowed_by_common_handlers(self):
         assert not issubclass(Terminated, Exception)

@@ -2220,7 +2220,9 @@ def run(
             )
         surface.query_id = main_input.enqueue(None, query, images=query_images)["id"]
         warn_stuck = True
-        prev_term = sigterm.install_unwind()
+        # SIGTERM 은 main 상자를 닫는다(6d-3 — 웹의 닫기와 같은 길): main 이 멈추면 펌프가 돌아온다. 시한 안에 멈추지
+        # 않으면 안전망이 `Terminated` 로 푼다
+        prev_term = sigterm.install_close(main_input.close)
         prev_int = _install_ctrl_c(surface, agent_registry)
         try:
             wired.pump.run()
@@ -2229,10 +2231,14 @@ def run(
             console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
             exit_code = 130
         except Terminated:
-            console.print(f"\n[{C['accent']}]⚡ Terminated — cleaning up.[/]")
+            pass  # 안전망 — 아래에서 정리한다
         finally:
+            sigterm.cancel_safety_net()
             signal.signal(signal.SIGINT, prev_int)
-            if not sigterm.received:
+            if sigterm.received:
+                SigTerm.default()  # 정리 중 두 번째 SIGTERM 은 즉시 죽음
+                console.print(f"\n[{C['accent']}]⚡ Terminated — cleaning up.[/]")
+            else:
                 SigTerm.restore(
                     prev_term
                 )  # 정상·Ctrl-C 경로의 정리는 종전 처리기 그대로
