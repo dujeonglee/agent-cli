@@ -18,9 +18,10 @@ import time
 
 import pytest
 
-from agent_cli.monitor import MonitorRegistry, build
+from agent_cli.monitor import build
 from agent_cli.monitor import registry as reg_mod
 from agent_cli.monitor.conditions import _REGISTRY, infer_type
+from agent_cli.monitor.registry import MonitorRegistry
 from tests.monitor_delivery import RecordingDelivery
 
 

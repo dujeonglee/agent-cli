@@ -24,7 +24,8 @@ from agent_cli.dialects import get as get_dialect
 from agent_cli.jobs import JobRegistry
 from agent_cli.loop.core import mail_item
 from agent_cli.main_input import intake_item
-from agent_cli.monitor import MonitorRegistry, build
+from agent_cli.monitor import build
+from agent_cli.monitor.registry import MonitorRegistry
 from agent_cli.prompts.system_prompt import build_live_agents_section
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities

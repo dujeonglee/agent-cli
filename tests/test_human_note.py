@@ -274,7 +274,7 @@ class TestShellBackground:
 
 @pytest.fixture
 def monitors():
-    from agent_cli.monitor import MonitorRegistry
+    from agent_cli.monitor.registry import MonitorRegistry
     from agent_cli.session_slots import set_monitor_registry
     from tests.monitor_delivery import RecordingDelivery
 

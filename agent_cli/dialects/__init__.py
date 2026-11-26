@@ -13,7 +13,7 @@ The CLI ``--dialect <name>`` option resolves through :func:`get`. 내장
 
 from __future__ import annotations
 
-from agent_cli.dialects.base import DialectBase, Op, ParsedAction, ParsedTurn
+from agent_cli.dialects.base import DialectBase
 
 # ── Registry ─────────────────────────────────────
 _registry: dict[str, DialectBase] = {}
@@ -239,9 +239,6 @@ def all_system_user_prefixes() -> tuple[str, ...]:
 __all__ = [
     "DialectBase",
     "DialectUnbound",
-    "Op",
-    "ParsedAction",
-    "ParsedTurn",
     "all_system_user_prefixes",
     "dialect_for_model",
     "get",

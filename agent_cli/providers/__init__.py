@@ -13,9 +13,8 @@ from __future__ import annotations
 
 import importlib
 
-from agent_cli.providers.base import LLMProvider, LLMResponse, TokenUsage
+from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import (
-    ModelCapabilities,
     UnsupportedModelError,
     get_capabilities,
 )
@@ -24,9 +23,6 @@ from agent_cli.providers.credentials import Credentials
 __all__ = [
     "Credentials",
     "LLMProvider",
-    "LLMResponse",
-    "ModelCapabilities",
-    "TokenUsage",
     "UnsupportedModelError",
     "available_providers",
     "create_provider",

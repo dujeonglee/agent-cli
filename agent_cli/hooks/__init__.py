@@ -4,9 +4,6 @@ Re-exports the shell hook API.
 """
 
 from agent_cli.hooks.shell import (
-    HookEntry,
-    HookMatcher,
-    HookResult,
     load_hooks,
     merge_hooks_configs,
     parse_hooks_config,
@@ -14,9 +11,6 @@ from agent_cli.hooks.shell import (
 )
 
 __all__ = [
-    "HookEntry",
-    "HookMatcher",
-    "HookResult",
     "load_hooks",
     "merge_hooks_configs",
     "parse_hooks_config",

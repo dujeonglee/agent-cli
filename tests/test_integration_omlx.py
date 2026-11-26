@@ -426,7 +426,7 @@ class TestSkillHooks:
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
         """PreToolUse hook blocks shell → LLM gets error feedback."""
-        from agent_cli.hooks import HookEntry, HookMatcher
+        from agent_cli.hooks.shell import HookEntry, HookMatcher
 
         hooks_config = {
             "PreToolUse": [
@@ -452,7 +452,7 @@ class TestSkillHooks:
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
         """PostToolUse hook writes log file after tool execution."""
-        from agent_cli.hooks import HookEntry, HookMatcher
+        from agent_cli.hooks.shell import HookEntry, HookMatcher
 
         log_file = tmp_path / "hook_log.txt"
         hooks_config = {

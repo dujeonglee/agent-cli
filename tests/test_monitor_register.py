@@ -14,9 +14,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_cli.monitor import MonitorRegistry, build
+from agent_cli.monitor import build
 from agent_cli.monitor import conditions as mc
 from agent_cli.monitor.conditions import MatchCondition
+from agent_cli.monitor.registry import MonitorRegistry
 from agent_cli.tools import monitor_tool as mt
 from tests.monitor_delivery import RecordingDelivery
 

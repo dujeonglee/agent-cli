@@ -31,33 +31,12 @@ contract.
 """
 
 from agent_cli.code_index.builder import build
-from agent_cli.code_index.callgraph import (
-    Edges,
-    Neighbor,
-    callees_of,
-    callers_of,
-)
-from agent_cli.code_index.schema import (
-    CODE_NAME_KINDS,
-    NAME_KINDS,
-    REF_KINDS,
-    SCHEMA_VERSION,
-    Ref,
-    Symbol,
-)
+from agent_cli.code_index.callgraph import callees_of, callers_of
 from agent_cli.code_index.slice import cmd_slice
 from agent_cli.code_index.store import IndexStore, load_index
 
 __all__ = [
-    "CODE_NAME_KINDS",
-    "NAME_KINDS",
-    "REF_KINDS",
-    "SCHEMA_VERSION",
-    "Edges",
     "IndexStore",
-    "Neighbor",
-    "Ref",
-    "Symbol",
     "build",
     "callees_of",
     "callers_of",

@@ -8,7 +8,3 @@ default — ``--host 0.0.0.0`` exposes it on the LAN (opt-in).
 
 Optional dependency: install with ``pip install agent-cli[web]``.
 """
-
-from agent_cli.web.server import WebServer, create_app
-
-__all__ = ["WebServer", "create_app"]
