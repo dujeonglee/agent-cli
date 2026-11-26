@@ -832,7 +832,8 @@ class AgentLoop:
             # 레코드가 실은 도구명으로 그린다 — 하드코딩하면 모니터 보고가 빈 칩을 단
             # 에이전트 회신 카드로 그려진다(프런트가 `tool === "agent"` 를 특수 처리한다).
             tool_name=record["tool"],
-            success=bool(reply.get("success")),
+            # 화면은 기록과 같은 값 — 우편의 칸이 아니라 레코드의 것(사람의 답·닫힘은 우편에 칸이 없다)
+            success=bool(record["success"]),
         )
 
     def _inject_item(self, it: dict) -> None:
