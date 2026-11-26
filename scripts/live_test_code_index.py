@@ -16,8 +16,7 @@ Usage:
   python3 scripts/live_test_code_index.py                 # all cases
   python3 scripts/live_test_code_index.py P3-callers P5   # subset by id prefix
 
-Provider config comes from the environment (same names as
-``scripts/bakeoff``). The API key is a secret and is never committed:
+Provider config comes from the environment. The API key is a secret and is never committed:
   export OMLX_API_KEY=...       # required; the script exits 2 without it
   export OMLX_BASE_URL=...      # optional, default http://127.0.0.1:8000/v1
   export OMLX_MODEL=...         # optional, default Qwen3.6-35B-A3B-MLX-8bit
