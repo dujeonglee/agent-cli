@@ -3815,6 +3815,7 @@ class TestChangesEndpoints:
         assert first["enabled"] is True and first["files"] == []
         assert first["baseline"]["kind"] == "session"
         assert isinstance(first["baseline"]["when"], int)
+        assert "commit" in first["baseline"]  # 읽는 이 없는 칸 — 지금 값 고정
         (w / "a.py").write_text("one\nTWO\n")
         (w / "new.md").write_text("x\n")
         got = client.get("/api/changes" + q).json()["files"]
