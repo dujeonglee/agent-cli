@@ -34,13 +34,20 @@ from agent_cli.prompts.system_prompt import (
     _build_environment_section,
     _build_tools_section,
     _load_directives,
-    build_system_prompt,
     build_system_prompt_sections,
 )
 from agent_cli.providers.capabilities import ModelCapabilities
 from tests.loop_ports import TEST_PORTS
 
 _SNAPSHOT_DIR = Path(__file__).parent / "snapshots"
+
+
+def _joined_prompt(*args, **kwargs) -> str:
+    """The system prompt as the loop sends it — the sections joined verbatim
+    (``loop/prompt.py``)."""
+    return "\n\n".join(t for _, t in build_system_prompt_sections(*args, **kwargs))
+
+
 # Fixed tool set for the snapshot — deterministic (no CWD / directives / env).
 _SNAPSHOT_TOOLS = ["read_file", "shell", "code_index", "edit_file", "agent", "ask"]
 
@@ -225,22 +232,9 @@ class TestMultiOpPromptBranches:
 
 
 class TestBuildSystemPromptSections:
-    """``build_system_prompt_sections`` is the single assembly point — the
-    joined form MUST be byte-identical to ``build_system_prompt`` (the web
+    """``build_system_prompt_sections`` is the single assembly point (the web
     Prompt Inspector renders the same sections the LLM receives, no drift),
     and the (name, text) structure is what the inspector keys on."""
-
-    def test_join_is_byte_identical_to_build(self):
-        kwargs = {
-            "capabilities": _make_caps(),
-            "active_tools": ["read_file", "shell", "edit_file", "delegate"],
-            "session_dir": "/tmp/sess",
-            "skill_stack": ["s1"],
-            "depth": 1,
-            "max_depth": 3,
-        }
-        sections = build_system_prompt_sections(**kwargs)
-        assert "\n\n".join(t for _, t in sections) == build_system_prompt(**kwargs)
 
     def test_section_names_present_and_ordered(self):
         sections = build_system_prompt_sections(
@@ -313,7 +307,7 @@ def caps():
 
 class TestBuildSystemPrompt:
     def test_includes_all_tools(self):
-        prompt = build_system_prompt(
+        prompt = _joined_prompt(
             _make_caps(), ["read_file", "write_file", "edit_file", "shell"]
         )
         assert "read_file" in prompt
@@ -322,7 +316,7 @@ class TestBuildSystemPrompt:
         assert "shell" in prompt
 
     def test_active_tools_only(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "shell" in prompt
         assert "LINE#HASH refs" not in prompt  # No edit_file → no ref rule
         assert "- edit_file:" not in prompt  # Not in active_tools list
@@ -330,7 +324,7 @@ class TestBuildSystemPrompt:
     def test_hashline_rule_rides_in_the_edit_file_description(self):
         """v10.112.0: the hashline guide block ("Hashline refs:", worked example)
         is gone; the ref rule is the edit_file description's, rendered with it."""
-        prompt = build_system_prompt(_make_caps(), ["edit_file"])
+        prompt = _joined_prompt(_make_caps(), ["edit_file"])
         assert "Lines are addressed by their LINE#HASH refs" in prompt
         assert "Hashline refs:" not in prompt
         # Should be inline, not a separate section
@@ -343,7 +337,7 @@ class TestBuildSystemPrompt:
         action_per_turn — single-action is no longer the contract.)"""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         flat = re.sub(r"\s+", " ", prompt)
         # The multi-op envelope field — json_fc emits [{"action": ...}, ...].
         # (Was a loose plural-"actions" grep that in fact matched TASK_GUIDELINES;
@@ -364,7 +358,7 @@ class TestBuildSystemPrompt:
         prompt-content improvement, behavior-affecting so bakeoff-validated.)"""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["shell", "edit_file", "read_file"])
+        prompt = _joined_prompt(_make_caps(), ["shell", "edit_file", "read_file"])
         flat = re.sub(r"\s+", " ", prompt)
         # Multi-op batching nudge: independent ops belong in one turn.
         assert "Batch independent" in flat or "batching saves turns" in flat
@@ -382,7 +376,7 @@ class TestBuildSystemPrompt:
         to `complete`."""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["ask"])
+        prompt = _joined_prompt(_make_caps(), ["ask"])
         flat = re.sub(r"\s+", " ", prompt).lower()
         assert "ask" in flat
         # A conversational category is named...
@@ -411,7 +405,7 @@ class TestBuildSystemPrompt:
             "a closing remark or a pleasantry is not a question — end with `complete` instead"
             in d
         )
-        flat = re.sub(r"\s+", " ", build_system_prompt(_make_caps(), ["ask"])).lower()
+        flat = re.sub(r"\s+", " ", _joined_prompt(_make_caps(), ["ask"])).lower()
         assert "rule of thumb" not in flat and "`ask` vs `complete`" not in flat
         dialect = _get_dialect("json_fc")
         assert "ask" not in _build_tool_inline_guides(["ask"], dialect)
@@ -429,7 +423,7 @@ class TestBuildSystemPrompt:
         model doesn't spend a turn on a redundant read_file."""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["edit_file", "code_index"])
+        prompt = _joined_prompt(_make_caps(), ["edit_file", "code_index"])
         flat = re.sub(r"\s+", " ", prompt)
         assert "current turn" not in flat.lower()
         # v10.77.0: 출처는 도구 설명 한 곳, 안내는 "바뀌기 전 ref 는 안 맞는다" 만
@@ -462,7 +456,7 @@ class TestBuildSystemPrompt:
         import re
 
         guide = re.sub(
-            r"\s+", " ", build_system_prompt(_make_caps(), ["edit_file", "write_file"])
+            r"\s+", " ", _joined_prompt(_make_caps(), ["edit_file", "write_file"])
         ).split("- write_file:")[0]
         assert "edit vs write" not in guide
         assert "Use write_file only for creating new files" not in guide
@@ -488,7 +482,7 @@ class TestBuildSystemPrompt:
         assert "guardrail" in first.lower() and "not a failure" in first.lower()
         # Recovery action is still spelled out.
         assert "fresh refs — retry from these" in rest
-        assert "guardrail" not in build_system_prompt(_make_caps(), ["edit_file"])
+        assert "guardrail" not in _joined_prompt(_make_caps(), ["edit_file"])
 
     def test_hashline_guide_allows_same_file_batched_edits(self):
         """Multi-op + flat-native edit_file: consecutive same-path edit_file ops
@@ -504,7 +498,7 @@ class TestBuildSystemPrompt:
         from agent_cli.tools import TOOLS
 
         assert "Several edits to one file" in TOOLS["edit_file"].description
-        prompt = build_system_prompt(_make_caps(), ["edit_file"])
+        prompt = _joined_prompt(_make_caps(), ["edit_file"])
         flat = re.sub(r"\s+", " ", prompt)
         # Invites same-file edits batched in one turn …
         assert "Several edits to one file can go in one turn" in flat
@@ -520,7 +514,7 @@ class TestBuildSystemPrompt:
         따옴표가 필요 없다)은 write_file 설명에 있다."""
         import re
 
-        flat = re.sub(r"\s+", " ", build_system_prompt(_make_caps(), ["edit_file"]))
+        flat = re.sub(r"\s+", " ", _joined_prompt(_make_caps(), ["edit_file"]))
         assert "NEVER a shell heredoc" not in flat
         assert "escaped TWICE" not in flat
         from agent_cli.tools import TOOLS
@@ -550,21 +544,21 @@ class TestBuildSystemPrompt:
 
     def test_delegate_included(self):
         # 5.0.0: delegate 소멸 — agent(run) 이 그 자리
-        prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
+        prompt = _joined_prompt(_make_caps(), ["shell", "agent"])
         assert "agent" in prompt.lower()
         assert "run" in prompt
 
     def test_delegate_excluded(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "- agent:" not in prompt.split("## Available Tools")[1]
 
     def test_delegate_guide_mentions_context_modes(self, full_tool_text):
-        prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
+        prompt = _joined_prompt(_make_caps(), ["shell", "agent"])
         assert "none" in prompt
         assert "fork" in prompt
 
     def test_delegate_guide_mentions_parallel(self, full_tool_text):
-        prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
+        prompt = _joined_prompt(_make_caps(), ["shell", "agent"])
         assert "parallel" in prompt.lower()
 
     def test_agent_guide_shows_run_and_spawn_to_a_loop_that_can_spawn(
@@ -604,15 +598,15 @@ class TestBuildSystemPrompt:
 
     def test_profiles_advertised_with_agent_tool(self):
         """5.0.0: agent 도구 포함 시 프로파일 카탈로그가 광고된다."""
-        prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
+        prompt = _joined_prompt(_make_caps(), ["shell", "agent"])
         assert "code-analyst" in prompt  # built-in profile
 
     def test_no_agents_without_delegate(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "Available Agents" not in prompt
 
     def test_json_format_present(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "JSON" in prompt
         # v10.11.1: the format speaks of "reasoning", never a `thought` field
         assert "reasoning as plain prose" in prompt
@@ -620,12 +614,12 @@ class TestBuildSystemPrompt:
 
     def test_no_session_section(self):
         """No ## Session section (the session_id feature + param were removed)."""
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "## Session" not in prompt
         assert "Current session ID" not in prompt
 
     def test_ready_for_review_removed_from_prompt(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "ready_for_review" not in prompt  # tool removed
         assert "complete" in prompt
 
@@ -637,7 +631,7 @@ class TestBuildSystemPrompt:
     # builder carried that gate; the multi-op rules deliberately don't.
 
     def test_environment_section_present(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "## Environment" in prompt
         assert "Working directory:" in prompt
         assert "Platform:" in prompt
@@ -645,7 +639,7 @@ class TestBuildSystemPrompt:
     def test_environment_section_omits_date(self):
         # Date is intentionally excluded — see _build_environment_section
         # docstring for rationale (KV prefix cache stability).
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "Date:" not in prompt
 
     def test_directives_loaded_when_present(self, tmp_path, monkeypatch):
@@ -656,7 +650,7 @@ class TestBuildSystemPrompt:
             "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
             [directive_dir],
         )
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "## Directives" in prompt
         assert "Always write tests." in prompt
 
@@ -665,14 +659,14 @@ class TestBuildSystemPrompt:
             "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
             [tmp_path / "nonexistent"],
         )
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "## Directives" not in prompt
 
     def test_task_guidelines_not_in_system_prompt(self):
         """v8.52.0: the WHOLE section rides the session-state tail block
         (recency — the position the Harbor bench showed the model follows);
         the system prompt must no longer carry it."""
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "## Task Guidelines" not in prompt
 
     def test_task_guidelines_read_before_edit(self):
@@ -820,7 +814,7 @@ class TestBuildSystemPrompt:
     def test_context_discipline_present(self):
         """Primacy section teaching the LLM that the context window is a
         finite, shared resource and that each observation costs budget."""
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "## Context Window Discipline" in prompt
         assert "single most important resource" in prompt
         # v10.9.0: filling = automatic structured summary, not loss (67qcmb —
@@ -835,7 +829,7 @@ class TestBuildSystemPrompt:
         assert "Read only what you need" in prompt
 
     def test_format_rules_present(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "## Response Format" in prompt
         # 기본 포맷(json_fc)의 캐노니컬 계약 — 산문 + ONE JSON array.
         assert "one JSON\narray of tool calls" in prompt
@@ -843,7 +837,7 @@ class TestBuildSystemPrompt:
     def test_section_order_primacy_before_tools(self):
         """Context Discipline → Response Format in the primacy zone ahead
         of Available Tools (Task Guidelines → session-state tail, v8.52.0)."""
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         ctx_pos = prompt.index("## Context Window Discipline")
         format_pos = prompt.index("## Response Format")
         tools_pos = prompt.index("## Available Tools")
@@ -852,7 +846,7 @@ class TestBuildSystemPrompt:
     def test_code_index_has_no_guide_block(self, full_tool_text):
         """v10.92.0 — 안내 블록(번호 목록·호출 예시 11개·SQLite 경로·"index-scoped")을
         지웠다. 모드는 `mode` 인자 설명이, 이름 규칙·확장자는 도구 설명이 말한다."""
-        prompt = build_system_prompt(_make_caps(), ["code_index"]).replace('\\"', '"')
+        prompt = _joined_prompt(_make_caps(), ["code_index"]).replace('\\"', '"')
         assert "- code_index:" in prompt
         assert '{"action": "code_index"' not in prompt
         assert "Ten values of `mode`" not in prompt
@@ -873,14 +867,14 @@ class TestBuildSystemPrompt:
         from get_supported_extensions()."""
         from agent_cli.code_index.languages import get_supported_extensions
 
-        prompt = build_system_prompt(_make_caps(), ["code_index"])
+        prompt = _joined_prompt(_make_caps(), ["code_index"])
         for ext in get_supported_extensions():
             assert ext in prompt, f"{ext} missing from the code_index description"
 
     def test_code_index_says_which_modes_read_any_file(self, full_tool_text):
         """ "list"·"fetch" 는 어떤 파일이든, 나머지는 프로젝트 루트 아래만 — 모델이
         루트 밖 파일에 "file" 을 쓰지 않게 하는 한 문장."""
-        prompt = build_system_prompt(_make_caps(), ["read_file", "code_index"])
+        prompt = _joined_prompt(_make_caps(), ["read_file", "code_index"])
         flat = " ".join(prompt.split()).replace('\\"', '"')
         assert (
             '"list" and "fetch" read any file; the other modes see only files '
@@ -888,13 +882,13 @@ class TestBuildSystemPrompt:
         )
 
     def test_code_index_fetch_says_it_feeds_edit_file(self, full_tool_text):
-        prompt = build_system_prompt(_make_caps(), ["code_index"])
+        prompt = _joined_prompt(_make_caps(), ["code_index"])
         assert "LINE#HASH" in prompt and "ready for `edit_file`" in prompt
 
     def test_read_file_never_points_at_code_index(self):
         """read_file 설명은 code_index 를 부르지 않는다 — 그 경로 안내는
         code_index 설명 쪽에 있다 (v10.77.0)."""
-        prompt = build_system_prompt(_make_caps(), ["read_file"])
+        prompt = _joined_prompt(_make_caps(), ["read_file"])
         assert "code_index" not in prompt
 
     def test_no_redundant_read_file_preview_rule(self):
@@ -904,7 +898,7 @@ class TestBuildSystemPrompt:
         back in — both were renamed because the LLM treated them as
         'I already looked at the file' and stopped after the first 20
         lines. 'stat' was chosen for its Unix-metadata connotation."""
-        prompt = build_system_prompt(_make_caps(), ["read_file"])
+        prompt = _joined_prompt(_make_caps(), ["read_file"])
         assert "call with preview=true first" not in prompt
         assert "preview=true" not in prompt
         assert "peek=true" not in prompt
@@ -912,14 +906,14 @@ class TestBuildSystemPrompt:
 
     def test_section_order_tools_before_environment(self):
         """Available Tools should appear before Environment (recency section)."""
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         tools_pos = prompt.index("## Available Tools")
         env_pos = prompt.index("## Environment")
         assert tools_pos < env_pos
 
     def test_section_order_no_session_section(self):
         """Session ID no longer creates a section."""
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "## Session" not in prompt
 
     def test_file_tools_sit_together_whatever_order_the_caller_gave(self):
@@ -928,7 +922,7 @@ class TestBuildSystemPrompt:
         to the very end ("conditional last"), a dozen tools after
         ``write_file`` — and the order followed whatever list the caller
         passed, so a profile's ``allowed-tools`` decided the prompt layout."""
-        prompt = build_system_prompt(
+        prompt = _joined_prompt(
             _make_caps(), ["shell", "write_file", "edit_file", "read_file"]
         )
         pos = [
@@ -939,12 +933,12 @@ class TestBuildSystemPrompt:
 
     def test_read_artifact_removed(self):
         """read_artifact tool removed from system prompt."""
-        prompt = build_system_prompt(_make_caps(), ["shell"])
+        prompt = _joined_prompt(_make_caps(), ["shell"])
         assert "read_artifact" not in prompt
 
     def test_no_small_model_hints(self):
         """Small model hints should no longer be included."""
-        prompt = build_system_prompt(_make_caps(ctx_window=4096), ["shell"])
+        prompt = _joined_prompt(_make_caps(ctx_window=4096), ["shell"])
         assert "Keep responses concise" not in prompt
 
     def test_no_thinking_hints(self):
@@ -954,12 +948,12 @@ class TestBuildSystemPrompt:
             max_output_tokens=4096,
             supports_thinking=True,
         )
-        prompt = build_system_prompt(caps, ["shell"])
+        prompt = _joined_prompt(caps, ["shell"])
         assert "Thinking Budget" not in prompt
 
     def test_agent_role_replaces_default_role(self):
         """Agent role replaces default ROLE_PROMPT in Primacy zone."""
-        prompt = build_system_prompt(
+        prompt = _joined_prompt(
             _make_caps(), ["shell"], agent_role="You are a reviewer"
         )
         assert "## Role" in prompt
@@ -968,12 +962,12 @@ class TestBuildSystemPrompt:
 
     def test_agent_role_excluded_when_empty(self):
         """Empty agent_role uses default ROLE_PROMPT."""
-        prompt = build_system_prompt(_make_caps(), ["shell"], agent_role="")
+        prompt = _joined_prompt(_make_caps(), ["shell"], agent_role="")
         assert "AI assistant" in prompt
 
     def test_agent_role_in_primacy_before_tools(self):
         """Agent Role is in Primacy zone, before Available Tools."""
-        prompt = build_system_prompt(
+        prompt = _joined_prompt(
             _make_caps(), ["shell"], agent_role="You are a reviewer"
         )
         role_pos = prompt.index("You are a reviewer")
@@ -1107,18 +1101,18 @@ class TestDelegateInlineAgent:
 
 class TestRoleInheritance:
     def test_main_uses_default_role(self, caps):
-        prompt = build_system_prompt(caps, ["read_file", "shell"])
+        prompt = _joined_prompt(caps, ["read_file", "shell"])
         assert "AI assistant" in prompt
 
     def test_delegate_replaces_role(self, caps):
-        prompt = build_system_prompt(
+        prompt = _joined_prompt(
             caps, ["read_file"], agent_role="You are an explorer agent."
         )
         assert "explorer agent" in prompt
         assert "AI assistant that solves tasks" not in prompt
 
     def test_skill_inherits_parent_role(self, caps):
-        prompt = build_system_prompt(
+        prompt = _joined_prompt(
             caps, ["read_file"], parent_role="You are a code reviewer."
         )
         assert "code reviewer" in prompt
@@ -1130,7 +1124,7 @@ class TestRoleInheritance:
         Uses unique markers (not real words like "reviewer" that can leak in
         from the skill catalog's descriptions) so the assertion isolates the
         role-precedence behavior, not incidental prompt content."""
-        prompt = build_system_prompt(
+        prompt = _joined_prompt(
             caps,
             ["read_file"],
             agent_role="You are ZORPAGENT.",
@@ -1142,19 +1136,19 @@ class TestRoleInheritance:
 
 class TestGitContextRemoved:
     def test_no_git_context(self, caps):
-        prompt = build_system_prompt(caps, ["read_file", "shell"])
+        prompt = _joined_prompt(caps, ["read_file", "shell"])
         assert "git status" not in prompt.lower() or "## Git" not in prompt
 
 
 class TestSessionIdRemoved:
     def test_no_session_section(self, caps):
-        prompt = build_system_prompt(caps, ["read_file"])
+        prompt = _joined_prompt(caps, ["read_file"])
         assert "## Session" not in prompt
 
 
 class TestContextRecoveryGuide:
     def test_recovery_guide_present(self, caps):
-        prompt = build_system_prompt(
+        prompt = _joined_prompt(
             caps, ["read_file", "history"], session_dir="/tmp/sessions/abc"
         )
         assert "## Context Recovery" in prompt
@@ -1162,13 +1156,11 @@ class TestContextRecoveryGuide:
 
     def test_no_recovery_without_the_tool(self, caps):
         """A profile whose tool list omits history is not told to use it."""
-        prompt = build_system_prompt(
-            caps, ["read_file"], session_dir="/tmp/sessions/abc"
-        )
+        prompt = _joined_prompt(caps, ["read_file"], session_dir="/tmp/sessions/abc")
         assert "## Context Recovery" not in prompt
 
     def test_no_recovery_without_session_dir(self, caps):
-        prompt = build_system_prompt(caps, ["read_file"])
+        prompt = _joined_prompt(caps, ["read_file"])
         assert "## Context Recovery" not in prompt
 
     def test_build_context_recovery_format(self):
@@ -1189,7 +1181,7 @@ class TestThoughtGuidelines:
     def test_reasoning_guidance_present(self, caps):
         # react 의 Thought Guidelines 섹션은 react 와 함께 제거 —
         # json_fc 는 rules 의 산문-선행 안내가 그 역할.
-        prompt = build_system_prompt(caps, ["read_file"])
+        prompt = _joined_prompt(caps, ["read_file"])
         assert "plain prose" in prompt
         assert "reason" in prompt.lower()
 
@@ -1205,9 +1197,7 @@ class TestRecencySectionOrder:
     """
 
     def test_environment_before_recovery(self, caps):
-        prompt = build_system_prompt(
-            caps, ["read_file", "history"], session_dir="/tmp/test"
-        )
+        prompt = _joined_prompt(caps, ["read_file", "history"], session_dir="/tmp/test")
         env_pos = prompt.find("## Environment")
         recovery_pos = prompt.find("## Context Recovery")
         assert env_pos >= 0 and recovery_pos >= 0
@@ -1222,7 +1212,7 @@ class TestRecencySectionOrder:
             [directive_dir],
         )
 
-        prompt = build_system_prompt(
+        prompt = _joined_prompt(
             caps,
             ["read_file", "history"],
             skill_stack=["my-skill"],
@@ -1236,7 +1226,7 @@ class TestRecencySectionOrder:
 
     def test_execution_context_is_last_when_present(self, caps):
         """When Execution Context is included, no Recency section follows it."""
-        prompt = build_system_prompt(
+        prompt = _joined_prompt(
             caps,
             ["read_file", "history"],
             skill_stack=["my-skill"],
@@ -1385,7 +1375,7 @@ class TestDirectiveScoping:
         monkeypatch.setattr("agent_cli.prompts.system_prompt._DIRECTIVE_PATHS", [d])
 
     def _prompt(self, depth: int) -> str:
-        return build_system_prompt(_make_caps(), ["shell"], depth=depth)
+        return _joined_prompt(_make_caps(), ["shell"], depth=depth)
 
     # ── split_directive_scopes 단위 ──
 

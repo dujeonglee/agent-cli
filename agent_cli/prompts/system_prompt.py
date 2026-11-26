@@ -122,7 +122,7 @@ TASK_GUIDELINES = """\
 
 # ── Section 4: Format Rules ──────────────────────
 # Lives on the dialect plugin: ``ReActFormat.format_rules()``.
-# build_system_prompt() pulls it through ``dialect.format_rules()``.
+# build_system_prompt_sections() pulls it through ``dialect.format_rules()``.
 
 
 # ── Inline guides for tools ──────────────────────
@@ -494,8 +494,8 @@ def build_system_prompt_sections(
 ) -> list[tuple[str, str]]:
     """Build the system prompt as an ordered list of ``(name, text)`` sections.
 
-    The single assembly point — :func:`build_system_prompt` joins these
-    verbatim, and the web Prompt Inspector renders them per-section (a name
+    The single assembly point — the loop joins these verbatim with
+    ``"\n\n"`` (``loop/prompt.py``), and the web Prompt Inspector renders them per-section (a name
     per section beats re-parsing the joined string, whose section BODIES are
     full of ``##`` headings — tool guides, format-rules examples).
 
@@ -612,38 +612,6 @@ def build_system_prompt_sections(
         sections.append(("Execution Context", exec_ctx))
 
     return sections
-
-
-def build_system_prompt(
-    capabilities: ModelCapabilities,
-    active_tools: list[str],
-    skill_stack: list[str] | None = None,
-    agent_stack: list[str] | None = None,
-    agent_role: str = "",
-    parent_role: str = "",
-    session_dir: str = "",
-    dialect=None,
-    depth: int = 0,
-    max_depth: int = 0,
-) -> str:
-    """Joined form of :func:`build_system_prompt_sections` — see there for
-    the section order / role-selection contract. Byte-identical to the
-    pre-sections implementation (the sections are joined verbatim)."""
-    return "\n\n".join(
-        text
-        for _, text in build_system_prompt_sections(
-            capabilities,
-            active_tools,
-            skill_stack=skill_stack,
-            agent_stack=agent_stack,
-            agent_role=agent_role,
-            parent_role=parent_role,
-            session_dir=session_dir,
-            dialect=dialect,
-            depth=depth,
-            max_depth=max_depth,
-        )
-    )
 
 
 def _build_execution_context(

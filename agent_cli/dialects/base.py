@@ -74,46 +74,10 @@ def _terminal_input(result: str, answers: list[str] | None) -> dict:
 
 
 @dataclass
-class ParsedAction:
-    """Format-agnostic parse result.
-
-    Carries everything the loop needs to dispatch one action, plus a small
-    set of generally-useful metadata fields. Format-specific debug info
-    belongs inside the plugin — this dataclass is the *boundary* between
-    plugin and loop.
-
-    Field semantics:
-      - ``thought / action / action_input``: the action to execute. ``None``
-        when parse failed (``parse_stage == 0``).
-      - ``raw``: the model's emitted text after any leading-thinking strip.
-        Recovery primitives echo this back verbatim, so any normalization
-        upstream loses fidelity.
-      - ``parse_stage``: 0 means "parse failed, no action available."
-        Values ≥ 1 are plugin-defined success paths (e.g. ReAct uses
-        1=json.loads, 2=json_repair, 3=regex). The loop only checks
-        ``parse_stage > 0``; the exact value is for observability.
-      - ``thinking``: contents of any leading ``<think>...</think>`` block
-        the parser stripped. Used by the renderer in verbose mode.
-      - ``truncated``: the parser had to repair the JSON (e.g. closed an
-        unterminated string). The loop uses this as a "result is suspect"
-        signal — currently gates ``edit_file`` truncation handling.
-    """
-
-    thought: str | None = None
-    action: str | None = None
-    action_input: dict | str | None = None
-    raw: str = ""
-    parse_stage: int = 0
-    thinking: str | None = None
-    truncated: bool = False
-
-
-@dataclass
 class Op:
     """One tool invocation within a turn — the per-op unit of a ``ParsedTurn``.
 
-    Mirrors the action-carrying fields of :class:`ParsedAction`. A
-    single-action dialect (하나도 내장돼 있지 않음 — 미래 플러그인용 기본) yields a turn with exactly
+    A single-action dialect (하나도 내장돼 있지 않음 — 미래 플러그인용 기본) yields a turn with exactly
     one ``Op``; a multi-op format yields several.
     """
 
@@ -127,8 +91,7 @@ class Op:
 
 @dataclass
 class ParsedTurn:
-    """Turn-level parse result — the loop boundary that supersedes the
-    singular :class:`ParsedAction`.
+    """Turn-level parse result — the boundary between dialect and loop.
 
     Carries the turn's reasoning plus an ORDERED list of ops to dispatch.
     A single-action format produces ``ops`` of length 0 (parse failure) or 1;
@@ -138,12 +101,18 @@ class ParsedTurn:
     ``False`` for them and the loop's behaviour is unchanged.
 
     :meth:`DialectBase.parse_turn` (abstract, v8.41.0 — 루프의 1차 경계) 가
-    이 shape 을 반환한다; a plugin opts into multi-op
-    only by overriding ``parse_turn``; ``parse`` (and the history round-trip
-    built on it) is untouched.
+    이 shape 을 반환한다.
 
-    Field semantics mirror :class:`ParsedAction`: ``thought`` / ``raw`` /
-    ``parse_stage`` (0 = parse failed) / ``thinking`` carry the same meaning.
+    Field semantics:
+      - ``thought``: the turn's reasoning prose.
+      - ``raw``: the model's emitted text after any leading-thinking strip.
+        Recovery primitives echo this back verbatim, so any normalization
+        upstream loses fidelity.
+      - ``parse_stage``: 0 means "parse failed, no op available." Values ≥ 1
+        are dialect-defined success paths; the exact value is for
+        observability.
+      - ``thinking``: contents of any leading ``<think>...</think>`` block
+        the parser stripped.
     """
 
     thought: str | None = None
@@ -183,7 +152,7 @@ class DialectBase(ABC):
 
     Method groups:
       - **Prompt**: what the model is told to emit.
-      - **Parsing**: how the emitted text becomes a ``ParsedAction``.
+      - **Parsing**: how the emitted text becomes a ``ParsedTurn``.
       - **Recovery**: what the model is told when parsing failed.
       - **Provider / lifecycle**: the (A)→(C) normalization and the
         (A)↔(B)↔(D) history round-trip.
@@ -239,9 +208,7 @@ class DialectBase(ABC):
     # 경계는 ``parse_turn`` 인데 종전엔 ``parse`` 가 추상이고 parse_turn 은
     # parse 를 감싸는 기본 구현이었다 — 등록된 두 포맷(json_fc/xml_fc) 모두
     # multi-op 라 그 기본 구현은 사문이었고, 새 포맷 작성자는 루프가 부르지
-    # 않는 메서드를 구현하라고 안내받았다. 이제 **parse_turn 이 추상(1차)**,
-    # parse 는 첫-op 투영 기본 구현(레거시 단수 소비자용 — history 직렬화
-    # 기본·테스트)이다. 기존 플러그인의 자체 parse 오버라이드는 그대로.
+    # 않는 메서드를 구현하라고 안내받았다. 이제 **parse_turn 이 유일한 파서**다.
 
     @abstractmethod
     def parse_turn(self, llm_text: str) -> ParsedTurn:
@@ -261,27 +228,6 @@ class DialectBase(ABC):
         > 0 whenever an ``action_input`` was recovered this way (the exact
         value stays observability-only).
         """
-
-    def parse(self, llm_text: str) -> ParsedAction:
-        """Parse one emission into the singular legacy :class:`ParsedAction`.
-
-        Default: first-op projection of :meth:`parse_turn` — for consumers
-        of the pre-multi-op surface (the base history-serialization default,
-        direct callers, tests). Plugins may override when their singular
-        projection differs from "first op" (both built-ins do, keeping
-        their historical projections byte-identical).
-        """
-        turn = self.parse_turn(llm_text)
-        op = turn.ops[0] if turn.ops else Op()
-        return ParsedAction(
-            thought=turn.thought,
-            action=op.action,
-            action_input=op.action_input,
-            raw=turn.raw,
-            parse_stage=turn.parse_stage,
-            thinking=turn.thinking,
-            truncated=op.truncated,
-        )
 
     # 미닫힘 thinking opener 의 truncation 정지점 — 포맷의 첫-구조 마커.
     # None 이면 EOF 까지 (종전 동작). 각 플러그인이 자기 마커로 지정.
@@ -342,7 +288,7 @@ class DialectBase(ABC):
         in a stray ``## Thought`` would render back as ``## Thought … ##
         Thought`` in the prior, teaching the model (self-reinforcement) that
         repeating the shape is fine — the root cause of format runaway. Applied
-        at save time in two spots: ``parse`` cleans ``ParsedAction.thought``
+        at save time in two spots: ``parse_turn`` cleans ``ParsedTurn.thought``
         (structured turns), and ``serialize_assistant_for_history`` cleans the
         bare-content fallback (fully-degenerate turns with no valid action).
         Both feed history → prior (render) → on-screen, so cleaning once at

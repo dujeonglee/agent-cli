@@ -202,7 +202,7 @@ class TestSummary:
         ctx, calls = _make_ctx(tmp_path, max_context_tokens=120)
         _add(ctx, {"role": "system", "content": "sys"})
         # Mix of user + tool result + assistant action — exercises every
-        # branch of _to_natural_language.
+        # branch of render_history_message.
         _add(ctx, {"role": "user", "content": "first question"})
         _add(
             ctx,
@@ -247,7 +247,7 @@ class TestSummary:
 
 class TestSummaryTextRendering:
     """``_to_summary_text`` renders prose (not ReAct JSON) and drops file
-    bodies — what the summariser should see, vs ``_to_natural_language``
+    bodies — what the summariser should see, vs ``render_history_message``
     which round-trips assistant turns back to the wire shape for resume."""
 
     def test_user_message(self):

@@ -83,27 +83,29 @@ class TestJsonFcPreservation:
         ids=[c[0] for c in _JSON_FC_CASES],
     )
     def test_parse_preserves_input(self, name, raw, exp_input):
-        parsed = get("json_fc").parse(raw)
-        assert parsed.action_input == exp_input
-        assert not parsed.action  # dropped → loop will infer / NO_ACTION echo
-        assert infer_action(parsed.action_input) == "shell"
+        [op] = get("json_fc").parse_turn(raw).ops
+        assert op.action_input == exp_input
+        assert not op.action  # dropped → loop will infer / NO_ACTION echo
+        assert infer_action(op.action_input) == "shell"
 
     def test_thought_only_is_unrecoverable(self):
-        parsed = get("json_fc").parse("just thinking, no ops")
-        assert not parsed.action
-        assert parsed.action_input is None
+        assert get("json_fc").parse_turn("just thinking, no ops").ops == []
 
 
 class TestXmlFcPreservation:
     def test_empty_function_name_preserves_params(self):
-        parsed = get("xml_fc").parse(
-            "<tool_call>\n<function=>\n"
-            "<parameter=shell_command>make</parameter>\n"
-            "</function>\n</tool_call>"
+        [op] = (
+            get("xml_fc")
+            .parse_turn(
+                "<tool_call>\n<function=>\n"
+                "<parameter=shell_command>make</parameter>\n"
+                "</function>\n</tool_call>"
+            )
+            .ops
         )
-        assert parsed.action_input == {"shell_command": "make"}
-        assert not parsed.action
-        assert infer_action(parsed.action_input) == "shell"
+        assert op.action_input == {"shell_command": "make"}
+        assert not op.action
+        assert infer_action(op.action_input) == "shell"
 
 
 # ── 2. Cross-wire parity ─────────────────────────────

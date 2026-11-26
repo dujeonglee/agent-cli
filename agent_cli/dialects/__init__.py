@@ -5,7 +5,7 @@ history round-trip for one tool-call shape. Since Phase 5 a dialect is **data**:
 a :class:`~agent_cli.dialects.spec.DialectSpec` in ``agent_cli/dialects/specs/``
 driven by the single :class:`~agent_cli.dialects.engine.Dialect` engine. The
 loop / prompts / recovery layers depend only on :class:`DialectBase` (the
-protocol) and :class:`ParsedAction` (data) — they never branch on a name.
+protocol) and :class:`~agent_cli.dialects.base.ParsedTurn` (data) — they never branch on a name.
 
 The CLI ``--dialect <name>`` option resolves through :func:`get`. 내장
 방언(json_fc·xml_fc·hermes_json·glm_argkey)은 패키지 import 시 등록된다.

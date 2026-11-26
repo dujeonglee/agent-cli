@@ -42,10 +42,14 @@ _ENV = {
 
 
 def git(cwd: Path, *args: str) -> str:
-    """테스트가 사람처럼 하위 저장소를 만지는 git (저장소 메서드 밖)."""
+    """테스트가 사람처럼 하위 저장소를 만지는 git (저장소 메서드 밖).
+
+    자동 정리(``maintenance.auto``·``gc.auto``)는 끈다 — ``commit`` 뒤에 git 이 떼어 띄운
+    정리가 ``.git/objects/maintenance.lock`` 을 만들었다 지우는 사이 :func:`fingerprint` 가
+    ``.git`` 을 훑으면 사라진 파일을 ``stat`` 한다(CI 에서 한 번 실패)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     r = subprocess.run(
-        ["git", *args],
+        ["git", "-c", "maintenance.auto=false", "-c", "gc.auto=0", *args],
         cwd=cwd,
         env={**env, **_ENV},
         capture_output=True,

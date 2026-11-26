@@ -240,15 +240,6 @@ class TestTruncatedPropagation:
         t2 = self.w.parse_turn('[{"action":"shell","command":"ls"}}]')
         assert t2.ops and not t2.ops[0].truncated
 
-    def test_parse_projection_carries_truncated(self):
-        # 단수 투영(parse)도 xml_fc 동형으로 truncated 를 실어야 한다.
-        p = self.w.parse(
-            '[{"action":"edit_file","path":"a.py","old_lines":["x"],"new_lines":["y"]'
-        )
-        assert p.truncated is True
-        clean = self.w.parse('[{"action":"shell","command":"ls"}]')
-        assert clean.truncated is False
-
     def test_prose_then_truncated_array_flags_last_op(self):
         # 산문 뒤 미닫힘 배열 — 같은 증거 규칙(수리 + 미닫힘)으로 마지막 op 만.
         t = self.w.parse_turn(

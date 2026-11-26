@@ -204,9 +204,7 @@ class Dialect(DialectBase):
         if spec.prose is None:
             raise ValueError(f"dialect '{spec.name}' has no prose fragments")
         self.spec = spec
-        # 서브클래스가 클래스 속성 ``name`` 으로 다른 이름을 주면(A/B 변형 — bakeoff
-        # 의 json_fc_fenced) 그것이 이긴다. ABC 는 ``name: str`` 주석만 둔다.
-        self.name = getattr(type(self), "name", None) or spec.name
+        self.name = spec.name
         self.summary = spec.summary
         self.degeneration_trigger = spec.degeneration_trigger
         self._t = self._w = None

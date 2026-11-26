@@ -3,8 +3,9 @@
 옛 모듈은 S5 에서 삭제됐다. 삭제 직전에 그 출력을 ``tests/equivalence/expected/``
 에 고정했고(S2·S3 에서 라이브 비교로 바이트 동일을 확인한 뒤), 이 테스트는 그
 고정본과 현재 엔진을 비교한다 — 코퍼스(``corpus/<name>.jsonl``) 전건의 parse·
-투영·history·재렌더·러너웨이·sanitize·진단, 그리고 산문·문법·플래그 표면 전체.
+history·재렌더·러너웨이·sanitize·진단, 그리고 산문·문법·플래그 표면 전체.
 큰 필드는 sha 로 비교하고 ops 는 그대로 둬 차이가 나면 어디서 났는지 보인다.
+기대값의 ``action_sha``(지운 단수 투영 ``parse`` 의 고정본)는 더 읽지 않는다.
 """
 
 from __future__ import annotations
@@ -97,24 +98,9 @@ class TestParity:
                 diffs.append((text[:120], e["turn"]["ops"][:1], got["ops"][:1]))
         assert not diffs, f"{len(diffs)} differing rows; first: {diffs[0]}"
 
-    def test_projection_history_rerender_match(self, name):
+    def test_history_rerender_match(self, name):
         wf = get(name)
         for text, e in zip(_corpus(name), _expected(name)):
-            a = wf.parse(text)
-            assert (
-                _sha(
-                    [
-                        a.thought,
-                        a.action,
-                        a.action_input,
-                        a.raw,
-                        a.parse_stage,
-                        a.thinking,
-                        a.truncated,
-                    ]
-                )
-                == e["action_sha"]
-            ), text[:120]
             rec = wf.serialize_assistant_for_history(text)
             assert _sha(rec) == e["history_sha"], text[:120]
             assert _sha(wf.render_assistant_from_history(rec)) == e["rerender_sha"], (

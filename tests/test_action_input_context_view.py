@@ -8,7 +8,7 @@ to elide their bulky body args (content / lines) on re-feed, keeping the op
 shape but dropping the bulk (the file is on disk; read_file to view).
 
 The seam is consulted at the two context boundaries — render
-(``_to_natural_language``) and budget (``_estimate_message_tokens``) — via the
+(``render_history_message``) and budget (``_estimate_message_tokens``) — via the
 shared ``_context_view`` helper, always on a COPY so history.jsonl + the cache
 stay faithful.
 """
@@ -20,7 +20,7 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.context.render import (
     _context_view,
     _estimate_message_tokens,
-    _to_natural_language,
+    render_history_message,
 )
 from agent_cli.dialects import get as get_wire
 from agent_cli.tools import TOOLS
@@ -75,7 +75,9 @@ class TestSeamDefaultIdentity:
         msg = _assistant_read()
         wf = get_wire("json_fc")
         # rendering through the seam must equal rendering the raw msg directly
-        assert _to_natural_language(msg, wf) == wf.render_assistant_from_history(msg)
+        assert render_history_message(msg, wf, index=0, assistant_index=None) == [
+            wf.render_assistant_from_history(msg)
+        ]
 
     def test_estimate_unchanged_with_default_seam(self):
         # read_file op with a long path-ish arg — identity → counted as-is
@@ -127,7 +129,9 @@ class TestContextViewElision:
     def test_render_uses_elided_view(self, monkeypatch):
         self._patch(monkeypatch)
         msg = _assistant_write("SECRET_BODY_LINE\nmore")
-        rendered = _to_natural_language(msg, get_wire("json_fc"))
+        rendered = render_history_message(
+            msg, get_wire("json_fc"), index=0, assistant_index=None
+        )
         assert "SECRET_BODY_LINE" not in json.dumps(rendered, ensure_ascii=False)
         assert "elided" in json.dumps(rendered, ensure_ascii=False)
 

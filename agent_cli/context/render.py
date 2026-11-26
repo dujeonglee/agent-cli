@@ -1,6 +1,6 @@
 """record → LLM 표현 렌더 (C5, v4.47.0).
 
-재공급 NL(_to_natural_language/_convert_observation/_context_view),
+재공급(render_history_message/_convert_observation/_context_view),
 예산 추정(_estimate_message_tokens — 재공급과 같은 view 를 세는 쌍둥이),
 압축 요약 입력(_to_summary_text). 전부 무상태(인자만) — manager 의
 캐시/정책과 결합 없음.
@@ -23,7 +23,7 @@ def _context_view(message: dict) -> dict:
     ``action_input`` passed through its tool's
     ``render_action_input_for_context`` (default identity — so this is a no-op
     for every tool today; the seam is consulted by both the render path
-    (:func:`_to_natural_language`) and the budget path
+    (:func:`render_history_message`) and the budget path
     (:func:`_estimate_message_tokens`) so the two always agree).
 
     Returns ``message`` unchanged (same object) when nothing is elided, else a
@@ -216,36 +216,6 @@ def _with_observation_images(rendered: list[dict], record: dict) -> list[dict]:
     return rendered
 
 
-def _to_natural_language(msg: dict, dialect) -> dict:
-    """Convert a JSON history record to a natural-language message for the LLM.
-
-    Input formats (from history.jsonl):
-        User input:     {"role":"user", "content":"..."}
-        Tool result:    {"role":"user", "tool":"...", "args":{...}, "content":"...", "artifact":"..."}
-        Assistant act:  {"role":"assistant", "thought":"...", "action":"...", "action_input":{...}}
-        Complete:       {"role":"assistant", "thought":"...", "action":"complete", "action_input":{"result":"..."}}
-
-    Output format (for chat completion):
-        {"role": "user"|"assistant", "content": "...natural language..."}
-
-    Assistant records are handed off to ``dialect.render_assistant_
-    from_history`` so each plugin owns the on-disk → message conversion
-    for its own format. The user / tool branches live here because they
-    are format-agnostic.
-    """
-    role = msg.get("role", "user")
-
-    if role == "user":
-        tool = msg.get("tool")
-        if tool:
-            return _convert_observation(msg)
-        return {"role": "user", "content": msg.get("content", "")}
-
-    # Re-feed the context view (bulky action_input bodies elided per-tool;
-    # default identity → unchanged today). History/cache stay faithful.
-    return dialect.render_assistant_from_history(_context_view(msg))
-
-
 _SUMMARY_CONTENT_EXCERPT = 200  # chars of tool-result content kept per line
 
 
@@ -253,7 +223,7 @@ def _to_summary_text(msg: dict) -> str:
     """Render one history record as a single natural-language line for the
     summarisation transcript.
 
-    Unlike ``_to_natural_language`` (which round-trips assistant turns back
+    Unlike :func:`render_history_message` (which round-trips assistant turns back
     to the wire shape — ReAct JSON — for resume/recovery self-reinforcement),
     this is for the *summariser's* input: assistant turns become prose and
     tool args are summarised (``write_file`` → path only, no file body), so

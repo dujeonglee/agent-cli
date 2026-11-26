@@ -109,7 +109,7 @@ agent_cli/
 │   └── ledger.py            열린 항목 장부 `Ledger` — 꼬리 `## Open Items` 와 화면용 사본 (docs/ledger/DESIGN.md)
 ├── dialects/                방언 — LLM 응답의 와이어 모양. 스펙(데이터) + 엔진 하나 (docs/dialects/PHASE5.md)
 │   ├── __init__.py          방언 레지스트리·해석(`resolve_dialect`·`dialect_for_model`)·`try_foreign_parse`
-│   ├── base.py              `DialectBase` 프로토콜과 `ParsedAction`·`Op`·`ParsedTurn`, history 직렬화
+│   ├── base.py              `DialectBase` 프로토콜과 `Op`·`ParsedTurn`, history 직렬화
 │   ├── spec.py              `DialectSpec` 과 축(`ArgStyle`·`NameSlot`·`Lenient`·`Prose`) — 메서드 없는 데이터
 │   ├── engine.py            `Dialect` 엔진 — 스펙 하나로 렌더·파서·문법·산문·history 왕복
 │   ├── grammar.py           디코딩 문법 — 와이어 모양을 서버가 강제할 EBNF 로
@@ -453,7 +453,7 @@ class ModelCapabilities:
 첫 실행 프로브는 `constants.DETECTION_PROBE_TIMEOUT` 을 공유한다. vision 은 등록값이 없으면 `vision_support` 가 프로세스당 한 번 프로브하고
 (두 색 PNG 를 보내 순서대로 답하는지), 판정이 나면 models.json 의 빠진 키에 적는다.
 
-### 4.3 파서 결과 — `ParsedTurn` · `Op` · `ParsedAction` (`dialects/base.py`)
+### 4.3 파서 결과 — `ParsedTurn` · `Op` (`dialects/base.py`)
 
 방언이 돌려주는 경계 타입이다. 루프는 방언과 무관하게 이 타입만 소비한다.
 
@@ -475,9 +475,6 @@ class ParsedTurn:              # 응답 하나
     thinking: str | None
     record: dict | None        # history 에 저장할 assistant 레코드(`TurnDispatcher._handle_text_path` 가 한 번 만든다)
     split_calls: bool          # 호출이 산문으로 나뉜 두 군데 이상에 있었다(형식 거부로 되묻는다)
-
-@dataclass
-class ParsedAction:            # 단수 투영 — thought·action·action_input·raw·parse_stage·thinking·truncated
 ```
 
 ### 4.4 도구 추상화 표면 (`tools/base.py` + `tools/registry.py`)
