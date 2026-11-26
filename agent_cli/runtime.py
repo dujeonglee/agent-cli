@@ -34,12 +34,7 @@ from agent_cli.loop.kind import (
     PromptProfile,
     Start,
 )
-from agent_cli.loop.ports import (
-    _RESIDENT_ROSTER,
-    LoopPorts,
-    _hook_runner_port,
-    _hook_unwired,
-)
+from agent_cli.loop.ports import LoopPorts, _hook_runner_port
 from agent_cli.render import render_step
 from agent_cli.session.records import record_restart
 from agent_cli.session_slots import (
@@ -335,8 +330,6 @@ def main_run_ended(
     (`AgentRegistry.answer_main_debts_as_stopped`), 여기는 남은 줄을 버린다(에이전트의 ■ 와 같다). ``meta``
     (v10.156.0): 실패한 런이면 ``success=False``·``error`` — 폴백 머리에 원인 한 줄(에이전트의 실패 런과 같다).
     """
-    if agent_registry is None:
-        return 0
     return agent_registry.run_ended("main", output or "", stopped=stopped, **meta)
 
 
@@ -847,29 +840,16 @@ class MainLoop(LoopKind):
             enqueue_user_message=enqueue_user_message,
             route_message=route_message,
             # main 도 `message` 로 요청·통지를 보낸다 (v10.141.0 — 종전 `agent` "request")
-            message_handler=(
-                agent_registry.message_handler("main")
-                if agent_registry is not None
-                else None
-            ),
+            message_handler=agent_registry.message_handler("main"),
             hook_runner=_hook_runner_port(),
-            peer_roster=None,
+            peer_roster=None,  # 상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다
             # 턴 경계의 흡수는 main 상자 하나(도착 순서 — `AgentRegistry.absorb_main`)
             mailbox=Mailbox(
                 agent_registry,
                 "main",
-                take=agent_registry.absorb_main if agent_registry is not None else None,
+                take=agent_registry.absorb_main,
                 wait_input=wait_for_user_input,
             ),
-            unwired={
-                **(
-                    {"message_handler": "레지스트리가 없는 세션 — 보낼 상대가 없다"}
-                    if agent_registry is None
-                    else {}
-                ),
-                **_hook_unwired(),
-                "peer_roster": _RESIDENT_ROSTER,
-            },
         )
 
     # ── 엔진이 묻는 것 (v10.88.0) ──

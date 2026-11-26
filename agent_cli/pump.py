@@ -102,10 +102,7 @@ class QuietPolicy:
             kind = "monitors"
         elif self.harness is not None and self.harness.in_flight:
             kind = "harness"
-        elif (
-            self.agent_registry is not None
-            and self.agent_registry.open_human_questions()
-        ):
+        elif self.agent_registry.open_human_questions():
             kind = "questions"
         else:
             kind = "schedules"
@@ -229,8 +226,7 @@ class MainActor:
             d.surface.echo(item)
         stop_event = threading.Event()
         # "Stop everything" 의 조용함은 그 정지 하나의 것 — 새 런은 깨우는 정지 회신으로 시작한다
-        if d.agent_registry is not None:
-            d.agent_registry.main_stop_wakes = True
+        d.agent_registry.main_stop_wakes = True
         self._bind_stop(stop_event)
         start = d.main.start(got, stop_event)
         if item is None or not item.get("command"):
@@ -307,7 +303,7 @@ class MainActor:
                 from agent_cli.runtime import main_run_ended
 
                 stopped = end.outcome == "stopped"
-                if stopped and d.agent_registry is not None:
+                if stopped:
                     self._answer_stopped()
                 # 실패한 런(턴 상한·LLM 오류)은 그 사유를 — 폴백 머리에 원인 한 줄
                 failed = (

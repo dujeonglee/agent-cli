@@ -248,14 +248,7 @@ class SkillLoop(LoopKind):
         읽는다. 그래서 스킬의 `wait` 는 자기가 건 질문만 기다린다(작업·모니터는 ``owner`` 에게 보고한다). 기다리는
         동안 사람의 명령은 호스트가 세운 길(`session_slots.get_nested_wait_input`)로 받는다. ``name`` 은 스킬 이름 —
         질문의 묻는 쪽 이름표(`asker_label` — ``skill <name>``)."""
-        from agent_cli.loop.ports import (
-            _AS_BEFORE,
-            _RESIDENT_ROSTER,
-            _WEB_ONLY,
-            LoopPorts,
-            _hook_runner_port,
-            _hook_unwired,
-        )
+        from agent_cli.loop.ports import LoopPorts, _hook_runner_port
 
         return LoopPorts(
             owner=owner,
@@ -263,31 +256,18 @@ class SkillLoop(LoopKind):
             questions=agent_registry.question_port(address=address, name=name)
             if agent_registry is not None
             else None,
-            mcp_manager=None,
-            message_handler=None,
+            mcp_manager=None,  # 이 호스트는 이 포트를 받은 적이 없다
+            message_handler=None,  # 이 호스트는 이 포트를 받은 적이 없다
             hook_runner=_hook_runner_port(),
-            route_message=None,
-            enqueue_user_message=None,
-            peer_roster=None,
+            route_message=None,  # main 루프 전용 — 사람의 말을 받는 호스트(run·web)에만 있다
+            enqueue_user_message=None,  # main 루프 전용 — 사람의 말을 받는 호스트(run·web)에만 있다
+            peer_roster=None,  # 상주 전용 — 동료 로스터는 상주 런의 꼬리에만 실린다
             mailbox=Mailbox(
                 get_agent_registry(),
                 address,
                 take=_skill_inbox(address),
                 wait_input=get_nested_wait_input(),
             ),
-            unwired={
-                **(
-                    {"questions": "레지스트리가 없는 세션 — 물을 곳이 없다"}
-                    if agent_registry is None
-                    else {}
-                ),
-                "mcp_manager": _AS_BEFORE,
-                "message_handler": _AS_BEFORE,
-                **_hook_unwired(),
-                "route_message": _WEB_ONLY,
-                "enqueue_user_message": _WEB_ONLY,
-                "peer_roster": _RESIDENT_ROSTER,
-            },
         )
 
     # ── 엔진이 묻는 것 (v10.88.0) ──

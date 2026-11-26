@@ -89,13 +89,7 @@ class ResidentLoop(LoopKind):
     ) -> LoopPorts:
         """상주 런의 포트. ``inbox`` (v9.25.0, 메일함 포트의 ``take``) 가 턴 경계마다 받은편지함을 이 런으로
         흡수하고, ``peer_roster`` (v10.1.0) 가 매 턴 꼬리에 실을 동료 로스터를 돌려준다."""
-        from agent_cli.loop.ports import (
-            _AS_BEFORE,
-            _WEB_ONLY,
-            LoopPorts,
-            _hook_runner_port,
-            _hook_unwired,
-        )
+        from agent_cli.loop.ports import LoopPorts, _hook_runner_port
 
         return LoopPorts(
             owner=f"agent:{key}",
@@ -106,16 +100,10 @@ class ResidentLoop(LoopKind):
             # `agent` 도구의 권한 — run·spawn 이 모든 에이전트의 표면이다 (v10.141.0, 설계 §1).
             # 메일함·꼬리 로스터는 이 종류가 따로 정한다(`intake`·`tail_roster`).
             agent_registry=agent_registry,
-            mcp_manager=None,
+            mcp_manager=None,  # 이 호스트는 이 포트를 받은 적이 없다
             hook_runner=_hook_runner_port(),
-            route_message=None,
-            enqueue_user_message=None,
-            unwired={
-                "mcp_manager": _AS_BEFORE,
-                **_hook_unwired(),
-                "route_message": _WEB_ONLY,
-                "enqueue_user_message": _WEB_ONLY,
-            },
+            route_message=None,  # main 루프 전용 — 사람의 말을 받는 호스트(run·web)에만 있다
+            enqueue_user_message=None,  # main 루프 전용 — 사람의 말을 받는 호스트(run·web)에만 있다
         )
 
     def _engine(self):

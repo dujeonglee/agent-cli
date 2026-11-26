@@ -4,13 +4,8 @@
 테스트가 협력자를 **직접 만들어** 검사하니 조립 지점이 그걸 넘기는지는
 아무도 안 봤다. 여기 있는 것은 그 빈자리를 메우는 두 장치다:
 
-1. **무기본값** — 포트를 빠뜨리면 생성 시 `TypeError`. 언어가 잡는다.
-2. **패리티** — 빌더가 `None` 으로 둔 포트는 `unwired` 에 **사유가 있어야**
-   한다. 의도적 미연결과 빠뜨린 것이 둘 다 `None` 이던 것이 이 설계가
-   생긴 이유의 절반이다.
-
-사유 **문자열의 진위**는 여기서 못 잡는다(설계 2판이 거짓 사유를 적고
-통과했다). 강제되는 것은 "사유가 있다" 뿐이고, 그건 문서에도 적혀 있다.
+**무기본값** — 포트를 빠뜨리면 생성 시 `TypeError`. 언어가 잡는다. 빌더가 `None` 으로 둔 포트는 그 줄 옆 주석이
+왜인지 말한다(v10.177.4 — 종전의 `unwired` 사유 맵은 "사유 문자열이 있다" 만 강제했고 진위는 못 잡았다).
 """
 
 from __future__ import annotations
@@ -79,8 +74,7 @@ class TestNoDefaults:
         optional = [
             f.name
             for f in fields(LoopPorts)
-            if f.name != "unwired"
-            and not (f.default is MISSING and f.default_factory is MISSING)
+            if not (f.default is MISSING and f.default_factory is MISSING)
         ]
         assert optional == [], f"기본값이 붙은 포트: {optional}"
 
@@ -88,44 +82,6 @@ class TestNoDefaults:
         p = BUILDERS["private"]()
         with pytest.raises(dataclasses.FrozenInstanceError):
             p.owner = "agent:x"  # type: ignore[misc]
-
-
-class TestParity:
-    """§2.2 의 표가 코드가 된 자리."""
-
-    @pytest.mark.parametrize("host", sorted(BUILDERS))
-    def test_no_port_is_silently_none(self, host):
-        ports = BUILDERS[host]()
-        silent = [
-            name
-            for name, value in ports.handler_resources().items()
-            if value is None and name not in ports.unwired
-        ]
-        assert silent == [], f"{host}: 사유 없이 미연결 — {silent}"
-
-    @pytest.mark.parametrize("host", sorted(BUILDERS))
-    def test_reasons_are_not_empty(self, host):
-        ports = BUILDERS[host]()
-        blank = [k for k, v in ports.unwired.items() if not (v or "").strip()]
-        assert blank == [], f"{host}: 빈 사유 — {blank}"
-
-    @pytest.mark.parametrize("host", sorted(BUILDERS))
-    def test_reasons_name_real_ports(self, host):
-        """없는 포트에 사유를 달아두면(오타·삭제된 포트) 그건 거짓 문서다."""
-        ports = BUILDERS[host]()
-        unknown = set(ports.unwired) - set(ports.handler_resources())
-        assert unknown == set(), f"{host}: 없는 포트의 사유 — {unknown}"
-
-    @pytest.mark.parametrize("host", sorted(BUILDERS))
-    def test_wired_ports_have_no_reason(self, host):
-        """값이 있는데 '미연결 사유' 가 남아 있으면 문서가 코드와 어긋난다."""
-        ports = BUILDERS[host]()
-        stale = [
-            k
-            for k, v in ports.handler_resources().items()
-            if v is not None and k in ports.unwired
-        ]
-        assert stale == [], f"{host}: 연결됐는데 사유가 남음 — {stale}"
 
 
 class TestOwner:
@@ -163,11 +119,11 @@ class TestHandlerResources:
 
     def test_excludes_non_resources(self):
         keys = BUILDERS["private"]().handler_resources()
-        assert "owner" not in keys and "unwired" not in keys
+        assert "owner" not in keys
 
     def test_covers_every_port(self):
         p = BUILDERS["private"]()
-        expected = {f.name for f in fields(LoopPorts)} - {"owner", "unwired"}
+        expected = {f.name for f in fields(LoopPorts)} - {"owner"}
         assert set(p.handler_resources()) == expected
 
     def test_declared_requirements_are_resolvable(self):

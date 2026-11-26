@@ -676,7 +676,6 @@ class TestUncoveredSurfaces:
         한쪽만 고치는 사고가 안 난다(`runtime.py` 가 있는 이유)."""
         from agent_cli.runtime import main_run_ended
 
-        assert main_run_ended(None) == 0  # 레지스트리 없는 부팅에서 안전
         reg = mkreg()
         a = spawn_idle(reg)
         reg.note_owes("main", f"agent:{a}", "결정해 줘")  # main 이 받은 message 요청

@@ -252,12 +252,18 @@ class TestKindsStateTheirPolicy:
             def question_port(self, key=None, *, address="", name=""):
                 return object()
 
+            def absorb_main(self):  # main 의 턴 경계 흡수
+                return []
+
+            def message_handler(self, sender):  # main 의 `message`
+                return object()
+
         reg = _Reg()
         main = MainLoop(
             binding=make_binding(model="m"),
             ctx=None,
             session=None,
-            agent_registry=None,
+            agent_registry=reg,
             mcp_manager=None,
             enqueue_user_message=lambda text, nickname: {},
             route_message=lambda t, i: False,
@@ -305,8 +311,7 @@ class TestKindsStateTheirPolicy:
         `ports.wakeable`). 6b: 스킬 런도 자기 주소의 상자가 있다 — 자기가 건 질문의 답을 기다린다."""
         main, skill, one, harness, _ = self._kinds(tmp_path)
         assert one.ports.wakeable() and harness.ports.wakeable()
-        # 이 대역의 main 은 레지스트리 없이 섰다 — 받을 상자가 없어 깨울 길도 없다(제품의 main 은 늘 레지스트리가 있다)
-        assert not main.ports.wakeable()
+        assert main.ports.wakeable()  # main 상자(레지스트리의 `absorb_main`)
         assert skill.ports.wakeable()  # 자기 주소(`skill:…`)의 상자
         # 맨 종류: 상자가 없으면 거부, 있으면 기다린다
         assert not make_kind().ports.wakeable()
