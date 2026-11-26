@@ -650,10 +650,6 @@ class TestFetchFlatNative:
         assert set(props) == {"url", "download_to"}
         assert t.parameters["required"] == ["url"]
 
-    def test_wrap_single_op_is_identity(self):
-        flat = {"url": "http://x", "download_to": "a"}
-        assert self._tool().wrap_single_op(flat) == flat
-
     def test_claims_false_for_flat_payload(self):
         # claims (prefix matching) must be latent for the flat shape —
         # infer_action no longer resolves a bare {url} to fetch.

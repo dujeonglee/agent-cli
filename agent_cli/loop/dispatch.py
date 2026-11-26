@@ -1559,22 +1559,10 @@ class TurnDispatcher:
         return _CONTINUE
 
     def _op_execute_tool(self, llm_text: str, turn, op, outcome: dict, accumulate):
-        """일반 도구 op — wrap→truncation 가드→B1/A4/A5→실행→관찰 조립
+        """일반 도구 op — truncation 가드→B1/A4/A5→실행→관찰 조립
         (단독이면 자체 append, N-op 이면 accumulate)."""
         tool_name = op.action
         tool_input = op.action_input or {}
-
-        # Multi-op formats emit flat single-target ops (one file / edit /
-        # query / task per op); the tool re-wraps that into its canonical
-        # prefixed input so the validate → strip → run pipeline below is
-        # unchanged. Single-action formats bypass this (their input is
-        # already canonical).
-        if (
-            getattr(self.cfg.dialect, "multi_op", False)
-            and tool_name in TOOLS
-            and isinstance(tool_input, dict)
-        ):
-            tool_input = TOOLS[tool_name].wrap_single_op(tool_input)
 
         # Truncation guard: if JSON was repaired (truncated response),
         # strip the last element from edit_file's lines arrays
@@ -1693,14 +1681,9 @@ class TurnDispatcher:
                 store_emission=False,
             )
 
-        # Render the model's ACTUAL emission, not the dispatch-canonical
-        # form. `wrap_single_op` above re-wrapped the flat op into the
-        # tool's prefixed/batch shape (e.g. read_file `{path}` →
-        # `{read_file_reads:[...]}`) so the validate→strip→run pipeline is
-        # unchanged — but showing THAT misrepresents what the model wrote
-        # and diverges from history.jsonl / resume-replay (which store the
-        # raw op). The dispatch keeps `tool_input` (wrapped); only the card
-        # shows `op.action_input` (pre-wrap).
+        # Render the model's ACTUAL emission (`op.action_input`) — the same op
+        # history.jsonl / resume-replay store. The dispatch may have changed
+        # `tool_input` (the truncation guard above); the card does not show that.
         display_input = op.action_input if op.action_input is not None else {}
 
         def show_action() -> None:

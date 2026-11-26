@@ -202,9 +202,6 @@ class AgentTool(Tool):
         target = args.get("key") or args.get("profile") or ""
         return f"{mode} {target}".strip()
 
-    def wrap_single_op(self, flat: dict) -> dict:
-        return flat
-
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # 루프가 인터셉트 (registry/provider 필요) — 직접/테스트 호출자용.
         return ToolResult(True, output="(agent: intercepted by loop)")

@@ -1,10 +1,6 @@
 """Multi-op execution path (DESIGN §6, step 3b).
 
-Covers the two new pieces:
-- ``Tool.wrap_single_op`` — a multi-op format's flat single-target op is
-  re-wrapped into the tool's canonical prefixed (batch) input, so the
-  existing validate → strip → run pipeline applies unchanged.
-- the loop's N-op dispatch — ops run sequentially in array order, regular
+Covers the loop's N-op dispatch: ops run sequentially in array order, regular
   tool ops accumulate into ONE combined observation (per-op OK/FAIL headers,
   any-fail ⇒ turn failed), turn-ending ops flush accumulated work first,
   and a `complete` op finishes the loop (a thought-only/0-op turn is a
@@ -32,73 +28,10 @@ from agent_cli.render import get_renderer
 from agent_cli.tools.registry import TOOLS
 from tests.loop_ports import TEST_PORTS, make_ports
 
-# ─── Tool.wrap_single_op ────────────────────────────
-
 
 def _answerable(monkeypatch):
     """답이 올 수 있는 표면 — 아니면 `ask` 가 거절된다(6c). 테스트에는 터미널이 없다."""
     monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: True)
-
-
-class TestWrapSingleOp:
-    def test_read_file_flat_is_identity(self):
-        # Flat-native (Step 3): read_file's wrap_single_op is identity — the
-        # model's flat single-file op dispatches with no canonical re-wrap.
-        flat = {"path": "a.py", "stat": True}
-        assert TOOLS["read_file"].wrap_single_op(flat) == flat
-
-    def test_edit_file_flat_is_identity(self):
-        # Flat-native (Step 3): edit_file's wrap_single_op is identity — one
-        # op carries one edit, dispatched with no canonical re-wrap.
-        flat = {"path": "a.py", "op": "replace", "pos": "2#KT", "lines": ["x"]}
-        assert TOOLS["edit_file"].wrap_single_op(flat) == flat
-
-    def test_code_index_flat_is_identity(self):
-        # Flat-native (Step 3): code_index's wrap_single_op is identity — one
-        # op runs one query, dispatched with no canonical re-wrap.
-        flat = {"mode": "list", "path": "a.py"}
-        assert TOOLS["code_index"].wrap_single_op(flat) == flat
-
-    def test_agent_flat_is_identity(self):
-        # Flat-native (Step 3): delegate's wrap_single_op is identity — one op
-        # = one task. Several delegate ops in a turn run in parallel (the loop
-        # batches them), so no per-op canonical re-wrap.
-        flat = {"task": "do x", "context": "fork"}
-        assert TOOLS["agent"].wrap_single_op(flat) == flat
-
-    def test_shell_flat_is_identity(self):
-        # Flat-native (Step 3): shell is the last builtin to flatten — its
-        # wrap_single_op is now identity too.
-        assert TOOLS["shell"].wrap_single_op({"command": "ls"}) == {"command": "ls"}
-
-    def test_base_default_wrap_is_identity(self):
-        """기본은 **항등**이다 — 대부분의 도구는 표준 입력이 이미 평탄해서
-        되감을 것이 없다. 배치 모양 도구만 오버라이드한다.
-
-        ★종전 기본값은 ``add_prefix`` 였고, 그것이 오버라이드를 깜빡한
-        도구의 **모든 호출을 중앙 검증에서 거절**시켰다(키가 ``monitor_mode``
-        가 되어 required ``mode`` 를 못 찾는다). v9.11.0 의 ``monitor`` 가
-        그 상태로 나가 한 번도 동작하지 않았다 — 살아 있는 dialect 이
-        둘 다 multi_op 이라 이 경로는 프로덕션에서 항상 탄다.
-
-        MCP 어댑터는 같은 함정을 겪고 자기만 항등으로 우회해 뒀었다
-        (``mcp/adapter.py`` 주석) — 함정 자체를 없앤다."""
-
-        from agent_cli.tools.base import Tool
-        from agent_cli.tools.result import ToolResult
-
-        class _Plain(Tool):
-            name = "synthtool"
-            description = "x"
-            parameters: ClassVar[dict] = {
-                "type": "object",
-                "properties": {"command": {}},
-            }
-
-            def _run(self, args, *, ctx=None):
-                return ToolResult(True, output="")
-
-        assert _Plain().wrap_single_op({"command": "ls"}) == {"command": "ls"}
 
 
 # ─── Mock multi-op dialect ──────────────────────
@@ -311,9 +244,8 @@ class TestMultiOpDispatch:
         assert "[2/2] read_file — FAILED" in obs[0]["content"]
         assert obs[0]["success"] is False  # any-fail ⇒ combined failure
 
-    def test_flat_op_executes_via_wrap(self, tmp_path):
-        # The op carries flat {"path": ...} — only wrap_single_op makes this
-        # a valid read_file input, so success proves the wrap is applied.
+    def test_flat_op_executes(self, tmp_path):
+        # The op carries flat {"path": ...} — the flat-native read_file input.
         f1 = tmp_path / "a.txt"
         f1.write_text("alpha")
         result, ctx, _ = _run(
@@ -350,9 +282,6 @@ class TestMultiOpDispatch:
                 "properties": {"item": {"type": "string"}},
                 "required": [],
             }
-
-            def wrap_single_op(self, flat):
-                return flat
 
             def parallel_batchable(self, args):
                 return True
@@ -408,9 +337,6 @@ class TestMultiOpDispatch:
                 "properties": {"tag": {"type": "string"}},
                 "required": [],
             }
-
-            def wrap_single_op(self, flat):
-                return flat
 
             def _run(self, args, *, ctx=None):
                 ran.append(args.get("tag", ""))

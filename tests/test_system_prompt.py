@@ -220,7 +220,7 @@ class TestMultiOpPromptBranches:
 
     def test_edit_file_input_json_flat_merges_scalar_and_item(self, section):
         flat = " ".join(section.split())
-        # scalar param kept + edit-item fields surfaced (matches wrap_single_op)
+        # scalar param kept + edit-item fields surfaced
         assert '"path": "string, required' in flat
         assert '"op": "string, required' in flat and '"pos":' in flat
         assert '"edits":' not in flat and '"edit_file_edits":' not in flat

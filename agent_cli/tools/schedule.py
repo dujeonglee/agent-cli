@@ -124,9 +124,6 @@ class ScheduleTool(Tool):
         "required": ["mode"],
     }
 
-    def wrap_single_op(self, flat: dict) -> dict:
-        return flat
-
     def summary_arg(self, action_input: dict) -> str:
         std = self.strip_prefix(action_input)
         return f"{std.get('mode', '')} {std.get('label') or std.get('cron') or _sched_id(std)}".strip()

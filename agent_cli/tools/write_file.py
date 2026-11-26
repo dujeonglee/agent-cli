@@ -172,9 +172,8 @@ class WriteFileTool(Tool):
     # edit_file 이 없는 루프용 설명(``DESCRIPTION_WITHOUT_EDIT``)은 v10.77.0 에서
     # 지웠다 — write_file 이 있으면 edit_file 도 붙는다(``EditFileTool.mounted_with``).
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
-    # single-target shape — no `write_file_` wire-key prefix. `wrap_single_op`
-    # is identity (no canonical re-wrap), so the flat op dispatches straight
-    # through. `key_prefix` is left at its default; strip_prefix is then a
+    # single-target shape — no `write_file_` wire-key prefix, so the flat op
+    # dispatches straight through. `key_prefix` is left at its default; strip_prefix is then a
     # no-op on these unprefixed keys, and `claims` correctly returns False for
     # a flat `{path}` (no `write_file_` key) so it stays out of infer_action.
     parameters: ClassVar[dict] = {
@@ -192,9 +191,6 @@ class WriteFileTool(Tool):
         },
         "required": ["path", "content"],
     }
-
-    def wrap_single_op(self, flat: dict) -> dict:
-        return flat
 
     def touched_paths(self, action_input: dict) -> list[str]:
         p = self.strip_prefix(action_input).get("path")

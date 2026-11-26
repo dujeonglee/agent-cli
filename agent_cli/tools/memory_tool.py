@@ -153,9 +153,6 @@ class MemoryTool(Tool):
             missing = [m for m in missing if m != "mode"]
         return missing, unknown
 
-    def wrap_single_op(self, flat: dict) -> dict:
-        return flat
-
     def summary_arg(self, action_input: dict) -> str:
         std = self.strip_prefix(action_input)
         return f"{std.get('mode', '')} {std.get('summary', std.get('id', ''))}".strip()

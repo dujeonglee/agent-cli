@@ -82,10 +82,6 @@ def extract_file_paths(messages: list[dict[str, Any]]) -> list[str]:
             action_input = op.get("action_input")
             if tool is None or not isinstance(action_input, dict):
                 continue
-            # Stored ops are FLAT (read_file `{path}`); touched_paths reads the
-            # CANONICAL shape (`read_file_reads[].path`). Normalize flat →
-            # canonical (idempotent on already-canonical input).
-            action_input = tool.wrap_single_op(action_input)
             for entry in tool.touched_paths(action_input):
                 if entry and entry not in seen:
                     seen.add(entry)
@@ -362,8 +358,7 @@ def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
     Under a multi-op format one op IS one item,
     so the prompt must advertise the item fields at the top level — NOT the
     array wrapper. This unwraps the array param into its item-object
-    properties and keeps scalars (prefix-stripped), exactly mirroring
-    :meth:`Tool.wrap_single_op`'s flat→batch mapping. The item schema already
+    properties and keeps scalars (prefix-stripped). The item schema already
     lives in ``items.properties``, so no per-tool declaration is needed.
 
     Not doing this is what let the 27B copy the advertised ``reads`` array and

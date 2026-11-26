@@ -545,9 +545,8 @@ class TestRunLoopParseFailure:
 
 class TestActionRenderShowsRawEmission:
     """The action card must show the model's ACTUAL emission (``op.action_input``,
-    pre-wrap), not a dispatch-canonical form. read_file is flat-native (Step 3),
-    so its `wrap_single_op` is identity and the model's flat `{path}` op flows
-    straight through validate→run; the card must show that flat `{path}` —
+    as written), not a dispatch-canonical form. read_file is flat-native (Step 3),
+    so the model's flat `{path}` op flows straight through validate→run; the card must show that flat `{path}` —
     matching history.jsonl / resume-replay — never the old `read_file_reads`
     batch wrapper a reader might still expect. (The render-vs-wrap gap the
     2d45aa5 fix closed is still observable for the batch tools whose wrap

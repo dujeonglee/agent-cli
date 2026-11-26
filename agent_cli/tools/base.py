@@ -607,42 +607,6 @@ class Tool(ABC):
             return ToolResult(False, error=err)
         return self._run(std, ctx=ctx)
 
-    def wrap_single_op(self, flat: dict) -> dict:
-        """Convert a multi-op format's flat single-target op into this tool's
-        canonical (wire-key-prefixed) input.
-
-        Multi-op formats emit ONE target per op with plain standard keys
-        (``{"path": "x"}``) — the turn's op array is the batch mechanism, so
-        their ops never carry a per-tool batch wrapper.
-
-        **Default: identity, and currently nothing overrides it in substance.**
-        Every tool's schema now declares the flat single-target shape, so the
-        op the model emits IS the canonical input. The ten overrides in the
-        tree all ``return flat`` — they predate the flattening and are kept as
-        local statements of "this tool is flat-native"; none re-wraps.
-
-        The hook stays for a future genuinely batch-shaped tool (it would map
-        ``{"path": "x"}`` → ``{"read_file_reads": [{"path": "x"}]}`` so the
-        validate → strip → run pipeline applies unchanged). If you add one,
-        note that its schema must then declare the batch key as required, or
-        the contract test cannot tell the re-wrap happened.
-
-        ★ The default used to be ``add_prefix``, which namespaced the keys
-        (``mode`` → ``monitor_mode``) and made central validation reject
-        **every** call to any tool that forgot to override — silently, at
-        dispatch, only under multi-op formats. ``monitor`` shipped in
-        v9.11.0 in exactly that state and never worked once: both live wire
-        formats are ``multi_op``, so non-intercepted tools always take this
-        path. No tool relied on the prefixing default (every tool that needs
-        wrapping overrides), so identity removes the trap instead of asking
-        each new tool to remember. ``TestWrapSingleOpIdempotence`` pins it.
-
-        Overrides must be tolerant of an already-canonical input (idempotent)
-        so a model that emits the batch shape anyway still works. Only called
-        on the multi-op dispatch path; single-action formats bypass it.
-        """
-        return flat
-
     def schema_gaps(self, action_input: object) -> tuple[list[str], list[str]]:
         """``(missing required, unknown keys)`` of a call against this tool's
         schema (v10.37.0) — the facts a rejection names after the call.
@@ -661,8 +625,7 @@ class Tool(ABC):
 
         Default reads ``self.parameters``. Override when the keys a caller may
         legitimately send differ from that schema — a per-loop schema
-        (``AskTool``: residents may send ``to``) or a future batch-shaped tool
-        whose flat op is re-wrapped by :meth:`wrap_single_op`.
+        (``AskTool``: residents may send ``to``).
         """
         if not isinstance(action_input, dict):
             return [], []

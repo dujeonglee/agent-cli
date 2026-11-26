@@ -60,9 +60,6 @@ class ViewImageTool(Tool):
         "required": ["path"],
     }
 
-    def wrap_single_op(self, flat: dict) -> dict:
-        return flat
-
     def touched_paths(self, action_input: dict) -> list[str]:
         p = self.strip_prefix(action_input).get("path")
         return [p] if isinstance(p, str) and p else []

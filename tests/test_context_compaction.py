@@ -594,11 +594,9 @@ class TestFileExtractHelper:
 
     def test_extracts_all_paths_from_multi_op_record(self):
         """Regression: a multi-op format (json_fc) stores ``{ops:[...]}``;
-        extract must iterate ``ops`` AND normalize each flat op to canonical
-        before reading paths. For flat-native read_file (Step 3) ``{path}`` is
-        already canonical (identity wrap); still-prefixed batch tools are
-        normalized via their wrap_single_op. json_fc's compaction file list
-        was empty before — both gaps fixed."""
+        extract must iterate ``ops`` and read each op's paths (flat-native
+        read_file ``{path}``). json_fc's compaction file list was empty
+        before."""
         from agent_cli import dialects
 
         plugin = dialects.get("json_fc")

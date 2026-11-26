@@ -279,13 +279,9 @@ class TestMcpAdapter:
         # bare-key payload is not claimed
         assert tool.claims({"query": "x"}) is False
 
-    def test_mcp_tool_wrap_single_op_is_identity(self):
-        """Regression: under a multi-op format the loop calls
-        ``wrap_single_op`` on every tool op. MCP is prefix-less, so the base
-        default (add_prefix) would namespace its bare keys
-        (``{query}`` → ``{github.search_query}``) and the prefixed input would
-        then fail validate (SCHEMA_MISMATCH) — MCP tools unusable under the
-        default json_fc/react formats. McpTool overrides to identity."""
+    def test_mcp_tool_flat_op_validates(self):
+        """MCP is prefix-less: the model's flat op (bare schema keys) is the
+        input the loop validates and runs — it must pass the MCP schema."""
         from unittest.mock import MagicMock
 
         from agent_cli.mcp.adapter import McpTool
@@ -302,15 +298,11 @@ class TestMcpAdapter:
             },
         )
         flat = {"query": "x"}
-        assert tool.wrap_single_op(flat) == flat
-        # end-to-end: the wrapped op still validates against the MCP schema
         from agent_cli.tools.registry import TOOLS, validate_tool_input
 
         TOOLS["mcp__github__search"] = tool
         try:
-            ok, err, _ = validate_tool_input(
-                "mcp__github__search", tool.wrap_single_op(flat)
-            )
+            ok, err, _ = validate_tool_input("mcp__github__search", flat)
             assert ok is True, err
         finally:
             del TOOLS["mcp__github__search"]
