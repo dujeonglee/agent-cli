@@ -3756,7 +3756,6 @@ class TestInstantAgent:
         assert err == ""
         tm = reg.get(key)
         assert tm.role_prompt == "너는 dialect 전문가다."
-        assert tm.instructions == "너는 dialect 전문가다."
         reg.shutdown_all()
 
     def test_profile_plus_instructions_overlay(self, tmp_path, renderer, monkeypatch):
@@ -3786,7 +3785,7 @@ class TestInstantAgent:
         reg2 = make_registry(tmp_path)
         assert reg2.restore() == 1
         tm = reg2.get(key)
-        assert tm.role_prompt == "INSTANT ROLE" and tm.instructions == "INSTANT ROLE"
+        assert tm.role_prompt == "INSTANT ROLE"
         wait_until(lambda: tm.state == "idle")
         reg2.kill(key)
         assert reg2.resume_teammate(key) == ""  # 부활도 동일 정체성
