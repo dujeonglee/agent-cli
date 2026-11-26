@@ -396,7 +396,7 @@ class TestMcpAdapter:
 
         from agent_cli import dialects
         from agent_cli.mcp.adapter import McpTool
-        from agent_cli.prompts.system_prompt import build_system_prompt
+        from agent_cli.prompts.system_prompt import build_system_prompt_sections
         from agent_cli.providers.capabilities import ModelCapabilities
         from agent_cli.tools.registry import TOOLS
 
@@ -412,14 +412,23 @@ class TestMcpAdapter:
         )
         TOOLS[tool.name] = tool
         try:
-            wide = build_system_prompt(
-                caps, ["read_file", tool.name], dialect=dialects.get("json_fc")
+            wide = "\n\n".join(
+                t
+                for _, t in build_system_prompt_sections(
+                    caps, ["read_file", tool.name], dialect=dialects.get("json_fc")
+                )
             )
-            narrow = build_system_prompt(
-                caps, ["read_file"], dialect=dialects.get("json_fc")
+            narrow = "\n\n".join(
+                t
+                for _, t in build_system_prompt_sections(
+                    caps, ["read_file"], dialect=dialects.get("json_fc")
+                )
             )
-            native = build_system_prompt(
-                caps, ["read_file", tool.name], dialect=dialects.get("native_fc")
+            native = "\n\n".join(
+                t
+                for _, t in build_system_prompt_sections(
+                    caps, ["read_file", tool.name], dialect=dialects.get("native_fc")
+                )
             )
         finally:
             del TOOLS[tool.name]

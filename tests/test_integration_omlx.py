@@ -120,12 +120,15 @@ class TestConstrainedDecoding:
         self, integration_model, omlx_provider, model_capabilities
     ):
         """A real provider.call should return a ReAct-parseable response."""
-        from agent_cli.prompts.system_prompt import build_system_prompt
+        from agent_cli.prompts.system_prompt import build_system_prompt_sections
         from agent_cli.tools import TOOLS
 
-        system = build_system_prompt(
-            capabilities=model_capabilities,
-            active_tools=list(TOOLS.keys()),
+        system = "\n\n".join(
+            t
+            for _, t in build_system_prompt_sections(
+                capabilities=model_capabilities,
+                active_tools=list(TOOLS.keys()),
+            )
         )
         response = omlx_provider.call(
             messages=[

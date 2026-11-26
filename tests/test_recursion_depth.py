@@ -405,14 +405,17 @@ class TestExecutionContextDepth:
         # does is to be the cache-friendly tail. Adding the depth
         # gauge must not change its position. Build a full prompt
         # and confirm the section appears last.
-        from agent_cli.prompts.system_prompt import build_system_prompt
+        from agent_cli.prompts.system_prompt import build_system_prompt_sections
 
-        prompt = build_system_prompt(
-            capabilities=_caps(),
-            active_tools=["read_file"],
-            skill_stack=["foo"],
-            depth=1,
-            max_depth=2,
+        prompt = "\n\n".join(
+            t
+            for _, t in build_system_prompt_sections(
+                capabilities=_caps(),
+                active_tools=["read_file"],
+                skill_stack=["foo"],
+                depth=1,
+                max_depth=2,
+            )
         )
         # Position the Execution Context after every other ``##``
         # section, so prefix-stable KV cache holds.
