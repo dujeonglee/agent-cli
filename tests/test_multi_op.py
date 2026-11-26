@@ -45,7 +45,6 @@ class _MultiOpFormat(DialectBase):
 
     name = "_multi_op_test"
     action_required = False
-    multi_op = True
     # Completion is an explicit `complete` op (json_fc's model), not a
     # terminal flag — parse_turn never sets terminal.
 

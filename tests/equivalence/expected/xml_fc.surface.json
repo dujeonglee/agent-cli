@@ -16,7 +16,6 @@
  ],
  "flags": [
   "xml_fc",
-  true,
   false,
   "<",
   "<tool_call>|<function="

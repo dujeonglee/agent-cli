@@ -209,19 +209,6 @@ class DialectBase(ABC):
     The recovery path depends on the parser preserving ``action_input``
     (see :meth:`parse`)."""
 
-    multi_op: bool = False
-    """Whether the format expresses several tool ops in one turn.
-
-    False (default — 단일-action 포맷용; 내장 둘은 True): one action per turn; per-tool batch
-    fields (``read_file_reads`` etc.) let one turn touch several targets. The
-    prompt shows wire-key-prefixed params and the tools' batch prose.
-
-    True (multi-op formats): the turn carries an array of ops, so per-tool
-    batch is redundant. The prompt layer renders tool params with the prefix
-    stripped (the format's flat ``{action, params}`` convention) and drops the
-    batch-specific guide prose; the "one op per target" instruction lives once
-    in :meth:`format_rules`. See docs/inputs-array-schema/DESIGN.md §5."""
-
     # ─── Prompt (abstract) ──────────────────────────────────────
 
     @abstractmethod

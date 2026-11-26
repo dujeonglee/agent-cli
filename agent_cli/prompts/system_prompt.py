@@ -172,16 +172,10 @@ def _build_agent_inline(dialect) -> str:
             },
         )
     )
-    if getattr(dialect, "multi_op", False):
-        dependency = (
-            "  - If task B depends on task A's result, emit only A now; "
-            "use its\n    result next turn."
-        )
-    else:
-        dependency = (
-            '  - If task B depends on task A\'s result, call "run" twice: '
-            "first A,\n    then use A's result to call B."
-        )
+    dependency = (
+        "  - If task B depends on task A's result, emit only A now; "
+        "use its\n    result next turn."
+    )
     # Inline tool-guide examples show only the action_input dict —
     # the surrounding tool name (delegate) is already in the guide
     # header, and inlining the wire-shape envelope per example
@@ -298,7 +292,6 @@ def tool_guide_text(
         return None
     line, guide = render_tool_block(
         name,
-        dialect=dialect,
         inline_guides=_build_tool_inline_guides(
             active_tools, dialect, ask_guide=ask_guide
         ),

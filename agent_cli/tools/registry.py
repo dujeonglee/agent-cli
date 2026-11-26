@@ -289,9 +289,9 @@ def render_param_value(prop_schema: dict, required: bool) -> str:
 
 
 def _strip_own_prefix(name: str, text: str) -> str:
-    """Strip a tool's own wire-key prefix (``{name}_``) from text — used for
-    multi-op formats whose convention is flat ``{action, plain-keys}`` rather
-    than ``{name}_param``. Only the tool's own prefix is touched (so the bare
+    """Strip a tool's own wire-key prefix (``{name}_``) from text — the
+    dialects' convention is flat ``{action, plain-keys}`` rather than
+    ``{name}_param``. Only the tool's own prefix is touched (so the bare
     tool name, e.g. ``read_file``, is preserved)."""
     return text.replace(f"{name}_", "")
 
@@ -301,7 +301,7 @@ def flat_param_schemas(name: str, params_schema: dict) -> dict[str, tuple[dict, 
 
     The one place that knows how a batch tool's array param unwraps into
     per-op item fields and how a tool's own wire-key prefix is stripped.
-    :func:`_multi_op_flat_params` renders this for the prompt; the decoding
+    :func:`_flat_params` renders this for the prompt; the decoding
     grammar (v9.24.0) enumerates the same keys — the two surfaces must agree
     or the grammar forbids a key the prompt advertised.
     """
@@ -349,13 +349,12 @@ def effective_tool_names(tool_names: list[str] | None, dialect=None) -> list[str
     return builtin + [n for n in names if n not in rank]
 
 
-def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
-    """Render a batch tool's params as its FLAT single-op shape for multi-op
-    formats.
+def _flat_params(name: str, props: dict, required: set) -> dict:
+    """Render a batch tool's params as its FLAT single-op shape.
 
     A batch tool's schema declares its native (batch) interface: a single
     array param (``delegate_tasks``) whose items are the per-call shape.
-    Under a multi-op format one op IS one item,
+    Every dialect carries an array of ops, so one op IS one item,
     so the prompt must advertise the item fields at the top level — NOT the
     array wrapper. This unwraps the array param into its item-object
     properties and keeps scalars (prefix-stripped). The item schema already
@@ -366,17 +365,6 @@ def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
     """
     flat = flat_param_schemas(name, {"properties": props, "required": list(required)})
     return {k: render_param_value(v, req) for k, (v, req) in flat.items()}
-
-
-# Batch-framing sentences to drop from a tool's description under multi-op
-# formats (one op = one item, so "pass a list" / "in a single call" guidance
-# is wrong). Keyed by tool name; applied AFTER the wire-prefix strip. Mechanism
-# retained as an abstraction surface for any future batch tool, but currently
-# EMPTY: the flat-native tools (read_file/write_file/edit_file/code_index,
-# Step 3) describe themselves as single-op natively, and the remaining batch
-# tool (delegate) describes its tasks array accurately. ``TestMultiOp*``
-# asserts no batch phrasing leaks regardless.
-_MULTI_OP_DESC_REWRITES: dict[str, list[tuple[str, str]]] = {}
 
 
 #: 하위 스키마를 품는 JSON 스키마 키 — ``deferred_schema`` 가 이 자리만 내려간다.
@@ -433,7 +421,6 @@ def tool_view(
 def render_tool_block(
     name: str,
     *,
-    dialect=None,
     inline_guides: dict[str, str] | None = None,
     full: bool = False,
 ) -> tuple[str, str]:
@@ -445,18 +432,11 @@ def render_tool_block(
         inline_guides=inline_guides,
         full=full,
     )
-    multi_op = bool(getattr(dialect, "multi_op", False))
     props = params_schema.get("properties", {})
     required = set(params_schema.get("required", []))
-    if multi_op:
-        params = _multi_op_flat_params(name, props, required)
-    else:
-        params = {k: render_param_value(v, k in required) for k, v in props.items()}
+    params = _flat_params(name, props, required)
     params_str = json.dumps(params, ensure_ascii=False)
-    if multi_op:
-        description = _strip_own_prefix(name, description)
-        for old, new in _MULTI_OP_DESC_REWRITES.get(name, []):
-            description = description.replace(old, new)
+    description = _strip_own_prefix(name, description)
     return f"- {name}: {description}\n  Input JSON: {params_str}", guide
 
 
@@ -470,11 +450,10 @@ def get_tool_descriptions(
     Args:
         tool_names: Filter to specific tools. None = all tools.
         inline_guides: Map of tool name → extra guide text to append.
-        dialect: the active ``DialectBase``. When it is multi-op, each
-            tool's own wire-key prefix is stripped from its description and
-            param keys (flat ``{action, params}`` convention); when it does not
-            expose ``complete``, that tool is omitted from the always-included
-            set. ``None`` keeps the default (prefixed, ``complete`` shown).
+        dialect: the active ``DialectBase`` (passed on to
+            ``effective_tool_names``). Each tool's own wire-key prefix is
+            stripped from its description and param keys (flat
+            ``{action, params}`` convention).
 
     Tools are ordered by ``effective_tool_names`` (related tools together).
     """
@@ -495,7 +474,6 @@ def get_tool_descriptions(
             continue
         line, guide = render_tool_block(
             name,
-            dialect=dialect,
             inline_guides=inline_guides,
         )
         roster.append(line)

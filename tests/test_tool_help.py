@@ -171,10 +171,7 @@ class TestDeferredView:
 
         guides = _build_tool_inline_guides(ALL, dialect)
         names = R.effective_tool_names(ALL, dialect)
-        blocks = {
-            n: R.render_tool_block(n, dialect=dialect, inline_guides=guides)
-            for n in names
-        }
+        blocks = {n: R.render_tool_block(n, inline_guides=guides) for n in names}
         section = _build_tools_section(ALL, dialect)
         assert section == "## Available Tools\n" + "\n".join(
             line for line, _ in blocks.values()
@@ -240,7 +237,7 @@ class TestToolHelp:
 
     def test_a_tool_that_is_not_deferred_gets_the_same_block(self):
         out = TOOLS["tool_help"]._run({"name": "shell"}, ctx=self._ctx())
-        line, guide = R.render_tool_block("shell", dialect=D.get("xml_fc"))
+        line, guide = R.render_tool_block("shell")
         assert out.output == f"{HEADER.format(name='shell')}\n{line}{guide}"
         assert line in _build_tools_section(ALL, D.get("xml_fc"))
 
