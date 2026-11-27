@@ -919,6 +919,36 @@ class TestMidBatchValidationFailure:
         rejection = first + rest[rest.index("[2/2]") :]
         assert len(rejection) < 1500
 
+    def test_action_loop_mid_batch_note(self, tmp_path):
+        """묶음 안에서 B1(같은 호출 반복)이 나면 넛지 뒤에 묶음 꼬리말이 붙는다 — 지금은 입력
+        검증 실패와 같은 꼬리말("… re-send only it.")이다(감사 3-a, 고정)."""
+        f1 = tmp_path / "a.txt"
+        f1.write_text("alpha")
+        f2 = tmp_path / "b.txt"
+        f2.write_text("bravo")
+        same = {"action": "read_file", "path": str(f1)}
+        _, ctx, _ = _run(
+            [
+                _turn(ops=[same]),
+                _turn(ops=[same]),
+                _turn(ops=[same, {"action": "read_file", "path": str(f2)}]),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        body = next(
+            m["content"]
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "[1/2]" in m.get("content", "")
+        )
+        assert "[1/2] read_file — FAILED" in body
+        assert "Take a different action based on that result." in body
+        assert (
+            "This op did not run. The other ops in this batch were still attempted — "
+            "see their own results. Fix this op and re-send only it." in body
+        )
+        assert "[2/2] read_file — OK" in body and "bravo" in body
+
     def test_unknown_tool_mid_batch_is_the_same_shape(self, tmp_path):
         f1 = tmp_path / "a.txt"
         f1.write_text("alpha")
