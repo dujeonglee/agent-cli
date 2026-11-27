@@ -641,3 +641,121 @@ class TestRaiseForStatusWithBody:
             )
         assert "x" * 100 in str(ei.value)
         assert "x" * 200 not in str(ei.value)  # capped
+
+
+class _FakeClock:
+    """``time.sleep``·``time.monotonic`` 대역 — 잠은 시계만 민다(실제로 자지 않는다)."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.slept: list[float] = []
+
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+class TestStopDuringRetry:
+    """정지가 선 뒤의 LLM 요청 — 사용자 신고: ReadTimeout·429 재시도 도중 ■ 가 5·14분 안 풀렸다."""
+
+    @pytest.fixture
+    def clock(self, monkeypatch) -> _FakeClock:
+        c = _FakeClock()
+        monkeypatch.setattr(http_mod.time, "sleep", c.sleep)
+        monkeypatch.setattr(http_mod.time, "monotonic", c.monotonic)
+        return c
+
+    @staticmethod
+    def _call(post, stop: list[bool]):
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.providers.openai import OpenAIProvider
+
+        caps = ModelCapabilities(
+            context_window=4096, max_output_tokens=256, supports_thinking=False
+        )
+        with patch("agent_cli.providers.openai.requests.post", post):
+            return OpenAIProvider("http://x/v1", Credentials()).call(
+                messages=[{"role": "user", "content": "hi"}],
+                system="s",
+                model="m",
+                capabilities=caps,
+                on_chunk=lambda *a, **k: None,
+                interrupt_check=lambda: stop[0],
+            )
+
+    def test_read_timeout_after_stop_keeps_sending(self, clock):
+        stop = [False]
+
+        def post(*a, **k):
+            stop[0] = True  # 첫 요청이 응답 머리를 기다리는 동안 ■
+            raise requests.ReadTimeout("no headers")
+
+        post = MagicMock(side_effect=post)
+        with pytest.raises(requests.ReadTimeout):
+            self._call(post, stop)
+        assert post.call_count == 10
+        assert sum(clock.slept) == 9 * http_mod._DEFAULT_DELAY
+
+    def test_rate_limit_after_stop_keeps_waiting(self, clock):
+        stop = [False]
+        limited = _status_response(429)
+        limited.headers = {"Retry-After": "120"}
+        limited.raise_for_status.side_effect = requests.HTTPError("429")
+
+        def post(*a, **k):
+            stop[0] = True
+            return limited
+
+        post = MagicMock(side_effect=post)
+        with pytest.raises(requests.HTTPError):
+            self._call(post, stop)
+        assert post.call_count == 8
+        assert sum(clock.slept) == 7 * 120.0
+
+    def test_broken_stream_after_stop_keeps_resending(self, clock):
+        from agent_cli.providers.openai import OpenAIProvider
+
+        stop = [False]
+
+        def broken(*a, **k):
+            stop[0] = True  # 스트림이 끊긴 순간과 ■ 가 겹쳤다
+            raise requests.exceptions.ChunkedEncodingError("eof")
+
+        post = MagicMock(return_value=_ok_response())
+        with (
+            patch("agent_cli.providers.http.make_stream_patient"),
+            patch.object(OpenAIProvider, "_handle_stream", side_effect=broken),
+            pytest.raises(requests.exceptions.ChunkedEncodingError),
+        ):
+            self._call(post, stop)
+        assert post.call_count == 10
+
+    def test_stop_before_the_call_still_sends(self, clock):
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.openai import OpenAIProvider
+
+        post = MagicMock(return_value=_ok_response())
+        interrupted = LLMResponse(content="", stop_reason="interrupted")
+        with (
+            patch("agent_cli.providers.http.make_stream_patient"),
+            patch.object(OpenAIProvider, "_handle_stream", return_value=interrupted),
+        ):
+            resp = self._call(post, [True])
+        assert resp.stop_reason == "interrupted"
+        assert post.call_count == 1
+
+    def test_without_stop_retries_and_waits_are_unchanged(self, clock, capsys):
+        """정지가 서지 않으면 재시도 횟수·간격·화면 줄이 그대로다."""
+        post = MagicMock(side_effect=requests.ReadTimeout("no headers"))
+        with pytest.raises(requests.ReadTimeout):
+            self._call(post, [False])
+        assert post.call_count == 10
+        assert sum(clock.slept) == pytest.approx(9 * http_mod._DEFAULT_DELAY)
+        out = capsys.readouterr().out
+        assert [ln.strip() for ln in out.splitlines() if ln.strip()] == [
+            f"● LLM request failed (ReadTimeout) — retrying ({n}/10)"
+            for n in range(2, 11)
+        ] + ["● LLM request failed after 10 attempts: ReadTimeout"]
