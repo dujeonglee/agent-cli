@@ -440,12 +440,17 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
     def has_agent_work(self) -> bool:
         """에이전트 몫의 살아 있는 일 — 일하는 중(`state_is_active`, ``starting`` 포함)이거나 죽지 않았고 깨우는 봉투가
         쌓였다(세션 판정 `runtime.session_has_live_work` 의 한 항). 죽은 이의 남은 봉투는 일이 아니다 — 런 도중 끝난
-        (■·✕) 워커는 꺼내지 않고 나간다(세면 `run` 이 끝나지 않는다, v10.142.0)."""
-        return any(
-            self.state_is_active(t.state)
-            or (t.state != "dead" and self.backlog_of(t.key) > 0)
-            for t in list(self._agents.values())
-        )
+        (■·✕) 워커는 꺼내지 않고 나간다(세면 `run` 이 끝나지 않는다, v10.142.0).
+
+        상태와 쌓인 수를 한 락 구간에서 읽는다 — 워커의 "집기+busy" 가 같은 락 구간이라(`_next_run_item`), 따로
+        읽으면 그 사이에 집혀 상태는 집기 전(idle)·수는 집은 뒤(0)로 읽혀 둘 다 '없음' 이 된다. 창구의 조건변수는
+        재진입 락이라 ``backlog_of`` 가 같은 락을 다시 잡아도 된다."""
+        with self._cv:
+            return any(
+                self.state_is_active(t.state)
+                or (t.state != "dead" and self.backlog_of(t.key) > 0)
+                for t in list(self._agents.values())
+            )
 
     def set_max_agents(self, value) -> int:
         """Set the live-agent cap (session-only, web UI). ``value <= 0`` →

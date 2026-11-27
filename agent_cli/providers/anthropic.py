@@ -147,6 +147,7 @@ class AnthropicProvider:
                     attempts=attempts,
                 ),
                 max_attempts=settings.stream_max_attempts,
+                interrupt_check=kwargs.get("interrupt_check"),
             )
 
         r = post_with_retry(
