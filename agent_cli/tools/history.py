@@ -367,12 +367,12 @@ def _help(session_dir: Path | None) -> ToolResult:
         "history: query session history with SQL (read-only SELECT over the",
         "`history` table; pass it as `query`).",
         "",
-        "Table `history` (one row per turn record):",
+        "Table `history` (one row per record):",
         schema,
         "",
         (
             "  kind: query=user ask · action=tool-call turn · observation=tool result"
-            " · final=complete answer · raw=unparsed"
+            " · final=complete answer · raw=unparsed · system=system prompt"
         ),
         (
             '  Default scope = current session; set `sessions` to "all" or id(s) for others.'
@@ -402,7 +402,7 @@ class HistoryTool(Tool):
         "record): session, loc, seq, kind (query/action/observation/final/raw/"
         "system), turn, ts, tools, files, author, text — `text` is the full content. "
         "Rows come back whole, so project and limit (substr of `text`, a LIMIT) and "
-        "fetch the one row you need afterwards; an oversized result is refused. Omit "
+        "fetch the one row you need afterwards. Omit "
         "`query` for the schema, examples and the session list. Default scope is the "
         'current session; `sessions` "all" or session id(s) reaches others.'
     )

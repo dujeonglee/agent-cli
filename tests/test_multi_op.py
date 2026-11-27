@@ -365,10 +365,42 @@ class TestMultiOpDispatch:
         assert result.success
         assert ran == ["t1"]  # terminal op 은 디스패치됨
         msgs = [m.get("content", "") for m in ctx.get_raw_messages()]
-        # ① 누적 read 결과가 flush 됨 (단독 op 라 [1/1] combined)
-        assert any("[1/1] read_file — OK" in c and "alpha" in c for c in msgs)
+        # ① 누적 read 결과가 flush 됨 — 버린 op 의 알림과 한 관찰로
+        assert any("[1/2] read_file — OK" in c and "alpha" in c for c in msgs)
         # ③ terminal 뒤의 op 은 실행되지 않음
         assert not any("should not appear" in c for c in msgs)
+        # ④ 그 사실을 알린다 (감사 2-4 — 종전엔 말없이 버려졌다)
+        assert any(
+            "[2/2] batch — FAILED\nNot executed — `termtool` ends the turn, so the "
+            "calls after it did not run: [3/3] read_file. Send them in a later turn "
+            "if you still need them." in c
+            for c in msgs
+        )
+
+    def test_complete_first_still_notes_the_dropped_ops(self, tmp_path):
+        """`complete` 가 맨 앞이어도 같은 알림이 기록에 남는다 — 런은 그 답으로 끝난다."""
+        f = tmp_path / "a.txt"
+        f.write_text("alpha")
+        result, ctx, provider = _run(
+            [
+                _turn(
+                    ops=[
+                        {"action": "complete", "result": "fin"},
+                        {"action": "read_file", "path": str(f)},
+                    ]
+                )
+            ],
+            tmp_path,
+        )
+        assert result.success and result.output == "fin"
+        assert provider.call.call_count == 1
+        msgs = [m.get("content", "") for m in ctx.get_raw_messages()]
+        assert any(
+            "Not executed — `complete` ends the turn, so the calls after it did not "
+            "run: [2/2] read_file." in c
+            for c in msgs
+        )
+        assert not any("alpha" in c for c in msgs)
 
     def test_complete_op_ends_with_result(self, tmp_path):
         # Completion is an explicit `complete` op (DESIGN Exp 8): one turn,
@@ -918,6 +950,37 @@ class TestMidBatchValidationFailure:
         assert "[2/2] memory — FAILED" in rest
         rejection = first + rest[rest.index("[2/2]") :]
         assert len(rejection) < 1500
+
+    def test_action_loop_mid_batch_note(self, tmp_path):
+        """묶음 안에서 B1(같은 호출 반복)이 나면 넛지 뒤의 꼬리말은 "다시 보내라" 를 말하지
+        않는다 — 넛지는 다른 행동을 권한다(감사 3-a: 종전엔 "… re-send only it.")."""
+        f1 = tmp_path / "a.txt"
+        f1.write_text("alpha")
+        f2 = tmp_path / "b.txt"
+        f2.write_text("bravo")
+        same = {"action": "read_file", "path": str(f1)}
+        _, ctx, _ = _run(
+            [
+                _turn(ops=[same]),
+                _turn(ops=[same]),
+                _turn(ops=[same, {"action": "read_file", "path": str(f2)}]),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        body = next(
+            m["content"]
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "[1/2]" in m.get("content", "")
+        )
+        assert "[1/2] read_file — FAILED" in body
+        assert "Take a different action based on that result." in body
+        assert (
+            "This op did not run. The other ops in this batch were still attempted — "
+            "see their own results.\n" in body
+        )
+        assert "re-send" not in body
+        assert "[2/2] read_file — OK" in body and "bravo" in body
 
     def test_unknown_tool_mid_batch_is_the_same_shape(self, tmp_path):
         f1 = tmp_path / "a.txt"

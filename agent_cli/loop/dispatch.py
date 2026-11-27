@@ -84,6 +84,12 @@ BATCH_OP_SKIPPED_NOTE = (
     "This op did not run. The other ops in this batch were still attempted — "
     "see their own results. Fix this op and re-send only it."
 )
+#: 묶음 안의 B1(같은 호출 반복) 자리 (감사 3-a) — 넛지가 "다른 행동을" 이라고 하므로 다시
+#: 보내라는 말은 붙이지 않는다(다시 보내면 곧 반복이고 다음 단계, 끝내 런 종료다).
+BATCH_LOOP_SKIPPED_NOTE = (
+    "This op did not run. The other ops in this batch were still attempted — "
+    "see their own results."
+)
 
 #: 답할 길이 없는 곳의 `ask` (6c) — 표면이 "답이 올 수 있다" 고 말하지 않으면(`Renderer.can_prompt`) 질문을 올리지도
 #: 묻지도 않는다. 누가 묻든(main·스킬·에이전트) 같은 글이다
@@ -740,6 +746,9 @@ class TurnDispatcher:
             # the work done so far (chronological order for the model).
             # ``Tool.terminal`` 속성 파생 (T3 선언화 — 종전 도구명 튜플).
             if tool is not None and tool.terminal:
+                self._note_not_run_after_terminal(
+                    op.action, ops[i + 1 :], len(ops), i, results
+                )
                 self._flush_op_results(turn.record, results)
                 return self._dispatch_op(llm_text, turn, op, outcome)
             # Ops run sequentially, in order — the correctness guarantee for
@@ -815,6 +824,25 @@ class TurnDispatcher:
             return False
         stop = self.state.stop_event
         return bool(stop is not None and stop.is_set())
+
+    def _note_not_run_after_terminal(
+        self, name: str, skipped: list, total: int, at: int, results: list[dict]
+    ) -> None:
+        """턴을 끝내는 호출 뒤의 op 은 실행하지 않았다고 결과에 한 줄 남긴다 (감사 2-4) —
+        문법은 종결 호출을 끝에만 허용하지만 문법 없는 서버·native_fc 에는 그 막음이 없다.
+        종전엔 말없이 버려져 모델은 그 결과를 기다렸다."""
+        if not skipped:
+            return
+        names = ", ".join(
+            f"[{at + 2 + k}/{total}] {o.action or '?'}" for k, o in enumerate(skipped)
+        )
+        self.tools.accumulate_raw(
+            results,
+            "batch",
+            f"Not executed — `{name}` ends the turn, so the calls after it did not "
+            f"run: {names}. Send them in a later turn if you still need them.",
+            False,
+        )
 
     def _note_not_run_after_stop(
         self, skipped: list, total: int, first: int, results: list[dict]
@@ -1099,17 +1127,19 @@ class TurnDispatcher:
         )
         nag = bool(still_open or debts or awaited) and ledger.spend()
         show_open_items(self.cfg, self.state)  # 정산·예산 소진이 띠에 바로 선다
+        # 종결 레코드의 "아직 열린 것" 은 되돌림이 보는 것과 같은 집합이다(감사 3-f).
+        open_now = [*still_open, *debts, *awaited]
         if nag:
             # 기록은 `_intervene` 이 한다 — 이 턴의 assistant 레코드(종결 모양)를
             # 관찰과 함께 저장한다. 따로 넣으면 같은 final 이 두 번 들어간다.
-            turn.record = self._terminal_record(turn, answer, claimed, still_open)
+            turn.record = self._terminal_record(turn, answer, claimed, open_now)
             return self._nag_open_items(
                 llm_text, turn, claimed, still_open, debts, outcome, awaited
             )
         answer = self._with_unanswered_notice(claimed, still_open, answer)
         answer = self._with_awaited_notice(awaited, answer)
         if self.ctx:
-            self.ctx.add(self._terminal_record(turn, answer, claimed, still_open))
+            self.ctx.add(self._terminal_record(turn, answer, claimed, open_now))
         return ToolResult(True, output=answer)
 
     def _op_wait(self, llm_text: str, turn, op, outcome: dict):
@@ -1301,8 +1331,9 @@ class TurnDispatcher:
         return _CONTINUE
 
     def _terminal_record(self, turn, answer: str, claimed, still_open) -> dict:
-        """종결 레코드 — `answers` 가 있으면 정산 뒤 남은 요청 id 도 함께
-        (v10.23.0; 서버 파싱 렌더가 결과 문구에 쓴다)."""
+        """종결 레코드 — `answers` 가 있으면 정산 뒤 아직 열린 항목 id 도 함께
+        (v10.23.0; 서버 파싱 렌더가 결과 문구에 쓴다). ``still_open`` 은 남은 요청·빚·
+        기다리는 회신 — 되돌림 판정과 같은 집합."""
         return self.cfg.dialect.serialize_terminal_for_history(
             turn.thought or "",
             answer,
@@ -1645,7 +1676,7 @@ class TurnDispatcher:
                 self.tools.accumulate_raw(
                     accumulate,
                     tool_name,
-                    f"{intervention.message}\n{BATCH_OP_SKIPPED_NOTE}",
+                    f"{intervention.message}\n{BATCH_LOOP_SKIPPED_NOTE}",
                     False,
                 )
                 return None

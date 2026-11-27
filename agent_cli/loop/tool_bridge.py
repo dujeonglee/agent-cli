@@ -414,9 +414,16 @@ class ToolBridge:
                 tool_guide=self._tool_guide,
                 tool_names=tuple(effective_tool_names(sorted(available))),
                 stopped=self._run_stopped,
+                agent_slots=self._agent_slots,
             )
             self._run_ctx_cache = cached
         return cached
+
+    def _agent_slots(self) -> int | None:
+        """지금 더 띄울 수 있는 에이전트 수 — ``RunContext.agent_slots``. 레지스트리가 없으면
+        ``None``(모름). 부를 때 읽는다. 읽기만 한다."""
+        registry = self.cfg.kind.ports.agent_registry
+        return registry.free_slots() if registry is not None else None
 
     def _run_stopped(self) -> bool:
         """이 런의 정지가 섰는가 — ``RunContext.stopped``. 런마다 바뀌는 ``state.stop_event`` 를
@@ -562,6 +569,7 @@ class ToolBridge:
                 retry_hint=GENERIC_RETRY_HINT,
                 tools_available=frozenset(self.cfg.tools_list),
                 reason=reason,
+                agent_slots=self._agent_slots(),
             ),
             [],
         )

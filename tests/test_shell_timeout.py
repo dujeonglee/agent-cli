@@ -74,3 +74,15 @@ def test_description_states_the_result_shape_not_task_kinds():
         assert kind not in d
     bg = ShellTool.parameters["properties"]["background"]["description"]
     assert "installs" not in bg and "test suites" not in bg
+
+
+def test_timeout_below_one_second():
+    """`timeout` 0·음수는 거절 (감사 1-8 — 종전엔 시작하자마자 "timed out after 0s")."""
+    from agent_cli.tools.registry import validate_tool_input
+
+    for t in (0, -5):
+        ok, err, _ = validate_tool_input("shell", {"command": "true", "timeout": t})
+        assert not ok
+        assert err == (
+            "`timeout` must be at least 1 second; omit it for the default (120)."
+        )

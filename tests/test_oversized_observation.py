@@ -99,7 +99,14 @@ class TestToolSurfaces:
 
 
 def _nudge(
-    tool_name, body, *, cap=1000, tools=("read_file", "agent"), tmp_path=None, args=None
+    tool_name,
+    body,
+    *,
+    cap=1000,
+    tools=("read_file", "agent"),
+    tmp_path=None,
+    args=None,
+    agent_slots=None,
 ):
     """Render one tool's over-cap observation through the real seam."""
     tool = TOOLS[tool_name]
@@ -107,6 +114,7 @@ def _nudge(
         session_dir=tmp_path,
         oversized_cap=cap,
         tools_available=frozenset(tools),
+        agent_slots=agent_slots,
     )
     return tool.render_oversized(
         ToolResult(True, output=body),
@@ -194,6 +202,20 @@ class TestUnifiedNudge:
         n = _nudge("shell", body, cap=1000, tmp_path=tmp_path)
         assert self._sections(n) == 16
         assert "still large" in n and "`read_file` with `search`" in n
+
+    def test_fanout_and_the_agent_limit(self, tmp_path):
+        """감사 1-5 — 갈래 수는 지금 띄울 수 있는 에이전트 수를 넘지 않는다(종전엔 상한을 보지
+        않고 16 개까지 권했다). 깎이면 "still large" 꼬리가 붙고, 자리가 없으면 그 길이 없다."""
+        body = self._body(40_000)
+        n = _nudge("shell", body, cap=1000, tmp_path=tmp_path, agent_slots=lambda: 10)
+        assert self._sections(n) == 10 and "still large" in n
+        n = _nudge("shell", body, cap=1000, tmp_path=tmp_path, agent_slots=lambda: 3)
+        assert self._sections(n) == 3
+        n = _nudge("shell", body, cap=1000, tmp_path=tmp_path, agent_slots=lambda: 0)
+        assert 'mode "run"' not in n and "Next time —" in n
+        # 상한 없음(None) — 종전 상한 16
+        n = _nudge("shell", body, cap=1000, tmp_path=tmp_path, agent_slots=lambda: None)
+        assert self._sections(n) == 16
 
     def test_persist_failure_degrades_without_claiming_a_file(self, monkeypatch):
         monkeypatch.setattr(

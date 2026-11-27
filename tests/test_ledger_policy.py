@@ -19,6 +19,7 @@ import pytest
 
 from agent_cli import item_ids
 from agent_cli.context.manager import ContextManager
+from agent_cli.dialects import get as get_dialect
 from agent_cli.loop.ledger import (
     NAG_BUDGET,
     RESULT_SHAPE_LINE,
@@ -168,6 +169,22 @@ class TestOneBudget:
         lp = _loop(tmp_path, requests=[_req(1, "A"), _req(2, "B")])
         out, _ = _complete(lp, result="둘 다", answers=["u-1", "u-2"])
         assert out == "둘 다" and lp._state.ledger.budget == NAG_BUDGET
+
+
+class TestTerminalRecordStillOpen:
+    """종결 레코드의 ``open_requests`` — native_fc 의 결과 문장 "Still open: … / Nothing else
+    open." 이 읽는다. 되돌림과 같은 집합 — 빚(r-)도 센다(감사 3-f: 종전엔 요청만)."""
+
+    def test_debt_left_when_the_budget_is_spent(self, tmp_path, finals):
+        lp = _loop(tmp_path, requests=[_req(1, "A")], debts=[_REPLY], ctx=True)
+        lp._state.ledger.budget = 0
+        _complete(lp, result="A 했다", answers=["u-1"])
+        rec = lp.ctx.get_raw_messages()[-1]
+        assert rec["role"] == "assistant" and rec["open_requests"] == ["r-4"]
+        native = get_dialect("native_fc").render_terminal_result(rec, index=1)
+        assert native["content"] == (
+            "completed task. Closed [u-1] in the open items. Still open: [r-4]."
+        )
 
 
 class TestIdsAreOneFormat:

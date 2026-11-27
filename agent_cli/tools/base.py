@@ -95,6 +95,10 @@ class RunContext:
     #: main 은 런마다 새 Event 라 읽을 때 본다. 전경 `shell` 이 기다리는 사이사이 보고, 서면
     #: 명령의 프로세스 그룹을 끝낸다. ``is_set()`` 만 쓴다(`agent_stop.LinkedStop` 의 부모까지 본다).
     stopped: Callable[[], bool] | None = None
+    #: 지금 더 띄울 수 있는 에이전트 수를 돌려주는 콜러블 (감사 1-5, None = 모름; 콜러블이
+    #: ``None`` 을 돌려주면 상한 없음). 과대 출력 넛지의 갈래 수가 이 수를 넘지 않는다 —
+    #: 따를 수 없는 수를 권하지 않는다. 같은 이유로 콜러블.
+    agent_slots: Callable[[], int | None] | None = None
 
 
 # ── Oversized-output policy (ONE policy, every tool) ─────────────
@@ -235,15 +239,17 @@ def oversized_excerpt(body: str, cap: int) -> str:
     return "\n".join(parts)
 
 
-def _fanout_route(path: str, nlines: int, tokens: int, cap: int) -> str:
+def _fanout_route(
+    path: str, nlines: int, tokens: int, cap: int, max_sections: int
+) -> str:
     """The divide-and-conquer route: split the file into sections sized to fit
     a sub-agent's context and emit one ``agent(mode="run")`` op per section in
     ONE turn (agent-cli runs same-turn run ops concurrently), each returning a
     short summary. Neither the sub-agents nor the parent ever hold the bulk."""
     per_section = max(1, int(cap * _FANOUT_FILL))
     k = max(2, -(-tokens // per_section))  # ceil
-    capped = k > _FANOUT_MAX_SECTIONS
-    k = min(k, _FANOUT_MAX_SECTIONS)
+    capped = k > max_sections
+    k = min(k, max_sections)
     if nlines <= 1:
         return (
             f'Analyse the whole thing? Divide and conquer: split "{path}" into '
@@ -283,6 +289,7 @@ def oversized_nudge(
     reason: str = "",
     saved_note: str = "",
     path_is_source: bool = False,
+    agent_slots: int | None = None,
 ) -> str:
     """The single over-cap observation, identical in shape for every tool.
 
@@ -291,7 +298,9 @@ def oversized_nudge(
     budget guard passes its own so the model is told the truth about WHY its
     output was replaced (the turn's accumulated total, not this one result).
     ``saved_note`` — one sentence on what the saved file IS, after the "saved
-    to" line (:attr:`Tool.oversized_saved_note`)."""
+    to" line (:attr:`Tool.oversized_saved_note`). ``agent_slots`` — how many more
+    agents can be alive now (``None`` = no limit known): the fan-out route never
+    asks for more sections than that, and is left out at 0."""
     nlines = body.count("\n") + 1
     why = reason or (
         f"output is ~{tokens:,} tokens — too large for one context (cap {cap:,})"
@@ -331,8 +340,13 @@ def oversized_nudge(
             "Know roughly where it is? Read that range:\n"
             f'    `read_file` on "{path}" with `line_start` and `line_end`'
         )
-    if path and "agent" in tools_available:
-        routes.append(_fanout_route(path, nlines, tokens, cap))
+    if path and "agent" in tools_available and agent_slots != 0:
+        max_sections = (
+            _FANOUT_MAX_SECTIONS
+            if agent_slots is None
+            else min(_FANOUT_MAX_SECTIONS, agent_slots)
+        )
+        routes.append(_fanout_route(path, nlines, tokens, cap, max_sections))
     routes.append(f"Next time — {retry_hint or GENERIC_RETRY_HINT}")
 
     body_lines = ["", "Get what you need from it:"] if path else ["", "What to do:"]
@@ -578,6 +592,7 @@ class Tool(ABC):
             reason=reason,
             saved_note=self.oversized_saved_note,
             path_is_source=self.oversized_path_is_source,
+            agent_slots=ctx.agent_slots() if ctx.agent_slots else None,
         )
 
     def validate(self, args: dict) -> str | None:

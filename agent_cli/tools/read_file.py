@@ -261,6 +261,9 @@ def _read_one(
         context = int(context) if context else _DEFAULT_SEARCH_CONTEXT
     except (ValueError, TypeError):
         line_start, line_end, context = 0, 0, _DEFAULT_SEARCH_CONTEXT
+    # `line_start` 를 빼면 1 부터다(설명 "Omit to start at line 1.") — `line_end` 만 와도 범위.
+    if line_end > 0 and line_start <= 0:
+        line_start = 1
 
     # 민감 경로 게이트 (v9.10.0) — read_file 은 **워크스페이스 봉쇄 대상이 아니다**
     # (밖 헤더·툴체인을 대량으로 읽으므로 프롬프트 폭풍이 된다). 하지만

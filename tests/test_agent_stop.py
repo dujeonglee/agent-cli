@@ -770,3 +770,34 @@ class TestStopEverythingAgentRequesters:
         assert reg.stop_all_runs() == [sub.key]
         # 회신이 런을 열었다(인용된 과제 글의 표지로 가짜 엔진이 그 런을 붙잡는다)
         assert until(lambda: res.state == "busy" and held_items(res) == [])
+
+
+class TestAgentAddressedByName:
+    """`agent` 의 `key` 자리도 `message` 처럼 키 또는 이름 (감사 3-1 — 종전엔 키만)."""
+
+    def test_kill_and_status_by_name(self, reg):
+        tm = peer(reg, "agt-named0001")
+        tm.instance_name = "ui"
+        tm.state = "dead"
+        caller = make_caller(owner="main", agent_registry=reg)
+        status = tool_agent(
+            {"mode": "status", "key": "ui"}, registry=reg, caller=caller
+        )
+        assert "agt-named0001" in status.output
+        kill = tool_agent({"mode": "kill", "key": "ui"}, registry=reg, caller=caller)
+        assert kill.success and "agt-named0001" in kill.output
+        unknown = tool_agent(
+            {"mode": "kill", "key": "nobody"}, registry=reg, caller=caller
+        )
+        assert unknown.error == 'kill rejected: unknown agent "nobody"'
+
+
+def test_free_slots_counts_the_living(reg):
+    """`free_slots` — 상한 − 살아 있는 수, 상한 0(없음)이면 None (과대 넛지가 읽는다)."""
+    reg.max_agents = 3
+    peer(reg, "agt-a")
+    dead = peer(reg, "agt-b")
+    dead.state = "dead"
+    assert reg.free_slots() == 2
+    reg.max_agents = 0
+    assert reg.free_slots() is None

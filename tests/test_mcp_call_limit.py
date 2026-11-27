@@ -399,3 +399,25 @@ def test_real_server_run_stop_gives_up_then_the_connection_still_answers(servers
     assert r.error.endswith("s.")
     assert _fast(m, "patient", "after-stop") == "fast:after-stop"
     assert loop_tasks(m) == baseline
+
+
+# ── 서버가 오류로 답한 호출 (감사 1-10) ─────────────────────────────
+
+ERROR_SERVER = Path(__file__).parent / "fixtures" / "error_mcp_server.py"
+
+
+def test_a_tool_error_from_the_server():
+    """서버가 ``isError: true`` 로 답하면 실패다 — 글은 서버의 오류 본문 그대로(감사 1-10: 종전엔
+    성공으로 기록됐다)."""
+    m = McpClientManager()
+    cfg = McpServerConfig(
+        name="errors", command=sys.executable, args=[str(ERROR_SERVER)]
+    )
+    try:
+        assert m.connect_all({"errors": cfg}, warn=False) == {"errors": "connected"}
+        r = McpTool(m, "errors", "denied", "", {}).run({"path": "/x"})
+    finally:
+        m.disconnect_all()
+    assert not r.success
+    # 오류 본문은 SDK 가 짓는다 — 1.x 는 예외의 글을 붙이고 2.x 는 붙이지 않는다. 머리만 본다.
+    assert r.error.startswith("Error executing tool denied")

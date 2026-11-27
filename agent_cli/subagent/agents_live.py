@@ -455,6 +455,12 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
         self.max_agents = clamp_max_agents(value)
         return self.max_agents
 
+    def free_slots(self) -> int | None:
+        """지금 더 띄울 수 있는 에이전트 수 — 상한이 없으면(0) ``None``."""
+        if not self.max_agents:
+            return None
+        return max(0, self.max_agents - self.alive_count())
+
     def _at_agent_limit(self) -> bool:
         """True when a new spawn/resume would exceed the cap. 0 = unlimited."""
         return bool(self.max_agents) and self.alive_count() >= self.max_agents

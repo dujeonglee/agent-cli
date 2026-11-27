@@ -219,10 +219,8 @@ class BrowserTool(Tool):
         )
         header = session.screenshot(str(dest), full_page=full_page)
         ref = _images.make_ref(dest)
-        info = (
-            f"{header} — {ref.mime}, {ref.bytes:,} bytes, saved to {ref.path}; "
-            "the image is attached to this result."
-        )
+        # 그림이 보이는지는 공급자 경계가 사실대로 붙인다(못 보는 모델엔 "image not shown").
+        info = f"{header} — {ref.mime}, {ref.bytes:,} bytes, saved to {ref.path}."
         return ToolResult(
             True, output=f"{ref.placeholder}\n{info}", images=[ref.to_dict()]
         )

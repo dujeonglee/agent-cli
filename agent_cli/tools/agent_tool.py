@@ -106,8 +106,8 @@ class AgentTool(Tool):
                 "type": "string",
                 "description": (
                     '"spawn": optional instance label to tell same-profile agents '
-                    'apart (e.g. two coders as "ui" and "api"). Display only — '
-                    "always address agents by their `key`."
+                    'apart (e.g. two coders as "ui" and "api"). Anywhere an agent is '
+                    "addressed, its name works as well as its `key`."
                 ),
             },
             "task": {
@@ -133,8 +133,8 @@ class AgentTool(Tool):
             "key": {
                 "type": "string",
                 "description": (
-                    'agent key returned by "run"/"spawn" (required for "resume"/'
-                    '"kill"; optional filter for "status")'
+                    'agent key returned by "run"/"spawn", or its name (required for '
+                    '"resume"/"kill"; optional filter for "status")'
                 ),
             },
             "tools": {

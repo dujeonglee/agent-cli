@@ -439,8 +439,11 @@ class TestToolsAsk:
 
     def test_nowhere_to_answer_is_refused_as_before(self, monkeypatch, surface):
         session_slots.set_agent_registry(None)
-        assert shell.confirm_dangerous("rm -rf build").startswith(
-            "Refused: command contains `rm` but this interface can't prompt"
+        # 1-11: 모델이 할 수 없는 일(하니스 프로세스의 환경 변수)은 권하지 않는다.
+        assert shell.confirm_dangerous("rm -rf build") == (
+            "Refused: command contains `rm` and no one can be asked to confirm it "
+            "right now (non-interactive shell, or no connected client). Only the user "
+            "can allow it — if the task needs it, say so in your answer."
         )
 
 

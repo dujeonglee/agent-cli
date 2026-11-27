@@ -161,7 +161,13 @@ class TestGuardGating:
         denial = _confine.guard([str(outside / "x")], "write_file")
         assert denial is not None
         assert "outside the workspace" in denial
-        assert "AGENT_CLI_WORKSPACE_CONFINE=0" in denial
+        # 1-11: 모델이 할 수 없는 일(하니스 프로세스의 환경 변수)은 권하지 않는다.
+        assert denial.endswith(
+            "and no one can be asked to confirm it right now (non-interactive shell, "
+            "or no connected client). Only the user can allow it — if the task needs "
+            "it, say so in your answer."
+        )
+        assert "AGENT_CLI_" not in denial
 
 
 class TestDevicePseudoFiles:

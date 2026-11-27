@@ -167,7 +167,8 @@ class WriteFileTool(Tool):
         " again and keeps it in your context. If the same edit keeps failing on a small"
         " file, rewriting it is fine. Returns the written file tagged LINE#HASH:content"
         " — the whole file when it is short, otherwise its first and last lines; "
-        "`read_file` shows the rest tagged."
+        "a small change to an existing file returns the diff and the changed lines "
+        "tagged instead. `read_file` shows the rest tagged."
     )
     # edit_file 이 없는 루프용 설명(``DESCRIPTION_WITHOUT_EDIT``)은 v10.77.0 에서
     # 지웠다 — write_file 이 있으면 edit_file 도 붙는다(``EditFileTool.mounted_with``).

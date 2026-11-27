@@ -127,10 +127,10 @@ def confirm_dangerous(
     # from trying when no prompt could be shown.
     if not confirm.answerable():
         return (
-            f"Refused: command contains `{keyword}` but this interface can't "
-            "prompt for confirmation right now (non-interactive shell, or no "
-            "connected client). Set AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 to "
-            "bypass for non-interactive runs."
+            f"Refused: command contains `{keyword}` and no one can be asked to "
+            "confirm it right now (non-interactive shell, or no connected client). "
+            "Only the user can allow it — if the task needs it, say so in your "
+            "answer."
         )
     # ⚡ 자동 승인 (v10.120.0 부터 확인 밖 — 정책은 안전 확인의 것): 묻지 않고 once.
     if get_renderer().auto_approved(cmd):
@@ -523,6 +523,19 @@ class ShellTool(Tool):
         # 이 명령은 방금까지 컨텍스트에 통째로 있던 것이라 트랜스크립트가
         # 밀려난 양을 넘지 못한다.
         return self.strip_prefix(action_input).get("command") or ""
+
+    def validate(self, args: dict) -> str | None:
+        """`timeout` 은 1 초 이상 (감사 1-8) — 0·음수는 종전엔 시작하자마자 시간 초과였다."""
+        try:
+            asked = int(args.get("timeout", FOREGROUND_LIMIT))
+        except (TypeError, ValueError):
+            return None  # 형은 중앙 검증이 본다
+        if asked < 1:
+            return (
+                "`timeout` must be at least 1 second; omit it for the default "
+                f"({FOREGROUND_LIMIT})."
+            )
+        return None
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         background = args.get("background") is True or str(
