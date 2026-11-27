@@ -770,3 +770,19 @@ class TestStopEverythingAgentRequesters:
         assert reg.stop_all_runs() == [sub.key]
         # 회신이 런을 열었다(인용된 과제 글의 표지로 가짜 엔진이 그 런을 붙잡는다)
         assert until(lambda: res.state == "busy" and held_items(res) == [])
+
+
+class TestAgentAddressedByName:
+    """`agent` 의 `key` 자리 — 지금은 키만 받는다, `message` 는 이름도 받는다(감사 3-1, 고정)."""
+
+    def test_kill_and_status_by_name(self, reg):
+        tm = peer(reg, "agt-named0001")
+        tm.instance_name = "ui"
+        tm.state = "dead"
+        caller = make_caller(owner="main", agent_registry=reg)
+        status = tool_agent(
+            {"mode": "status", "key": "ui"}, registry=reg, caller=caller
+        )
+        assert status.output == 'unknown agent "ui"'
+        kill = tool_agent({"mode": "kill", "key": "ui"}, registry=reg, caller=caller)
+        assert not kill.success and kill.error == 'kill rejected: unknown agent "ui"'
