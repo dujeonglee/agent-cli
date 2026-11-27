@@ -1305,7 +1305,7 @@ class TestHistoryTool:
         from agent_cli.tools.history import tool_history
 
         result = tool_history(
-            {"query": "SELECT DISTINCT session FROM history", "sessions": "all"},
+            {"query": "SELECT DISTINCT session FROM history", "sessions": ["all"]},
             extract_paths=extract_file_paths,
         )
         assert result.success
@@ -1360,18 +1360,31 @@ class TestHistoryTool:
         from agent_cli.tools.history import tool_history
 
         result = tool_history(
-            {"query": "SELECT session FROM history", "sessions": "s1"},
+            {"query": "SELECT session FROM history", "sessions": ["s1"]},
             extract_paths=extract_file_paths,
         )
         assert result.success
         assert "session=s1" in result.output and "session=s2" not in result.output
+
+    def test_sessions_as_one_string_is_refused(self, tmp_path, monkeypatch):
+        """배열로만 받는다 — 도구 자신의 문자열 관용은 지웠다(1-3 뒤로 모델 호출로는 닿지 않았다)."""
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
+        from agent_cli.tools.history import tool_history
+
+        result = tool_history(
+            {"query": "SELECT session FROM history", "sessions": "s1"},
+            extract_paths=extract_file_paths,
+        )
+        assert not result.success
+        assert result.error == "sessions must be an array of strings, got str"
 
     def test_sessions_unknown_errors(self, tmp_path, monkeypatch):
         self._patch_base(monkeypatch, tmp_path)
         from agent_cli.tools.history import tool_history
 
         result = tool_history(
-            {"query": "SELECT * FROM history", "sessions": "nope"},
+            {"query": "SELECT * FROM history", "sessions": ["nope"]},
             extract_paths=extract_file_paths,
         )
         assert not result.success

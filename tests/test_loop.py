@@ -1,6 +1,7 @@
 """Tests for agent loop (integration with mocked provider)."""
 
 import json
+import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.credentials import Credentials
+from agent_cli.tools.registry import TOOLS
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
@@ -2151,17 +2153,13 @@ class TestToolHistoryTracking:
         assert result.output == "ok"
 
 
-class TestEchoAsFinalAnswer:
-    def test_simple_echo_becomes_final(self, caps):
-        """echo 'Task done' → intercepted as final answer."""
+class TestEchoIsAShellCommand:
+    def test_echo_runs_like_any_command(self, caps, monkeypatch):
+        """맨 `echo` 도 셸에서 돈다 — 결과는 관찰로 오고, 끝내는 것은 `complete` 다."""
+        monkeypatch.setenv("ECHO_PROBE", "expanded")
         provider = _make_provider(
-            json.dumps(
-                {
-                    "action": "shell",
-                    "command": 'echo "Task completed successfully."',
-                    "timeout": 5,
-                }
-            ),
+            json.dumps({"action": "shell", "command": "echo $ECHO_PROBE"}),
+            _complete("second"),
         )
         result = run_loop(
             ports=TEST_PORTS,
@@ -2170,38 +2168,55 @@ class TestEchoAsFinalAnswer:
             capabilities=caps,
             model="test-model",
         )
-        assert result.output == "Task completed successfully."
+        assert result.output == "second"
+        assert provider.call.call_count == 2
+        observed = _messages_from_call(provider.call.call_args_list[1])[-1]["content"]
+        assert "expanded" in observed
 
-    def test_echo_with_pipe_not_intercepted(self, caps):
-        """echo ... | grep should NOT be treated as final answer."""
-        provider = _make_provider(
-            json.dumps({"action": "shell", "command": "echo hello | grep h"}),
-            _complete("found"),
-        )
-        result = run_loop(
+
+class TestStringLinesForEditFile:
+    """`edit_file` `lines` 를 배열 대신 문자열로 보낸 편집 (감사 1-3)."""
+
+    @staticmethod
+    def _refs(path):
+        out = TOOLS["read_file"].run({"path": str(path)}).output
+        return re.findall(r"^(\d+#[A-Z]{2})", out, re.MULTILINE)
+
+    def _run(self, caps, ops):
+        provider = _make_provider(json.dumps(ops), _complete("ok"))
+        run_loop(
             ports=TEST_PORTS,
-            query="Search",
+            query="edit",
             provider=provider,
             capabilities=caps,
             model="test-model",
         )
-        assert result.output == "found"
+        return _messages_from_call(provider.call.call_args_list[1])[-1]["content"]
 
-    def test_echo_with_redirect_not_intercepted(self, caps, tmp_path, monkeypatch):
-        """echo ... > file should NOT be treated as final answer."""
-        monkeypatch.chdir(tmp_path)  # 셸이 cwd 에 out.txt 를 쓴다
-        provider = _make_provider(
-            json.dumps({"action": "shell", "command": "echo hello > out.txt"}),
-            _complete("written"),
+    def test_one_string_edit_is_refused(self, caps, tmp_path):
+        """편집 하나도 묶음과 같은 결과 — 거절, 아무것도 쓰지 않는다."""
+        f = tmp_path / "f.py"
+        f.write_text("def g():\n    a = 1\n    b = 2\n")
+        pos = self._refs(f)[1]
+        op = {"action": "edit_file", "path": str(f), "op": "replace", "pos": pos}
+        observed = self._run(caps, [dict(op, lines="    a = 10\n    a2 = 11")])
+        assert f.read_text() == "def g():\n    a = 1\n    b = 2\n"
+        assert "Field `lines` for `edit_file` expected array, got str" in observed
+
+    def test_two_string_edits_to_one_file_are_refused(self, caps, tmp_path):
+        f = tmp_path / "f.py"
+        f.write_text("def g():\n    a = 1\n    b = 2\n")
+        refs = self._refs(f)
+        op = {"action": "edit_file", "path": str(f), "op": "replace"}
+        observed = self._run(
+            caps,
+            [
+                dict(op, pos=refs[1], lines="    a = 10"),
+                dict(op, pos=refs[2], lines="    b = 20"),
+            ],
         )
-        result = run_loop(
-            ports=TEST_PORTS,
-            query="Write",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-        )
-        assert result.output == "written"
+        assert f.read_text() == "def g():\n    a = 1\n    b = 2\n"
+        assert "`lines` must be a JSON array of strings" in observed
 
 
 class TestRepeatedCallDetection:
@@ -4517,7 +4532,6 @@ class TestPR3Collaborators:
 
     def test_dispatcher_standalone_tool_op_continues(self):
         from agent_cli.dialects.base import Op, ParsedTurn
-        from agent_cli.loop.state import _CONTINUE
 
         d, _st = self._dispatcher()
         turn = ParsedTurn(
@@ -4526,12 +4540,14 @@ class TestPR3Collaborators:
             raw="",
             parse_stage=1,
         )
-        r = d._dispatch_op("raw", turn, turn.ops[0], {})
-        # 단일-op 도구 실행은 ToolResult 반환(레거시 경로 보존) — 루프 계속
-        # 여부는 _execute_turn 이 판단. _CONTINUE 는 ask/run_skill 경로 소관.
-        assert r is not _CONTINUE and r.success and r.output.strip() == "pr3"
-        # 1-op 경로의 관찰 append 는 상위(_handle_text_path) 소관 — 여기선
-        # 디스패처가 브리지 경유로 실제 도구를 실행했다는 사실만 고정.
+        acc: list = []
+        r = d._dispatch_op("raw", turn, turn.ops[0], {}, accumulate=acc)
+        # 묶음 자리의 도구 실행 — 결과는 호출자의 묶음 관찰로 쌓이고 루프는 계속된다.
+        # 디스패처가 브리지 경유로 실제 도구를 실행했다는 사실만 고정한다(종전 단언은
+        # 맨 `echo` 를 최종 답으로 접던 구제 덕에 통과했다 — 도구는 돌지 않았다).
+        assert r is None
+        assert [(e["tool_name"], e["success"]) for e in acc] == [("shell", True)]
+        assert "pr3" in acc[0]["observation"]
 
     def test_dispatcher_owns_loop_detector(self):
         d, _ = self._dispatcher()

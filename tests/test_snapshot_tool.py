@@ -252,6 +252,14 @@ class TestWireAndPrompt:
             fns = [f["name"] for f in d["scenarios"]["main"]["functions"]]
             assert "snapshot" in fns
 
+    def test_description_says_when_snapshots_are_taken(self):
+        """시스템 절(`## Workspace snapshot`)과 같은 사실 — 호출마다가 아니라 최소 간격마다."""
+        assert (
+            "(at session start, and before a `shell` / `edit_file` / `write_file` call "
+            "— at most once per the interval stated in `## Workspace snapshot`)"
+            in SnapshotTool.description
+        )
+
     def test_notice_points_at_the_tool_not_a_cli(self, ws):
         s = _store(ws)
         n = s.notice()

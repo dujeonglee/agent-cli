@@ -45,9 +45,11 @@ Your reasoning goes here, as plain prose. No tags around it.
 
 The tool name comes right after <tool_call>. Each parameter is one
 <arg_key>…</arg_key> followed by its <arg_value>…</arg_value>. Values are
-Raw text: write file contents, code, and multi-line text directly between
-the tags with no escaping — no \\n, no quote escaping, no JSON. For a
-multi-line value put it on its own lines:
+raw text: write file contents, code, and multi-line text directly between
+the tags with no escaping — no \\n, no quote escaping. The one exception
+is a parameter whose type is an array or an object (such as `lines` or
+`answers`): write that value as JSON. For a multi-line text value put it
+on its own lines:
 <arg_key>content</arg_key>
 <arg_value>
 line one
@@ -68,7 +70,8 @@ Rules:
    `complete` to finish).
 2. The name after <tool_call> is exactly one tool from Available Tools.
 3. Each call acts on one target. To read N files, emit N separate
-   <tool_call> blocks in the same turn — never a list inside one call.
+   <tool_call> blocks in the same turn — never several targets inside one
+   call.
 4. Close every tag: </arg_key>, </arg_value>, </tool_call>.
 5. When the task is done, end with a `complete` call carrying your final
    answer:

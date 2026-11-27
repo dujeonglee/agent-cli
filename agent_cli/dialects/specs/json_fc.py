@@ -49,8 +49,8 @@ Rules:
    (work, or `complete` to finish). Do not just stop after prose.
 3. Each op must have an "action" naming one tool.
 4. Each op acts on one target. To read N files, emit N separate
-   {"action": "read_file", "path": ...} ops in the same array. Never put a
-   list of items inside a single op (no nested arrays).
+   {"action": "read_file", "path": ...} ops in the same array. Never put
+   several targets inside a single op.
 5. When the task is done, end with a `complete` op carrying your final
    answer: {"action": "complete", "result": "<your final answer>"}.
 6. Never use HTML/XML tags of any kind — no <tool_call>, <function_call>,

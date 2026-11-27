@@ -96,7 +96,7 @@ def tool_history(
 ) -> ToolResult:
     """Run a SQL query over session history.
 
-    ``args``: ``{query: "SELECT …", sessions?: current|all|<id>|[…]}``.
+    ``args``: ``{query: "SELECT …", sessions?: ["all"] | [<id>, …]}``.
     With no ``query``, returns the schema + example queries + session list so
     the model can discover what to ask. ``session_dir`` scopes the default
     (current session) when ``sessions`` is omitted. ``extract_paths`` fills the
@@ -154,12 +154,10 @@ def _resolve_session_dirs(
             return None, None
         return [Path(current_session_dir)], None
 
-    if isinstance(sessions, str):
-        sessions = [sessions]
     if not isinstance(sessions, list):
-        return None, (
-            f"sessions must be a string or array of strings, "
-            f"got {type(sessions).__name__}"
+        return (
+            None,
+            f"sessions must be an array of strings, got {type(sessions).__name__}",
         )
 
     if "all" in sessions:
@@ -404,7 +402,7 @@ class HistoryTool(Tool):
         "Rows come back whole, so project and limit (substr of `text`, a LIMIT) and "
         "fetch the one row you need afterwards. Omit "
         "`query` for the schema, examples and the session list. Default scope is the "
-        'current session; `sessions` "all" or session id(s) reaches others.'
+        'current session; `sessions` with "all" or session ids reaches others.'
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -421,9 +419,8 @@ class HistoryTool(Tool):
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    'Which sessions populate the table. Default: current session. "all"'
-                    " = every session, or specific session id(s). A single string is "
-                    "accepted."
+                    'Which sessions populate the table, as an array: "all" for every '
+                    "session, or session ids. Default: current session."
                 ),
             },
         },

@@ -195,10 +195,7 @@ def _save_mcp_image(item: Any, label: str, n: int) -> tuple[str, dict | None]:
             f"{display_path(dest)}; not a PNG/JPEG/GIF/WebP so it cannot be shown)"
         )
         return note, None
-    text = (
-        f"{ref.placeholder}\n{ref.mime}, {ref.bytes:,} bytes — saved to {ref.path}; "
-        "the image is attached to this result."
-    )
+    text = f"{ref.placeholder}\n{ref.mime}, {ref.bytes:,} bytes — saved to {ref.path}."
     return text, ref.to_dict()
 
 
