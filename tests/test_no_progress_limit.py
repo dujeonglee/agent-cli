@@ -257,6 +257,8 @@ def turn_counting_shapes(dialect: str) -> dict[str, LLMResponse]:
         "every call refused": batch_of_unknown_tools(dialect),
         "wait refused": call(dialect, "wait", {}),
         "same failing run": call(dialect, "read_file", {"path": "nope.py"}),
+        # 쓰기의 같은 실패(해시 불일치) — 성공한 쓰기만 진전이다(Q4)
+        "same failing edit": call(dialect, *FAILED_EDIT),
         "output cut off": LLMResponse(
             content='x\n\n[{"action": "read_file", "pa', stop_reason="length"
         ),
@@ -273,7 +275,7 @@ SHAPES = tuple(turn_counting_shapes("json_fc"))
 
 
 #: 같은 실패의 실행은 처음 한 번은 새 결과다(아직 본 적 없음) — 둘째부터 제자리 턴
-FIRST_IS_NEW = {"same failing run"}
+FIRST_IS_NEW = {"same failing run", "same failing edit"}
 
 
 @pytest.mark.parametrize("dialect", DIALECTS)
@@ -295,6 +297,7 @@ REASON = {
     "every call refused": "every call was refused",
     "wait refused": "wait refused",
     "same failing run": "the same results again",
+    "same failing edit": "the same results again",
     "output cut off": "output cut off",
     "server error": "server error",
     "runaway": "runaway output",

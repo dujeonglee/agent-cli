@@ -47,9 +47,11 @@ from tests.test_agents_live import make_registry
 
 
 def _feed(guard: StaleGuard, turns, *, work=None) -> list[int]:
-    """턴 목록을 먹여 발화한 턴 번호(1부터)를 돌려준다."""
+    """턴 목록을 먹여 발화한 턴 번호(1부터)를 돌려준다. 쌍은 ``(도구, 결과)`` 로 적으면 성공한 결과,
+    ``(도구, 결과, 성공)`` 이면 그대로."""
     hits = []
     for i, pairs in enumerate(turns, start=1):
+        pairs = [p if len(p) == 3 else (*p, True) for p in pairs]
         if guard.observe(pairs, turn=i, work_running=bool(work and i in work)):
             hits.append(i)
     return hits
@@ -141,7 +143,7 @@ class TestRule:
         assert g.fires == 2
         g.acknowledge()
         assert g.fires == 1 and g.run == 0
-        assert g.observe([("shell", "17")], turn=8) is False
+        assert g.observe([("shell", "17", True)], turn=8) is False
 
     def test_since_turn_is_zero_without_a_streak(self):
         assert StaleGuard().since_turn == 0
@@ -163,7 +165,7 @@ class TestTurnPairs:
             _asst("shell"),
             {"role": "user", "tool": "shell", "content": "Observation: 17"},
         ]
-        assert stale_turn_pairs(recs) == [("shell", "17")]
+        assert stale_turn_pairs(recs) == [("shell", "17", True)]
 
     def test_batch_uses_parts(self):
         recs = [
@@ -178,11 +180,14 @@ class TestTurnPairs:
                 ],
             },
         ]
-        assert stale_turn_pairs(recs) == [("shell", "17"), ("read_file", "body")]
+        assert stale_turn_pairs(recs) == [
+            ("shell", "17", True),
+            ("read_file", "body", True),
+        ]
 
     def test_complete_is_not_a_call_and_missing_results_are_empty(self):
         recs = [_asst("shell", "complete")]
-        assert stale_turn_pairs(recs) == [("shell", "")]
+        assert stale_turn_pairs(recs) == [("shell", "", True)]
 
     def test_interventions_are_not_results(self):
         recs = [
@@ -190,7 +195,7 @@ class TestTurnPairs:
             {"role": "user", "tool": "shell", "recovery": "loop", "content": "nudge"},
             {"role": "user", "tool": "", "content": "format"},
         ]
-        assert stale_turn_pairs(recs) == [("shell", "")]
+        assert stale_turn_pairs(recs) == [("shell", "", True)]
 
     def test_unstored_attempt_is_not_a_turn(self):
         """형식 재시도·B1 이 막은 반복은 assistant 레코드를 남기지 않는다 — 턴이 아니다."""
@@ -754,8 +759,37 @@ class TestAutoApproveDoesNotSkipThePause:
         assert decision.action == confirm.DENY and seen["item"]["title"] == "pause?"
 
 
-def test_a_failed_write_repeated_is_never_stale():
-    """지금 규칙: 쓰기 도구는 결과와 무관하게 제외 — 같은 실패를 되풀이해도 제자리가 아니다(고정)."""
-    turns = [[("edit_file", "Hash mismatch at line 2")]] * 6
+def test_a_failed_write_repeated_is_stale():
+    """쓰기 도구의 제외는 성공한 쓰기에만 (v10.177.14) — 같은 실패를 되풀이하는 편집은 다른 도구와 같이 센다."""
+    turns = [[("edit_file", "Hash mismatch at line 2", False)]] * 6
     g = StaleGuard()
-    assert _feed(g, turns) == [] and g.turns_without_new == 0
+    assert _feed(g, turns) == [4] and g.turns_without_new == 5
+
+
+def test_turn_pairs_carry_the_success_of_each_result():
+    recs = [
+        _asst("edit_file", "shell"),
+        {
+            "role": "user",
+            "tool": "edit_file+shell",
+            "content": "Observation: [1/2] …",
+            "parts": [
+                {"tool": "edit_file", "content": "Hash mismatch", "success": False},
+                {"tool": "shell", "content": "17", "success": True},
+            ],
+        },
+    ]
+    assert stale_turn_pairs(recs) == [
+        ("edit_file", "Hash mismatch", False),
+        ("shell", "17", True),
+    ]
+    single = [
+        _asst("edit_file"),
+        {
+            "role": "user",
+            "tool": "edit_file",
+            "content": "Observation: x",
+            "success": False,
+        },
+    ]
+    assert stale_turn_pairs(single) == [("edit_file", "x", False)]
