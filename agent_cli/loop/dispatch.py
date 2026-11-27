@@ -1127,17 +1127,19 @@ class TurnDispatcher:
         )
         nag = bool(still_open or debts or awaited) and ledger.spend()
         show_open_items(self.cfg, self.state)  # 정산·예산 소진이 띠에 바로 선다
+        # 종결 레코드의 "아직 열린 것" 은 되돌림이 보는 것과 같은 집합이다(감사 3-f).
+        open_now = [*still_open, *debts, *awaited]
         if nag:
             # 기록은 `_intervene` 이 한다 — 이 턴의 assistant 레코드(종결 모양)를
             # 관찰과 함께 저장한다. 따로 넣으면 같은 final 이 두 번 들어간다.
-            turn.record = self._terminal_record(turn, answer, claimed, still_open)
+            turn.record = self._terminal_record(turn, answer, claimed, open_now)
             return self._nag_open_items(
                 llm_text, turn, claimed, still_open, debts, outcome, awaited
             )
         answer = self._with_unanswered_notice(claimed, still_open, answer)
         answer = self._with_awaited_notice(awaited, answer)
         if self.ctx:
-            self.ctx.add(self._terminal_record(turn, answer, claimed, still_open))
+            self.ctx.add(self._terminal_record(turn, answer, claimed, open_now))
         return ToolResult(True, output=answer)
 
     def _op_wait(self, llm_text: str, turn, op, outcome: dict):
@@ -1329,8 +1331,9 @@ class TurnDispatcher:
         return _CONTINUE
 
     def _terminal_record(self, turn, answer: str, claimed, still_open) -> dict:
-        """종결 레코드 — `answers` 가 있으면 정산 뒤 남은 요청 id 도 함께
-        (v10.23.0; 서버 파싱 렌더가 결과 문구에 쓴다)."""
+        """종결 레코드 — `answers` 가 있으면 정산 뒤 아직 열린 항목 id 도 함께
+        (v10.23.0; 서버 파싱 렌더가 결과 문구에 쓴다). ``still_open`` 은 남은 요청·빚·
+        기다리는 회신 — 되돌림 판정과 같은 집합."""
         return self.cfg.dialect.serialize_terminal_for_history(
             turn.thought or "",
             answer,
