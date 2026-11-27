@@ -35,10 +35,12 @@ def test_history_help_table():
 
 
 def test_write_file_description_result():
-    """3-5: 결과 모양."""
+    """3-5: 결과 모양 — 작은 덮어쓰기는 diff + 바뀐 줄(`write_file.py` 의 `is_small` 갈래)."""
     assert TOOLS["write_file"].description.endswith(
         "Returns the written file tagged LINE#HASH:content — the whole file when it "
-        "is short, otherwise its first and last lines; `read_file` shows the rest tagged."
+        "is short, otherwise its first and last lines; a small change to an existing "
+        "file returns the diff and the changed lines tagged instead. `read_file` "
+        "shows the rest tagged."
     )
 
 
