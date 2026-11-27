@@ -206,6 +206,10 @@ def tool_agent(
         registry.runtime = runtime
 
     mode = args.get("mode", "")
+    # 에이전트 주소는 어디서나 같은 규칙 — 키 또는 이름(`resolve_key`, `message` 와 같다, 감사 3-1).
+    key = args.get("key")
+    if mode in ("resume", "kill", "status") and isinstance(key, str) and key:
+        args = {**args, "key": registry.resolve_key(key) or key}
     handler = _MODE_HANDLERS.get(mode)
     if handler is None:
         return ToolResult(

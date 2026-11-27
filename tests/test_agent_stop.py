@@ -773,7 +773,7 @@ class TestStopEverythingAgentRequesters:
 
 
 class TestAgentAddressedByName:
-    """`agent` 의 `key` 자리 — 지금은 키만 받는다, `message` 는 이름도 받는다(감사 3-1, 고정)."""
+    """`agent` 의 `key` 자리도 `message` 처럼 키 또는 이름 (감사 3-1 — 종전엔 키만)."""
 
     def test_kill_and_status_by_name(self, reg):
         tm = peer(reg, "agt-named0001")
@@ -783,6 +783,10 @@ class TestAgentAddressedByName:
         status = tool_agent(
             {"mode": "status", "key": "ui"}, registry=reg, caller=caller
         )
-        assert status.output == 'unknown agent "ui"'
+        assert "agt-named0001" in status.output
         kill = tool_agent({"mode": "kill", "key": "ui"}, registry=reg, caller=caller)
-        assert not kill.success and kill.error == 'kill rejected: unknown agent "ui"'
+        assert kill.success and "agt-named0001" in kill.output
+        unknown = tool_agent(
+            {"mode": "kill", "key": "nobody"}, registry=reg, caller=caller
+        )
+        assert unknown.error == 'kill rejected: unknown agent "nobody"'
