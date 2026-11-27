@@ -610,8 +610,8 @@ def validate_tool_input(
                     action_input,
                 )
 
-    # enum · minLength (v9.24.4) — 디코딩 문법이 강제하는 것과 같은 스키마
-    # 선언을 검증기도 본다: 문법을 못 쓰는 서버에서도 규칙이 같아야 한다.
+    # enum · minLength (v9.24.4) · minimum/maximum (감사 1-13) — 스키마가 선언한
+    # 것은 검증기가 지킨다: 문법을 못 쓰는 서버에서도 규칙이 같아야 한다.
     for key, value in action_input.items():
         prop = properties.get(key)
         if not isinstance(prop, dict):
@@ -629,6 +629,20 @@ def validate_tool_input(
             return (
                 False,
                 f"Field `{key}` for `{tool_name}` must not be empty.",
+                action_input,
+            )
+        number = isinstance(value, (int, float)) and not isinstance(value, bool)
+        low, high = prop.get("minimum"), prop.get("maximum")
+        if number and low is not None and value < low:
+            return (
+                False,
+                f"Field `{key}` for `{tool_name}` must be at least {low} — got {value}.",
+                action_input,
+            )
+        if number and high is not None and value > high:
+            return (
+                False,
+                f"Field `{key}` for `{tool_name}` must be at most {high} — got {value}.",
                 action_input,
             )
 
