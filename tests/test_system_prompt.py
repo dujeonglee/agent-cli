@@ -434,7 +434,7 @@ class TestBuildSystemPrompt:
         assert '`code_index` "fetch", `write_file`, or an earlier `edit_file`' in d
         # v10.112.0: 안내의 두 줄("A ref from before the file last changed no longer
         # matches", "never a bare line number")은 트리거 직후로 옮겼다 — 해시 불일치
-        # 오류가 "the ref does not match that line as it is now" 를(v10.177.10 — 원인을 단정하지
+        # 오류가 "the ref does not match that line as it is now" 를(v10.177.11 — 원인을 단정하지
         # 않는다), 줄 번호만 온 ref 의 오류가
         # 그 줄의 지금 ref 를 말한다.
         from agent_cli.tools.edit_file import _bare_ref_error, _resolve_ref
@@ -1826,7 +1826,7 @@ class TestServerParsedPromptHasNoTextCalls:
 
     def test_examples_name_the_tool_and_its_arguments(self):
         d, _ = self._texts()
-        # 감사 3-6 (v10.177.10): 인자 객체도 호출 모양이라 표기 규칙의 문장 꼴로.
+        # 감사 3-6 (v10.177.11): 인자 객체도 호출 모양이라 표기 규칙의 문장 꼴로.
         assert d.prompt_example("read_file", {"path": "app.py"}) == (
             '`read_file` with `path` "app.py"'
         )

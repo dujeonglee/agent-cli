@@ -486,7 +486,7 @@ class TestFormatRulesBatchSteering:
       (1) dependent ops split across turns (a later op needs an earlier
           result; all ops in a turn run before any observation), and
       (2) one target per op — several targets inside one op broke 27B
-          (DESIGN §3). v10.177.10: worded as targets, not "no nested arrays"
+          (DESIGN §3). v10.177.11: worded as targets, not "no nested arrays"
           (array arguments such as `lines` are allowed).
     Losing either guardrail is the failure mode this nudge risks, so both
     are asserted alongside the steering."""

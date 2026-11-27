@@ -21,7 +21,7 @@
   254건은 옛 문구의 작은따옴표 값을 큰따옴표로·`pos 'x'` 를 `` `pos` "x" `` 로·
   `requires 'pos'` 를 `` requires `pos` `` 로 옮기면 새 문구와 바이트 단위로 같고, 성공·결과
   파일은 400건 모두 불변.
-- v10.177.10: 해시 불일치 문장이 원인을 단정하지 않는다("the file changed since that read." →
+- v10.177.11: 해시 불일치 문장이 원인을 단정하지 않는다("the file changed since that read." →
   "the ref does not match that line as it is now."). 바뀐 74건은 그 문장 하나를 되돌리면 옛 문구와
   바이트 단위로 같고, 성공·결과 파일은 400건 모두 불변. 이후 편집 경로를 손대는 변경(턴
 디스패치 통합, 에코 형식)이 의미를 조용히 바꾸면 여기서 깨진다 — 의도한 변경이면
