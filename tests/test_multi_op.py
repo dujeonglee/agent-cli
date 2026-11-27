@@ -369,6 +369,8 @@ class TestMultiOpDispatch:
         assert any("[1/1] read_file — OK" in c and "alpha" in c for c in msgs)
         # ③ terminal 뒤의 op 은 실행되지 않음
         assert not any("should not appear" in c for c in msgs)
+        # ④ 그 사실을 알리지 않는다 — 버려진 op 에 아무 말이 없다(감사 2-4, 고정)
+        assert not any("Not executed" in c for c in msgs)
 
     def test_complete_op_ends_with_result(self, tmp_path):
         # Completion is an explicit `complete` op (DESIGN Exp 8): one turn,
