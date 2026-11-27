@@ -1,5 +1,7 @@
 """Tests for tools/registry."""
 
+import pytest
+
 from agent_cli.tools.registry import (
     TOOLS,
     get_tool_descriptions,
@@ -104,6 +106,17 @@ class TestTypeValidation:
         ok, err, _ = validate_tool_input("shell", {"command": [1, 2, 3]})
         assert ok is False
         assert "expected string" in err
+
+
+class TestNumericBounds:
+    """스키마의 `minimum`/`maximum` (감사 1-13) — 지금은 검증기가 보지 않는다(고정)."""
+
+    @pytest.mark.parametrize("depth", [0, -1, 6, 9])
+    def test_code_index_depth_out_of_range(self, depth):
+        ok, err, _ = validate_tool_input(
+            "code_index", {"mode": "slice", "name": "f", "depth": depth}
+        )
+        assert ok, err
 
 
 class TestAgentSchema:
