@@ -686,7 +686,7 @@ class TestStopDuringRetry:
                 interrupt_check=lambda: stop[0],
             )
 
-    def test_read_timeout_after_stop_keeps_sending(self, clock):
+    def test_read_timeout_after_stop_sends_nothing_more(self, clock):
         stop = [False]
 
         def post(*a, **k):
@@ -694,12 +694,13 @@ class TestStopDuringRetry:
             raise requests.ReadTimeout("no headers")
 
         post = MagicMock(side_effect=post)
-        with pytest.raises(requests.ReadTimeout):
-            self._call(post, stop)
-        assert post.call_count == 10
-        assert sum(clock.slept) == 9 * http_mod._DEFAULT_DELAY
+        resp = self._call(post, stop)
+        assert resp.stop_reason == "interrupted"
+        assert resp.content == ""
+        assert post.call_count == 1
+        assert clock.slept == []  # 쉼이 첫 폴링 전에 끝났다
 
-    def test_rate_limit_after_stop_keeps_waiting(self, clock):
+    def test_rate_limit_after_stop_stops_waiting(self, clock):
         stop = [False]
         limited = _status_response(429)
         limited.headers = {"Retry-After": "120"}
@@ -710,12 +711,12 @@ class TestStopDuringRetry:
             return limited
 
         post = MagicMock(side_effect=post)
-        with pytest.raises(requests.HTTPError):
-            self._call(post, stop)
-        assert post.call_count == 8
-        assert sum(clock.slept) == 7 * 120.0
+        resp = self._call(post, stop)
+        assert resp.stop_reason == "interrupted"
+        assert post.call_count == 1
+        assert clock.slept == []
 
-    def test_broken_stream_after_stop_keeps_resending(self, clock):
+    def test_broken_stream_after_stop_does_not_resend(self, clock):
         from agent_cli.providers.openai import OpenAIProvider
 
         stop = [False]
@@ -728,12 +729,13 @@ class TestStopDuringRetry:
         with (
             patch("agent_cli.providers.http.make_stream_patient"),
             patch.object(OpenAIProvider, "_handle_stream", side_effect=broken),
-            pytest.raises(requests.exceptions.ChunkedEncodingError),
         ):
-            self._call(post, stop)
-        assert post.call_count == 10
+            resp = self._call(post, stop)
+        assert resp.stop_reason == "interrupted"
+        assert post.call_count == 1
+        assert clock.slept == []
 
-    def test_stop_before_the_call_still_sends(self, clock):
+    def test_stop_before_the_call_sends_nothing(self, clock):
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.openai import OpenAIProvider
 
@@ -745,7 +747,7 @@ class TestStopDuringRetry:
         ):
             resp = self._call(post, [True])
         assert resp.stop_reason == "interrupted"
-        assert post.call_count == 1
+        assert post.call_count == 0
 
     def test_without_stop_retries_and_waits_are_unchanged(self, clock, capsys):
         """정지가 서지 않으면 재시도 횟수·간격·화면 줄이 그대로다."""
@@ -759,3 +761,35 @@ class TestStopDuringRetry:
             f"● LLM request failed (ReadTimeout) — retrying ({n}/10)"
             for n in range(2, 11)
         ] + ["● LLM request failed after 10 attempts: ReadTimeout"]
+
+    def test_stop_during_a_wait_ends_it_at_the_next_poll(self, clock):
+        """쉼 도중 ■ — 다음 폴링(``_INTERRUPT_POLL_SECONDS``)에서 끝나고 더 보내지 않는다."""
+        stop = [False]
+        limited = _status_response(429)
+        limited.headers = {"Retry-After": "120"}
+        post = MagicMock(return_value=limited)
+
+        def sleep(seconds):
+            clock.slept.append(seconds)
+            clock.now += seconds
+            stop[0] = True  # 첫 조각을 자는 동안 ■
+
+        with patch.object(http_mod.time, "sleep", sleep):
+            resp = self._call(post, stop)
+        assert resp.stop_reason == "interrupted"
+        assert post.call_count == 1
+        assert clock.slept == [http_mod._INTERRUPT_POLL_SECONDS]
+
+    def test_post_with_retry_returns_none_when_stopped(self, clock):
+        post = MagicMock(side_effect=requests.ConnectionError("refused"))
+        stop = [False]
+
+        def failing(*a, **k):
+            stop[0] = True
+            return post(*a, **k)
+
+        assert (
+            post_with_retry(failing, "http://x", interrupt_check=lambda: stop[0])
+            is None
+        )
+        assert post.call_count == 1

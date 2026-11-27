@@ -84,6 +84,7 @@ from agent_cli.context.overflow import (
     parse_overflow_amounts,
 )
 from agent_cli.net_errors import exception_chain, tls_detail
+from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.runaway import RunawayDetector
 from agent_cli.verbose import debug_log
 
@@ -286,13 +287,30 @@ _BROKEN_STREAM: tuple[type[BaseException], ...] = (
 )
 
 
+def _sleep_unless_stopped(
+    seconds: float, interrupt_check: Callable[[], bool] | None
+) -> None:
+    """Pause ``seconds`` — with ``interrupt_check``, in ``_INTERRUPT_POLL_SECONDS``
+    slices that end as soon as it is true. Without it, one plain sleep."""
+    if interrupt_check is None:
+        time.sleep(seconds)
+        return
+    deadline = time.monotonic() + seconds
+    while not interrupt_check():
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return
+        time.sleep(min(_INTERRUPT_POLL_SECONDS, left))
+
+
 def post_with_retry(
     post_fn: Callable[..., requests.Response],
     url: str,
     *,
     retry_statuses: frozenset[int] = _RETRYABLE_STATUS,
+    interrupt_check: Callable[[], bool] | None = None,
     **kwargs,
-) -> requests.Response:
+) -> requests.Response | None:
     """Invoke ``post_fn(url, **kwargs)`` with bounded retry on network errors,
     on transient gateway ``5xx`` responses and on rate limiting.
 
@@ -313,6 +331,11 @@ def post_with_retry(
     ``agent_cli.providers.{name}.requests.post`` continue to intercept
     the call — the provider module still owns the ``requests`` name and
     passes its own ``requests.post`` attribute to this helper.
+
+    ``interrupt_check`` (the caller's stop predicate, the same one the stream
+    read polls): once it is true nothing more is sent — it is checked before
+    every send, and the pauses between attempts end at the next poll — and
+    ``None`` is returned. A request already sent is not cut short.
     """
     # Lazy import: keeps this module loadable during test collection
     # even if the render subsystem isn't fully wired.
@@ -327,6 +350,9 @@ def post_with_retry(
     rate_failures = 0
 
     while True:
+        if interrupt_check is not None and interrupt_check():
+            debug_log(f"[retry] stop is set; not sending to {url}")
+            return None
         try:
             r = post_fn(url, **kwargs)
         except _RETRYABLE as e:
@@ -343,7 +369,7 @@ def post_with_retry(
                 f"[retry] {type(e).__name__} on {url}: "
                 f"attempt {net_failures}/{attempts} failed; sleeping {delay}s"
             )
-            time.sleep(delay)
+            _sleep_unless_stopped(delay, interrupt_check)
             continue
 
         # A response arrived. Transient gateway 5xx (502/503/504) is re-sent on
@@ -367,7 +393,7 @@ def post_with_retry(
                 f"attempt {status_failures}/{status_attempts} failed; "
                 f"sleeping {delay}s"
             )
-            time.sleep(delay)
+            _sleep_unless_stopped(delay, interrupt_check)
             continue
 
         # Rate limited: wait as long as the server asks (or back off) and
@@ -392,7 +418,7 @@ def post_with_retry(
                 f"{rate_failures}/{_RATE_LIMIT_ATTEMPTS} rate limited; "
                 f"sleeping {wait:.1f}s"
             )
-            time.sleep(wait)
+            _sleep_unless_stopped(wait, interrupt_check)
             continue
 
         return r
@@ -581,7 +607,9 @@ class StreamAccum:
     tool_calls: dict = field(default_factory=dict)
 
 
-def stream_with_reconnect(url, *, headers, body, handle_stream, max_attempts=None):
+def stream_with_reconnect(
+    url, *, headers, body, handle_stream, max_attempts=None, interrupt_check=None
+):
     """스트리밍 POST + idle 재연결 루프 — 양 provider 공용 (v8.41.0,
     리뷰 §4.2: 28행 복붙 2벌의 단일화; 동작은 바이트 동일).
 
@@ -597,7 +625,11 @@ def stream_with_reconnect(url, *, headers, body, handle_stream, max_attempts=Non
     ``_BROKEN_STREAM_ATTEMPTS``(+1초 간격) — 이유는 그 상수 주석 참조.
     재전송 전에는 항상 ``render_stream_reset()`` 으로 부분 출력을 걷는다:
     재전송은 생성을 처음부터 다시 하므로(서버측 resume 없음) 남겨두면 새
-    출력이 옛 부분 뒤에 이어붙어 보인다."""
+    출력이 옛 부분 뒤에 이어붙어 보인다.
+
+    ``interrupt_check``(호출자의 정지 술어 — 스트림 읽기가 보는 것과 같은 것)가 참이면 더 보내지
+    않는다: 보내기 전마다 ``post_with_retry`` 가 보고, 재전송 사이 쉼도 그 술어로 끊긴다. 보내지
+    않고 나올 때는 스트림 도중 정지와 같은 모양 — ``stop_reason`` "interrupted" 인 빈 응답이다."""
     from agent_cli.constants import (
         LLM_READ_TIMEOUT,
         LLM_STREAM_TIMEOUT,
@@ -623,7 +655,11 @@ def stream_with_reconnect(url, *, headers, body, handle_stream, max_attempts=Non
             json=body,
             timeout=LLM_STREAM_TIMEOUT,
             stream=True,
+            interrupt_check=interrupt_check,
         )
+        if r is None:  # 정지가 섰다 — 보내지 않았다
+            render_stream_stall(kind="clear", attempt=stalls + 1, attempts=attempts)
+            return LLMResponse(content="", stop_reason="interrupted")
         raise_for_status_with_body(r)
         make_stream_patient(r, LLM_READ_TIMEOUT)
         try:
@@ -651,7 +687,7 @@ def stream_with_reconnect(url, *, headers, body, handle_stream, max_attempts=Non
             debug_log(f"[stream] broken mid-stream ({type(e).__name__}: {e}) — resend")
             render_stream_reset()
             # 서버가 재시작 중일 수 있으므로 한 박자 쉰다 (post_with_retry 동일).
-            time.sleep(_DEFAULT_DELAY)
+            _sleep_unless_stopped(_DEFAULT_DELAY, interrupt_check)
         except BaseException:
             # 중단·에러로 빠져나갈 때도 제자리 줄을 남기지 않는다.
             render_stream_stall(kind="clear", attempt=stalls + 1, attempts=attempts)
