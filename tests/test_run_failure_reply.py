@@ -30,7 +30,8 @@ CAPS = ModelCapabilities(
 
 
 class _Provider:
-    """``mode``: "loop"(매 턴 같은 읽기 — 턴 상한까지) · "down"(provider 오류) · "reply"(곧바로 `complete`)."""
+    """``mode``: "loop"(매 턴 같은 읽기 — 턴 상한까지) · "down"(provider 오류) · "reply"(곧바로 `complete`) ·
+    "prose"(매번 호출 없는 산문 — 버려진 응답의 상한까지, v10.177.10)."""
 
     def __init__(self, mode: str):
         self.mode = mode
@@ -38,6 +39,8 @@ class _Provider:
     def call(self, messages, system, model, capabilities, **kw):
         if self.mode == "down":
             raise RuntimeError("upstream 502 Bad Gateway")
+        if self.mode == "prose":
+            return LLMResponse(content="I am thinking about it.")
         if self.mode == "reply":
             return LLMResponse(
                 content=json.dumps({"action": "complete", "result": "all good"})
@@ -137,6 +140,19 @@ class TestMainRequester:
             "(the run ended with an error: LLM call failed: upstream 502 Bad Gateway)"
             in body
         )
+
+    def test_discarded_response_limit_cause_reaches_main(self, world):
+        """버려진 응답이 상한에 닿아 끝난 런 — 원인 줄에 실패 결과 문장, 그 뒤는 답 없음 사실 문장 그대로."""
+        _, make = world
+        reg = make("prose")
+        key = _ask(reg, "main", run=True)
+        assert _until(lambda: reg.get(key).state == "dead")
+        body = _main_reply(reg)
+        cause = (
+            "(the run ended with an error: No progress: the last 10 responses were "
+            "rejected before anything ran.)\n"
+        )
+        assert cause in body and is_no_reply(body.split(cause, 1)[1])
 
     def test_resident_failed_run_names_the_cause_too(self, world):
         _, make = world
