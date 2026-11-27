@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -141,3 +142,38 @@ def test_a_repeated_key_is_not_rescued():
     (op,) = get("glm_argkey").parse_turn(text).ops
     assert op.action_input["op"] == "replace"
     assert isinstance(op.action_input["lines"], str)
+
+
+#: 측정 기록(meas/a2, GLM, 과제 L1)의 태그 방언 응답 — 서로 다른 글 133개(원문 345). 닫힌 응답은 옛 파서와 같은 결과,
+#: 닫는 태그가 빠진 응답(``rescued``)은 구제 모양이고 옛 결과(``old_ops``)를 함께 둔다. 만든 법·전수 비교는
+#: DONE-tag-close-rescue.md (옛·새 파서 전수: 닫힌 307 동일, 다른 것은 누락 38 뿐).
+RECORDS = json.loads(
+    (Path(__file__).parent / "fixtures" / "tag_close_records.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+def test_recorded_responses_cover_both_kinds():
+    assert {r["dialect"] for r in RECORDS} == {"glm_argkey", "xml_fc"}
+    assert any(r["rescued"] for r in RECORDS) and any(not r["rescued"] for r in RECORDS)
+    assert not any(r["rescued"] for r in RECORDS if r["dialect"] == "xml_fc")
+
+
+@pytest.mark.parametrize("i", range(len(RECORDS)))
+def test_recorded_response_reads_as_frozen(i):
+    """닫힌 응답은 한 바이트도 다르게 읽히지 않고, 누락 응답은 태그를 값에 품지 않는다."""
+    r = RECORDS[i]
+    turn = get(r["dialect"]).parse_turn(r["text"])
+    ops = [
+        {"action": o.action, "input": o.action_input, "truncated": o.truncated}
+        for o in turn.ops
+    ]
+    assert (ops, turn.parse_stage) == (r["ops"], r["parse_stage"])
+    if r["rescued"]:
+        assert ops != r["old_ops"]
+        assert not any(
+            isinstance(v, str) and ("<arg_key>" in v or "<parameter=" in v)
+            for o in ops
+            for v in o["input"].values()
+        )
