@@ -996,9 +996,10 @@ class GitSnapshot:
             "The harness keeps git snapshots of this working directory in "
             "`.agent-cli/snapshot.git` (a bare repository; this directory is its work "
             "tree — nothing is added to the directory itself). A snapshot was taken "
-            "when this session started and one is taken again just before each "
-            f"{MUTATING_TOOLS_PHRASE} call, so the state before your last "
-            "command is always on record."
+            "when this session started and one is taken again before a "
+            f"{MUTATING_TOOLS_PHRASE} call, at most once every "
+            f"{self.min_interval_s:g} seconds — so a change made in the last few "
+            "seconds before a command may not be on record."
         )
         howto = (
             "If an input file gets damaged or disappears, call the `snapshot` tool "

@@ -256,9 +256,12 @@ class TestWireAndPrompt:
         s = _store(ws)
         n = s.notice()
         assert "`snapshot` tool" in n and "agent-cli snapshot" not in n
+        # 2-1: 체크포인트는 최소 간격(`min_interval_s`)을 둔다 — "always on record" 가 아니다.
         assert (
             "A snapshot was taken when this session started and one is taken again "
-            "just before each `shell` / `edit_file` / `write_file` call, so the state "
-            "before your last command is always on record." in n
+            "before a `shell` / `edit_file` / `write_file` call, at most once every "
+            f"{s.min_interval_s:g} seconds — so a change made in the last few seconds "
+            "before a command may not be on record." in n
         )
+        assert "always on record" not in n
         assert Path(".agent-cli/snapshot.git").exists()
