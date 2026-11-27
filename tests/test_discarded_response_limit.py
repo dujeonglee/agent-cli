@@ -14,11 +14,13 @@ import pytest
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get
-from agent_cli.loop.dispatch import DISCARDED_RESPONSE_LIMIT
+from agent_cli.loop.dispatch import DISCARDED_RESPONSE_LIMIT, TurnDispatcher
+from agent_cli.loop.state import LoopState
+from agent_cli.loop.tool_bridge import ToolBridge
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
-from tests.loop_ports import TEST_PORTS
-from tests.loopkit import run_loop
+from tests.loop_ports import TEST_PORTS, make_ports
+from tests.loopkit import make_config, run_loop
 
 CAPS = ModelCapabilities(
     context_window=32768, max_output_tokens=4096, supports_thinking=False
@@ -67,8 +69,9 @@ REFUSED_EDIT = (
 )
 
 
-def run(tmp_path, monkeypatch, dialect, responses):
-    """``responses``: 응답 목록 — 마지막 것을 끝없이 되풀이한다. (결과, 호출 수); 상한이면 ProviderCap."""
+def run(tmp_path, monkeypatch, dialect, responses, *, ports=TEST_PORTS, **attrs):
+    """``responses``: 응답 목록 — 마지막 것을 끝없이 되풀이한다. (결과, 호출 수); 상한이면 ProviderCap.
+    ``attrs`` 는 ``run_loop`` 의 설정·시작 귀속(``query_request_id`` 등)."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "f.py").write_text("a\nb\nc\n")
     n = [0]
@@ -83,13 +86,14 @@ def run(tmp_path, monkeypatch, dialect, responses):
     provider.call.side_effect = respond
     ctx = ContextManager(tmp_path / "s", max_context_tokens=30000, dialect=get(dialect))
     result = run_loop(
-        ports=TEST_PORTS,
+        ports=ports,
         query="q",
         provider=provider,
         capabilities=CAPS,
         model="m",
         dialect=get(dialect),
         ctx=ctx,
+        **attrs,
     )
     return result, n[0]
 
@@ -130,3 +134,81 @@ class TestDiscardedResponsesEndTheRun:
         assert ends_at(tmp_path, monkeypatch, dialect, responses) == (
             2 + DISCARDED_RESPONSE_LIMIT
         )
+
+    def test_different_discarded_shapes_in_a_row_end_at_the_limit(
+        self, tmp_path, monkeypatch, dialect
+    ):
+        """모양이 매번 달라 B1 이 못 잡는 연속 — 산문·스키마 거절(필수 빠짐)·인자 오류가 번갈아."""
+        shapes = [
+            prose(dialect),
+            call(dialect, "read_file", {}),
+            bad_arguments(dialect),
+        ]
+        responses = [shapes[i % 3] for i in range(CAP)]
+        assert ends_at(tmp_path, monkeypatch, dialect, responses) == (
+            DISCARDED_RESPONSE_LIMIT
+        )
+
+    def test_an_executed_call_in_between_starts_the_count_again(
+        self, tmp_path, monkeypatch, dialect
+    ):
+        """버려진 응답 9 → 실행된 호출 1 → 버려진 응답 9 → `complete`: 끝나지 않고 그 결과로 끝난다."""
+        nine = [prose(dialect)] * (DISCARDED_RESPONSE_LIMIT - 1)
+        responses = [
+            *nine,
+            call(dialect, "read_file", {"path": "f.py"}),
+            *nine,
+            call(dialect, "complete", {"result": "done"}),
+        ]
+        result, calls = run(tmp_path, monkeypatch, dialect, responses)
+        assert result.success and result.output == "done"
+        assert calls == len(responses)
+
+    def test_an_accepted_virtual_op_in_between_starts_the_count_again(
+        self, tmp_path, monkeypatch, dialect
+    ):
+        """가상 op(받아들여진 `message`)도 기록에 남는 응답이다."""
+        nine = [prose(dialect)] * (DISCARDED_RESPONSE_LIMIT - 1)
+        responses = [
+            *nine,
+            call(dialect, "message", {"to": "agt-x", "text": "hi"}),
+            *nine,
+            call(dialect, "complete", {"result": "done"}),
+        ]
+        ports = make_ports(message_handler=lambda to, text, **kw: ("", ""))
+        result, calls = run(tmp_path, monkeypatch, dialect, responses, ports=ports)
+        assert result.success and result.output == "done"
+        assert calls == len(responses)
+
+    def test_a_complete_sent_back_in_between_starts_the_count_again(
+        self, tmp_path, monkeypatch, dialect
+    ):
+        """`complete` 되돌림(열린 항목)은 결과가 기록되는 응답이라 세지 않고 0 으로 돌린다."""
+        nine = [prose(dialect)] * (DISCARDED_RESPONSE_LIMIT - 1)
+        responses = [
+            *nine,
+            call(dialect, "complete", {"result": "early"}),
+            *nine,
+            call(dialect, "complete", {"result": "done", "answers": ["u-1"]}),
+        ]
+        result, calls = run(
+            tmp_path, monkeypatch, dialect, responses, query_request_id="u-1"
+        )
+        assert result.success and result.output == "done"
+        assert calls == len(responses)
+
+
+def test_a_new_segment_starts_the_count_again():
+    """`wait` 에서 깨어 구간이 새로 시작되면 B1·되돌림 예산과 함께 0."""
+    cfg = make_config(tools_list=["shell", "complete"])
+    state = LoopState(query="q")
+    d = TurnDispatcher(
+        cfg,
+        state,
+        ctx=None,
+        tools=ToolBridge(cfg, state, ctx=None, provider=None),
+        recorder=None,
+    )
+    d._discarded_in_a_row = DISCARDED_RESPONSE_LIMIT - 1
+    d._begin_segment()
+    assert d._discarded_in_a_row == 0
