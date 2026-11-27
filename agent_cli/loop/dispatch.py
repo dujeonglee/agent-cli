@@ -84,6 +84,12 @@ BATCH_OP_SKIPPED_NOTE = (
     "This op did not run. The other ops in this batch were still attempted — "
     "see their own results. Fix this op and re-send only it."
 )
+#: 묶음 안의 B1(같은 호출 반복) 자리 (감사 3-a) — 넛지가 "다른 행동을" 이라고 하므로 다시
+#: 보내라는 말은 붙이지 않는다(다시 보내면 곧 반복이고 다음 단계, 끝내 런 종료다).
+BATCH_LOOP_SKIPPED_NOTE = (
+    "This op did not run. The other ops in this batch were still attempted — "
+    "see their own results."
+)
 
 #: 답할 길이 없는 곳의 `ask` (6c) — 표면이 "답이 올 수 있다" 고 말하지 않으면(`Renderer.can_prompt`) 질문을 올리지도
 #: 묻지도 않는다. 누가 묻든(main·스킬·에이전트) 같은 글이다
@@ -1645,7 +1651,7 @@ class TurnDispatcher:
                 self.tools.accumulate_raw(
                     accumulate,
                     tool_name,
-                    f"{intervention.message}\n{BATCH_OP_SKIPPED_NOTE}",
+                    f"{intervention.message}\n{BATCH_LOOP_SKIPPED_NOTE}",
                     False,
                 )
                 return None

@@ -920,8 +920,8 @@ class TestMidBatchValidationFailure:
         assert len(rejection) < 1500
 
     def test_action_loop_mid_batch_note(self, tmp_path):
-        """묶음 안에서 B1(같은 호출 반복)이 나면 넛지 뒤에 묶음 꼬리말이 붙는다 — 지금은 입력
-        검증 실패와 같은 꼬리말("… re-send only it.")이다(감사 3-a, 고정)."""
+        """묶음 안에서 B1(같은 호출 반복)이 나면 넛지 뒤의 꼬리말은 "다시 보내라" 를 말하지
+        않는다 — 넛지는 다른 행동을 권한다(감사 3-a: 종전엔 "… re-send only it.")."""
         f1 = tmp_path / "a.txt"
         f1.write_text("alpha")
         f2 = tmp_path / "b.txt"
@@ -945,8 +945,9 @@ class TestMidBatchValidationFailure:
         assert "Take a different action based on that result." in body
         assert (
             "This op did not run. The other ops in this batch were still attempted — "
-            "see their own results. Fix this op and re-send only it." in body
+            "see their own results.\n" in body
         )
+        assert "re-send" not in body
         assert "[2/2] read_file — OK" in body and "bravo" in body
 
     def test_unknown_tool_mid_batch_is_the_same_shape(self, tmp_path):
