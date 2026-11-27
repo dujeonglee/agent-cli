@@ -2172,6 +2172,23 @@ class TestEchoAsFinalAnswer:
         )
         assert result.output == "Task completed successfully."
 
+    def test_echo_is_not_run_and_ends_the_run(self, caps, monkeypatch):
+        """맨 `echo` 는 셸에서 돌지 않는다 — 변수가 펼쳐지지 않은 글이 그대로 최종 답, 모델 호출 1회."""
+        monkeypatch.setenv("ECHO_PROBE", "expanded")
+        provider = _make_provider(
+            json.dumps({"action": "shell", "command": "echo $ECHO_PROBE"}),
+            _complete("second"),
+        )
+        result = run_loop(
+            ports=TEST_PORTS,
+            query="Do something",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+        )
+        assert result.output == "$ECHO_PROBE"
+        assert provider.call.call_count == 1
+
     def test_echo_with_pipe_not_intercepted(self, caps):
         """echo ... | grep should NOT be treated as final answer."""
         provider = _make_provider(
