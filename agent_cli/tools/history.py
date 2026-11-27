@@ -96,7 +96,7 @@ def tool_history(
 ) -> ToolResult:
     """Run a SQL query over session history.
 
-    ``args``: ``{query: "SELECT …", sessions?: current|all|<id>|[…]}``.
+    ``args``: ``{query: "SELECT …", sessions?: ["all"] | [<id>, …]}``.
     With no ``query``, returns the schema + example queries + session list so
     the model can discover what to ask. ``session_dir`` scopes the default
     (current session) when ``sessions`` is omitted. ``extract_paths`` fills the
@@ -154,12 +154,10 @@ def _resolve_session_dirs(
             return None, None
         return [Path(current_session_dir)], None
 
-    if isinstance(sessions, str):
-        sessions = [sessions]
     if not isinstance(sessions, list):
-        return None, (
-            f"sessions must be a string or array of strings, "
-            f"got {type(sessions).__name__}"
+        return (
+            None,
+            f"sessions must be an array of strings, got {type(sessions).__name__}",
         )
 
     if "all" in sessions:
