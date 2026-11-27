@@ -126,7 +126,7 @@ class ResidentLoop(LoopKind):
         return PromptProfile(
             role=self.tm.role_prompt,
             peer_section=self.peer_agents_section,
-            reports_to_caller=True,
+            answer_route="reply",
         )
 
     def tail_roster(self, tools: list[str]) -> str:

@@ -1363,8 +1363,8 @@ class TurnDispatcher:
         left = ledger.budget
         budget = (
             f"({left} more reminder{'s' if left != 1 else ''} before the harness "
-            "closes the rest: unanswered requests are reported to the user, unpaid "
-            "replies get your run summary.)"
+            "closes the rest: unanswered requests are reported to the user, and each "
+            "unpaid `reply` is closed with a note that you did not answer.)"
             if left > 0
             else "(Last reminder — after this the harness closes the rest.)"
         )
@@ -1378,7 +1378,7 @@ class TurnDispatcher:
         return self._intervene(
             llm_text,
             (
-                f"Observation: your result was delivered, but {why}:\n"
+                f"Observation: your result is recorded, but {why}:\n"
                 f"{ledger.items_lines(requests, debts, awaited)}\n"
                 "Close them in that order — by action first, then `complete` again "
                 "with `answers` for the items it covers." + waiting_hint + " " + budget

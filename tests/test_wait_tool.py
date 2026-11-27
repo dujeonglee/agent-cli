@@ -147,11 +147,11 @@ class TestRegistration:
         assert "The user sees it rendered as Markdown." in d
 
     def test_complete_says_result_is_the_delivered_answer(self):
-        # v10.75.0: result 가 답으로 전달되는 유일한 글 — 답 먼저, 근거는 고정 틀
-        # 두 줄. 추론 과정 전체를 요구하지 않는다(사용자 결정).
+        # v10.75.0: result 가 사람에게 가는 답 — 답 먼저, 근거는 고정 틀 두 줄. 추론 과정 전체를
+        # 요구하지 않는다(사용자 결정). v10.177.8: 요청한 에이전트에게는 `reply` 만 간다.
         d = TOOLS["complete"].description
-        assert "`result` is the only text delivered as your answer" in d
-        assert "the agent that called you" in d
+        assert "`result` is your final answer for the person who asked you here" in d
+        assert "gets only your `reply` — `result` does not reach it" in d
         assert "\nChecked: <" in d and "\nNot checked: <" in d
         assert "nothing to check has neither line" in d
         assert "reasoning" not in d

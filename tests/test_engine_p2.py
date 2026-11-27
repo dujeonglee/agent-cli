@@ -258,7 +258,7 @@ class TestResultIsAReply:
         result = s["run"]()
         assert result.success and result.output.startswith("final")
         text = contents(s["ctx"])
-        assert "your result was delivered, but 1 item is still open" in text
+        assert "your result is recorded, but 1 item is still open" in text
         assert (
             "2. by arrival — `wait`; each reply closes its item when it comes" in text
         )

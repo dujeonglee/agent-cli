@@ -31,8 +31,10 @@ class CompleteTool(Tool):
     # 써도 된다는 것을 알린다(사용자 요청 2026-11-01). 호출한 에이전트는 원문을 받는다.
     description = (
         "Call this tool when the task is done — always the last call. `result` "
-        "is the only text delivered as your answer — to the user, or to the "
-        "agent that called you; what you wrote outside it is not. The user "
+        "is your final answer for the person who asked you here, or for the "
+        "caller that ran you inline (a skill or a harness job); what you wrote "
+        "outside it is not. An agent that sent you a request gets only your "
+        "`reply` — `result` does not reach it. The user "
         "sees it rendered as Markdown. Put the answer first. When it rests on "
         "work you did, end with two lines:\n"
         "Checked: <what you ran or inspected, and what it showed>\n"
@@ -175,8 +177,8 @@ class MessageTool(Tool):
         "back to you as a new message marked with that id, and you are not blocked. "
         "With `expects_reply` false it is a notice: a status update, a hand-off note, "
         "a goodbye — nothing is owed back and the receiver must not acknowledge it. "
-        "To answer a request you received, use `reply`. `complete` alone reports to "
-        "no one. See `## Live Agents` for who is running. Never send thanks or "
+        "To answer a request you received, use `reply` — it is the only way an answer "
+        "reaches an agent; `complete` does not. See `## Live Agents` for who is running. Never send thanks or "
         "acknowledgements."
     )
     parameters: ClassVar[dict] = {
@@ -227,7 +229,9 @@ class ReplyTool(Tool):
 
     deferred = True
 
-    summary = "Answer a request someone is waiting on — another agent's `message` or the request you were given."
+    summary = (
+        "Answer a request someone is waiting on — an `r-…` item in `## Open Items`."
+    )
     # v10.56.0 (장부 P3 §11.3): main 에도 붙는다 — 빚을 갚는 도구는 루프와 무관하게
     # 하나다. 종전엔 상주 전용(``message_handler``)이었고 main 은 `agent` 의 옛 요청 모드
     # 로 "가장 오래된 빚" 을 갚았다. 6b: `message` 와 짝 — 메시지를 주고받는 루프(main·에이전트)에 붙는다.
@@ -235,12 +239,14 @@ class ReplyTool(Tool):
     requires_handler = "message_handler"
     force_mount = True
     description = (
-        "Reply to a request someone is waiting on — an agent's `message` that expects "
-        "an answer, or the request you were given. `id` is the request's `r-…` from "
-        "`## Open Items`; it alone says where the reply goes, and each request gets "
+        "Reply to a request someone is waiting on — an `r-…` item in `## Open Items`, "
+        "such as a `message` that expects an answer or a task another agent gave you. "
+        "`id` is that `r-…`; it alone says where the reply goes, and each request gets "
         "its own reply. Nothing is expected back, so this ends that exchange cleanly. "
-        "Use `message` instead when you need something from them. `complete` alone "
-        "reports to no one: reply before you complete. Refused when nothing is owed."
+        "Use `message` instead when you need something from them. `complete` does not "
+        "reach the requester: reply before you complete. A request left without a "
+        "`reply` is closed with a note that you did not answer. Refused when nothing "
+        "is owed."
     )
     parameters: ClassVar[dict] = {
         "type": "object",

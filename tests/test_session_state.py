@@ -91,7 +91,7 @@ class TestBuildSessionState:
         """v9.24.1: 턴 한도에서 루프는 마무리 없이 멈춘다 — 실측(v5 large-scale)
         하위 에이전트가 60턴째에도 다음 실험을 계획했고 발견이 전부 사라졌다.
         마지막 턴에 complete 로 무엇을 보고할지 알려 준다."""
-        out = build_session_state(turn=60, max_turns=60, reports_to_caller=True)
+        out = build_session_state(turn=60, max_turns=60, answer_route="result")
         assert "turn 60/60 (0 left after this one)" in out
         assert "last turn" in out and "Call `complete` now" in out
         assert "The agent that called you receives only" in out
@@ -715,7 +715,7 @@ class TestOpenItemsInTail:
         )
         assert '     [u-3] (dj) "README 정리해 줘"' in out
         assert 'then `complete`, listing in `answers` the ids it covers ("u-3")' in out
-        assert out.rstrip().endswith("your result is delivered either way.")
+        assert out.rstrip().endswith("The run stays open until every item is closed.")
 
     def test_main_settles_a_reply_with_reply_too(self):
         """main 도 `reply(id)` — 갚는 도구는 루프와 무관하게 하나다."""

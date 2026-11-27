@@ -1183,7 +1183,7 @@ class TestReplyNagCap:
             m
             for m in ctx.get_raw_messages()
             if m.get("role") == "user"
-            and "your result was delivered, but" in m.get("content", "")
+            and "your result is recorded, but" in m.get("content", "")
         ]
         assert len(nags) == NAG_BUDGET, f"독촉 {len(nags)}회 — 예산은 {NAG_BUDGET}"
         assert p.call.call_count == NAG_BUDGET + 1, "예산 뒤 complete 은 통과해야 한다"
@@ -1665,7 +1665,7 @@ class TestUnifiedDebtRules:
             m
             for m in ctx.get_raw_messages()
             if m.get("role") == "user"
-            and "your result was delivered, but" in m.get("content", "")
+            and "your result is recorded, but" in m.get("content", "")
         ]
         assert nags and '`reply` with `id` "r-1"' in nags[0]["content"]
         assert reg.reply_debts(f"agent:{b}") == []  # 갚았다
@@ -2223,7 +2223,7 @@ class TestMidRunAbsorption:
         assert "## Open Items" in second and "[u-2]" in second  # 사람 요청 회계
         third = "\n".join(str(m.get("content")) for m in calls[2])
         assert (
-            "your result was delivered, but 1 item is still open" in third
+            "your result is recorded, but 1 item is still open" in third
         )  # 배달 후 독촉
         assert "was refused" not in third
         user_recs = [r for r in _history(ctx) if r.get("request_id") == "u-2"]

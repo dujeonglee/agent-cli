@@ -287,7 +287,7 @@ class SkillLoop(LoopKind):
         return PromptProfile(
             role=self.agent_role,  # 호출자의 역할 (D3)
             peer_section="",
-            reports_to_caller=True,
+            answer_route="result",
         )
 
     def tail_roster(self, tools: list[str]) -> str:

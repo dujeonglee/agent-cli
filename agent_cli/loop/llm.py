@@ -277,7 +277,7 @@ class LLMCaller:
             jobs=jobs,
             questions=questions,
             guidelines=TASK_GUIDELINES,
-            reports_to_caller=self.cfg.kind.prompt_profile().reports_to_caller,
+            answer_route=self.cfg.kind.prompt_profile().answer_route,
         )
 
     def _interrupt_check(self) -> bool:

@@ -34,10 +34,7 @@ from agent_cli import item_ids
 NAG_BUDGET = 8
 
 _HEAD = "## Open Items — close them in this order; `complete` is always the last step"
-_TAIL = (
-    "  The run stays open until every item is closed; your result is delivered "
-    "either way."
-)
+_TAIL = "  The run stays open until every item is closed."
 #: wait 가 있는 루프에만 (v10.67.1) — 열린 항목을 보며 `complete` 를 고민하는 바로
 #: 그 자리에 대안을 둔다. 도구 설명은 프롬프트 머리에 있어 그 순간 읽히지 않는다
 #: (Task Guidelines·Open Items 를 꼬리로 옮긴 근거와 같다). 스킬 루프엔

@@ -867,7 +867,7 @@ class MainLoop(LoopKind):
         return PromptProfile(
             role="",  # 기본 ROLE_PROMPT
             peer_section="",
-            reports_to_caller=False,
+            answer_route="user",
         )
 
     def tail_roster(self, tools: list[str]) -> str:

@@ -267,7 +267,8 @@ def build_reply_record(reply: dict, *, registry=None) -> dict:
             "content": (
                 f"── {job} ──\n{body}\n"
                 "(A harness job's result — nothing to send back. Act on findings "
-                "if there are any; otherwise there is nothing to do.)"
+                "if there are any, then close it in `complete`'s `answers` with its "
+                "id from `## Open Items`.)"
             ),
             "source": "harness",
         }

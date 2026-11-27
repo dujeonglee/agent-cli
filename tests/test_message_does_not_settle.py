@@ -77,7 +77,7 @@ def test_complete_after_asking_back_names_the_debt(session):  # noqa: F811
         (nag,) = [
             str(m.get("content") or "")
             for m in msgs
-            if "your result was delivered, but" in str(m.get("content") or "")
+            if "your result is recorded, but" in str(m.get("content") or "")
         ]
         seen["nag"] = nag
         seen["id"] = re.search(r"\[(r-\d+)\] \(main\) reply owed", nag).group(1)
@@ -102,7 +102,7 @@ def test_complete_after_asking_back_names_the_debt(session):  # noqa: F811
     )
     s = session(p)
     assert s["run"]().success
-    assert "Observation: your result was delivered, but" in seen["nag"]
+    assert "Observation: your result is recorded, but" in seen["nag"]
     assert f"[{seen['id']}] (main) reply owed" in seen["nag"]
     assert f'`reply` with `id` "{seen["id"]}"' in seen["nag"]
     assert f"re [{seen['id']}]" in contents(s["ctx"])

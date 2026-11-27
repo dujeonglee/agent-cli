@@ -30,8 +30,8 @@ from agent_cli.tools.result import ToolResult
 #: run 의 결과 — 기다리지 않는다는 사실과 회신 표지. 기다리는 법은 꼬리(`## Open Items`)가 말한다.
 RUN_STARTED = (
     'started agent "{key}"{as_} on request "{rid}" — its `reply` comes back marked '
-    "[{rid}] and wakes you (if it completes without one you get its run summary "
-    "instead); the agent ends when it completes."
+    "[{rid}] and wakes you (if it ends without one, you get a note saying so); "
+    "the agent ends when it completes."
 )
 
 

@@ -151,7 +151,7 @@ def _context_line(turn: int, max_turns: int) -> str:
     return " · ".join(parts)
 
 
-def final_turn_notice(*, reports_to_caller: bool) -> str:
+def final_turn_notice(*, answer_route: str) -> str:
     """The last-allowed-turn instruction (v9.24.1).
 
     At the turn cap the loop simply stops (``_on_max_turns``) — no wrap-up
@@ -161,13 +161,23 @@ def final_turn_notice(*, reports_to_caller: bool) -> str:
     overwrote /app/mac.vim during a probe", was lost. So on the final turn
     the model is told plainly that the run ends after it and what to put in
     ``complete``. It asks for a status report, never for writing unfinished
-    work into the task's deliverables."""
-    who = (
-        "The agent that called you receives only what you put in complete — "
-        "anything you do not write there is lost."
-        if reports_to_caller
-        else "The user receives what you put in complete."
-    )
+    work into the task's deliverables.
+
+    ``answer_route`` (`PromptProfile`): an agent answers its requests with `reply` — its `result` reaches no
+    requester (v10.177.8); a skill or harness job hands its `result` to the caller that ran it; main hands it
+    to the user."""
+    who = {
+        "reply": (
+            "Send what you found with `reply` to each open request (its `id`) and "
+            "call `complete` in this same turn — a requester without a `reply` is "
+            "told only that you ended without answering."
+        ),
+        "result": (
+            "The agent that called you receives only what you put in complete — "
+            "anything you do not write there is lost."
+        ),
+        "user": "The user receives what you put in complete.",
+    }[answer_route]
     return (
         "⚠ This is your last turn — the run ends after it, whatever you emit. "
         "Call `complete` now instead of starting new work. In the result, report "
@@ -188,7 +198,7 @@ def build_session_state(
     jobs: str = "",
     questions: str = "",
     guidelines: str = "",
-    reports_to_caller: bool = False,
+    answer_route: str = "user",
     compaction_notice: bool = False,
     notice_memory: bool = True,
 ) -> str:
@@ -203,9 +213,8 @@ def build_session_state(
     A non-empty block always opens with ``TAIL_BOUNDARY`` (v9.25.2) so the
     model can tell where the user's text ends and the harness's begins.
 
-    ``reports_to_caller`` (v9.24.1) selects the final-turn wording: a
-    sub-agent or skill loop (``depth > 0``) hands its ``complete`` result to
-    the agent that called it; the main loop hands it to the user.
+    ``answer_route`` (v9.24.1, v10.177.8) selects the final-turn wording
+    (:func:`final_turn_notice`).
 
     ``guidelines`` is ``TASK_GUIDELINES`` verbatim (v8.52.0 — the WHOLE
     section moved here from the system prompt's primacy zone: bench-measured,
@@ -269,7 +278,7 @@ def build_session_state(
 
     if max_turns and turn >= max_turns:
         lines.append("")
-        lines.append(final_turn_notice(reports_to_caller=reports_to_caller))
+        lines.append(final_turn_notice(answer_route=answer_route))
 
     if compaction_notice:
         lines.append("")

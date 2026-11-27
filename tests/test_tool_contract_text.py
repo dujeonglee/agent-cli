@@ -72,85 +72,89 @@ def test_depth_refusal_names_the_hops():
 
 
 def test_complete_says_where_result_goes():
-    """#1 `complete` 설명 — `result` 가 어디로 가나."""
+    """#1 `complete` 설명 — `result` 는 사람(또는 그 자리에서 부른 스킬·하니스)에게, 요청한 에이전트에게는 가지
+    않는다."""
     assert (
-        "`result` is the only text delivered as your answer — to the user, or to the "
-        "agent that called you; what you wrote outside it is not."
-        in TOOLS["complete"].description
+        "`result` is your final answer for the person who asked you here, or for the "
+        "caller that ran you inline (a skill or a harness job); what you wrote outside "
+        "it is not. An agent that sent you a request gets only your `reply` — `result` "
+        "does not reach it." in TOOLS["complete"].description
     )
 
 
 def test_message_points_answers_to_reply():
     """#2 `message` 설명 끝."""
     assert (
-        "To answer a request you received, use `reply`. `complete` alone reports to "
-        "no one." in TOOLS["message"].description
+        "To answer a request you received, use `reply` — it is the only way an answer "
+        "reaches an agent; `complete` does not." in TOOLS["message"].description
     )
 
 
 def test_reply_description():
-    """#3·1-6 `reply` 요약·설명."""
+    """#3·1-6 `reply` 요약·설명 — 닫는 것은 `r-…` 항목, `complete` 는 요청자에게 닿지 않는다."""
     assert TOOLS["reply"].summary == (
-        "Answer a request someone is waiting on — another agent's `message` or the "
-        "request you were given."
+        "Answer a request someone is waiting on — an `r-…` item in `## Open Items`."
     )
-    d = TOOLS["reply"].description
-    assert d.startswith(
-        "Reply to a request someone is waiting on — an agent's `message` that expects "
-        "an answer, or the request you were given. `id` is the request's `r-…` from "
-        "`## Open Items`; it alone says where the reply goes"
-    )
-    assert d.endswith(
-        "`complete` alone reports to no one: reply before you complete. Refused when "
-        "nothing is owed."
+    assert TOOLS["reply"].description == (
+        "Reply to a request someone is waiting on — an `r-…` item in `## Open Items`, "
+        "such as a `message` that expects an answer or a task another agent gave you. "
+        "`id` is that `r-…`; it alone says where the reply goes, and each request gets "
+        "its own reply. Nothing is expected back, so this ends that exchange cleanly. "
+        "Use `message` instead when you need something from them. `complete` does not "
+        "reach the requester: reply before you complete. A request left without a "
+        "`reply` is closed with a note that you did not answer. Refused when nothing "
+        "is owed."
     )
 
 
 def test_reply_discipline_first_rule():
-    """#4 Reply Discipline 1."""
+    """#4 Reply Discipline 1 — 첫 문장은 그대로(이제 참), `reply` 없이 끝나면 무엇이 가는지 한 문장."""
     flat = " ".join(_REPLY_DISCIPLINE_SECTION.split())
     assert (
         "1. `complete` reports to no one — it only ends your run. The answer for a "
         "requester goes out with `reply` (that request's id + your text), one reply "
-        "per request, BEFORE you complete. A request from the user in your chat window "
-        "is answered by `complete` itself (they see it there). 2." in flat
+        "per request, BEFORE you complete. If you end without a `reply`, the requester "
+        "is told only that you did not answer — none of your work reaches them. A "
+        "request from the user in your chat window is answered by `complete` itself "
+        "(they see it there). 2." in flat
     )
 
 
 def test_last_turn_says_who_receives_the_result():
-    """#5 마지막 턴 안내의 끝 문장."""
-    assert final_turn_notice(reports_to_caller=True).endswith(
+    """#5 마지막 턴 안내의 끝 문장 — 답이 가는 길(`PromptProfile.answer_route`)마다."""
+    assert final_turn_notice(answer_route="reply").endswith(
+        "Send what you found with `reply` to each open request (its `id`) and call "
+        "`complete` in this same turn — a requester without a `reply` is told only "
+        "that you ended without answering."
+    )
+    assert final_turn_notice(answer_route="result").endswith(
         "The agent that called you receives only what you put in complete — "
         "anything you do not write there is lost."
     )
-    assert final_turn_notice(reports_to_caller=False).endswith(
+    assert final_turn_notice(answer_route="user").endswith(
         "The user receives what you put in complete."
     )
 
 
 def test_run_and_spawn_say_what_comes_back():
-    """#6·#7 `agent` 결과 — 회신이 없으면 무엇이 오나."""
-    assert (
-        "(if it completes without one you get its run summary instead)" in RUN_STARTED
-    )
-    assert SPAWN_TASK_QUEUED.endswith(
-        "(if it completes without one you get its run summary instead)."
-    )
-    assert RESUME_TASK_QUEUED.endswith("and wakes you.")
+    """#6·#7 `agent` 결과 — 회신이 없으면 그 사실을 알리는 회신이 온다(spawn·resume 짝, 감사 3-2)."""
+    assert "(if it ends without one, you get a note saying so)" in RUN_STARTED
+    for queued in (SPAWN_TASK_QUEUED, RESUME_TASK_QUEUED):
+        assert queued.endswith(
+            "and wakes you (if it ends its run without one, you get a note saying so)."
+        )
 
 
 def test_open_items_tail():
-    """#10 `## Open Items` 꼬리말."""
-    assert ledger._TAIL == (
-        "  The run stays open until every item is closed; your result is delivered "
-        "either way."
-    )
+    """#10 `## Open Items` 꼬리말 — "your result is delivered either way" 는 사람의 요청이 있을 때만 참이었다."""
+    assert ledger._TAIL == "  The run stays open until every item is closed."
 
 
 def test_harness_mail_says_what_to_do():
-    """#11 감사 메일(2-6)."""
+    """#11 감사 메일(2-6) — 항목이고 `answers` 로 닫는다."""
     rec = build_reply_record({"kind": "harness", "job": "auditor", "output": "x"})
     assert rec["content"].endswith(
         "(A harness job's result — nothing to send back. Act on findings if there are "
-        "any; otherwise there is nothing to do.)"
+        "any, then close it in `complete`'s `answers` with its id from "
+        "`## Open Items`.)"
     )

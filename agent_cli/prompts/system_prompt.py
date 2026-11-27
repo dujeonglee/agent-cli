@@ -447,8 +447,10 @@ its own answer back; never let one end silently:
 
 1. `complete` reports to no one — it only ends your run. The answer for a
    requester goes out with `reply` (that request's id + your text), one reply
-   per request, BEFORE you complete. A request from the user in your chat
-   window is answered by `complete` itself (they see it there).
+   per request, BEFORE you complete. If you end without a `reply`, the
+   requester is told only that you did not answer — none of your work reaches
+   them. A request from the user in your chat window is answered by
+   `complete` itself (they see it there).
 2. A request that arrives mid-run does not replace the one you are on: finish
    or explicitly decline both, each with its own reply.
 3. When you NEED something from a requester or a peer, use `message` — it

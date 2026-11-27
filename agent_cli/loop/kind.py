@@ -48,8 +48,10 @@ class PromptProfile:
     role: str
     #: 상주의 `## Live Agents` 안내 + Reply Discipline (빈 문자열이면 없음)
     peer_section: str
-    #: 종결문이 "호출자에게 보고" 어투인가 (서브루프)
-    reports_to_caller: bool
+    #: 이 루프의 답이 가는 길 — 마지막 턴 안내가 고른다. ``"user"``(main — `complete` 의 `result` 가 사람에게),
+    #: ``"reply"``(상주·일회용 에이전트 — 요청의 답은 `reply` 하나, `result` 는 요청자에게 가지 않는다),
+    #: ``"result"``(스킬·하니스 작업 — 그 자리에서 부른 쪽이 `result` 를 받는다).
+    answer_route: str
 
 
 @dataclass(frozen=True)
@@ -257,7 +259,7 @@ class LoopKind:
         return PromptProfile(
             role=self.agent_role,
             peer_section=self.peer_agents_section,
-            reports_to_caller=self.depth > 0,
+            answer_route="result" if self.depth > 0 else "user",
         )
 
     def tail_roster(self, tools: list[str]) -> str:
@@ -369,7 +371,7 @@ class PrivateLoop(LoopKind):
         return PromptProfile(
             role=self.agent_role,
             peer_section="",
-            reports_to_caller=True,
+            answer_route="result",
         )
 
     def tail_roster(self, tools: list[str]) -> str:
