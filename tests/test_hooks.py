@@ -456,15 +456,6 @@ class TestSkillHooksEndToEnd:
         provider.call.side_effect = [LLMResponse(content=r) for r in responses]
         return provider
 
-    # Tests below use `printf` instead of `echo` for the mocked shell
-    # command: loop._try_echo_as_final intercepts plain `echo ...` shell
-    # calls and treats them as a final answer (a shortcut for small
-    # models that use echo as a stand-in for the complete tool). That
-    # shortcut bypasses tool execution entirely, which would mean no
-    # PreToolUse hook ever fires and these tests trivially "pass for
-    # the wrong reason". Using `printf` keeps tool dispatch on the real
-    # path.
-
     def _write_probe_skill(self, skill_root, log_file):
         """Write a SKILL.md that logs every PreToolUse shell invocation
         to `log_file` via `cat` of the hook stdin payload."""
@@ -830,10 +821,6 @@ class TestAgentFrontmatterHooks:
         """Full E2E: write a real agent file with a PreToolUse hook,
         delegate to it with a mocked LLM, and verify the hook's
         subprocess actually ran and wrote to the log file.
-
-        Uses `printf` instead of `echo` to avoid loop._try_echo_as_final
-        shortcut-intercepting the tool call before the hook fires (same
-        gotcha as the skill E2E tests above).
         """
         from unittest.mock import MagicMock
 

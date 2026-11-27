@@ -2151,29 +2151,9 @@ class TestToolHistoryTracking:
         assert result.output == "ok"
 
 
-class TestEchoAsFinalAnswer:
-    def test_simple_echo_becomes_final(self, caps):
-        """echo 'Task done' → intercepted as final answer."""
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "action": "shell",
-                    "command": 'echo "Task completed successfully."',
-                    "timeout": 5,
-                }
-            ),
-        )
-        result = run_loop(
-            ports=TEST_PORTS,
-            query="Do something",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-        )
-        assert result.output == "Task completed successfully."
-
-    def test_echo_is_not_run_and_ends_the_run(self, caps, monkeypatch):
-        """맨 `echo` 는 셸에서 돌지 않는다 — 변수가 펼쳐지지 않은 글이 그대로 최종 답, 모델 호출 1회."""
+class TestEchoIsAShellCommand:
+    def test_echo_runs_like_any_command(self, caps, monkeypatch):
+        """맨 `echo` 도 셸에서 돈다 — 결과는 관찰로 오고, 끝내는 것은 `complete` 다."""
         monkeypatch.setenv("ECHO_PROBE", "expanded")
         provider = _make_provider(
             json.dumps({"action": "shell", "command": "echo $ECHO_PROBE"}),
@@ -2186,39 +2166,10 @@ class TestEchoAsFinalAnswer:
             capabilities=caps,
             model="test-model",
         )
-        assert result.output == "$ECHO_PROBE"
-        assert provider.call.call_count == 1
-
-    def test_echo_with_pipe_not_intercepted(self, caps):
-        """echo ... | grep should NOT be treated as final answer."""
-        provider = _make_provider(
-            json.dumps({"action": "shell", "command": "echo hello | grep h"}),
-            _complete("found"),
-        )
-        result = run_loop(
-            ports=TEST_PORTS,
-            query="Search",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-        )
-        assert result.output == "found"
-
-    def test_echo_with_redirect_not_intercepted(self, caps, tmp_path, monkeypatch):
-        """echo ... > file should NOT be treated as final answer."""
-        monkeypatch.chdir(tmp_path)  # 셸이 cwd 에 out.txt 를 쓴다
-        provider = _make_provider(
-            json.dumps({"action": "shell", "command": "echo hello > out.txt"}),
-            _complete("written"),
-        )
-        result = run_loop(
-            ports=TEST_PORTS,
-            query="Write",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-        )
-        assert result.output == "written"
+        assert result.output == "second"
+        assert provider.call.call_count == 2
+        observed = _messages_from_call(provider.call.call_args_list[1])[-1]["content"]
+        assert "expanded" in observed
 
 
 class TestRepeatedCallDetection:
@@ -4534,7 +4485,6 @@ class TestPR3Collaborators:
 
     def test_dispatcher_standalone_tool_op_continues(self):
         from agent_cli.dialects.base import Op, ParsedTurn
-        from agent_cli.loop.state import _CONTINUE
 
         d, _st = self._dispatcher()
         turn = ParsedTurn(
@@ -4543,12 +4493,14 @@ class TestPR3Collaborators:
             raw="",
             parse_stage=1,
         )
-        r = d._dispatch_op("raw", turn, turn.ops[0], {})
-        # 단일-op 도구 실행은 ToolResult 반환(레거시 경로 보존) — 루프 계속
-        # 여부는 _execute_turn 이 판단. _CONTINUE 는 ask/run_skill 경로 소관.
-        assert r is not _CONTINUE and r.success and r.output.strip() == "pr3"
-        # 1-op 경로의 관찰 append 는 상위(_handle_text_path) 소관 — 여기선
-        # 디스패처가 브리지 경유로 실제 도구를 실행했다는 사실만 고정.
+        acc: list = []
+        r = d._dispatch_op("raw", turn, turn.ops[0], {}, accumulate=acc)
+        # 묶음 자리의 도구 실행 — 결과는 호출자의 묶음 관찰로 쌓이고 루프는 계속된다.
+        # 디스패처가 브리지 경유로 실제 도구를 실행했다는 사실만 고정한다(종전 단언은
+        # 맨 `echo` 를 최종 답으로 접던 구제 덕에 통과했다 — 도구는 돌지 않았다).
+        assert r is None
+        assert [(e["tool_name"], e["success"]) for e in acc] == [("shell", True)]
+        assert "pr3" in acc[0]["observation"]
 
     def test_dispatcher_owns_loop_detector(self):
         d, _ = self._dispatcher()

@@ -453,7 +453,6 @@ class TestLiveDispatchOrdinals:
             )
             target = tmp_path / "f.txt"
             target.write_text("hello\n")
-            # (shell `echo` 는 echo-as-final 로 접히므로 read_file 로 관찰을 만든다)
             d._handle_text_path('[{"action":"read_file","path":"' + str(target) + '"}]')
         finally:
             set_renderer(prev)

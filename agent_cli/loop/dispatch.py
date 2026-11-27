@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import time
 
 from agent_cli import confirm
@@ -1072,19 +1071,6 @@ class TurnDispatcher:
         if op.action == "wait":
             return self._op_wait(llm_text, turn, op, outcome)
 
-        # 9. Detect echo-as-final-answer (common small model pattern)
-        echo_answer = _try_echo_as_final(op.action, op.action_input)
-        if echo_answer:
-            if self.ctx:
-                self.ctx.add(
-                    self.cfg.dialect.serialize_terminal_for_history(
-                        turn.thought or "", echo_answer
-                    )
-                )
-            render_step("final", echo_answer, self.state.turn, hidx=self._last_hidx())
-
-            return ToolResult(True, output=echo_answer)
-
         if op.action == "ask":
             handled = self._op_ask(llm_text, turn, op, accumulate)
             if handled is not _NOT_HANDLED:
@@ -2011,12 +1997,6 @@ def _extract_questions(action_input) -> list[str]:
     return []
 
 
-_ECHO_FINAL_RE = re.compile(
-    r'^echo\s+["\']?(.+?)["\']?\s*$',
-    re.DOTALL,
-)
-
-
 def _claimed_ids(action_input) -> set[str] | None:
     """`complete` 이 주장한 요청 id 집합. **부재는 `None`** (빈 집합과 다르다).
 
@@ -2033,24 +2013,6 @@ def _claimed_ids(action_input) -> set[str] | None:
     if isinstance(raw, str) and raw.strip():
         # 단일 id 를 문자열로 보내는 모델 습관 — 관용한다.
         return {raw.strip()}
-    return None
-
-
-def _try_echo_as_final(tool_name: str, tool_input) -> str | None:
-    """Detect 'echo ...' shell calls that are actually final answers.
-
-    Small models often use shell echo instead of the complete tool.
-    Only matches simple echo commands with no pipes, redirects, or chaining.
-    """
-    if tool_name != "shell" or not isinstance(tool_input, dict):
-        return None
-    cmd = tool_input.get("command", "").strip()
-    # Reject if command has pipes, redirects, semicolons, &&, || etc.
-    if any(c in cmd for c in ["|", ">", "<", ";", "&&", "||", "`", "$("]):
-        return None
-    m = _ECHO_FINAL_RE.match(cmd)
-    if m:
-        return m.group(1).strip().strip("'\"")
     return None
 
 

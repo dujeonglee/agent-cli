@@ -2247,7 +2247,6 @@ agent-cli mcp remove <이름>
 
 - **반복 호출 감지**: 동일 도구를 같은 파라미터로 3회 연속 호출 시 자동 중단
 - **버려진 응답의 연속 상한 (v10.177.10)**: 하니스가 저장하지 않고 되묻기만 남긴 응답 — 형식 오류(호출 없는 산문·깨진 JSON·빈 응답 등), 실행 전에 거절된 호출(모르는 도구·인자 오류·인자가 JSON 이 아님), 반복 호출 넛지 — 이 **연달아 10번**이면 런을 끝냅니다(고정 상수 `DISCARDED_RESPONSE_LIMIT`, 노브 없음). 화면에는 `No progress: the last 10 responses were rejected before anything ran (last: <사유>). Stopping.`, 결과는 실패(`run` 종료 코드 1). 그런 응답은 턴 상한에 세지 않아 같은 응답이 되풀이되면 다른 상한이 없었습니다. 도구가 실행되거나 기록에 남는 응답(가상 호출·`complete` 되돌림·묶음·`wait`)이 오면, 그리고 `wait` 에서 깨어나면 다시 0 부터 셉니다. 턴을 세는 응답(묶음 전체 거절·`wait` 거절·같은 실패 재시도·출력 절단·스트림 오류·폭주 중단)은 이 상한 밖이라 턴 상한(`--max-turns`)이 무제한이면 지금처럼 끝나지 않습니다.
-- **echo-as-final**: `echo`로 답하는 소형 모델 패턴 자동 감지 → `complete` 도구 호출로 변환
 - **잘린 JSON 복구**: LLM 응답이 잘릴 때 JSON repair 후 마지막 불완전한 edit 라인 제거, 적용된 edit 수 리포트
 - **Execution Context**: 스킬/agent 실행 시 call stack + `depth N/M` 을 시스템 프롬프트에 표시, 재귀 호출 억제. 한계 도달 시 그 사실도 명시.
 - **agent_stack / skill_stack**: 런타임 재귀 방지 (A→B→A 차단). 블록 메시지에 3가지 recovery option 포함 (다른 접근 / complete / ask).
