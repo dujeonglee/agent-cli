@@ -363,7 +363,13 @@ def build_reply_record(reply: dict, *, registry=None) -> dict:
         mark=str(reply.get("mark") or ""),
     )
     tm = registry.get(key) if registry is not None else None
-    if tm is not None and getattr(tm, "state", "dead") != "dead":
+    # 상태 꼬리는 다시 물을 수 있는 상주에게만 — 일회용(``ends_after_task``)은 이 회신을 낸 런으로 내려간다("… and is
+    # gone."). 배달 순간엔 아직 dead 가 아니어도 그렇다.
+    if (
+        tm is not None
+        and getattr(tm, "state", "dead") != "dead"
+        and not getattr(tm, "ends_after_task", False)
+    ):
         queued = registry.backlog_of(key)
         if queued > 0 or state_is_active(tm.state):
             # 기다리는 중이면(우편의 기다림 표시) 작업 상태 대신 그 낱말로 — 꼬리의 `## Live Agents` 와 같다
