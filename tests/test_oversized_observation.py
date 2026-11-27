@@ -195,6 +195,15 @@ class TestUnifiedNudge:
         assert self._sections(n) == 16
         assert "still large" in n and "`read_file` with `search`" in n
 
+    def test_fanout_and_the_agent_limit(self, tmp_path):
+        """감사 1-5 — 지금 넛지는 살아 있는 에이전트 상한(기본 10)을 보지 않고 16 개까지
+        권한다(고정)."""
+        from agent_cli.subagent.agents_live import _DEFAULT_MAX_AGENTS
+
+        n = _nudge("shell", self._body(40_000), cap=1000, tmp_path=tmp_path)
+        assert _DEFAULT_MAX_AGENTS == 10
+        assert self._sections(n) == 16
+
     def test_persist_failure_degrades_without_claiming_a_file(self, monkeypatch):
         monkeypatch.setattr(
             "agent_cli.tools.base.persist_oversized", lambda *a, **k: ""
