@@ -509,9 +509,14 @@ class TestKvWinEndToEnd:
 
         calls = iter(ops)
         provider = MagicMock()
-        provider.call = MagicMock(
-            side_effect=lambda *a, **k: LLMResponse(content=json.dumps(next(calls)))
-        )
+        #: 호출 때의 마지막 메시지 — ``call_args_list`` 는 같은 목록을 가리켜 뒤의 추가가 보인다.
+        provider.tails = []
+
+        def respond(*a, **k):
+            provider.tails.append(k["messages"][-1]["content"])
+            return LLMResponse(content=json.dumps(next(calls)))
+
+        provider.call = MagicMock(side_effect=respond)
         ctx = _ctx(tmp_path)
         result = run_loop(
             ports=TEST_PORTS,
@@ -573,8 +578,8 @@ class TestKvWinEndToEnd:
                 {"action": "complete", "result": "ok"},
             ],
         )
-        for call in provider.call.call_args_list:
-            tail = call[1]["messages"][-1]["content"]
+        assert len(provider.tails) == 2
+        for tail in provider.tails:
             assert SESSION_STATE_HEADER in tail
             assert "turn " in tail and "context:" not in tail
 
