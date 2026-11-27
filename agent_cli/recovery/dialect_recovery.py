@@ -76,6 +76,17 @@ def format_no_json_retry(
     """
     wf = _resolve_dialect(dialect)
     echo = echo_prior_output(prior_content, excerpt=not prior_is_excerpt)
+    if not echo and swallowed and wf.server_parsed:
+        # 서버 파싱 방언은 글을 파싱하지 않는다(감사 2-5) — 배열 길이 없다. 호출은 함수 호출로만.
+        return Intervention(
+            message=(
+                "The server counted output tokens but delivered no text and no "
+                "function call — a server-side parser most likely consumed your "
+                "call. Call the tool again through function calling. (The user has "
+                "been told about this server.)"
+            ),
+            primitives=["swallowed_output_hint"],
+        )
     if not echo and swallowed:
         # v10.1.7 (실측): 서버가 토큰은 셌는데 글을 안 줬다 — 서버측 파서가 호출
         # 블록을 삼킨 것. 같은 모양으로 다시 내면 또 삼킨다. 레지스트리가 bare
@@ -87,8 +98,7 @@ def format_no_json_retry(
                 "before it reached the harness. Do not repeat the same shape. "
                 "Emit the call as a bare JSON array instead: "
                 '[{"action": "<tool>", ...params}] — the harness accepts it and '
-                "re-renders it. (The user has been told the binding should "
-                "change to json_fc on this server.)"
+                "re-renders it. (The user has been told about this server.)"
             ),
             primitives=["swallowed_output_hint"],
         )
