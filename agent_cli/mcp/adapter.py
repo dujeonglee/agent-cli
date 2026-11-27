@@ -92,6 +92,9 @@ class McpTool(Tool):
             text, images = _extract_mcp_result(
                 result, f"{self._server}-{self._tool_name}"
             )
+            # 서버가 도구 오류로 답했다(MCP `isError`) — 글은 그대로, 실패로 기록한다.
+            if getattr(result, "isError", False) is True:
+                return ToolResult(False, error=text, images=images)
             return ToolResult(True, output=text, images=images)
         except McpCallTimedOut as e:
             return ToolResult(

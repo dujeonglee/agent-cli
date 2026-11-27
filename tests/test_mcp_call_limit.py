@@ -407,7 +407,8 @@ ERROR_SERVER = Path(__file__).parent / "fixtures" / "error_mcp_server.py"
 
 
 def test_a_tool_error_from_the_server():
-    """서버가 ``isError: true`` 로 답한다 — 지금은 성공으로 기록된다(고정)."""
+    """서버가 ``isError: true`` 로 답하면 실패다 — 글은 서버의 오류 본문 그대로(감사 1-10: 종전엔
+    성공으로 기록됐다)."""
     m = McpClientManager()
     cfg = McpServerConfig(name="errors", command=sys.executable, args=[str(ERROR_SERVER)])
     try:
@@ -415,5 +416,5 @@ def test_a_tool_error_from_the_server():
         r = McpTool(m, "errors", "denied", "", {}).run({"path": "/x"})
     finally:
         m.disconnect_all()
-    assert r.success
-    assert r.output == "Error executing tool denied: permission denied: /x"
+    assert not r.success
+    assert r.error == "Error executing tool denied: permission denied: /x"
