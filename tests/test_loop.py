@@ -2193,13 +2193,15 @@ class TestStringLinesForEditFile:
         )
         return _messages_from_call(provider.call.call_args_list[1])[-1]["content"]
 
-    def test_one_string_edit_is_written(self, caps, tmp_path):
+    def test_one_string_edit_is_refused(self, caps, tmp_path):
+        """편집 하나도 묶음과 같은 결과 — 거절, 아무것도 쓰지 않는다."""
         f = tmp_path / "f.py"
         f.write_text("def g():\n    a = 1\n    b = 2\n")
         pos = self._refs(f)[1]
         op = {"action": "edit_file", "path": str(f), "op": "replace", "pos": pos}
-        self._run(caps, [dict(op, lines="    a = 10\n    a2 = 11")])
-        assert f.read_text() == "def g():\n    a = 10\n    a2 = 11\n    b = 2\n"
+        observed = self._run(caps, [dict(op, lines="    a = 10\n    a2 = 11")])
+        assert f.read_text() == "def g():\n    a = 1\n    b = 2\n"
+        assert "Field `lines` for `edit_file` expected array, got str" in observed
 
     def test_two_string_edits_to_one_file_are_refused(self, caps, tmp_path):
         f = tmp_path / "f.py"

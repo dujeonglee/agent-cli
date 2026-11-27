@@ -692,8 +692,6 @@ def _try_coerce(value: Any, expected_type: str) -> Any | None:
             return None
     if expected_type == "array" and isinstance(value, dict):
         return [value]  # single dict → [dict]
-    if expected_type == "array" and isinstance(value, str):
-        return [value]  # single str → [str]  (lenient for "scope": "x" patterns)
     if expected_type == "string" and isinstance(value, (int, float)):
         return str(value)
     return None

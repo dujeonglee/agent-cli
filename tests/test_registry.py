@@ -118,11 +118,13 @@ class TestTypeValidation:
             ("agent", {"mode": "spawn", "profile": "coder", "tools": "shell"}, "tools"),
         ],
     )
-    def test_string_for_an_array_param_is_wrapped(self, tool, args, key):
-        """배열 인자 자리의 문자열은 한 요소 배열로 감싸 통과한다 (감사 1-3)."""
-        ok, err, normalized = validate_tool_input(tool, args)
-        assert (ok, err) == (True, None)
-        assert normalized[key] == [args[key]]
+    def test_string_for_an_array_param_is_refused(self, tool, args, key):
+        """배열 인자는 배열로만 받는다 — 문자열을 감싸지 않는다 (감사 1-3, 문법 서버와 같은 규칙)."""
+        ok, err, _ = validate_tool_input(tool, args)
+        assert ok is False
+        assert err == (
+            f"Field `{key}` for `{tool}` expected array, got str: {args[key]!r}"
+        )
 
     def test_wrong_type_no_coercion(self):
         """Cannot coerce list to string."""

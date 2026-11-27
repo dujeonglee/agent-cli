@@ -404,7 +404,7 @@ class HistoryTool(Tool):
         "Rows come back whole, so project and limit (substr of `text`, a LIMIT) and "
         "fetch the one row you need afterwards. Omit "
         "`query` for the schema, examples and the session list. Default scope is the "
-        'current session; `sessions` "all" or session id(s) reaches others.'
+        'current session; `sessions` with "all" or session ids reaches others.'
     )
     parameters: ClassVar[dict] = {
         "type": "object",
@@ -421,9 +421,8 @@ class HistoryTool(Tool):
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    'Which sessions populate the table. Default: current session. "all"'
-                    " = every session, or specific session id(s). A single string is "
-                    "accepted."
+                    'Which sessions populate the table, as an array: "all" for every '
+                    "session, or session ids. Default: current session."
                 ),
             },
         },
