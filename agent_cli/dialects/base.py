@@ -137,6 +137,18 @@ class ParsedTurn:
 NO_ACTION_FRAMING = "Your response had no usable tool call"
 
 
+def _call_in_words(tool: str, args: dict) -> str:
+    """호출 하나를 표기 규칙의 문장으로 — 도구·인자는 백틱, 값은 JSON 값(문자열은 큰따옴표),
+    인자가 여럿이면 쉼표와 마지막 "and": `` `agent` with `mode` "run" and `task` "…" ``."""
+    named = [f"`{k}` {json.dumps(v, ensure_ascii=False)}" for k, v in args.items()]
+    if not named:
+        return f"`{tool}`"
+    listed = (
+        named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1]
+    )
+    return f"`{tool}` with {listed}"
+
+
 class DialectBase(ABC):
     """Plugin base class for one dialect.
 
@@ -501,12 +513,13 @@ class DialectBase(ABC):
         """프롬프트(도구 가이드·섹션)에 싣는 호출 예시 하나 (v10.75.1).
 
         텍스트 방언은 자기 호출 모양 그대로 — 예시가 곧 형식 교육이다. 서버 파싱
-        방언은 도구 이름 + 인자 객체만: 호출을 글로 쓰지 말라는 방언이 json_fc 의
-        ``{"action": …}`` 를 보여 주면 서로 모순이다(프롬프트 지도 리뷰, 2026-10-26).
+        방언은 표기 규칙의 문장 꼴(:func:`_call_in_words`): 호출을 글로 쓰지 말라는 방언이
+        호출 모양(json_fc 의 ``{"action": …}``, v10.177.10 까지의 인자 객체)을 보여 주면
+        서로 모순이다(프롬프트 지도 리뷰 2026-10-26, 감사 3-6).
         ``render_action_input`` 은 기록 재렌더에도 쓰여(native_fc 의 내부 표현은
         json_fc) 여기서만 갈라진다."""
         if self.server_parsed:
-            return f"`{tool}` {json.dumps(args, ensure_ascii=False)}"
+            return _call_in_words(tool, args)
         return self.render_action_input(TOOLS[tool].add_prefix(args))
 
     def prompt_call_example(self, tool: str, args: dict) -> str:

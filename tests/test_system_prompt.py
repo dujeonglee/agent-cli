@@ -1826,9 +1826,13 @@ class TestServerParsedPromptHasNoTextCalls:
 
     def test_examples_name_the_tool_and_its_arguments(self):
         d, _ = self._texts()
+        # 감사 3-6 (v10.177.10): 인자 객체도 호출 모양이라 표기 규칙의 문장 꼴로.
         assert d.prompt_example("read_file", {"path": "app.py"}) == (
-            '`read_file` {"path": "app.py"}'
+            '`read_file` with `path` "app.py"'
         )
-        assert d.prompt_call_example("run_skill", {"name": "x"}) == (
-            '`run_skill` {"name": "x"}'
-        )
+        assert d.prompt_call_example(
+            "run_skill", {"name": "skill-name", "arguments": "x"}
+        ) == ('`run_skill` with `name` "skill-name" and `arguments` "x"')
+        assert d.prompt_example(
+            "agent", {"mode": "run", "profile": "p", "task": "Read data.csv"}
+        ) == ('`agent` with `mode` "run", `profile` "p" and `task` "Read data.csv"')
