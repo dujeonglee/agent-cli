@@ -31,7 +31,9 @@ Your reasoning goes here, as plain prose. No tags around it.
 
 Parameter values are raw text: write file contents, code, and multi-line
 text directly between the tags with no escaping — no \\n, no quote
-escaping, no JSON. For a multi-line value put it on its own lines:
+escaping. The one exception is a parameter whose type is an array or an
+object (such as `lines` or `answers`): write that value as JSON. For a
+multi-line text value put it on its own lines:
 <parameter=content>
 line one
 line two
@@ -51,7 +53,8 @@ Rules:
    `complete` to finish).
 2. Each <function=...> names exactly one tool from Available Tools.
 3. Each call acts on one target. To read N files, emit N separate
-   <tool_call> blocks in the same turn — never a list inside one call.
+   <tool_call> blocks in the same turn — never several targets inside one
+   call.
 4. Close every tag: </parameter>, </function>, </tool_call>.
 5. When the task is done, end with a `complete` call carrying your final
    answer:

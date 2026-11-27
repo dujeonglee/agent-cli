@@ -485,7 +485,9 @@ class TestFormatRulesBatchSteering:
     the two guardrails that stop this from causing regressions:
       (1) dependent ops split across turns (a later op needs an earlier
           result; all ops in a turn run before any observation), and
-      (2) no nested arrays inside one op (nesting broke 27B, DESIGN §3).
+      (2) one target per op — several targets inside one op broke 27B
+          (DESIGN §3). v10.177.10: worded as targets, not "no nested arrays"
+          (array arguments such as `lines` are allowed).
     Losing either guardrail is the failure mode this nudge risks, so both
     are asserted alongside the steering."""
 
@@ -501,9 +503,8 @@ class TestFormatRulesBatchSteering:
     def test_keeps_dependent_split_guardrail(self):
         assert "only when a later step needs an earlier step's result" in self.low
 
-    def test_keeps_no_nesting_guardrail(self):
-        assert "no nested arrays" in self.low
-        assert "never put a list of items inside a single op" in self.low
+    def test_keeps_one_target_per_op_guardrail(self):
+        assert "never put several targets inside a single op" in self.low
 
     def test_example_models_multifile_read_batch(self):
         # The dominant missed-batch pattern was consecutive single read_file

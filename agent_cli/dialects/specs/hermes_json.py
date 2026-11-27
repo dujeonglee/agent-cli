@@ -61,7 +61,8 @@ Rules:
    `complete` to finish).
 2. Each "name" is exactly one tool from Available Tools.
 3. Each call acts on one target. To read N files, emit N separate
-   <tool_call> blocks in the same turn — never a list inside one call.
+   <tool_call> blocks in the same turn — never several targets inside one
+   call.
 4. Close every block: </tool_call>. One JSON object per block, nothing else
    inside the tags.
 5. When the task is done, end with a `complete` call carrying your final
