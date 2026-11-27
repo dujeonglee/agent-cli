@@ -156,3 +156,19 @@ def test_at_profile_command_whose_agent_does_not_reply(tmp_path, monkeypatch):
         in (answer)
         and answer.split("\n")[0].endswith(" and is gone.")
     )
+
+
+def test_a_one_shot_agent_owes_main(two_agents):
+    """A(일회용) — 내려가는 에이전트의 답 없음 회신. 지금은 "… and is gone." 과 "ready for new requests" 상태 꼬리가
+    한 회신에 함께 선다(배달 순간엔 아직 내려오기 전이다 — 고정)."""
+    reg, a, _b = two_agents
+    reg.get(a).ends_after_task = True
+    debt = reg.note_owes(f"agent:{a}", "main", "summarize the logs")
+    assert reg.end_run(f"agent:{a}", [], success=True) == 1
+    (content,) = _main_mail(reg)
+    lines = content.splitlines()
+    assert lines[1] == (
+        f"{a} finished its task without a `reply` to your request [{debt.id}] "
+        '("summarize the logs") and is gone.'
+    )
+    assert lines[-1] == "(agent status: idle — ready for new requests.)"
