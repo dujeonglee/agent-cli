@@ -402,7 +402,7 @@ class HistoryTool(Tool):
         "record): session, loc, seq, kind (query/action/observation/final/raw/"
         "system), turn, ts, tools, files, author, text — `text` is the full content. "
         "Rows come back whole, so project and limit (substr of `text`, a LIMIT) and "
-        "fetch the one row you need afterwards; an oversized result is refused. Omit "
+        "fetch the one row you need afterwards. Omit "
         "`query` for the schema, examples and the session list. Default scope is the "
         'current session; `sessions` "all" or session id(s) reaches others.'
     )

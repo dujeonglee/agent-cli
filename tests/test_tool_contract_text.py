@@ -15,12 +15,13 @@ from agent_cli.tools.registry import TOOLS
 
 
 def test_history_description_oversized():
-    """1-9: 큰 결과는 공통 과대 출력 규칙(파일 + 발췌)을 탄다."""
+    """1-9: 큰 결과는 공통 과대 출력 규칙(파일 + 발췌)을 탄다 — "refused" 라고 하지 않는다."""
+    d = TOOLS["history"].description
     assert (
         "Rows come back whole, so project and limit (substr of `text`, a LIMIT) and "
-        "fetch the one row you need afterwards; an oversized result is refused."
-        in TOOLS["history"].description
+        "fetch the one row you need afterwards. Omit `query`" in d
     )
+    assert "refused" not in d
 
 
 def test_history_help_table():
