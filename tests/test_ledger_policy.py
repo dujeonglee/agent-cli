@@ -170,6 +170,18 @@ class TestOneBudget:
         assert out == "둘 다" and lp._state.ledger.budget == NAG_BUDGET
 
 
+class TestTerminalRecordStillOpen:
+    """종결 레코드의 ``open_requests`` — native_fc 의 결과 문장 "Still open: … / Nothing else
+    open." 이 읽는다(감사 3-f). 지금은 정산 뒤 남은 요청만 담고 빚(r-)은 세지 않는다(고정)."""
+
+    def test_debt_left_when_the_budget_is_spent(self, tmp_path, finals):
+        lp = _loop(tmp_path, requests=[_req(1, "A")], debts=[_REPLY], ctx=True)
+        lp._state.ledger.budget = 0
+        _complete(lp, result="A 했다", answers=["u-1"])
+        rec = lp.ctx.get_raw_messages()[-1]
+        assert rec["role"] == "assistant" and rec["open_requests"] == []
+
+
 class TestIdsAreOneFormat:
     def test_sources_make_the_final_form(self, tmp_path):
         assert MainInput().enqueue("c", "hi")["id"] == "u-1"
