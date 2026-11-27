@@ -101,6 +101,29 @@ class TestTypeValidation:
 
         assert _try_coerce({"task": "do x"}, "array") == [{"task": "do x"}]
 
+    @pytest.mark.parametrize(
+        ("tool", "args", "key"),
+        [
+            (
+                "edit_file",
+                {"path": "f.py", "op": "replace", "pos": "2#WK", "lines": "    a = 10"},
+                "lines",
+            ),
+            ("history", {"sessions": "all"}, "sessions"),
+            (
+                "memory",
+                {"mode": "add", "type": "note", "summary": "s", "tags": "x"},
+                "tags",
+            ),
+            ("agent", {"mode": "spawn", "profile": "coder", "tools": "shell"}, "tools"),
+        ],
+    )
+    def test_string_for_an_array_param_is_wrapped(self, tool, args, key):
+        """배열 인자 자리의 문자열은 한 요소 배열로 감싸 통과한다 (감사 1-3)."""
+        ok, err, normalized = validate_tool_input(tool, args)
+        assert (ok, err) == (True, None)
+        assert normalized[key] == [args[key]]
+
     def test_wrong_type_no_coercion(self):
         """Cannot coerce list to string."""
         ok, err, _ = validate_tool_input("shell", {"command": [1, 2, 3]})

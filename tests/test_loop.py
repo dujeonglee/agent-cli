@@ -1,6 +1,7 @@
 """Tests for agent loop (integration with mocked provider)."""
 
 import json
+import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.credentials import Credentials
+from agent_cli.tools.registry import TOOLS
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
@@ -2170,6 +2172,49 @@ class TestEchoIsAShellCommand:
         assert provider.call.call_count == 2
         observed = _messages_from_call(provider.call.call_args_list[1])[-1]["content"]
         assert "expanded" in observed
+
+
+class TestStringLinesForEditFile:
+    """`edit_file` `lines` 를 배열 대신 문자열로 보낸 편집 (감사 1-3)."""
+
+    @staticmethod
+    def _refs(path):
+        out = TOOLS["read_file"].run({"path": str(path)}).output
+        return re.findall(r"^(\d+#[A-Z]{2})", out, re.MULTILINE)
+
+    def _run(self, caps, ops):
+        provider = _make_provider(json.dumps(ops), _complete("ok"))
+        run_loop(
+            ports=TEST_PORTS,
+            query="edit",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+        )
+        return _messages_from_call(provider.call.call_args_list[1])[-1]["content"]
+
+    def test_one_string_edit_is_written(self, caps, tmp_path):
+        f = tmp_path / "f.py"
+        f.write_text("def g():\n    a = 1\n    b = 2\n")
+        pos = self._refs(f)[1]
+        op = {"action": "edit_file", "path": str(f), "op": "replace", "pos": pos}
+        self._run(caps, [dict(op, lines="    a = 10\n    a2 = 11")])
+        assert f.read_text() == "def g():\n    a = 10\n    a2 = 11\n    b = 2\n"
+
+    def test_two_string_edits_to_one_file_are_refused(self, caps, tmp_path):
+        f = tmp_path / "f.py"
+        f.write_text("def g():\n    a = 1\n    b = 2\n")
+        refs = self._refs(f)
+        op = {"action": "edit_file", "path": str(f), "op": "replace"}
+        observed = self._run(
+            caps,
+            [
+                dict(op, pos=refs[1], lines="    a = 10"),
+                dict(op, pos=refs[2], lines="    b = 20"),
+            ],
+        )
+        assert f.read_text() == "def g():\n    a = 1\n    b = 2\n"
+        assert "`lines` must be a JSON array of strings" in observed
 
 
 class TestRepeatedCallDetection:
