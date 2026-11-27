@@ -56,7 +56,7 @@ def test_format_rules_parameter_names(name):
 
 
 def test_depth_refusal_names_the_hops():
-    """깊이 거절문의 도구 이름."""
-    assert "Skill and delegate hops share this counter." in format_depth_limit_error(
+    """깊이 거절문의 도구 이름 — `delegate` 는 옛 이름이다(v5 부터 `agent`)."""
+    assert "Skill and agent hops share this counter." in format_depth_limit_error(
         "skill", "x", 3, 3
     )

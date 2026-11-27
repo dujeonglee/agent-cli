@@ -1,6 +1,6 @@
 """Actionable error messages for recursion + depth-limit blocks.
 
-When the loop blocks a ``run_skill`` / ``delegate`` call (either
+When the loop blocks a ``run_skill`` / ``agent`` call (either
 because the target is already on the call stack, or because the
 combined call depth has hit ``max_depth``), the LLM sees this string
 as an Observation. A bare "blocked" message leaves the model
@@ -45,7 +45,7 @@ def format_recursion_error(kind: str, name: str, stack: list[str]) -> str:
 def format_depth_limit_error(
     kind: str, name: str, current_depth: int, max_depth: int
 ) -> str:
-    """The combined skill + delegate call depth has hit
+    """The combined skill + agent call depth has hit
     ``max_depth``. Block + explain the structural fix (this isn't
     something the model can retry around — the task is too deep).
 
@@ -56,7 +56,7 @@ def format_depth_limit_error(
     return (
         f'Maximum call depth reached: cannot enter {kind} "{name}" — that '
         f"would put the chain at depth {current_depth + 1}, beyond the "
-        f"configured limit of {max_depth}. Skill and delegate hops share "
+        f"configured limit of {max_depth}. Skill and agent hops share "
         f"this counter. Recover by one of:\n"
         f"  (1) finish the current level with `complete` before any further "
         f"nesting,\n"
