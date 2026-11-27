@@ -152,8 +152,8 @@ class TestFormatNoActionRetry:
 class TestFormatActionLoopIntervention:
     """B1 (action loop) Intervention composer.
 
-    Level 1 → probe_progress; level 2 → restate_task; level ≥3 → None
-    (caller hard-fails). Temperature-down level intentionally omitted —
+    Level 1 → probe_progress; level 2 and every later level → restate_task
+    (v10.177.14 — no hard fail; the run ends at NO_PROGRESS_LIMIT). Temperature-down level intentionally omitted —
     see DESIGN.md §2.3 and recovery.common_recovery.format_action_loop_intervention
     docstring.
     """
@@ -194,17 +194,15 @@ class TestFormatActionLoopIntervention:
         assert "Why does" in intv.message
         assert "not getting" in intv.message
 
-    def test_level_three_returns_none(self):
-        # Caller is responsible for hard-failing
-        assert format_action_loop_intervention(**self._kwargs(level=3)) is None
-
-    def test_level_four_returns_none(self):
-        assert format_action_loop_intervention(**self._kwargs(level=4)) is None
-
-    def test_level_zero_returns_none(self):
-        # Level 0 means no fire — caller should never invoke the builder
-        # at level 0, but defensively the builder returns None
-        assert format_action_loop_intervention(**self._kwargs(level=0)) is None
+    @pytest.mark.parametrize("level", [3, 4, 9])
+    def test_later_levels_repeat_restate_task(self, level):
+        """3단계 이상은 새 글 없이 2단계 넛지를 되풀이한다 — 끝은 진전 없는 응답의 상한."""
+        intv = format_action_loop_intervention(**self._kwargs(level=level))
+        assert intv.primitives == ["restate_task"]
+        assert (
+            intv.message
+            == format_action_loop_intervention(**self._kwargs(level=2)).message
+        )
 
     def test_keyword_only_signature(self):
         import pytest

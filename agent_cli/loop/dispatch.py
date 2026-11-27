@@ -204,8 +204,8 @@ class TurnDispatcher:
         (v10.107.0, 사용자 결정 2026-11-05): 이력에서 그 호출의 **직전 두 결과**가
         다르면 진행 중이다. 결과가 하나뿐이면 비교할 것이 없어 진행으로 본다 —
         그래서 진짜 루프(같은 호출, 같은 결과)는 세 번째 호출에서 1단계가 된다.
-        결과가 하나도 없으면(실행 전에 거부만 된 호출) 진행이 아니다 — 거부 반복의
-        상한(짝 없음, 4번째 하드 실패)은 그대로 센다.
+        결과가 하나도 없으면(실행 전에 거부만 된 호출) 진행이 아니다 — 그 반복은 넛지가 아니라
+        거부 안내를 다시 받고, 끝은 진전 없는 응답의 상한(`NO_PROGRESS_LIMIT`)이 정한다.
 
         비교는 관찰 본문 전체의 지문(``digest``) 그대로, 정규화 없음. 그래서 결과에
         시각·난수가 섞여 매번 다른 호출(`date`)은 감지기를 피한다 — 감수한 대가."""
@@ -1684,10 +1684,10 @@ class TurnDispatcher:
         # 이면 그 결과가 "직전 결과". 감지기는 dispatch 전에 세므로 A4/A5 로
         # **실행 전에 거부된** 호출도 센다 — 그 반복은 결과를 본 적이 없는
         # 재시도라 루프 넛지가 아니라 거부 안내를 다시 받아야 한다(사용자
-        # 지적). 그래서 1·2단계는 짝이 있을 때만 끼어들고, 짝이 없으면 아래
-        # A4/A5 로 흘려 보낸다. 상한(4번째 동일 반복 = 하드 실패)은 짝과
-        # 무관하게 유지 — 같은 거부를 세 번 받고도 같은 인자를 보내는 건
-        # 개입 턴이 max_turns 를 안 세는 이상 다른 상한이 없다.
+        # 지적). 그래서 넛지는 짝이 있을 때만 끼어들고, 짝이 없으면 아래
+        # A4/A5 로 흘려 보낸다. 끝은 어느 쪽이든 진전 없는 응답의 상한
+        # (`NO_PROGRESS_LIMIT` — 넛지·거절은 버려진 응답이다)이 정한다(v10.177.14 —
+        # 종전의 4번째 동일 반복 하드 실패는 지웠다).
         last = (
             self.tools.recent_tool_history[-1]
             if self.tools.recent_tool_history
@@ -1698,46 +1698,21 @@ class TurnDispatcher:
             and last.get("tool") == tool_name
             and last.get("input") == _normalize_input(tool_input)
         )
-        if loop_level >= 1 and (paired or loop_level >= 3):
+        if loop_level >= 1 and paired:
             outcome["failure_signal"] = FAILURE_ACTION_LOOP
             args_repr = (
                 json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
                 if isinstance(tool_input, dict)
                 else str(tool_input)
             )
-            intervention = (
-                format_action_loop_intervention(
-                    level=loop_level,
-                    action=tool_name,
-                    args_repr=args_repr,
-                    repeat_count=self.loop_detector.run_length,
-                    task=self._task_text(),
-                    prior_result=last.get("result") or "",
-                )
-                if paired
-                else None
+            intervention = format_action_loop_intervention(
+                level=loop_level,
+                action=tool_name,
+                args_repr=args_repr,
+                repeat_count=self.loop_detector.run_length,
+                task=self._task_text(),
+                prior_result=last.get("result") or "",
             )
-            if intervention is None:
-                # Level ≥3: recovery exhausted — hard fail. The message
-                # says what was tried: the two nudges (paired), or the same
-                # rejection three times (unpaired — no result ever came).
-                _debug_log(
-                    f"Loop hard-fail: {tool_name} input={args_repr[:100]} "
-                    f"level={loop_level} paired={paired} "
-                    f"skill_name={self.cfg.kind.skill_name}"
-                )
-                tried = (
-                    "tried probe_progress and restate_task without recovery"
-                    if paired
-                    else "the same arguments were rejected before every run"
-                )
-                render_run_ended(
-                    f"Action loop unresolved: {tool_name} repeated; {tried}. Stopping."
-                )
-                return ToolResult(
-                    False,
-                    error=f"Action loop unresolved: {tried}.",
-                )
             if accumulate is not None:
                 # N-op 배치 (v9.23.4): A4/A5 와 같은 모양 — 이 op 만 실행하지
                 # 않았다고 적고 **다음 op 로 간다**. 종전엔 배치 한가운데서
@@ -1752,8 +1727,8 @@ class TurnDispatcher:
                     False,
                 )
                 return None
-            # Level 1 or 2: inject Intervention, skip dispatch,
-            # let the next turn try again with the new context.
+            # Inject the nudge, skip dispatch, let the next turn try again
+            # with the new context.
             #
             # 막힌 호출은 저장하지 않는다 (v9.23.4 — "재시도는 기록하지 않는다"
             # 를 B1 로 확장). 실행되지 않은 반복 호출이 assistant 레코드로 남으면

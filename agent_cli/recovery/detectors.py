@@ -87,7 +87,7 @@ class ActionLoopDetector:
             0 — no fire (below threshold, or reset by an error retry)
             1 — first fire (just hit threshold)
             2 — second fire (kept emitting after the first intervention)
-            3+ — subsequent fires (caller should hard-fail)
+            3+ — subsequent fires (the level-2 nudge again)
 
         Args:
             action: Tool name the model is about to invoke.

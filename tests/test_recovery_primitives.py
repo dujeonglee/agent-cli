@@ -302,8 +302,8 @@ class TestRestateTask:
         assert "not getting" in out
 
     def test_forbids_another_retry_explicitly(self):
-        # Explicit "do not retry" cue — necessary because we're at the
-        # last recovery rung before hard-fail
+        # Explicit "do not retry" cue — the last nudge rung (repeated from
+        # level 2 on until the no-progress limit ends the run)
         out = restate_task(task="t", action="x", args_repr="{}", repeat_count=3)
         assert "not from another retry" in out
 
