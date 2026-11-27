@@ -252,6 +252,12 @@ class TestWireAndPrompt:
             fns = [f["name"] for f in d["scenarios"]["main"]["functions"]]
             assert "snapshot" in fns
 
+    def test_description_says_when_snapshots_are_taken(self):
+        assert (
+            "(at session start and before each `shell` / `edit_file` / `write_file` "
+            "call)" in SnapshotTool.description
+        )
+
     def test_notice_points_at_the_tool_not_a_cli(self, ws):
         s = _store(ws)
         n = s.notice()
