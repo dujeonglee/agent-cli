@@ -127,10 +127,10 @@ def confirm_dangerous(
     # from trying when no prompt could be shown.
     if not confirm.answerable():
         return (
-            f"Refused: command contains `{keyword}` but this interface can't "
-            "prompt for confirmation right now (non-interactive shell, or no "
-            "connected client). Set AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 to "
-            "bypass for non-interactive runs."
+            f"Refused: command contains `{keyword}` and no one can be asked to "
+            "confirm it right now (non-interactive shell, or no connected client). "
+            "Only the user can allow it — if the task needs it, say so in your "
+            "answer."
         )
     # ⚡ 자동 승인 (v10.120.0 부터 확인 밖 — 정책은 안전 확인의 것): 묻지 않고 once.
     if get_renderer().auto_approved(cmd):

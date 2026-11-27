@@ -739,10 +739,9 @@ def guard(
             else f"touches path(s) outside the workspace ({joined})"
         )
         return (
-            f"Refused: {action} {what} and this interface can't prompt for "
-            f"confirmation right now (non-interactive shell, or no connected "
-            f"client). Set AGENT_CLI_WORKSPACE_CONFINE=0 to disable these "
-            f"path gates for non-interactive runs."
+            f"Refused: {action} {what} and no one can be asked to confirm it "
+            "right now (non-interactive shell, or no connected client). Only the "
+            "user can allow it — if the task needs it, say so in your answer."
         )
     listing = "\n".join(f"  {p}\n    ↳ {why[str(p)]}" for p in outside)
     head = (
