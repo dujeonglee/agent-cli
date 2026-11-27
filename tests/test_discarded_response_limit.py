@@ -212,3 +212,50 @@ def test_a_new_segment_starts_the_count_again():
     d._discarded_in_a_row = DISCARDED_RESPONSE_LIMIT - 1
     d._begin_segment()
     assert d._discarded_in_a_row == 0
+
+
+# ── 턴을 세는 갈래 여섯 — 지금은 끝나지 않는다 (PROP-no-progress-turns §1.1, 고정) ──────────
+
+
+def batch_of_unknown_tools(dialect: str) -> LLMResponse:
+    """묶음의 호출이 전부 실행 전에 거절된다 — 모르는 도구 둘."""
+    ops = [("frobnicate", {"x": 1}), ("zork", {"y": 2})]
+    if dialect == "native_fc":
+        return LLMResponse(
+            content="ok",
+            tool_calls=[
+                {"id": f"c{i}", "name": n, "input": a} for i, (n, a) in enumerate(ops)
+            ],
+        )
+    return LLMResponse(
+        content="x\n\n" + json.dumps([{"action": n, **a} for n, a in ops])
+    )
+
+
+def turn_counting_shapes(dialect: str) -> dict[str, LLMResponse]:
+    return {
+        "every call refused": batch_of_unknown_tools(dialect),
+        "wait refused": call(dialect, "wait", {}),
+        "same failing run": call(dialect, "read_file", {"path": "nope.py"}),
+        "output cut off": LLMResponse(
+            content='x\n\n[{"action": "read_file", "pa', stop_reason="length"
+        ),
+        "server error": LLMResponse(
+            content="", stop_reason="server_error", stop_detail="upstream"
+        ),
+        "runaway": LLMResponse(
+            content="aaaa", stop_reason="runaway", stop_detail="repeat"
+        ),
+    }
+
+
+SHAPES = tuple(turn_counting_shapes("json_fc"))
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+@pytest.mark.parametrize("shape", SHAPES)
+def test_turn_counting_shapes_do_not_end_the_run(tmp_path, monkeypatch, dialect, shape):
+    """턴을 세는 응답이라 버려진 응답 카운터가 0 으로 돌아가거나(묶음·`wait`·실행) 건드리지 않는다(코어의 끊김) —
+    ``max_turns`` 0 에서는 가짜 provider 의 상한까지 끝나지 않는다."""
+    with pytest.raises(ProviderCap):
+        run(tmp_path, monkeypatch, dialect, [turn_counting_shapes(dialect)[shape]])

@@ -752,3 +752,10 @@ class TestAutoApproveDoesNotSkipThePause:
         )
         viewer.join(5)
         assert decision.action == confirm.DENY and seen["item"]["title"] == "pause?"
+
+
+def test_a_failed_write_repeated_is_never_stale():
+    """지금 규칙: 쓰기 도구는 결과와 무관하게 제외 — 같은 실패를 되풀이해도 제자리가 아니다(고정)."""
+    turns = [[("edit_file", "Hash mismatch at line 2")]] * 6
+    g = StaleGuard()
+    assert _feed(g, turns) == [] and g.turns_without_new == 0
