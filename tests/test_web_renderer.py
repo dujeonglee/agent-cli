@@ -31,6 +31,7 @@ from agent_cli.render.web_hub import WebConnection
 from agent_cli.tools.shell import tool_shell
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller
+from tests.mail_support import is_no_reply
 from tests.test_agents_live import make_registry
 from tests.web_static import js_text
 
@@ -2941,7 +2942,7 @@ class TestCtxDirWiring:
                 binding=make_binding(provider=object(), capabilities=self._caps()),
             ),
         )
-        assert out.success and out.output == "done"
+        assert out.success and is_no_reply(out.output)
         start = next(dict(d) for e, d in r.hub.events if e == "scope_start")
         key = start["task_id"].split("#")[0]
         assert start["channel"] == key

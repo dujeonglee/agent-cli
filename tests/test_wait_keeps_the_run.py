@@ -555,7 +555,7 @@ def test_a_run_agent_that_waited_comes_down_when_its_run_fails(home):
         until(lambda: s.agent_state(kid) == "dead" and _settled(s), "kid came down")
         assert work_cards(s, kid) == [s.reg.get(kid).task_id]  # 런 하나
         (read,) = replies_main_read(s)
-        assert read.startswith("── reply [n-4] from agt-* re [r-2] ──")
+        assert read.startswith("── reply [n-4] from agt-* re [r-2] · no reply ──")
     finally:
         s.close()
         pump.join(10)

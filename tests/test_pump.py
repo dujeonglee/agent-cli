@@ -59,7 +59,8 @@ class TestOneItem:
         outs = iter([ToolResult(True, output="x"), ToolResult(True, output="y")])
 
         make_pump(main_input=q, run_main=lambda req: next(outs), registry=reg).run()
-        assert reg.ended == [("main", "x"), ("main", "y")]
+        # 넘기는 것은 그 런의 마지막 호출(답 없음 회신의 재료) — 런의 결과는 넘기지 않는다(v10.177.8)
+        assert reg.ended == [("main", []), ("main", [])]
 
     def test_order_of_surface_calls_around_a_run(self):
         q = MainInput()

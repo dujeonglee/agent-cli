@@ -40,8 +40,10 @@ def _session(tmp_path, monkeypatch, script):
     return s, key
 
 
-def test_a_failed_main_run_heads_its_fallback_with_the_cause(tmp_path, monkeypatch):
-    """LLM 오류로 실패한 main 런 — 폴백 회신 머리에 원인 한 줄(에이전트의 실패 런과 같은 `run_error_line`)."""
+def test_a_failed_main_run_heads_its_no_reply_note_with_the_cause(
+    tmp_path, monkeypatch
+):
+    """LLM 오류로 실패한 main 런 — 답 없음 회신 머리에 원인 한 줄(에이전트의 실패 런과 같은 `run_error_line`)."""
 
     def broken(msgs):
         raise RuntimeError("upstream 500: model server down")
@@ -52,15 +54,20 @@ def test_a_failed_main_run_heads_its_fallback_with_the_cause(tmp_path, monkeypat
         assert not err
         tm = s.reg.get(key)
         until(
-            lambda: tm.handled >= 1 and tm.state == "idle", "the fallback opened a run"
+            lambda: tm.handled >= 1 and tm.state == "idle",
+            "the no-reply note opened a run",
         )
         (got,) = _helper_reads(tm)
         assert got.splitlines()[:3] == [
             got.splitlines()[0],
             "(the run ended with an error: LLM call failed: upstream 500: model server down)",
-            "(no explicit reply — this is the agent's run summary)",
+            got.splitlines()[2],
         ]
+        assert got.splitlines()[2].startswith(
+            "main ended its run without a `reply` to your request [r-"
+        ) and got.splitlines()[2].endswith(' ("which file?").')
         assert got.startswith("── reply [n-") and " from main re [r-" in got
+        assert got.splitlines()[0].endswith(" · no reply ──")
     finally:
         s.close()
 

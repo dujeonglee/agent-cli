@@ -491,7 +491,10 @@ class TestRunBlock:
             key=AGT,
             direction="out",
             author=AGT,
-            text="(no explicit reply — this is the agent's run summary)\n리뷰 결과 요약",
+            text=(
+                f'{AGT} ended its run without a `reply` to your request [u-1] ("리뷰").\n'
+                "Decide whether to continue another way or report back to the user."
+            ),
             to="main",
             item="u-1",
             fallback=True,
@@ -499,6 +502,8 @@ class TestRunBlock:
         fb = blk.locator(".run-body .card-fallback .row.fallback")
         assert _wait(lambda: fb.count() == 1)
         assert fb.locator(".k").inner_text().strip() == "Fallback"
+        # 하니스는 런의 결과를 보내지 않았다 — 요청자에게 답이 없었다는 사실을 알렸다(v10.177.8)
+        assert "the harness told the requester so" in fb.inner_text()
         assert "main" in fb.locator(".peer").inner_text()
         # 평범한 out 은 아무 줄도 만들지 않았다.
         assert page.locator("#messages").inner_text().count("과일") == 0

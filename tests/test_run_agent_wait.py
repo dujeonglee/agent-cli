@@ -39,7 +39,7 @@ from agent_cli.wake import (
 from tests.loop_kinds import make_caller, run_task
 from tests.loop_ports import TEST_PORTS
 from tests.loopkit import make_loop
-from tests.mail_support import checkin_ids
+from tests.mail_support import checkin_ids, is_no_reply
 from tests.test_agents_live import make_registry
 
 
@@ -444,7 +444,8 @@ class TestRunAgentHasAnAgentAddress:
                 binding=make_binding(provider=object(), model="m", capabilities=caps)
             ),
         )
-        assert result.success and result.output == "done"
+        # 가짜 엔진은 `reply` 없이 끝난다 — 회신은 하니스의 답 없음 문장(v10.177.8)
+        assert result.success and is_no_reply(result.output)
         assert seen["owner"].startswith("agent:agt-") and seen["inbox"] is True
         assert jobs.running(seen["owner"]) == []
 

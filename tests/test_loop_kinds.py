@@ -504,7 +504,8 @@ class TestResidentFinishIsOnePath:
             lambda: reg.arrived_for("main", waking_only=False, words=False)
         )
         (reply,) = absorbed_mail(reg)
-        assert "agent internal error: RuntimeError: boom" in reply["output"]
+        # 원인은 회신 머리 한 줄로(`run_error_line`) — 런의 결과는 요청자에게 가지 않는다(v10.177.8)
+        assert reply["error"] == "agent internal error: RuntimeError: boom"
         assert wait_until(lambda: reg.get(key).state == "idle")
         assert reg.get(key).handled == 1
         reg.shutdown_all()

@@ -58,7 +58,9 @@ class FakeSurface:
 
 class FakeRegistry:
     def __init__(self):
-        self.ended: list[tuple] = []  # run_ended 호출 (owner, output)
+        self.ended: list[
+            tuple
+        ] = []  # run_ended 호출 (owner, activity — 그 런의 마지막 호출)
 
     def has_agent_work(self):
         return False
@@ -66,8 +68,8 @@ class FakeRegistry:
     def open_human_questions(self):
         return []
 
-    def run_ended(self, owner, output="", **kw):
-        self.ended.append((owner, output))
+    def run_ended(self, owner, activity, **kw):
+        self.ended.append((owner, activity))
         return 0
 
 

@@ -318,15 +318,15 @@ export function closeRunBlock(d) {
   scheduleScroll();
 }
 
-/** 하네스 폴백 — 회신 없이 끝난 런의 요약을 하네스가 대신 보냈다. 본문
- * 첫 줄은 그 사정을 말하는 라벨이라 요약에서는 뺀다. */
+/** 하네스의 "답하지 않았다" 회신 — `reply` 없이 끝난 런의 빚마다 하네스가 요청자에게 그 사실을
+ * 알렸다(런의 결과는 보내지 않는다). 본문은 그 회신 글 그대로다. */
 function renderFallbackRow(blk, d) {
   var text = String(d.text || "");
   var lines = text.split("\n");
   var rest = lines.slice(1).join("\n").trim();
   var body = rest ? elHtml("div", ["md"], escapeAndFormat(text)) : null;
   var tail = el("span", ["peer"], peerLabel(d.to));
-  var row = makeRow("⚠", "Fallback", "ended without a reply — the harness sent the run summary instead", body, ["fallback"], tail);
+  var row = makeRow("⚠", "Fallback", "ended without a reply — the harness told the requester so", body, ["fallback"], tail);
   var card = el("div", ["card", "card-fallback"]);
   card.appendChild(row);
   stampCard(card, d.ts);

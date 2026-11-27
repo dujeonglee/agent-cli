@@ -85,6 +85,17 @@ DIED_REPLY = (
 DIED_WORKING_REPLY = (
     '{agent} died while it was working on your request [{rid}] ("{quote}").'
 )
+#: `reply` 없이 끝난 런이 남긴 빚의 회신 (답은 `reply` 하나 — 사용자 결정 2026-11-27). 런의 결과는 싣지 않는다:
+#: 요청자는 "답하지 않았다" 는 사실과 마지막 호출만 받는다. ``agent`` 는 빚진 쪽 — 에이전트 키 또는 ``main``.
+NO_REPLY_MARK = "no reply"
+NO_REPLY_REPLY = (
+    '{agent} ended its run without a `reply` to your request [{rid}] ("{quote}").'
+)
+#: 일회용 에이전트(``ends_after_task``) — 그 런이 끝나면 에이전트도 내려간다.
+NO_REPLY_GONE_REPLY = (
+    "{agent} finished its task without a `reply` to your request [{rid}] "
+    '("{quote}") and is gone.'
+)
 #: 요청한 쪽이 사라졌다 — 빚진 쪽이 받는 통지(그 빚은 이미 닫혔다, 깨우지 않는다). ``agent`` 는 사라진 쪽의 이름표.
 REQUESTER_GONE = (
     'request [{rid}] ("{quote}") is closed — {agent} is gone; nothing is owed back.'
@@ -227,6 +238,21 @@ def stopped_reply(
         lines.append(LAST_ACTIVITY.format(calls=" · ".join(activity)))
     if notes:
         lines.append(PARTIAL_NOTES.format(notes=notes))
+    lines.append(NEXT_STEP)
+    return "\n".join(lines)
+
+
+def no_reply(
+    agent: str, rid: str, request: str, activity: list[str], *, gone: bool
+) -> str:
+    """`reply` 없이 끝난 런의 빚에 대한 회신 본문 — 정지 회신과 같은 틀(첫 줄 사실, 마지막 호출, 다음 걸음).
+    ``activity`` 는 그 런의 마지막 호출(`run_activity`), ``gone`` 은 그 런으로 내려간 일회용 에이전트."""
+    first = (NO_REPLY_GONE_REPLY if gone else NO_REPLY_REPLY).format(
+        agent=agent, rid=rid, quote=one_line(request, QUOTE_CHARS)
+    )
+    lines = [first]
+    if activity:
+        lines.append(LAST_ACTIVITY.format(calls=" · ".join(activity)))
     lines.append(NEXT_STEP)
     return "\n".join(lines)
 

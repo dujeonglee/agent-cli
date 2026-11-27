@@ -784,25 +784,27 @@ class TestRunEnded:
         """끊긴 요청은 재시작이 새 id 로 다시 적는다 — 남기면 빚이 둘이 되고, 죽은
         채무자의 빚이 요청자의 `wait` 를 붙잡는다."""
         reg.note_owes("agent:a", "main", "일감", id="r-1")
-        assert reg.run_ended("agent:a", "끊김", stopped=True) == 0
+        assert reg.run_ended("agent:a", [], stopped=True) == 0
         assert reg.reply_debts("agent:a") == []
         assert not reg.arrived_for("main", waking_only=False, words=False)
         assert agent_wake_lines(reg, "main") == []
 
-    def test_a_normal_end_sends_the_labelled_summary_and_clears(self, reg):
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
-
+    def test_a_normal_end_sends_the_no_reply_note_and_clears(self, reg):
         reg.note_owes("agent:a", "main", "일감", id="r-1")
-        assert reg.run_ended("agent:a", "요약", success=True) == 1
+        assert reg.run_ended("agent:a", [], success=True) == 1
         assert reg.reply_debts("agent:a") == []
         (mail,) = absorbed_mail(reg)
-        assert mail["output"] == f"{_NO_REPLY_LABEL}\n요약" and mail["re"] == "r-1"
+        assert mail["output"] == (
+            'a ended its run without a `reply` to your request [r-1] ("일감").\n'
+            "Decide whether to continue another way or report back to the user."
+        )
+        assert mail["re"] == "r-1" and mail["mark"] == "no reply"
 
     def test_main_run_ended_routes_through_the_same_place(self, reg):
         from agent_cli.runtime import main_run_ended
 
         reg.note_owes("main", "agent:a", "결정해 줘", id="r-5")
         assert (
-            main_run_ended(reg, "끊김", stopped=True) == 0
+            main_run_ended(reg, [], stopped=True) == 0
         )  # 상주와 같은 자리 — 정지면 버린다
         assert reg.reply_debts("main") == []

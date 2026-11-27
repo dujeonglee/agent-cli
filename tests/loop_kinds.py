@@ -76,7 +76,7 @@ def _spec_args(spec: dict) -> dict:
 
 def run_tasks(args: dict, caller: Caller) -> list:
     """`agent` ``mode`` "run" 여럿을 띄우고 각자의 **회신**을 기다린다 — 과제마다 `ToolResult`
-    (거부면 그 거부문, 아니면 회신 본문 — 폴백 라벨은 뗀다). 호출자는 main 이어야 한다(회신이
+    (거부면 그 거부문, 아니면 회신 본문 — `reply` 없이 끝났으면 하니스의 "답하지 않았다" 문장). 호출자는 main 이어야 한다(회신이
     main 메일함으로 온다). 세션 슬롯에 레지스트리가 없으면 이 호출 동안만 임시 세션 디렉터리의
     레지스트리를 둔다."""
     import shutil
@@ -84,7 +84,6 @@ def run_tasks(args: dict, caller: Caller) -> list:
     from pathlib import Path
 
     from agent_cli.session_slots import get_agent_registry, set_agent_registry
-    from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
     from agent_cli.subagent.agents_live import AgentRegistry
     from agent_cli.subagent.run_agent import launch_run
     from agent_cli.tools.result import ToolResult
@@ -114,7 +113,7 @@ def run_tasks(args: dict, caller: Caller) -> list:
             if mail is None:
                 out.append(ToolResult(False, error="ended without a reply"))
                 continue
-            body = str(mail.get("output") or "").removeprefix(f"{_NO_REPLY_LABEL}\n")
+            body = str(mail.get("output") or "")
             out.append(ToolResult(bool(mail.get("success", True)), output=body))
         return out
     finally:

@@ -795,7 +795,7 @@ class AgentLoop:
                     **kw,
                 )
                 reply = {**reply, "debt_id": str(getattr(debt, "id", "") or "")}
-        record = build_reply_record(reply, cap=self._oversized_cap, registry=registry)
+        record = build_reply_record(reply, registry=registry)
         if debt is not None and getattr(debt, "id", ""):
             record["request_id"] = str(debt.id)
         # 장부 항목 (v10.55.0, docs/ledger/DESIGN.md P2) — 닫는 행동이 따로 없는 메일은

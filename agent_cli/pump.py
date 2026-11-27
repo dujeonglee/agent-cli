@@ -24,6 +24,7 @@ from typing import Any, Protocol
 
 from agent_cli.actor import RunEnd, run_actor
 from agent_cli.main_input import MainInput
+from agent_cli.subagent import agent_stop
 from agent_cli.tools.result import ToolResult
 
 
@@ -269,23 +270,30 @@ class MainActor:
         stop = getattr(start, "stop_event", None)
         return RunEnd.of(result, stopped=bool(stop is not None and stop.is_set()))
 
-    def _answer_stopped(self) -> None:
-        """멈춘 런의 빚에 정지 회신 — 그 런이 기록한 레코드에서 마지막 호출·생각을 뜬다(레지스트리가)."""
+    def _run_records(self) -> list[dict]:
+        """이 런이 기록한 레코드 — 정지·답 없음 회신이 그 런의 마지막 호출(·생각)을 뜬다."""
         ctx = getattr(self.deps.main, "ctx", None)
-        records = (
+        return (
             ctx.records_since(getattr(self, "_run_from", 0)) if ctx is not None else []
         )
-        self.deps.agent_registry.answer_main_debts_as_stopped(records)
+
+    def _run_activity(self) -> list[str]:
+        """이 런의 마지막 호출 — 답 없음 회신의 `Last activity:` 줄(`agent_stop.run_activity`)."""
+        return agent_stop.run_activity(self._run_records())
+
+    def _answer_stopped(self) -> None:
+        """멈춘 런의 빚에 정지 회신 — 그 런이 기록한 레코드에서 마지막 호출·생각을 뜬다(레지스트리가)."""
+        self.deps.agent_registry.answer_main_debts_as_stopped(self._run_records())
 
     def ended(self, start, end: RunEnd) -> bool:
         """런 끝 정리 — 빚 정리·감사·표면의 런 끝, 같은 보호 안(예외는 `run_failed`). 끝나면 중단 핸들을 푼다.
         main 의 수명은 세션이다 — 런 하나로 끝나지 않는다.
 
         사람이 멈춘 런(``stopped`` — ■·Stop everything)은 에이전트의 ■ 처럼 빚진 상대 모두에게 정지 회신을 보낸다(그
-        런의 마지막 호출·생각을 실어). 실패한 런과 예외로 끝난 런(``crashed`` — 표면이 삼킨 것)은 원인 한 줄을 단
-        폴백으로 정리한다 — 에이전트의 `crashed` 처럼, 빚을 다음 런으로 떠넘기지 않는다.
+        런의 마지막 호출·생각을 실어). 보통의 끝·실패한 런·예외로 끝난 런(``crashed`` — 표면이 삼킨 것)은 남은 빚마다
+        "답하지 않았다" 회신으로 정리한다(실패면 원인 한 줄을 머리에) — 에이전트와 같다, 빚을 다음 런으로 떠넘기지 않는다.
 
-        세션 종료로 끝난 런(``session_end`` — main 상자가 닫혀 정지가 선 런, 5e1)은 정리하지 않는다: 정지·폴백
+        세션 종료로 끝난 런(``session_end`` — main 상자가 닫혀 정지가 선 런, 5e1)은 정리하지 않는다: 정지·답 없음
         회신도, 체크인도, 감사·표면의 런 끝도 없다. 줄과 든 봉투는 그대로 — 우편은 프로세스와 함께 사라진다(재시작은
         우편을 올리지 않는다, 5c-0). 중단 핸들만 푼다."""
         d = self.deps
@@ -305,7 +313,7 @@ class MainActor:
                 stopped = end.outcome == "stopped"
                 if stopped:
                     self._answer_stopped()
-                # 실패한 런(턴 상한·LLM 오류)은 그 사유를 — 폴백 머리에 원인 한 줄
+                # 실패한 런(턴 상한·LLM 오류)은 그 사유를 — 답 없음 회신의 머리에 원인 한 줄
                 failed = (
                     {
                         "success": False,
@@ -316,7 +324,7 @@ class MainActor:
                 )
                 main_run_ended(
                     d.agent_registry,
-                    end.output,
+                    self._run_activity(),
                     stopped=stopped,
                     **failed,
                 )
