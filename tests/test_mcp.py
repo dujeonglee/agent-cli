@@ -1030,9 +1030,9 @@ class TestMcpImageContent:
         lines = r.output.splitlines()
         assert lines[0] == "chart below"
         assert lines[1] == f"[image: {ref['path']} (48×24)]"
-        assert lines[2] == (
-            f"image/png, {ref['bytes']:,} bytes — saved to {ref['path']}; "
-            "the image is attached to this result."
+        # 저장 사실만 — 그림이 보이는지는 공급자 경계가 사실대로 붙인다(텍스트 모델: "image not shown")
+        assert (
+            lines[2] == f"image/png, {ref['bytes']:,} bytes — saved to {ref['path']}."
         )
         assert self._png_b64() not in r.output  # base64 는 글에 없다
 
