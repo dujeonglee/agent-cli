@@ -73,7 +73,7 @@ def test_a_stopped_main_answers_its_requester_with_a_stop_reply_that_wakes(
         (got,) = _history_users(tm)
         assert got.startswith("── reply [n-") and "· stopped by user ──" in got
         assert "The user stopped main while it was working on your request [r-" in got
-        assert "(no explicit reply" not in got
+        assert "without a `reply`" not in got  # 정지 회신이다 — 답 없음 회신이 아니다
         assert {r.rid: r.state for r in s.reg._post.rows()} == {}
     finally:
         s.close()
