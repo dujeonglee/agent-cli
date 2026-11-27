@@ -419,4 +419,5 @@ def test_a_tool_error_from_the_server():
     finally:
         m.disconnect_all()
     assert not r.success
-    assert r.error == "Error executing tool denied: permission denied: /x"
+    # 오류 본문은 SDK 가 짓는다 — 1.x 는 예외의 글을 붙이고 2.x 는 붙이지 않는다. 머리만 본다.
+    assert r.error.startswith("Error executing tool denied")
