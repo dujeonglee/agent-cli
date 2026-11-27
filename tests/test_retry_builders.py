@@ -14,7 +14,9 @@ Falls back to the static template when ``prior_content`` is empty (the
 returned Intervention has the static message and no primitives).
 """
 
-from agent_cli.dialects import all_system_user_prefixes
+import pytest
+
+from agent_cli.dialects import all_system_user_prefixes, get
 from agent_cli.dialects.engine import Dialect
 from agent_cli.dialects.specs.json_fc import JSON_FC
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
@@ -209,3 +211,33 @@ class TestFormatActionLoopIntervention:
 
         with pytest.raises(TypeError):
             format_action_loop_intervention(1, "read_file", "{}", 2, "task")  # type: ignore[misc]
+
+
+class TestSwallowedOutputHint:
+    """서버가 토큰은 셌는데 글을 안 준 응답의 되묻기 (감사 3-b·3-c)."""
+
+    @pytest.mark.parametrize("name", ["json_fc", "xml_fc"])
+    def test_text_dialects_get_the_bare_json_array_route(self, name):
+        msg = format_no_json_retry(prior_content="", dialect=get(name), swallowed=True)
+        assert msg.message == (
+            "The server counted output tokens but delivered NO text — a "
+            "server-side parser most likely consumed your tool-call block "
+            "before it reached the harness. Do not repeat the same shape. "
+            "Emit the call as a bare JSON array instead: "
+            '[{"action": "<tool>", ...params}] — the harness accepts it and '
+            "re-renders it. (The user has been told about this server.)"
+        )
+        assert msg.primitives == ["swallowed_output_hint"]
+
+    def test_server_parsed_dialect_is_told_to_call_again(self):
+        """글을 파싱하지 않는 방언에는 배열 길을 권하지 않는다."""
+        msg = format_no_json_retry(
+            prior_content="", dialect=get("native_fc"), swallowed=True
+        )
+        assert msg.message == (
+            "The server counted output tokens but delivered no text and no function "
+            "call — a server-side parser most likely consumed your call. Call the "
+            "tool again through function calling. (The user has been told about "
+            "this server.)"
+        )
+        assert msg.primitives == ["swallowed_output_hint"]
