@@ -161,7 +161,12 @@ class TestGuardGating:
         denial = _confine.guard([str(outside / "x")], "write_file")
         assert denial is not None
         assert "outside the workspace" in denial
-        assert "AGENT_CLI_WORKSPACE_CONFINE=0" in denial
+        assert denial.endswith(
+            "and this interface can't prompt for confirmation right now "
+            "(non-interactive shell, or no connected client). Set "
+            "AGENT_CLI_WORKSPACE_CONFINE=0 to disable these path gates for "
+            "non-interactive runs."
+        )
 
 
 class TestDevicePseudoFiles:

@@ -256,4 +256,9 @@ class TestWireAndPrompt:
         s = _store(ws)
         n = s.notice()
         assert "`snapshot` tool" in n and "agent-cli snapshot" not in n
+        assert (
+            "A snapshot was taken when this session started and one is taken again "
+            "just before each `shell` / `edit_file` / `write_file` call, so the state "
+            "before your last command is always on record." in n
+        )
         assert Path(".agent-cli/snapshot.git").exists()

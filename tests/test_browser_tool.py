@@ -1415,7 +1415,9 @@ class TestScreenshot:
         assert (ref["width"], ref["height"], ref["mime"]) == (320, 200, "image/png")
         assert r.output.splitlines()[0] == f"[image: {ref['path']} (320×200)]"
         assert "[screenshot of http://shop.test/]" in r.output
-        assert "attached" in r.output
+        assert r.output.splitlines()[1].endswith(
+            "; the image is attached to this result."
+        )
         assert ("screenshot", False) in page.actions
         r2 = t.run({"mode": "screenshot", "full_page": True})
         assert r2.success and "(full page)" in r2.output
