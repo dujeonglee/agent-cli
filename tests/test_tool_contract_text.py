@@ -46,12 +46,13 @@ def test_write_file_description_result():
 
 @pytest.mark.parametrize("name", ["json_fc", "xml_fc", "glm_argkey", "hermes_json"])
 def test_format_rules_parameter_names(name):
-    """3-e: 인자 이름을 어디서 보는가."""
+    """3-e: 인자 이름은 Available Tools 에 있다 — 그 절은 형식 규칙 **아래**이고 지연 도구엔
+    안내(guide)가 없다(뼈대만)."""
     flat = " ".join(get_dialect(name).format_rules().split())
     assert (
-        "Use the parameter names shown in each tool's guide above (plain, no prefix)."
-        in flat
+        "Use the parameter names listed in Available Tools (plain, no prefix)." in flat
     )
+    assert "guide above" not in flat
 
 
 def test_depth_refusal_names_the_hops():

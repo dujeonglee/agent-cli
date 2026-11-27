@@ -36,8 +36,7 @@ escaping, no JSON. For a multi-line value put it on its own lines:
 line one
 line two
 </parameter>
-Use the parameter names shown in each tool's guide above (plain, no
-prefix).
+Use the parameter names listed in Available Tools (plain, no prefix).
 
 Batch independent work into one turn. Before you emit, look at everything
 you intend to do: every operation that does not need another's output goes

@@ -43,8 +43,8 @@ Your reasoning goes here, as plain prose. No tags around it.
 </tool_call>
 
 Each <tool_call> block holds exactly one JSON object with "name" (the tool)
-and "arguments" (an object of its parameters). Use the parameter names shown
-in each tool's guide above (plain, no prefix). Values are JSON: strings are
+and "arguments" (an object of its parameters). Use the parameter names listed
+in Available Tools (plain, no prefix). Values are JSON: strings are
 quoted and escaped (\\n for newlines, \\" for quotes), numbers and booleans
 are bare.
 
