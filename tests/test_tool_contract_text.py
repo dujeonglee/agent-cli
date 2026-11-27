@@ -9,7 +9,13 @@ from __future__ import annotations
 import pytest
 
 from agent_cli.dialects import get as get_dialect
+from agent_cli.loop import ledger
+from agent_cli.prompts.session_state import final_turn_notice
+from agent_cli.prompts.system_prompt import _REPLY_DISCIPLINE_SECTION
 from agent_cli.recovery.recursion import format_depth_limit_error
+from agent_cli.subagent.agent_mail import build_reply_record
+from agent_cli.subagent.agent_modes import RESUME_TASK_QUEUED, SPAWN_TASK_QUEUED
+from agent_cli.subagent.run_agent import RUN_STARTED
 from agent_cli.tools import history
 from agent_cli.tools.registry import TOOLS
 
@@ -59,4 +65,92 @@ def test_depth_refusal_names_the_hops():
     """깊이 거절문의 도구 이름 — `delegate` 는 옛 이름이다(v5 부터 `agent`)."""
     assert "Skill and agent hops share this counter." in format_depth_limit_error(
         "skill", "x", 3, 3
+    )
+
+
+# ── 답은 `reply` 하나 (감사 1-1·2-6·3-2·1-6, 제안서 PROP-no-result-fallback 3절) ──
+
+
+def test_complete_says_where_result_goes():
+    """#1 `complete` 설명 — `result` 가 어디로 가나."""
+    assert (
+        "`result` is the only text delivered as your answer — to the user, or to the "
+        "agent that called you; what you wrote outside it is not."
+        in TOOLS["complete"].description
+    )
+
+
+def test_message_points_answers_to_reply():
+    """#2 `message` 설명 끝."""
+    assert (
+        "To answer a request you received, use `reply`. `complete` alone reports to "
+        "no one." in TOOLS["message"].description
+    )
+
+
+def test_reply_description():
+    """#3·1-6 `reply` 요약·설명."""
+    assert TOOLS["reply"].summary == (
+        "Answer a request someone is waiting on — another agent's `message` or the "
+        "request you were given."
+    )
+    d = TOOLS["reply"].description
+    assert d.startswith(
+        "Reply to a request someone is waiting on — an agent's `message` that expects "
+        "an answer, or the request you were given. `id` is the request's `r-…` from "
+        "`## Open Items`; it alone says where the reply goes"
+    )
+    assert d.endswith(
+        "`complete` alone reports to no one: reply before you complete. Refused when "
+        "nothing is owed."
+    )
+
+
+def test_reply_discipline_first_rule():
+    """#4 Reply Discipline 1."""
+    flat = " ".join(_REPLY_DISCIPLINE_SECTION.split())
+    assert (
+        "1. `complete` reports to no one — it only ends your run. The answer for a "
+        "requester goes out with `reply` (that request's id + your text), one reply "
+        "per request, BEFORE you complete. A request from the user in your chat window "
+        "is answered by `complete` itself (they see it there). 2." in flat
+    )
+
+
+def test_last_turn_says_who_receives_the_result():
+    """#5 마지막 턴 안내의 끝 문장."""
+    assert final_turn_notice(reports_to_caller=True).endswith(
+        "The agent that called you receives only what you put in complete — "
+        "anything you do not write there is lost."
+    )
+    assert final_turn_notice(reports_to_caller=False).endswith(
+        "The user receives what you put in complete."
+    )
+
+
+def test_run_and_spawn_say_what_comes_back():
+    """#6·#7 `agent` 결과 — 회신이 없으면 무엇이 오나."""
+    assert (
+        "(if it completes without one you get its run summary instead)" in RUN_STARTED
+    )
+    assert SPAWN_TASK_QUEUED.endswith(
+        "(if it completes without one you get its run summary instead)."
+    )
+    assert RESUME_TASK_QUEUED.endswith("and wakes you.")
+
+
+def test_open_items_tail():
+    """#10 `## Open Items` 꼬리말."""
+    assert ledger._TAIL == (
+        "  The run stays open until every item is closed; your result is delivered "
+        "either way."
+    )
+
+
+def test_harness_mail_says_what_to_do():
+    """#11 감사 메일(2-6)."""
+    rec = build_reply_record({"kind": "harness", "job": "auditor", "output": "x"})
+    assert rec["content"].endswith(
+        "(A harness job's result — nothing to send back. Act on findings if there are "
+        "any; otherwise there is nothing to do.)"
     )
