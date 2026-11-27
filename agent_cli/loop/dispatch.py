@@ -133,11 +133,19 @@ def _flag(value, *, default: bool) -> bool:
 #: A5 자동 전문의 머리 (v10.109.0) — 뒤에 `tool_help` 가 줄 전문이 온다.
 FULL_GUIDE_HEAD = "Full guide:"
 
-#: 버려진 응답의 연속 상한 (v10.177.10) — 하니스가 저장하지 않고 되묻기만 남긴 응답
-#: (`_intervene(store_emission=False)`: 형식 되묻기·홀로 거절된 호출·B1 넛지)이 연달아 이만큼이면 런을 끝낸다.
-#: 그런 응답은 턴을 세지 않아 같은 응답이 되풀이되면 다른 상한이 없었다(NOTE-unbounded-retries §4).
-#: 기록에 남는 응답(도구 실행·가상 op·`complete` 되돌림·묶음·`wait`)이 오면, 그리고 구간이 새로 시작되면 0.
-DISCARDED_RESPONSE_LIMIT = 10
+#: 진전 없는 응답의 연속 상한 (v10.177.14, PROP-no-progress-turns) — 새 결과를 하나도 내지 못한 응답이 연달아
+#: 이만큼이면 런을 끝낸다. 진전 없음은 다섯이다: 버려진 응답(`_intervene(store_emission=False)` — 형식 되묻기·홀로
+#: 거절된 호출·B1 넛지), 호출이 전부 실행 전에 거절된 응답(`wait` 거절 포함), 실행했지만 결과가 모두 이미 본 것인
+#: 응답(StaleGuard 의 제자리 턴), 코어가 끊은 응답(출력 절단·폭주·스트림 서버 오류). 그 밖은 진전이다. 0 으로 돌아가는
+#: 때: 진전, 구간의 시작, StaleGuard 질문의 Continue, 사람의 새 말. 판정과 계수는 `settle_response` 한 자리다.
+NO_PROGRESS_LIMIT = 10
+#: 진전 없음의 사유 — 런 끝 줄의 ``(last: …)``. 버려진 응답은 `_intervene` 이 받는 사유 그대로다.
+NO_PROGRESS_WAIT_REFUSED = "wait refused"
+NO_PROGRESS_ALL_REFUSED = "every call was refused"
+NO_PROGRESS_SAME_RESULTS = "the same results again"
+NO_PROGRESS_OUTPUT_CUT = "output cut off"
+NO_PROGRESS_RUNAWAY = "runaway output"
+NO_PROGRESS_SERVER_ERROR = "server error"
 
 
 class TurnDispatcher:
@@ -168,9 +176,13 @@ class TurnDispatcher:
         self.stale_guard = StaleGuard()
         #: 🔁 표시가 떠 있나 — 발화 뒤 제자리 턴마다 N 을 갱신하고 새 결과면 지운다
         self._stale_shown = False
-        #: 연달아 버려진 응답 수와, 지금 응답이 버려졌으면 그 사유 (`DISCARDED_RESPONSE_LIMIT`)
-        self._discarded_in_a_row = 0
+        #: 진전 없는 응답의 연속 수 (`NO_PROGRESS_LIMIT`)
+        self._no_progress_in_a_row = 0
+        #: 지금 응답이 버려졌으면 그 사유 — `_intervene(store_emission=False)` 가 세운다
         self._discard_reason: str | None = None
+        #: 지금 응답에서 실행 전에 거절된 op 수와 마지막 거절의 사유 — `_refuse` 가 센다
+        self._refused_ops = 0
+        self._refusal_reason = ""
         #: 이 런에서 A5 자동 전문을 이미 받은 지연 도구 (v10.109.0) — 한 도구에 한 번.
         #: 디스패치만 쓰는 상태라 ``LoopState`` 가 아니라 여기(소유자)에 둔다.
         self._guided_tools: set[str] = set()
@@ -239,8 +251,8 @@ class TurnDispatcher:
         기록 → 턴 미계수 → ``_CONTINUE``. **턴 계수 통일 규칙**: 개입 턴은
         도구를 실행하지 않은 회복 넛지이므로 max_turns 예산을 소모하지 않는다
         (종전엔 A4/A5 만 계수하고 A7/B1/NO_JSON 은 미계수하던 비일관 —
-        리뷰 §4.1). 반복-개입 폭주는 B1 detector(동일 액션 반복 → level≥3
-        하드페일)가 상한을 잡는다.
+        리뷰 §4.1). 반복-개입 폭주는 진전 없는 응답의 연속 상한
+        (`NO_PROGRESS_LIMIT`)이 잡는다.
 
         ``failure_signal`` None 이면 outcome 의 기존 값을 유지한다
         (``_recover_unparsed`` — 초기 분류 NO_OUTPUT/NO_JSON/NO_ACTION 승계).
@@ -355,6 +367,7 @@ class TurnDispatcher:
         """
         self._record_emission(llm_text)
         self._discard_reason = None  # `_intervene(store_emission=False)` 가 세운다
+        self._refused_ops, self._refusal_reason = 0, ""  # `_refuse` 가 센다
         # v10.1.4: 빈 content 의 재시도 문구가 사고 채널 유무로 갈린다
         self._turn_thinking = (thinking or "").strip()
         self._turn_swallowed = bool(swallowed)
@@ -531,30 +544,53 @@ class TurnDispatcher:
                 ],
             }
         if result is _CONTINUE:
-            self._watch_stale(turn_start)
-            return self._count_discarded()
+            stale = self._watch_stale(turn_start)
+            return self.settle_response(self._no_progress_reason(turn, stale=stale))
         return result
 
-    def _count_discarded(self):
-        """이 응답이 버려졌으면 연속 수를 하나 올리고, 아니면 0 으로 — 상한에 닿으면 런을 끝낸다
-        (`DISCARDED_RESPONSE_LIMIT`). 끝내는 길은 B1 하드 실패와 같다: 런 끝 줄 + 실패 결과."""
-        if self._discard_reason is None:
-            self._discarded_in_a_row = 0
+    def _no_progress_reason(self, turn, *, stale: bool) -> str | None:
+        """디스패치한 응답이 진전 없음이면 그 사유, 진전이면 ``None`` — 버려졌다(되묻기만 남김), 호출이 전부 실행 전에
+        거절됐다, 실행한 결과가 모두 이미 본 것이다(``stale`` — `_watch_stale`)."""
+        if self._discard_reason is not None:
+            return self._discard_reason
+        if turn.ops and self._refused_ops == len(turn.ops):
+            return (
+                self._refusal_reason if len(turn.ops) == 1 else NO_PROGRESS_ALL_REFUSED
+            )
+        if stale:
+            return NO_PROGRESS_SAME_RESULTS
+        return None
+
+    def _refuse(self, reason: str) -> None:
+        """이 응답의 op 하나를 실행 전에 거절했다 — 묶음 안의 거절(`_reject_op`·B1)과 `wait` 거절이 부른다."""
+        self._refused_ops += 1
+        self._refusal_reason = reason
+
+    def settle_response(self, reason: str | None):
+        """응답 하나의 계수 — 진전 없음(``reason``)이면 연속 수를 하나 올리고, 진전(``None``)이면 0 으로. 상한
+        (`NO_PROGRESS_LIMIT`)에 닿으면 런 끝 줄 + 실패 결과로 런을 끝낸다. 디스패치한 응답(`_handle_text_path`)과 코어가
+        끊은 응답(`AgentLoop._finish_response`)이 모두 여기 온다."""
+        if reason is None:
+            self._no_progress_in_a_row = 0
             return _CONTINUE
-        self._discarded_in_a_row += 1
-        if self._discarded_in_a_row < DISCARDED_RESPONSE_LIMIT:
+        self._no_progress_in_a_row += 1
+        if self._no_progress_in_a_row < NO_PROGRESS_LIMIT:
             return _CONTINUE
         head = (
-            f"No progress: the last {DISCARDED_RESPONSE_LIMIT} responses were rejected "
-            "before anything ran"
+            f"No progress: the last {NO_PROGRESS_LIMIT} responses produced nothing new"
         )
-        render_run_ended(f"{head} (last: {self._discard_reason}). Stopping.")
+        render_run_ended(f"{head} (last: {reason}). Stopping.")
         return ToolResult(False, error=f"{head}.")
+
+    def reset_no_progress(self) -> None:
+        """진전 없는 응답의 연속 수를 0 으로 — 구간의 시작, StaleGuard 질문의 Continue, 사람의 새 말."""
+        self._no_progress_in_a_row = 0
 
     # ── 제자리 고리 (v10.120.0, docs/stale-guard/DESIGN.md) ──────────
 
-    def _watch_stale(self, turn_start: int | None) -> None:
-        """턴의 관찰이 다 기록된 뒤 한 번 — 그 턴이 ``ctx`` 에 남긴 레코드를 StaleGuard 에.
+    def _watch_stale(self, turn_start: int | None) -> bool:
+        """턴의 관찰이 다 기록된 뒤 한 번 — 그 턴이 ``ctx`` 에 남긴 레코드를 StaleGuard 에. 그 턴이 제자리 턴이었으면
+        참 — 진전 없음의 판정(`_no_progress_reason`)이 읽는다. 웹 main 의 질문에 사람이 Continue 를 고른 턴은 거짓이다.
 
         쌍은 history 의 그 구간에서 뽑는다(`stale_turn_pairs`) — trajectory 의 (호출 이름,
         관찰 본문) 과 같은 출처다. 저장되지 않은 시도(형식 재시도·B1 이 막은 반복)는 턴이
@@ -562,10 +598,10 @@ class TurnDispatcher:
         표시, 웹 main 의 두 번째 발화부터는 사람에게 묻는다(Hint 만 사용자 메시지로 간다)."""
         records_since = getattr(self.ctx, "records_since", None)
         if turn_start is None or records_since is None:
-            return
+            return False
         pairs = stale_turn_pairs(records_since(turn_start))
         if pairs is None:
-            return
+            return False
         guard = self.stale_guard
         fired = guard.observe(
             pairs,
@@ -577,7 +613,7 @@ class TurnDispatcher:
                 # 떠 있는 표시의 N 갱신 — 새 결과(0)면 지운다
                 self._show_stale(asking=False)
                 self._stale_shown = guard.turns_without_new > 0
-            return
+            return guard.last_turn_stale
         calls = self._stale_calls(guard.since_turn)
         self._record_stale(calls)
         from agent_cli.render import get_renderer
@@ -590,18 +626,18 @@ class TurnDispatcher:
         )
         self._stale_shown = True
         self._show_stale(asking=asking)
-        if asking:
-            self._ask_stale(calls)
+        # 사람이 Continue 를 고른 턴은 진전 없음으로 세지 않는다
+        return not (asking and self._ask_stale(calls))
 
     def _begin_segment(self) -> None:
         """구간(깨어 있는 토막)을 새로 시작한다 — 제자리 `wait` 에서 깰 때(5c-1). 구간마다 새로 세는 것이 여기 다 있다:
         턴(상한·꼬리의 턴 줄이 세는 기준), 되돌림 예산, 같은 호출 반복(`ActionLoopDetector`), 제자리 고리(`StaleGuard`)와
-        그 🔁 표시, 버려진 응답의 연속 수(`DISCARDED_RESPONSE_LIMIT`). 런 시작은 이 객체가 새로 서므로 부르지 않는다. 열린 항목·기록의 턴 번호는 그대로다."""
+        그 🔁 표시, 진전 없는 응답의 연속 수(`NO_PROGRESS_LIMIT`). 런 시작은 이 객체가 새로 서므로 부르지 않는다. 열린 항목·기록의 턴 번호는 그대로다."""
         self.state.segment_turn0 = self.state.turn
         self.state.ledger.new_segment()
         self.loop_detector = ActionLoopDetector(threshold=2)
         self.stale_guard = StaleGuard()
-        self._discarded_in_a_row = 0
+        self.reset_no_progress()
         self.clear_stale()
 
     def clear_stale(self) -> None:
@@ -675,8 +711,9 @@ class TurnDispatcher:
             },
         )
 
-    def _ask_stale(self, calls: list[str]) -> None:
-        """웹 main 의 두 번째 발화부터 — 런을 세우고 사람에게 Continue/Stop 을 묻는다.
+    def _ask_stale(self, calls: list[str]) -> bool:
+        """웹 main 의 두 번째 발화부터 — 런을 세우고 사람에게 Continue/Stop 을 묻는다. Continue 면 참 — 진전 없는
+        응답의 연속 수도 0 으로 돌린다(사람의 명시적 결정).
 
         안전 확인과 같은 확인(`c-N`, 6d): 트레이의 확인 항목, 말 칸이 Hint. Continue(approve) 는 런을 잇고 남긴 말을
         사람의 말로 넣는다. Stop(deny) 과 기다리는 동안의 정지(■·띠의 Stop — `/api/stop`)는 같다: 런 끝 줄(``stop_note``)
@@ -711,8 +748,9 @@ class TurnDispatcher:
             )
             self.state.stop_event.set()
             self._show_stale(asking=False)
-            return
+            return False
         g.acknowledge()
+        self.reset_no_progress()
         self._show_stale(asking=False)
         hint = decision.note
         enqueue = getattr(self.cfg.kind.ports, "enqueue_user_message", None)
@@ -721,6 +759,7 @@ class TurnDispatcher:
             # (``user:<별명>`` → 별명, 터미널의 ``user`` → 별명 없음)
             author = decision.by.partition(":")[2]
             enqueue(hint, author or STALE_HINT_AUTHOR)
+        return True
 
     def _dispatch_turn(self, llm_text: str, turn, outcome: dict):
         """Turn-level dispatch: guards, then the ops in array order.
@@ -950,6 +989,7 @@ class TurnDispatcher:
         이미 실행됐을 수 있다. A4(모르는 도구)·A5(스키마)·인자 JSON 오류가 쓴다."""
         outcome["failure_signal"] = signal
         if accumulate is not None:
+            self._refuse(NO_PROGRESS_ALL_REFUSED)
             # ``tail``(A5 자동 전문, v10.109.0)은 "이 op 는 안 돌았다" 뒤에 — 거절 사실이
             # 한 덩어리로 먼저 오고 참고 글이 뒤따른다.
             self.tools.accumulate_raw(
@@ -1200,6 +1240,7 @@ class TurnDispatcher:
                 success=False,
                 turn=self.state.turn,
             )
+            self._refuse(NO_PROGRESS_WAIT_REFUSED)
             return _CONTINUE
         mailbox = self.cfg.kind.ports.mailbox
         arrivals = mailbox.arrivals()
@@ -1214,6 +1255,7 @@ class TurnDispatcher:
                 success=False,
                 turn=self.state.turn,
             )
+            self._refuse(NO_PROGRESS_WAIT_REFUSED)
             return _CONTINUE
         # 무엇을 기다리기로 했나 — 받아들일 때 한 번 읽는다(5c-1 4b): 수락 문장·대기 줄·체크인 대상이 이 값 하나에서.
         # 기다림 표시를 먼저 세운다 — 거절이면 내린다
@@ -1255,6 +1297,7 @@ class TurnDispatcher:
                 success=False,
                 turn=self.state.turn,
             )
+            self._refuse(NO_PROGRESS_WAIT_REFUSED)
             return _CONTINUE
         # 받아들인 뒤 — 기다림 표시(`accept_wait` 가 세움)·체크인·대기 줄은 이 ``finally`` 하나가 내린다(5e1): 수락 문장
         # 기록·`PreWait`·대기 줄 그리기·`arm_checkin`·기다림 어디서 예외가 나도 남지 않는다(종전엔 기다림만 감싸, 그 앞의
@@ -1701,6 +1744,7 @@ class TurnDispatcher:
                 # `_intervene` 을 불러(단일 op 전용 — 턴 되감기 + 자기 관찰)
                 # 배치의 flush 와 겹쳤고, 런이 첫 op 의 shell 출력을 최종답으로
                 # **성공 종료**했다(재현: [새 op, 직전과 같은 op, 새 op]).
+                self._refuse(NO_PROGRESS_ALL_REFUSED)
                 self.tools.accumulate_raw(
                     accumulate,
                     tool_name,

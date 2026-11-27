@@ -19,7 +19,14 @@ from agent_cli.constants import (
     STOP_SERVER_ERROR,
 )
 from agent_cli.context.manager import ContextManager
-from agent_cli.loop.dispatch import TurnDispatcher, _append_observation, show_open_items
+from agent_cli.loop.dispatch import (
+    NO_PROGRESS_OUTPUT_CUT,
+    NO_PROGRESS_RUNAWAY,
+    NO_PROGRESS_SERVER_ERROR,
+    TurnDispatcher,
+    _append_observation,
+    show_open_items,
+)
 from agent_cli.loop.kind import LoopKind, Start
 from agent_cli.loop.llm import LLMCaller, UsageTotals, _build_token_stats
 from agent_cli.loop.prompt import SystemPromptSvc
@@ -729,6 +736,8 @@ class AgentLoop:
     def _absorb(self, items: list[dict]) -> None:
         """흡수 항목들을 넣는다 — 턴 경계(`_intake`)와 메일이 연 런의 시작(`_setup`)이 같은 길."""
         for it in items:
+            if "message" in it or it.get("user_request"):
+                self._dispatch.reset_no_progress()  # 사람의 새 말 — 새 일이 들어왔다
             if "message" in it:
                 self._inject_message(it["message"])
             elif "mail" in it:
@@ -1067,21 +1076,21 @@ class AgentLoop:
             "length",
             STOP_INCOMPLETE_TOOL_CALL,
         ):
-            result = self._on_output_truncated(llm_text, response)
+            self._on_output_truncated(llm_text, response)
             self._fire_hook("OnTurnEnd")
-            return result
+            return self._dispatch.settle_response(NO_PROGRESS_OUTPUT_CUT)
         # v10.10.0: the stream-side detector stopped a runaway — same
         # contract (not dispatched, retried smaller), own notice and row.
         if getattr(response, "stop_reason", None) == "runaway":
-            result = self._on_runaway(llm_text, response)
+            self._on_runaway(llm_text, response)
             self._fire_hook("OnTurnEnd")
-            return result
+            return self._dispatch.settle_response(NO_PROGRESS_RUNAWAY)
         # v10.20.0: the server sent an error inside the stream — nothing was
         # delivered. Say what it said instead of "your response was empty".
         if getattr(response, "stop_reason", None) == STOP_SERVER_ERROR:
-            result = self._on_server_error(response)
+            self._on_server_error(response)
             self._fire_hook("OnTurnEnd")
-            return result
+            return self._dispatch.settle_response(NO_PROGRESS_SERVER_ERROR)
 
         result = self._handle_text_path(
             llm_text,
@@ -1130,8 +1139,8 @@ class AgentLoop:
         whole and never folded. Now it follows the other retries — nothing
         stored, ``recovery_kind="format"`` so the note folds once the model
         recovers — and replaces an earlier unresolved one (v10.19.1: only the
-        latest notice stays in context across consecutive cuts). Returns
-        ``_CONTINUE`` so the loop gives it another turn.
+        latest notice stays in context across consecutive cuts). The caller
+        (`_finish_response`) counts it as a response without progress.
         """
         from agent_cli.recovery.primitives import echo_prior_output
 
@@ -1187,7 +1196,6 @@ class AgentLoop:
             f"Output truncated (stop_reason={stop_reason}, {detail}) at turn "
             f"{self.turn}; action not dispatched"
         )
-        return _CONTINUE
 
     def _on_server_error(self, response):
         """An in-stream server error (v10.20.0): the server stopped the
@@ -1218,7 +1226,6 @@ class AgentLoop:
             call=self._llm.last_call,
         )
         _debug_log(f"Server stream error ({detail}) at turn {self.turn}")
-        return _CONTINUE
 
     def _on_runaway(self, llm_text: str, response):
         """The stream-side detector (providers/runaway.py) stopped the
@@ -1257,7 +1264,6 @@ class AgentLoop:
         _debug_log(
             f"Runaway stopped ({detail}) at turn {self.turn}; action not dispatched"
         )
-        return _CONTINUE
 
     def _handle_text_path(
         self,

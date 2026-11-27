@@ -216,6 +216,7 @@ class StaleGuard:
         self._streak = 0
         self._since_turn = 0
         self._fires = 0
+        self._last_stale = False
 
     @property
     def fires(self) -> int:
@@ -231,6 +232,11 @@ class StaleGuard:
     def turns_without_new(self) -> int:
         """지금까지 이어진 제자리 턴 수 — 발화로 리셋되지 않는다. 화면의 N."""
         return self._streak
+
+    @property
+    def last_turn_stale(self) -> bool:
+        """마지막으로 먹인 턴이 제자리 턴이었나 — 발화와 무관하다. 진전 없는 응답의 판정이 읽는다."""
+        return self._last_stale
 
     @property
     def since_turn(self) -> int:
@@ -261,6 +267,7 @@ class StaleGuard:
         self._window.append(
             frozenset((tool, digest) for tool, digest, ok in keyed if ok)
         )
+        self._last_stale = stale
         if not stale:
             self._run = 0
             self._streak = 0
