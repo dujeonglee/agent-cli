@@ -365,12 +365,42 @@ class TestMultiOpDispatch:
         assert result.success
         assert ran == ["t1"]  # terminal op 은 디스패치됨
         msgs = [m.get("content", "") for m in ctx.get_raw_messages()]
-        # ① 누적 read 결과가 flush 됨 (단독 op 라 [1/1] combined)
-        assert any("[1/1] read_file — OK" in c and "alpha" in c for c in msgs)
+        # ① 누적 read 결과가 flush 됨 — 버린 op 의 알림과 한 관찰로
+        assert any("[1/2] read_file — OK" in c and "alpha" in c for c in msgs)
         # ③ terminal 뒤의 op 은 실행되지 않음
         assert not any("should not appear" in c for c in msgs)
-        # ④ 그 사실을 알리지 않는다 — 버려진 op 에 아무 말이 없다(감사 2-4, 고정)
-        assert not any("Not executed" in c for c in msgs)
+        # ④ 그 사실을 알린다 (감사 2-4 — 종전엔 말없이 버려졌다)
+        assert any(
+            "[2/2] batch — FAILED\nNot executed — `termtool` ends the turn, so the "
+            "calls after it did not run: [3/3] read_file. Send them in a later turn "
+            "if you still need them." in c
+            for c in msgs
+        )
+
+    def test_complete_first_still_notes_the_dropped_ops(self, tmp_path):
+        """`complete` 가 맨 앞이어도 같은 알림이 기록에 남는다 — 런은 그 답으로 끝난다."""
+        f = tmp_path / "a.txt"
+        f.write_text("alpha")
+        result, ctx, provider = _run(
+            [
+                _turn(
+                    ops=[
+                        {"action": "complete", "result": "fin"},
+                        {"action": "read_file", "path": str(f)},
+                    ]
+                )
+            ],
+            tmp_path,
+        )
+        assert result.success and result.output == "fin"
+        assert provider.call.call_count == 1
+        msgs = [m.get("content", "") for m in ctx.get_raw_messages()]
+        assert any(
+            "Not executed — `complete` ends the turn, so the calls after it did not "
+            "run: [2/2] read_file." in c
+            for c in msgs
+        )
+        assert not any("alpha" in c for c in msgs)
 
     def test_complete_op_ends_with_result(self, tmp_path):
         # Completion is an explicit `complete` op (DESIGN Exp 8): one turn,

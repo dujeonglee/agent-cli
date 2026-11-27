@@ -746,6 +746,9 @@ class TurnDispatcher:
             # the work done so far (chronological order for the model).
             # ``Tool.terminal`` 속성 파생 (T3 선언화 — 종전 도구명 튜플).
             if tool is not None and tool.terminal:
+                self._note_not_run_after_terminal(
+                    op.action, ops[i + 1 :], len(ops), i, results
+                )
                 self._flush_op_results(turn.record, results)
                 return self._dispatch_op(llm_text, turn, op, outcome)
             # Ops run sequentially, in order — the correctness guarantee for
@@ -821,6 +824,25 @@ class TurnDispatcher:
             return False
         stop = self.state.stop_event
         return bool(stop is not None and stop.is_set())
+
+    def _note_not_run_after_terminal(
+        self, name: str, skipped: list, total: int, at: int, results: list[dict]
+    ) -> None:
+        """턴을 끝내는 호출 뒤의 op 은 실행하지 않았다고 결과에 한 줄 남긴다 (감사 2-4) —
+        문법은 종결 호출을 끝에만 허용하지만 문법 없는 서버·native_fc 에는 그 막음이 없다.
+        종전엔 말없이 버려져 모델은 그 결과를 기다렸다."""
+        if not skipped:
+            return
+        names = ", ".join(
+            f"[{at + 2 + k}/{total}] {o.action or '?'}" for k, o in enumerate(skipped)
+        )
+        self.tools.accumulate_raw(
+            results,
+            "batch",
+            f"Not executed — `{name}` ends the turn, so the calls after it did not "
+            f"run: {names}. Send them in a later turn if you still need them.",
+            False,
+        )
 
     def _note_not_run_after_stop(
         self, skipped: list, total: int, first: int, results: list[dict]
