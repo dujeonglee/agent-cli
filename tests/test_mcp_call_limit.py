@@ -399,3 +399,21 @@ def test_real_server_run_stop_gives_up_then_the_connection_still_answers(servers
     assert r.error.endswith("s.")
     assert _fast(m, "patient", "after-stop") == "fast:after-stop"
     assert loop_tasks(m) == baseline
+
+
+# ── 서버가 오류로 답한 호출 (감사 1-10) ─────────────────────────────
+
+ERROR_SERVER = Path(__file__).parent / "fixtures" / "error_mcp_server.py"
+
+
+def test_a_tool_error_from_the_server():
+    """서버가 ``isError: true`` 로 답한다 — 지금은 성공으로 기록된다(고정)."""
+    m = McpClientManager()
+    cfg = McpServerConfig(name="errors", command=sys.executable, args=[str(ERROR_SERVER)])
+    try:
+        assert m.connect_all({"errors": cfg}, warn=False) == {"errors": "connected"}
+        r = McpTool(m, "errors", "denied", "", {}).run({"path": "/x"})
+    finally:
+        m.disconnect_all()
+    assert r.success
+    assert r.output == "Error executing tool denied: permission denied: /x"
