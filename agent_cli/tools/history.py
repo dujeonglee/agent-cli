@@ -367,12 +367,12 @@ def _help(session_dir: Path | None) -> ToolResult:
         "history: query session history with SQL (read-only SELECT over the",
         "`history` table; pass it as `query`).",
         "",
-        "Table `history` (one row per turn record):",
+        "Table `history` (one row per record):",
         schema,
         "",
         (
             "  kind: query=user ask · action=tool-call turn · observation=tool result"
-            " · final=complete answer · raw=unparsed"
+            " · final=complete answer · raw=unparsed · system=system prompt"
         ),
         (
             '  Default scope = current session; set `sessions` to "all" or id(s) for others.'

@@ -25,12 +25,12 @@ def test_history_description_oversized():
 
 
 def test_history_help_table():
-    """3-4: 무인자 도움말의 표 설명."""
+    """3-4: 무인자 도움말의 표 설명 — 도구 설명과 같게(행은 레코드마다, kind 에 `system`)."""
     out = history._help(None).output
-    assert "Table `history` (one row per turn record):" in out
+    assert "Table `history` (one row per record):" in out
     assert (
         "  kind: query=user ask · action=tool-call turn · observation=tool result"
-        " · final=complete answer · raw=unparsed\n" in out
+        " · final=complete answer · raw=unparsed · system=system prompt\n" in out
     )
 
 
