@@ -47,7 +47,9 @@ def _mismatch_window(lines: list[str], line_num: int) -> str:
 
 #: 해시 불일치는 실패가 아니라 가드레일이다 (v10.112.0 — 인라인 안내에서 트리거 직후로
 #: 옮김: 교정은 그 순간의 오류 문구가 맡는다).
-GUARDRAIL_NOTE = "This is a guardrail, not a failure: the file changed since that read."
+GUARDRAIL_NOTE = (
+    "This is a guardrail, not a failure: the ref does not match that line as it is now."
+)
 #: `lines` 가 맨 문자열 (v10.112.0) — 종전엔 ``split("\n")`` 으로 조용히 받아, 모델이
 #: 들여쓰기 없이 쓴 한 줄 문자열이 들여쓰기 없는 줄로 들어갔다(측정: edit3 후보 6/6 런이
 #: 문자열로 보냈고 한 런은 `return` 이 0 칸인 채 완료). 넣는 op 에서만 — "delete" 는

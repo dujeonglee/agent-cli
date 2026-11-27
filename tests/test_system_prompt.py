@@ -434,7 +434,8 @@ class TestBuildSystemPrompt:
         assert '`code_index` "fetch", `write_file`, or an earlier `edit_file`' in d
         # v10.112.0: 안내의 두 줄("A ref from before the file last changed no longer
         # matches", "never a bare line number")은 트리거 직후로 옮겼다 — 해시 불일치
-        # 오류가 "the file changed since that read" 를, 줄 번호만 온 ref 의 오류가
+        # 오류가 "the ref does not match that line as it is now" 를(v10.177.10 — 원인을 단정하지
+        # 않는다), 줄 번호만 온 ref 의 오류가
         # 그 줄의 지금 ref 를 말한다.
         from agent_cli.tools.edit_file import _bare_ref_error, _resolve_ref
 
@@ -442,7 +443,7 @@ class TestBuildSystemPrompt:
             _resolve_ref(["a", "b", "c"], "2#ZZ")
         except RuntimeError as e:
             mismatch = str(e)
-        assert "the file changed since that read" in mismatch
+        assert "the ref does not match that line as it is now" in mismatch
         bare = _bare_ref_error({"pos": "2"}, ["a", "b", "c"], "app.py") or ""
         assert "bare line number" in bare and "#" in bare
         assert "never a bare line number" not in flat
