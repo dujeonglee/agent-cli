@@ -50,13 +50,29 @@ def _run(tmp_path, monkeypatch, text):
     return result, second[-1]["content"]
 
 
-def test_json_array_in_text_is_run(tmp_path, monkeypatch):
-    result, _ = _run(tmp_path, monkeypatch, JSON_TEXT)
-    assert result.output == "ok"
-    assert (tmp_path / "made.txt").read_text() == "x"
+NO_CALL = (
+    "Your response had no usable tool call (no function call reached the harness)."
+)
 
 
-def test_foreign_tool_call_block_in_text_is_run(tmp_path, monkeypatch):
-    result, _ = _run(tmp_path, monkeypatch, XML_TEXT)
+def test_json_array_in_text_is_not_run(tmp_path, monkeypatch):
+    """글 속 JSON 배열은 호출이 아니다 — 실행하지 않고, 호출 없는 턴의 기존 되묻기를 받는다."""
+    result, observed = _run(tmp_path, monkeypatch, JSON_TEXT)
     assert result.output == "ok"
-    assert (tmp_path / "made.txt").read_text() == "x"
+    assert not (tmp_path / "made.txt").exists()
+    assert observed.startswith(NO_CALL)
+    assert JSON_TEXT in observed  # 되묻기가 그 글을 인용한다
+
+
+def test_foreign_tool_call_block_in_text_is_not_run(tmp_path, monkeypatch):
+    """외래 형식 구제도 타지 않는다."""
+    result, observed = _run(tmp_path, monkeypatch, XML_TEXT)
+    assert result.output == "ok"
+    assert not (tmp_path / "made.txt").exists()
+    assert observed.startswith(NO_CALL)
+
+
+def test_prose_turn_is_read_as_before(tmp_path, monkeypatch):
+    """호출 없는 산문 턴은 종전과 같은 되묻기다(글 파싱을 끈 것이 산문 턴을 바꾸지 않는다)."""
+    _, observed = _run(tmp_path, monkeypatch, "Just prose, no call.")
+    assert observed.startswith(NO_CALL)

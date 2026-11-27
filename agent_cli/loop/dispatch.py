@@ -378,6 +378,19 @@ class TurnDispatcher:
                     for op in turn.ops
                 ],
             }
+        elif self.cfg.dialect.server_parsed:
+            # 서버 파싱 방언은 글을 파싱하지 않는다 (감사 2-5): 호출은 서버의 tool_calls 로만
+            # 온다 — 형식 규칙이 "the server will not deliver them" 이라 가르치는 그대로. 글 속
+            # 배열·블록은 생각이고, 호출 없는 턴은 기존 "no function call" 되묻기로 간다.
+            text, thinking = self.cfg.dialect.strip_thinking(llm_text)
+            thought = self.cfg.dialect.sanitize_thought(text) or None
+            turn = ParsedTurn(
+                thought=thought,
+                ops=[],
+                raw=text,
+                parse_stage=1 if thought else 0,
+                thinking=thinking,
+            )
         else:
             turn = self.cfg.dialect.parse_turn(llm_text)
         # Phase 3 — foreign-format 구제 (dialects DESIGN §9): 바인딩
@@ -387,7 +400,7 @@ class TurnDispatcher:
         # 분류에서 FOREIGN_FORMAT, 직렬화는 corrected_record 로 바인딩
         # 포맷의 캐노니컬 shape 재렌더 (누출 raw 재공급 없음 — 자기 교정).
         foreign_source: str | None = None
-        if not turn.ops and server_ops is None:
+        if not turn.ops and not self.cfg.dialect.server_parsed:
             rescued = try_foreign_parse(self.cfg.dialect, llm_text)
             if rescued is not None:
                 turn, foreign_source = rescued
