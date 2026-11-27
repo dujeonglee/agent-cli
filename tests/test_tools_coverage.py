@@ -1366,6 +1366,18 @@ class TestHistoryTool:
         assert result.success
         assert "session=s1" in result.output and "session=s2" not in result.output
 
+    def test_sessions_as_one_string_is_wrapped(self, tmp_path, monkeypatch):
+        """도구 자신의 관용 — 문자열 하나를 한 요소 배열로."""
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
+        from agent_cli.tools.history import tool_history
+
+        result = tool_history(
+            {"query": "SELECT session FROM history", "sessions": "s1"},
+            extract_paths=extract_file_paths,
+        )
+        assert result.success and "session=s1" in result.output
+
     def test_sessions_unknown_errors(self, tmp_path, monkeypatch):
         self._patch_base(monkeypatch, tmp_path)
         from agent_cli.tools.history import tool_history
