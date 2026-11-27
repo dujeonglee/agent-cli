@@ -132,7 +132,7 @@ def reply(
     ts: float = 0.0,
     payload: Mapping[str, Any] | None = None,
 ) -> Envelope:
-    """회신 — 요청 ``re`` 를 갚는다(명시·폴백·정지·removed 모두). 줄은 없다. ``wakes`` 가 거짓이면 받는 쪽을
+    """회신 — 요청 ``re`` 를 갚는다(명시·답 없음·정지·removed 모두). 줄은 없다. ``wakes`` 가 거짓이면 받는 쪽을
     깨우지 않는다("Stop everything")."""
     return Envelope(
         id,

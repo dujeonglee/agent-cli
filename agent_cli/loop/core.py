@@ -56,7 +56,7 @@ from agent_cli.verbose import debug_log as _debug_log
 
 
 def is_reply_or_notice(mail: dict) -> bool:
-    """에이전트의 **회신**(명시 `reply`·런 끝 폴백 요약 — 요청 id ``re`` 를 단다) 또는
+    """에이전트의 **회신**(명시 `reply`·런 끝의 답 없음 회신 — 요청 id ``re`` 를 단다) 또는
     **통지**(`message` 의 ``expects_reply`` false)인가 (v10.141.0, 사용자 결정).
 
     둘 다 장부 항목을 만들지 않는다: 회신은 보낸 쪽의 "기다리는 회신" 을 닫는 것으로 끝이고

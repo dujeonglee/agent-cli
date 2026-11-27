@@ -436,7 +436,7 @@ def _load_directives(audience: str = "main") -> str:
 # 상주 에이전트 고정 각인 (v7.18.1, v9.25.0 개정) — 회신 규율. 여러 요청자
 # (main·창의 사용자·peer)로부터 오는 요청마다 반드시 그 요청자에게 답이
 # 돌아가게 한다. 배관 사실과 정합: `complete` 는 국소(v9.21.0 — 아무에게도
-# 배달되지 않는다), 배달은 `reply`/`message` 뿐이고, 요청은 런 도중에도
+# 배달되지 않는다; v10.177.8 부터 `reply` 없이 끝난 요청엔 "답하지 않았다" 회신만 간다), 배달은 `reply`/`message` 뿐이고, 요청은 런 도중에도
 # 도착한다(v9.25.0 — 턴 경계 흡수, 요청마다 번호가 붙은 빚).
 _REPLY_DISCIPLINE_SECTION = """## Reply Discipline (your core duty)
 Requests reach you from DIFFERENT requesters — main, the user in your chat

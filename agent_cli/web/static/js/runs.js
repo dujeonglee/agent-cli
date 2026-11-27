@@ -47,7 +47,7 @@ import { sendOnce } from "./send.js";
 //     쌓인 3건이 블록 3개를 먼저 연다.
 //   · 보냄 → 그리지 않는다. `message`/`reply`/`answer` **도구 줄**이 그 발신
 //     이고(라이브·resume 재생 둘 다 history 에서 온다), 유일한 예외는 도구
-//     호출 없는 하네스 폴백(`fallback`) — 그것만 ⚠ 줄로 몸통에.
+//     호출 없는 하네스의 답 없음 회신(`fallback`) — 그것만 ⚠ 줄로 몸통에.
 //   · 질문 → `→ ask` 도구 줄. 트레이 갱신만 남는다.
 // resume: `scopes.jsonl` 이 같은 scope_start/end 를 재생하고 에이전트
 // history 가 도구 줄을 재생하므로 재생 소스는 **새로 늘지 않는다**.

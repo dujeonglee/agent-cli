@@ -139,7 +139,7 @@ def view_of_inbox_item(item: dict) -> MailView:
 #   종류(job·monitor·checkin) → `system`(줄 없음 — 하니스 통지는 에이전트에서 항목이 아니다).
 #   ``opens_run`` 거짓 → 깨우지 않음.
 # - main·private 메일: peer_message 의 ``expects_reply`` → `request` — main 이 빚을 적는다(`AgentLoop._inject_mail`);
-#   ``notice`` → `notice`; ``re`` 가 있으면(명시 회신·정지 회신) 또는 kind reply(폴백) → `reply`; 그 밖
+#   ``notice`` → `notice`; ``re`` 가 있으면(명시 회신·정지 회신) 또는 kind reply(런 끝의 답 없음 회신) → `reply`; 그 밖
 #   (job·monitor·harness·died·checkin) → `system`, 줄 없음 — main 앞 메일의 n- 항목은 루프 장부(`Ledger`)가 들고
 #   있다. ``wakes_main`` 거짓 → 깨우지 않음.
 

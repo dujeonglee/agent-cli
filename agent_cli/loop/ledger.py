@@ -30,7 +30,7 @@ from agent_cli import item_ids
 
 #: 한 런이 쓰는 되돌림 예산 — 되묻기·독촉이 전부 나눠 쓴다(사용자 결정 8, 2026-10-18).
 #: 다 쓰면 남은 항목을 하니스가 닫는다: 요청은 최종 답에 미답으로, 빚은 런 끝의
-#: 폴백(회신 빚은 런 요약 배달).
+#: "답하지 않았다" 회신으로(런의 결과는 요청자에게 가지 않는다 — v10.177.8).
 NAG_BUDGET = 8
 
 _HEAD = "## Open Items — close them in this order; `complete` is always the last step"

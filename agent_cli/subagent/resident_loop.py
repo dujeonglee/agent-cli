@@ -275,7 +275,7 @@ class ResidentLoop(LoopKind):
           발신(창이 곧 배달 — `reply_debts` 가 사람 주소를 뺀다).
         - ``handled``/``state`` 는 **정리 뒤**(`_close_run`) — idle 은 '이 런의 일이 다
           끝났다' 여야 한다(v9.22.4, Linux CI 레이스).
-        - 세션 종료로 끝난 런(``session_ended`` — 5e1)은 아무것도 하지 않는다: 회신·폴백·우편 정리·처리 수 없이
+        - 세션 종료로 끝난 런(``session_ended`` — 5e1)은 아무것도 하지 않는다: 회신·답 없음 회신·우편 정리·처리 수 없이
           그대로 돌려준다. 우편은 프로세스와 함께 사라지고(5c-0), 마지막 저장은 `shutdown_all` 이 한다.
         """
         if result is not None and getattr(result, "session_ended", False):
@@ -301,7 +301,7 @@ class ResidentLoop(LoopKind):
             self._answer_stopped_run()
         # 🤝 창의 out 줄 — 하니스의 "답하지 않았다" 회신은 도구 호출 없는 유일한 발신이라(v9.23.0) 웹이 ⚠ 줄로
         # 그린다: 갚지 못한 빚마다 한 줄, 그 빚의 id 와 상대로(`end_run` 이 보내는 회신과 한 줄씩 같은 글). 사람이 창에서 연 구간은 창이 곧
-        # 배달이다 — 그 사람에게 결과 한 줄(폴백이 아니다). 결과가 빈 글이면(기다릴 것 없는 `wait` 로 끝났다 — 5d) 그
+        # 배달이다 — 그 사람에게 결과 한 줄(답 없음 회신이 아니다). 결과가 빈 글이면(기다릴 것 없는 `wait` 로 끝났다 — 5d) 그
         # 사람에게 한 말이 없다: 줄을 내지 않는다.
         line = {
             "key": tm.key,

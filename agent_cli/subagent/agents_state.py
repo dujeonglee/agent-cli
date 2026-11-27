@@ -18,7 +18,7 @@ from agent_cli.session.store import AGENTS_DIR
 AGENTS_STATE_VERSION = 2
 
 
-#: 받아들여진 `wait` 로 기다리는 에이전트를 **모델에게 말하는 낱말** (v10.166.0) — 꼬리의 `## Live Agents`, 폴백 회신의
+#: 받아들여진 `wait` 로 기다리는 에이전트를 **모델에게 말하는 낱말** (v10.166.0) — 꼬리의 `## Live Agents`, 답 없음 회신의
 #: 꼬리, 체크인의 에이전트 줄이 쓴다. 작업 상태가 아니다: 기다리는 에이전트의 ``state`` 는 그대로 ``busy``(작업 구간
 #: 안이다). 사실은 우편의 기다림 표시 하나(`PostOffice.is_waiting`).
 WAITING = "waiting"

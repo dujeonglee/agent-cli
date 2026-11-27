@@ -639,7 +639,7 @@ assistant 턴 하나는 세 형태를 지난다 — (A) 모델이 낸 원문 · 
 ├── compaction.json          ← 압축 상태(요약·파일 목록·dynamic_start_index)
 ├── turns.jsonl · failures.jsonl · verbose.jsonl   ← §7.6·§7.7
 ├── memory.jsonl             ← 세션 메모리
-├── agents/<key>/            ← 에이전트(run·spawn) — history.jsonl·conversation.jsonl·replies/
+├── agents/<key>/            ← 에이전트(run·spawn) — history.jsonl·conversation.jsonl
 ├── skill_<name>_<hash>_<ts>/← 스킬 런
 └── harness/<job>/<label>/   ← 하니스 작업 (세션 대화가 아니다)
 ```
@@ -699,7 +699,7 @@ op 에 준 `tools`·`model` 이 프로파일 값보다 우선한다(`subagent/ru
 run 은 레지스트리의 에이전트다(값 `ends_after_task`, docs/agent-engine/DESIGN.md). `agent` 의 모든 모드가 `tool_agent`
 (`subagent/agent_modes.py`)의 모드 표로 가고, run 은 `subagent/run_agent.py` 가 거부 판정(`subagent/delegation_checks.py`) →
 `AgentRegistry.spawn(ends_after_task=True)` → 과제 요청(`request`, 요청자 = 부른 루프의 주소) 순으로 띄우고 **바로 돌아온다**.
-결과는 그 에이전트의 회신이다 — 명시 `reply`, 없으면 런 끝 폴백(라벨 붙은 런 요약). 런이 `complete` 로 끝나면 워커가 내려온다(dead, 채널은 회색) — 받아들여진 `wait` 는 그 자리에서 기다렸다 깨어 계속하고(닫지 않은 것도 깨울 것도 없는 `wait` 는 런을 끝내 내려온다), 런 중간의 `reply` 는 끝이 아니다.
+결과는 그 에이전트의 회신이다 — 답은 `reply` 하나, 없이 끝나면 런 끝 정리가 "답하지 않았다" 는 사실 문장으로 그 요청을 닫는다(런의 결과는 가지 않는다). 런이 `complete` 로 끝나면 워커가 내려온다(dead, 채널은 회색) — 받아들여진 `wait` 는 그 자리에서 기다렸다 깨어 계속하고(닫지 않은 것도 깨울 것도 없는 `wait` 는 런을 끝내 내려온다), 런 중간의 `reply` 는 끝이 아니다.
 깊이·순환은 호출자(`loop.kind.Caller`)의 것으로 센다 — 에이전트가 띄운 에이전트는 한 단계 깊다(`AgentInstance.caller_runtime`).
 정지(docs/agent-engine/DESIGN.md §2.3): 에이전트마다 런의 정지(■ — `AgentRegistry.stop_run`, `ResidentLoop.start` 가 런마다
 `agent_stop.LinkedStop` 을 세운다)와 평생 정지(✕ — `kill`, 세션 종료)가 따로다. 부른 런의 정지에는 묶이지 않는다(방 ■·Ctrl+C 한 번은 main 만).
@@ -707,7 +707,7 @@ run 은 레지스트리의 에이전트다(값 `ends_after_task`, docs/agent-eng
 보내는 것은 레지스트리(`answer_debts_as_stopped` — 런의 정리에서, `_answer_after_stop` — 워커가 죽을 때).
 
 보낸 쪽 기록(`AgentRegistry._sent`)이 장부의 "기다리는 회신"(`Ledger.awaited`)이다 — 요청이 받은편지함에 들어갈 때 적히고 받는 쪽의
-빚이 끝날 때(갚음·폴백·버림) 지워진다. 남아 있으면 `complete` 가 되돌아온다. 받아들여진 `wait` 는 어느 루프에서나 런을 끝내지
+빚이 끝날 때(갚음·답 없음 회신·버림) 지워진다. 남아 있으면 `complete` 가 되돌아온다. 받아들여진 `wait` 는 어느 루프에서나 런을 끝내지
 않고 제자리에서(`dispatch._wait_in_place` 하나) 회신·메일·작업과 모니터의 보고·체크인을, main 은 사람 입력(`runtime.wait_for_human_words`,
 run 은 터미널 줄 — 대기 중 친 `/`·`@` 명령은 그 자리에서 라우팅하고 깨우지 않는다)도 기다린다. 깨면 새 구간(`_begin_segment`)이다.
 회신·통지 메일은 장부 항목을 만들지 않는다(`loop/core.py::is_reply_or_notice` — 회신은 기다리던 항목을 닫을 뿐, 통지는 읽으면 끝);

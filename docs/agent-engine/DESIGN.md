@@ -66,7 +66,7 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
 
 - **보내기.** run 의 과제와 `message` 요청은 받는 쪽 받은편지함에 들어갈 때(`_enqueue`; main 앞이면 `message_to_main`)
   보낸 쪽 기록 `_sent[요청자][r-…]` 에 적힌다. 받는 쪽 빚이 끝날 때 지운다(`_close_sent` — `reply` 로 갚음, 요청자에게
-  `message` 로 갚음, 런 끝 폴백, 정지로 버림). 받는 쪽이 죽었으면 보이지 않는다.
+  `message` 로 갚음, 런 끝의 답 없음 회신, 정지로 버림). 받는 쪽이 죽었으면 보이지 않는다.
 - **장부.** `Ledger.awaited`(질문 포트 `awaited` → `awaited_replies`)가 그것을 읽어 `## Open Items` 의 둘째 절
   "by arrival — `wait`; each reply closes its item when it comes" 에 싣는다(`complete` 절은 셋째로 밀린다).
   남아 있으면 `complete` 를 되돌린다 — 되돌림 예산 8·정책은 장부의 것 그대로. 예산이 다하면 결과 말미에
@@ -80,7 +80,7 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
   "the wait was interrupted — the user wrote to you; … still awaited, so `wait` again when you are done" 를 남긴다.
   같은 런이라 감사(auditor)의 구간이 회신까지 덮는다. `[v10.163.0 에서 바뀜]` 작업·모니터만 기다려도, 에이전트가
   기다려도 같다 — 제자리에서 기다리고 깨면 같은 런을 잇는다(종전엔 런을 끝냈다).
-- **회신·통지는 항목이 아니다 (사용자 결정).** 내가 보낸 요청의 회신(명시 `reply`·런 끝 폴백 요약)은 도착하면 그 기다리는
+- **회신·통지는 항목이 아니다 (사용자 결정).** 내가 보낸 요청의 회신(명시 `reply`·런 끝의 답 없음 회신)은 도착하면 그 기다리는
   회신 항목을 닫고(보낸 쪽 기록이 지워진다) 내용만 전한다 — 새 장부 항목(`n-`)을 만들지 않는다. 통지(`expects_reply` false)도
   읽으면 끝이다. 요청(`expects_reply` true)만 받는 쪽에 빚을 만든다. main 은 `core.mail_item` 이 `is_reply_or_notice` 를 장부
   밖으로 두고, 에이전트(run·spawn)는 종전부터 회신·통지를 항목으로 올리지 않았다(시작 항목·흡수 항목 모두). 작업·모니터·
@@ -89,7 +89,8 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
   동사이고, run 에이전트에게는 그게 곧 수명 끝이다(`AgentActor.ended` — 런 끝 사실 `RunEnd` 가 `wait` 가 아니면 내려옴; 턴 상한·오류로 끝난 런도
   끝이다). `wait` 로 끝난 런(자기 하위 run 을 기다림)은 내려오지 않고 깨어 계속하다 `complete` 때 내려온다. 런 중간에
   `reply` 를 먼저 보내도 내려오지 않는다. 회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도
-  남으면 런 끝 폴백이 런 요약으로 회신한다. 정지(■·✕)로 끊긴 run 도 내려온다 — 요청자에게는 stopped 회신(§2.3).
+  남으면 런 끝 정리가 "답하지 않았다" 는 사실 문장으로 그 요청을 닫는다 — 답은 `reply` 하나, 런의 결과는 요청자에게
+  가지 않는다(v10.177.8, 사용자 결정 2026-11-27; 전엔 런 요약이 대신 갔다). 정지(■·✕)로 끊긴 run 도 내려온다 — 요청자에게는 stopped 회신(§2.3).
 - **갚은 요청의 런은 깨울 근거가 아니다 (v10.143.0, 사용자 결정).** 요청자 X 의 `wait` 가 깨울 근거를 셀 때, 에이전트의
   진행 중 런과 받은편지함은 X 의 요청 중 아직 회신이 가지 않은 것을 들고 있을 때만 근거다(v10.146.0 부터 `wake._holds_unpaid_request_from`
   — 항목 가운데 X 의 기다리는 회신(장부의 열린 r 줄)에 든 것; 빚으로 적히기 전 틈 포함). 이미 회신했거나 통지로 도는 런,
@@ -105,10 +106,10 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
   동안). 이제 `waiting — will wake on: main has your request queued` 로 받아들여지고, main 이 집으면 "main owes you a
   reply" 가 된다(체크인 대상 id 는 둘 다 `main`). 집힌 줄(`owing`)·잠든 채무자·고리 거절은 그대로다 — 줄 선 요청만
   든 채 기다리는 쪽은 잠든 채무자가 아니다.
-- **실패한 런의 폴백 (v10.143.0).** 턴 상한·provider 오류로 끝난 런은 산출물이 비어 있다 — 폴백 회신의 머리에 엔진의
-  사유 한 줄이 선다: `(the run ended with an error: Max turns (40) reached)`(사유가 없으면 — 엔진 예외는 사유가 산출물에
-  있다 — `(the run ended with an error)`). 요청자가 main 이면 관찰 레코드(`agent_mail.build_reply_record`)가, 에이전트면
-  런 끝 폴백(`AgentRegistry.end_run`)이 단다 — 종전엔 사유가 버려졌고 에이전트 요청자는 실패 표시도 받지 못했다.
+- **실패한 런의 답 없음 회신 (v10.143.0).** 턴 상한·provider 오류로 끝난 런은 산출물이 비어 있다 — 회신의 머리에 엔진의
+  사유 한 줄이 선다: `(the run ended with an error: Max turns (40) reached)`(엔진 예외도 그 사유를 — v10.177.8, 결과가
+  요청자에게 가지 않으므로). 요청자가 main 이면 관찰 레코드(`agent_mail.build_reply_record`)가, 에이전트면
+  런 끝 정리(`AgentRegistry.end_run`)가 단다 — 종전엔 사유가 버려졌고 에이전트 요청자는 실패 표시도 받지 못했다.
   사유는 실패한 런의 메일에만 ``error`` 로 실린다.
 
 ### 2.3 정지
@@ -143,7 +144,7 @@ tool_bridge._invoke_agent ─▶ agent_modes.tool_agent(args, registry, caller=C
 main·에이전트가 같은 플래그를 같은 자리(턴 경계·스트림·도구 직전·전경 `shell`·MCP·제자리 대기)에서 보고, 엔진의 정지
 처리(`AgentLoop._on_interrupt`)가 "세션이 닫혔는가"(`LoopKind.session_ended` — main 은 `MainInput.closed`, 에이전트는
 레지스트리 우편의 main 상자)를 읽어 그렇다면 `[interrupt]` 기록·카드 없이 `ToolResult(session_ended=True)` 로 끝낸다. 끝
-정리는 그 원인(`RunEnd` "session_end")이면 아무것도 하지 않는다 — 정지·폴백 회신, 체크인, 감사, 우편 정리, 처리 수,
+정리는 그 원인(`RunEnd` "session_end")이면 아무것도 하지 않는다 — 정지·답 없음 회신, 체크인, 감사, 우편 정리, 처리 수,
 일회용 에이전트의 `OnAgentEnd` 훅 모두 없다(`MainActor.ended`·`ResidentLoop.finish`·`AgentActor.ended`). run 의 Ctrl+C·
 SIGTERM 은 그대로다(첫 누름은 사람의 정지, 끝내는 길은 예외 — 에이전트는 `shutdown_all` 이 main 상자를 닫아 같은 사실을
 본다). 5c-pre 의 닫힘 전용 길(`Mailbox(closed=)`·"closed")은 지웠다.
@@ -176,7 +177,7 @@ Decide whether to continue another way or report back to the user.
 워커가 죽으면 집어 든(picked — 지금 일·흡수한) 요청, 곧 갚지 않은 빚(사람 주소 제외) 모두에도 사실 한 통을 보내고 빚을
 닫는다 — 정지의 stopped 와 같은 길(`_answer_debts`)이다. 죽은 런의 활동·생각은 믿을 수 없어 싣지 않는다. 요청자가 이미
 죽어 못 간 빚은 멈춘 런처럼 버린다(`run_ended(stopped=True)`). main 의 `died` 메일은 그대로 간다(main 이 요청자면 그
-메일과 회신을 함께 받는다). 과제를 끝낸 run 에이전트가 답하지 않고 남긴 빚은 런 끝의 폴백이 갚는다(이 규칙 밖).
+메일과 회신을 함께 받는다). 과제를 끝낸 run 에이전트가 답하지 않고 남긴 빚은 런 끝의 답 없음 회신이 닫는다(이 규칙 밖).
 
 ```
 ── reply [n-5] from agt-B re [r-9] · ended ──
@@ -253,7 +254,7 @@ P1 이 둔 임시 종류·결과 어댑터·결과 포장·`run:` 주소·축소
 | 자리 | 지금 |
 |------|------|
 | run 의 루프 종류 | `ResidentLoop` + `ends_after_task` — 런이 `complete` 로 끝나면 내려온다 |
-| run 의 결과 | 회신(`reply`, 없으면 런 끝 폴백) — 도구 결과는 "started agent … on request r-…" 한 줄 |
+| run 의 결과 | 회신(`reply` 하나 — 없으면 런 끝의 답 없음 회신, 결과는 가지 않는다) — 도구 결과는 "started agent … on request r-…" 한 줄 |
 | run 의 주소 | `agent:<key>` — 받은편지함으로 통지·회신을 받는다 |
 | run 의 `wait` | 에이전트와 같다(런 끝). `WAIT_BLOCK` 은 하니스 작업과 기다리는 회신을 둔 main 이 쓴다 |
 | `agent` 스키마 | 모든 루프가 같다 — run·spawn·status·resume·kill. 깊이 상한만 도구를 뺀다 |

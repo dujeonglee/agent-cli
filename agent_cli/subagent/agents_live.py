@@ -617,8 +617,8 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
         (v10.141.0, docs/agent-engine/DESIGN.md §3). ``[{"id", "from", "text"}]``, 번호 순.
 
         우편 장부의 열린 r 줄을 읽는다 — 요청이 상자에 들 때 열리고(`_enqueue`·`message_to_main`), 받는 쪽의
-        빚이 끝날 때(갚음·폴백·버림 — 배달과 한 락 구간) 닫힌다(v10.145.0).
-        갚음·폴백은 회신을 **배달한 뒤** 지운다: 먼저 지우면 그 틈에 요청자의 `wait` 가 기다릴
+        빚이 끝날 때(갚음·답 없음 회신·버림 — 배달과 한 락 구간) 닫힌다(v10.145.0).
+        갚음·답 없음 회신은 회신을 **배달한 뒤** 지운다: 먼저 지우면 그 틈에 요청자의 `wait` 가 기다릴
         회신도 도착한 메일도 없는 순간을 보고 `wait` 를 거절한다.
         받는 쪽에서 세면(빚 장부 + 받은편지함) 항목이 받은편지함을 떠나 빚으로 적히기까지의
         틈에 회신 기다림이 사라진다. 받는 쪽이 죽었으면 빼다(`wake_facts` 의 ``replies``). 읽기만 한다."""
@@ -630,7 +630,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
     # 범용 배달(`_enqueue`·`_push_reply`·`_push_private`)은 봉투를 `_post_deliver` 로 우편에 넣는다. 갚는 자리
     # (`pay_debt`·`end_run`·`answer_debts_as_stopped`·`answer_question`)만 ``settles`` 로 그 배달이 닫는 줄의 id 를
     # 말한다 — 같은 모양의 봉투라도 위임·`message`·removed 회신·재배달은 갚지 않으므로 호출자가 아는 사실이다(갚는
-    # 것은 `reply` 와 그 대신인 폴백·정지 회신, v10.145.1). 배달 지시라 봉투·저장 파일·모델이 읽는 글에 실리지 않는다.
+    # 것은 `reply` 와 런 끝의 답 없음 회신·정지 회신, v10.145.1). 배달 지시라 봉투·저장 파일·모델이 읽는 글에 실리지 않는다.
 
     def _post_deliver(
         self, env, *, settles: str = "", closes_as: str = "user_answered"
@@ -721,8 +721,8 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
     # 요청(`expects_reply=True` 항목 / main 에 배달된 `message`)은 빚이다.
     # 갚는 길: `reply` 하나 — main·에이전트 같은 판정(`question_port.judge_reply`, v10.146.0). `message` 는
     # 갚지 않는다(v10.145.1).
-    # 런의 끝은 `run_ended` 하나다 — 보통의 끝은 남은 빚을 폴백(라벨 붙은 런 요약)으로
-    # 배달하고, 정지는 버린다.
+    # 런의 끝은 `run_ended` 하나다 — 보통의 끝은 남은 빚마다 "답하지 않았다" 회신으로 닫고, 정지는
+    # 버린다.
 
     def note_owes(
         self,
@@ -1752,7 +1752,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
             "direction": "out",
             "author": from_key,
             "text": text,
-            # 이 발신을 낸 런 — 웹이 폴백 줄을 그 런 블록에 단다
+            # 이 발신을 낸 런 — 웹이 ⚠ 줄(답 없음 회신)을 그 런 블록에 단다
             "item": tm.current_item,
             "success": True,
             "to": to,
