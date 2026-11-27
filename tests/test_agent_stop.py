@@ -790,3 +790,14 @@ class TestAgentAddressedByName:
             {"mode": "kill", "key": "nobody"}, registry=reg, caller=caller
         )
         assert unknown.error == 'kill rejected: unknown agent "nobody"'
+
+
+def test_free_slots_counts_the_living(reg):
+    """`free_slots` — 상한 − 살아 있는 수, 상한 0(없음)이면 None (과대 넛지가 읽는다)."""
+    reg.max_agents = 3
+    peer(reg, "agt-a")
+    dead = peer(reg, "agt-b")
+    dead.state = "dead"
+    assert reg.free_slots() == 2
+    reg.max_agents = 0
+    assert reg.free_slots() is None
