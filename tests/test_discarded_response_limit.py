@@ -1,7 +1,9 @@
 """버려진 응답(하니스가 저장하지 않고 되묻기만 남긴 응답)의 연속 상한 (NOTE-unbounded-retries §4).
 
 형식 되묻기·홀로 거절된 호출(A4·A5·인자 JSON 오류)·B1 넛지는 턴을 세지 않는다 — 같은 응답이 되풀이되면 다른
-상한이 없었다. 가짜 provider 는 응답 수 상한(:data:`CAP`)에서 멈추고, 그때까지 런이 끝나지 않았음을 단언한다."""
+상한이 없었다(v10.177.9 까지 — 가짜 provider 의 응답 수 상한 :data:`CAP` 에서도 끝나지 않았다). v10.177.10 부터
+연달아 :data:`DISCARDED_RESPONSE_LIMIT` 번이면 런이 끝난다. 가짜 provider 는 상한(:data:`CAP`)에서 멈춘다 — 그때까지
+끝나지 않으면 :class:`ProviderCap` 이 난다."""
 
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import pytest
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get
+from agent_cli.loop.dispatch import DISCARDED_RESPONSE_LIMIT
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from tests.loop_ports import TEST_PORTS
@@ -91,26 +94,39 @@ def run(tmp_path, monkeypatch, dialect, responses):
     return result, n[0]
 
 
-@pytest.mark.parametrize("dialect", DIALECTS)
-class TestUnboundedToday:
-    def test_same_prose_repeats_without_end(self, tmp_path, monkeypatch, dialect):
-        with pytest.raises(ProviderCap):
-            run(tmp_path, monkeypatch, dialect, [prose(dialect)])
+END = (
+    f"No progress: the last {DISCARDED_RESPONSE_LIMIT} responses were rejected "
+    "before anything ran."
+)
 
-    def test_same_bad_arguments_repeat_without_end(
-        self, tmp_path, monkeypatch, dialect
-    ):
-        with pytest.raises(ProviderCap):
-            run(tmp_path, monkeypatch, dialect, [bad_arguments(dialect)])
+
+def ends_at(tmp_path, monkeypatch, dialect, responses):
+    result, calls = run(tmp_path, monkeypatch, dialect, responses)
+    assert result.success is False and result.error == END
+    return calls
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+class TestDiscardedResponsesEndTheRun:
+    def test_same_prose_ends_at_the_limit(self, tmp_path, monkeypatch, dialect):
+        assert ends_at(tmp_path, monkeypatch, dialect, [prose(dialect)]) == (
+            DISCARDED_RESPONSE_LIMIT
+        )
+
+    def test_same_bad_arguments_end_at_the_limit(self, tmp_path, monkeypatch, dialect):
+        assert ends_at(tmp_path, monkeypatch, dialect, [bad_arguments(dialect)]) == (
+            DISCARDED_RESPONSE_LIMIT
+        )
 
     def test_refused_call_after_a_failed_run_of_the_same_tool(
         self, tmp_path, monkeypatch, dialect
     ):
-        """처음 보고한 결함 — 실행 실패(해시 불일치) 뒤 같은 도구를 실행 전 거절 인자로 되풀이."""
+        """처음 보고한 결함 — 실행된 두 응답(읽기·실패한 편집) 뒤 거절이 상한만큼."""
         responses = [
             call(dialect, "read_file", {"path": "f.py"}),
             call(dialect, *FAILED_EDIT),
             call(dialect, *REFUSED_EDIT),
         ]
-        with pytest.raises(ProviderCap):
-            run(tmp_path, monkeypatch, dialect, responses)
+        assert ends_at(tmp_path, monkeypatch, dialect, responses) == (
+            2 + DISCARDED_RESPONSE_LIMIT
+        )

@@ -134,6 +134,12 @@ def _flag(value, *, default: bool) -> bool:
 #: A5 자동 전문의 머리 (v10.109.0) — 뒤에 `tool_help` 가 줄 전문이 온다.
 FULL_GUIDE_HEAD = "Full guide:"
 
+#: 버려진 응답의 연속 상한 (v10.177.10) — 하니스가 저장하지 않고 되묻기만 남긴 응답
+#: (`_intervene(store_emission=False)`: 형식 되묻기·홀로 거절된 호출·B1 넛지)이 연달아 이만큼이면 런을 끝낸다.
+#: 그런 응답은 턴을 세지 않아 같은 응답이 되풀이되면 다른 상한이 없었다(NOTE-unbounded-retries §4).
+#: 기록에 남는 응답(도구 실행·가상 op·`complete` 되돌림·묶음·`wait`)이 오면, 그리고 구간이 새로 시작되면 0.
+DISCARDED_RESPONSE_LIMIT = 10
+
 
 class TurnDispatcher:
     """턴/op 디스패치 소유자 (C1 PR-3 승격 클러스터).
@@ -163,6 +169,9 @@ class TurnDispatcher:
         self.stale_guard = StaleGuard()
         #: 🔁 표시가 떠 있나 — 발화 뒤 제자리 턴마다 N 을 갱신하고 새 결과면 지운다
         self._stale_shown = False
+        #: 연달아 버려진 응답 수와, 지금 응답이 버려졌으면 그 사유 (`DISCARDED_RESPONSE_LIMIT`)
+        self._discarded_in_a_row = 0
+        self._discard_reason: str | None = None
         #: 이 런에서 A5 자동 전문을 이미 받은 지연 도구 (v10.109.0) — 한 도구에 한 번.
         #: 디스패치만 쓰는 상태라 ``LoopState`` 가 아니라 여기(소유자)에 둔다.
         self._guided_tools: set[str] = set()
@@ -245,6 +254,7 @@ class TurnDispatcher:
         # 내보내기 때문이다. 기록되는 개입(B1 등)은 그대로 보인다.
         if not store_emission:
             drop_pending_thought()
+            self._discard_reason = reason
         render_recovery(llm_text, message, reason, self.state.turn)
         # ``store_emission=False`` (v9.21.1): 물린 `complete` 은 저장하지 않는다
         # — 거부 관찰이 원문을 인용해 자기완결이다(사용자 결정). 남기면 저장
@@ -345,6 +355,7 @@ class TurnDispatcher:
         디스패치 벽시계(``tool_ms``)와 실행 목록(``tools``)은 여기서 잰다.
         """
         self._record_emission(llm_text)
+        self._discard_reason = None  # `_intervene(store_emission=False)` 가 세운다
         # v10.1.4: 빈 content 의 재시도 문구가 사고 채널 유무로 갈린다
         self._turn_thinking = (thinking or "").strip()
         self._turn_swallowed = bool(swallowed)
@@ -509,7 +520,24 @@ class TurnDispatcher:
             }
         if result is _CONTINUE:
             self._watch_stale(turn_start)
+            return self._count_discarded()
         return result
+
+    def _count_discarded(self):
+        """이 응답이 버려졌으면 연속 수를 하나 올리고, 아니면 0 으로 — 상한에 닿으면 런을 끝낸다
+        (`DISCARDED_RESPONSE_LIMIT`). 끝내는 길은 B1 하드 실패와 같다: 런 끝 줄 + 실패 결과."""
+        if self._discard_reason is None:
+            self._discarded_in_a_row = 0
+            return _CONTINUE
+        self._discarded_in_a_row += 1
+        if self._discarded_in_a_row < DISCARDED_RESPONSE_LIMIT:
+            return _CONTINUE
+        head = (
+            f"No progress: the last {DISCARDED_RESPONSE_LIMIT} responses were rejected "
+            "before anything ran"
+        )
+        render_run_ended(f"{head} (last: {self._discard_reason}). Stopping.")
+        return ToolResult(False, error=f"{head}.")
 
     # ── 제자리 고리 (v10.120.0, docs/stale-guard/DESIGN.md) ──────────
 
@@ -556,11 +584,12 @@ class TurnDispatcher:
     def _begin_segment(self) -> None:
         """구간(깨어 있는 토막)을 새로 시작한다 — 제자리 `wait` 에서 깰 때(5c-1). 구간마다 새로 세는 것이 여기 다 있다:
         턴(상한·꼬리의 턴 줄이 세는 기준), 되돌림 예산, 같은 호출 반복(`ActionLoopDetector`), 제자리 고리(`StaleGuard`)와
-        그 🔁 표시. 런 시작은 이 객체가 새로 서므로 부르지 않는다. 열린 항목·기록의 턴 번호는 그대로다."""
+        그 🔁 표시, 버려진 응답의 연속 수(`DISCARDED_RESPONSE_LIMIT`). 런 시작은 이 객체가 새로 서므로 부르지 않는다. 열린 항목·기록의 턴 번호는 그대로다."""
         self.state.segment_turn0 = self.state.turn
         self.state.ledger.new_segment()
         self.loop_detector = ActionLoopDetector(threshold=2)
         self.stale_guard = StaleGuard()
+        self._discarded_in_a_row = 0
         self.clear_stale()
 
     def clear_stale(self) -> None:
