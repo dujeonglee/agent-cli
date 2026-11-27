@@ -1798,6 +1798,36 @@ class TestQuiescenceHelpers:
         assert wait_until(lambda: not live())
         reg.shutdown_all()
 
+    def test_take_between_state_and_backlog_reads_is_seen_as_no_work(
+        self, tmp_path, renderer
+    ):
+        """상태(idle)를 읽은 뒤·줄 수를 읽기 전에 워커가 요청을 집으면(집기+busy 는 한 락 구간) 둘 다 '없음' 으로
+        읽힌다 — 결정적 재현: 상태를 읽은 자리에서 락을 한 단계 놓아 본다. 읽는 쪽이 락 밖이면 워커가 그 사이
+        집고, 락 안이면 못 집는다."""
+        gate = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        tm = reg.get(key)
+        real = type(reg).state_is_active
+
+        def state_then_let_worker_take(state):
+            seen = real(state)
+            reg._cv.release()
+            if not reg._cv._is_owned():  # 상태를 락 밖에서 읽었다 — 워커가 지금 집는다
+                assert wait_until(lambda: tm.state == "busy")
+            reg._cv.acquire()
+            return seen
+
+        reg.state_is_active = state_then_let_worker_take
+        with reg._cv:  # 워커가 아직 못 집게 막고 요청을 넣는다
+            reg.request(key, "long")
+            live = session_has_live_work(post=reg._post, agent_registry=reg)
+        assert tm.state == "busy"
+        assert live is False
+        gate.set()
+        reg.shutdown_all()
+
 
 class TestRunMessagePump:
     """CLI run 의 펌프(세션 펌프 + QuietPolicy, v10.33.0) — 초기 질의 1회 / 회신이 한가한 main 을 메일 런으로 /
