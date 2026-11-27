@@ -33,3 +33,17 @@ def checkin_ids(owner: str, agents=None) -> frozenset[str]:
     reg = agents if agents is not None else get_agent_registry()
     items = wake_items(owner, agents=reg, with_schedule=schedule_wakes(owner))
     return WaitingOn(tuple(items), ()).checkin_ids
+
+
+#: 런이 요청에 `reply` 없이 끝났을 때 요청자가 받는 하니스 문장의 머리(`agent_stop.no_reply`) — 상주·main 의
+#: "ended its run" 과 일회용의 "finished its task" 둘 다.
+_NO_REPLY_PHRASES = (
+    " ended its run without a `reply` to your request [",
+    " finished its task without a `reply` to your request [",
+)
+
+
+def is_no_reply(text: str) -> bool:
+    """``text`` 가 "답하지 않았다" 회신 본문인가 — 첫 줄이 그 사실이다."""
+    first = str(text or "").split("\n", 1)[0]
+    return any(p in first for p in _NO_REPLY_PHRASES)

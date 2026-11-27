@@ -212,7 +212,7 @@ class TestResultIsAReply:
         assert wait_until(lambda: tm.state == "dead") and tm.revivable is False
         assert tm.ends_after_task and tm.handled == 1
 
-    def test_reply_comes_without_explicit_reply_as_the_run_summary(self, session):
+    def test_no_reply_closes_the_request_with_a_note(self, session):
         p = Provider(
             {
                 "MAIN": [
@@ -227,8 +227,12 @@ class TestResultIsAReply:
         s = session(p)
         assert s["run"]().success
         text = contents(s["ctx"])
-        assert "(no explicit reply — this is the agent's run summary)" in text
-        assert "the summary only" in text
+        # 런의 결과(`complete` 의 `result`)는 요청자에게 가지 않는다 — 사실 문장이 그 요청을 닫는다(v10.177.8)
+        assert (
+            ' finished its task without a `reply` to your request [r-1] ("TASK-B summarize")'
+            in text
+        )
+        assert "the summary only" not in text
 
     def test_complete_with_an_awaited_reply_is_turned_back(self, session):
         """기다리는 회신이 남으면 `complete` 는 되돌아온다(장부 예산) — 꼬리와 되돌림 관찰에
@@ -254,7 +258,7 @@ class TestResultIsAReply:
         result = s["run"]()
         assert result.success and result.output.startswith("final")
         text = contents(s["ctx"])
-        assert "your result was delivered, but 1 item is still open" in text
+        assert "your result is recorded, but 1 item is still open" in text
         assert (
             "2. by arrival — `wait`; each reply closes its item when it comes" in text
         )
@@ -731,8 +735,12 @@ class TestRepliesAndNoticesAreNotItems:
         s = session(p)
         self._main_completes_once(p, s)
         text = contents(s["ctx"])
-        assert "(no explicit reply — this is the agent's run summary)" in text
-        assert "Q-SUMMARY" in text
+        # 답은 `reply` 하나 — 하니스의 사실 문장이 그 요청을 닫고 런의 결과는 가지 않는다(v10.177.8)
+        assert (
+            ' finished its task without a `reply` to your request [r-1] ("TASK-Q summary")'
+            in text
+        )
+        assert "Q-SUMMARY" not in text
 
     def test_notice_to_main_adds_no_item(self, session):
         """통지는 읽으면 끝 — main 의 꼬리에 항목이 서지 않고 `complete` 는 사람 요청만 닫는다.

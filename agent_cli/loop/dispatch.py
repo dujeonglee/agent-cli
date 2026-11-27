@@ -1363,8 +1363,8 @@ class TurnDispatcher:
         left = ledger.budget
         budget = (
             f"({left} more reminder{'s' if left != 1 else ''} before the harness "
-            "closes the rest: unanswered requests are reported to the user, unpaid "
-            "replies get your run summary.)"
+            "closes the rest: unanswered requests are reported to the user, and each "
+            "unpaid `reply` is closed with a note that you did not answer.)"
             if left > 0
             else "(Last reminder — after this the harness closes the rest.)"
         )
@@ -1378,7 +1378,7 @@ class TurnDispatcher:
         return self._intervene(
             llm_text,
             (
-                f"Observation: your result was delivered, but {why}:\n"
+                f"Observation: your result is recorded, but {why}:\n"
                 f"{ledger.items_lines(requests, debts, awaited)}\n"
                 "Close them in that order — by action first, then `complete` again "
                 "with `answers` for the items it covers." + waiting_hint + " " + budget
@@ -1406,7 +1406,7 @@ class TurnDispatcher:
 
         회계일 뿐 강제가 아니다. 모델의 주장이 정직한지는 검증할 수 없다 — 검출되는
         것은 "아무도 닫지 않은 항목" 뿐이고 그것만으로 값이 있다. 빚은 런 끝의
-        폴백(회신 빚은 런 요약 배달, 질문은 닫힘)이 처리한다."""
+        "답하지 않았다" 회신이 닫는다(런의 결과는 요청자에게 가지 않는다)."""
         if not requests:
             return answer
         ledger = self.state.ledger

@@ -307,7 +307,7 @@ def wire_agent_mail(registry, *, on_mail_notice=None, parent_ctx=None):
 
 def main_run_ended(
     agent_registry,
-    output: str = "",
+    activity: list[str],
     *,
     stopped: bool = False,
     **meta,
@@ -315,8 +315,9 @@ def main_run_ended(
     """main 의 런이 끝났다 — 남은 빚을 정리한다 (v9.22.0).
 
     독촉은 런 **안**에서 있었다(dispatch 의 빚 목록 — 상주와 같은 기계).
-    그러고도 남은 회신 빚은 라벨 붙은 런 요약(``output``)을 그 에이전트 inbox 로
-    폴백 배달한다. 판정은 상주와 같은 `AgentRegistry.run_ended` 한 곳이다.
+    그러고도 남은 회신 빚은 "답하지 않았다" 는 사실 문장으로 그 에이전트 inbox 에 회신하고
+    닫는다 — main 이 사용자에게 한 답은 가지 않는다(요청의 답은 `reply` 하나). ``activity`` 는
+    그 런의 마지막 호출. 판정은 상주와 같은 `AgentRegistry.run_ended` 한 곳이다.
 
     상주 에이전트는 워커 루프의 디스패치 수렴점에서 같은 일을 한다. main 은
     펌프가 둘(run/web)이라 호출부가 둘인데, **정의는 하나**여야 한다 —
@@ -328,9 +329,9 @@ def main_run_ended(
 
     ``stopped`` (v10.156.0): 사람이 main 을 멈췄다(■·Stop everything) — 정지 회신은 부르는 쪽이 먼저 보냈다
     (`AgentRegistry.answer_main_debts_as_stopped`), 여기는 남은 줄을 버린다(에이전트의 ■ 와 같다). ``meta``
-    (v10.156.0): 실패한 런이면 ``success=False``·``error`` — 폴백 머리에 원인 한 줄(에이전트의 실패 런과 같다).
+    (v10.156.0): 실패한 런이면 ``success=False``·``error`` — 회신 머리에 원인 한 줄(에이전트의 실패 런과 같다).
     """
-    return agent_registry.run_ended("main", output or "", stopped=stopped, **meta)
+    return agent_registry.run_ended("main", activity, stopped=stopped, **meta)
 
 
 def teardown_session(
@@ -866,7 +867,7 @@ class MainLoop(LoopKind):
         return PromptProfile(
             role="",  # 기본 ROLE_PROMPT
             peer_section="",
-            reports_to_caller=False,
+            answer_route="user",
         )
 
     def tail_roster(self, tools: list[str]) -> str:

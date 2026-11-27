@@ -37,7 +37,7 @@ from tests.test_engine_p2 import (
 # ── (가) 런이 끝나는가 ────────────────────────────────────────
 
 _NAG_NO_ANSWERS = (
-    "Observation: your result was delivered, but your `complete` did not say which "
+    "Observation: your result is recorded, but your `complete` did not say which "
     "items it closes (`answers` is missing), so nothing was closed:\n"
     "  2. by `complete` (last)\n"
     '     [u-0] "MAIN go"\n'
@@ -46,11 +46,11 @@ _NAG_NO_ANSWERS = (
     "did, end with a `Checked:` line and a `Not checked:` line\n"
     "Close them in that order — by action first, then `complete` again with `answers` "
     "for the items it covers. ({left} more reminder{s} before the harness closes the "
-    "rest: unanswered requests are reported to the user, unpaid replies get your run "
-    "summary.)"
+    "rest: unanswered requests are reported to the user, and each unpaid `reply` is "
+    "closed with a note that you did not answer.)"
 )
 _NAG_EMPTY_ANSWERS = (
-    "Observation: your result was delivered, but 1 item is still open:\n"
+    "Observation: your result is recorded, but 1 item is still open:\n"
     "  2. by `complete` (last)\n"
     '     [u-0] "MAIN go"\n'
     '     → then `complete`, listing in `answers` the ids it covers ("u-0")\n'
@@ -58,11 +58,11 @@ _NAG_EMPTY_ANSWERS = (
     "did, end with a `Checked:` line and a `Not checked:` line\n"
     "Close them in that order — by action first, then `complete` again with `answers` "
     "for the items it covers. ({left} more reminder{s} before the harness closes the "
-    "rest: unanswered requests are reported to the user, unpaid replies get your run "
-    "summary.)"
+    "rest: unanswered requests are reported to the user, and each unpaid `reply` is "
+    "closed with a note that you did not answer.)"
 )
 _LAST_NAG_EMPTY_ANSWERS = (
-    "Observation: your result was delivered, but 1 item is still open:\n"
+    "Observation: your result is recorded, but 1 item is still open:\n"
     "  2. by `complete` (last)\n"
     '     [u-0] "MAIN go"\n'
     '     → then `complete`, listing in `answers` the ids it covers ("u-0")\n'
@@ -78,7 +78,7 @@ def _nags(ctx) -> list[str]:
         str(r.get("content") or "")
         for r in records(ctx)
         if str(r.get("content") or "").startswith(
-            "Observation: your result was delivered"
+            "Observation: your result is recorded"
         )
     ]
 

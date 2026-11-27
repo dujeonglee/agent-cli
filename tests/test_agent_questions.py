@@ -30,7 +30,7 @@ from agent_cli.render.minimal import MinimalRenderer
 from agent_cli.subagent.agent_mail import build_reply_record
 from agent_cli.subagent.question_port import QuestionPort
 from tests.loop_ports import make_ports, split_ports
-from tests.mail_support import absorbed_mail
+from tests.mail_support import absorbed_mail, is_no_reply
 from tests.test_agents_live import (
     RecordingRenderer,
     _FakeLoopResult,
@@ -352,10 +352,8 @@ class TestSurfaces:
         self, mkreg, tmp_path, renderer
     ):
         """v10.77.0: §3.7 억제는 없다 — 사람에게 물은 런도 요청자(main)에게
-        결과가 간다(회신이 없으면 라벨 붙은 런 요약). 사람의 답은 사람 런으로
+        회신이 간다(`reply` 가 없으면 "답하지 않았다" 회신 — 런의 결과는 싣지 않는다). 사람의 답은 사람 런으로
         따로 오고 main 에게 두 번째 회신을 만들지 않는다."""
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
-
         reg = mkreg()
         ran = []
 
@@ -371,9 +369,8 @@ class TestSurfaces:
         assert wait_until(lambda: ran)
         assert wait_run_done(reg, b)
         (rep,) = absorbed_mail(reg)
-        assert rep["kind"] == "reply" and rep["output"].startswith(_NO_REPLY_LABEL)
-        assert rep["re"] == "r-1"
-        assert (tmp_path / "agents" / b / "replies" / "reply-r-1.md").is_file()
+        assert rep["kind"] == "reply" and is_no_reply(rep["output"])
+        assert rep["re"] == "r-1" and "부분 결과" not in rep["output"]
 
     def test_the_roster_does_not_carry_questions(self, mkreg, tmp_path, renderer):
         """열린 질문은 질문 목록 하나로 간다(6b) — 명단 행에 두 번째 출처를 두지 않는다."""
@@ -526,7 +523,6 @@ class TestReplyFreshness:
         ]
         assert len(outs) == 1
         assert "정리 완료" in outs[0]["text"]
-        assert (tmp_path_of(reg) / "agents" / b / "replies" / "reply-u-1.md").is_file()
 
 
 def tmp_path_of(reg):
@@ -679,10 +675,10 @@ class TestUncoveredSurfaces:
         reg = mkreg()
         a = spawn_idle(reg)
         reg.note_owes("main", f"agent:{a}", "결정해 줘")  # main 이 받은 message 요청
-        # 런 끝: 안 갚은 빚은 라벨 붙은 런 요약으로 정리된다
-        assert main_run_ended(reg, "main 요약") == 1
+        # 런 끝: 안 갚은 빚은 "답하지 않았다" 회신으로 정리된다
+        assert main_run_ended(reg, []) == 1
         assert reg.reply_debts("main") == []
-        assert main_run_ended(reg, "main 요약") == 0  # 두 번 보내지 않는다
+        assert main_run_ended(reg, []) == 0  # 두 번 보내지 않는다
 
     def test_cli_mail_notice_waits_only_when_main_is_busy(self, mkreg, renderer):
         """CLI 대기 줄 (v10.51.0): main 이 바쁠 때만 — 유휴면 곧 깨우기 런의 관찰
@@ -1091,12 +1087,10 @@ class TestTrafficRowsAreRealSendsOnly:
         return reg, b, outs
 
     def test_unpaid_request_yields_one_labelled_fallback_row(self, mkreg, renderer):
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
-
         _, _, outs = self._run_one(mkreg, renderer, author="agent:agt-x")
         assert len(outs) == 1
         assert outs[0]["to"] == "agent:agt-x"
-        assert outs[0]["text"].startswith(_NO_REPLY_LABEL)
+        assert is_no_reply(outs[0]["text"])
 
     def test_delivered_item_run_yields_no_row(self, mkreg, renderer):
         """받은 회신으로 시작한 런 — 산출물은 아무에게도 안 가고 줄도 없다."""
@@ -1189,7 +1183,7 @@ class TestReplyNagCap:
             m
             for m in ctx.get_raw_messages()
             if m.get("role") == "user"
-            and "your result was delivered, but" in m.get("content", "")
+            and "your result is recorded, but" in m.get("content", "")
         ]
         assert len(nags) == NAG_BUDGET, f"독촉 {len(nags)}회 — 예산은 {NAG_BUDGET}"
         assert p.call.call_count == NAG_BUDGET + 1, "예산 뒤 complete 은 통과해야 한다"
@@ -1267,9 +1261,10 @@ class TestCompleteIsLocal:
         def runner(kind, start, ctx):
             # 레지스트리 전체가 이 러너를 쓴다 — 상대 에이전트의 런(회신을
             # 받은 런)에서도 몸체가 돌면 서로 message 를 주고받으며 무한히
-            # 돈다. 원 요청("일감") 런에서만 몸체를 돌린다.
+            # 돈다. 원 요청("일감") 런에서만 몸체를 돌린다 — 회신(답 없음 회신은 그 요청 글을 인용한다)이 연
+            # 런은 아니다.
             ran.append(start.query)
-            if "일감" in start.query:
+            if "일감" in start.query and not start.query.startswith("── reply ["):
                 body()
             return _FakeLoopResult(output="런 요약"), 0.01
 
@@ -1298,9 +1293,7 @@ class TestCompleteIsLocal:
         self, mkreg, renderer
     ):
         """`message` 는 빚을 갚지 않는다(v10.145.1 — 갚는 것은 `reply` 하나): 요청자에게 되물은 `message` 는 상대를
-        빚지게 할 뿐이고, 내 빚은 런 끝 폴백이 대신 갚는다(종전 v9.21.0 의 끝말잇기 규칙은 이 `message` 로 갚았다)."""
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
-
+        빚지게 할 뿐이고, 내 빚은 런 끝의 "답하지 않았다" 회신이 닫는다(종전 v9.21.0 의 끝말잇기 규칙은 이 `message` 로 갚았다)."""
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         calls = self._run(
@@ -1308,13 +1301,9 @@ class TestCompleteIsLocal:
         )
         to_a = [c for c in calls if c["key"] == a]
         assert [c["expects_reply"] for c in to_a] == [True, False]
-        assert to_a[1]["message"].startswith(_NO_REPLY_LABEL), (
-            "빚이 열린 채인데 폴백이 없다"
-        )
+        assert is_no_reply(to_a[1]["message"]), "빚이 열린 채인데 답 없음 회신이 없다"
 
     def test_message_to_a_third_party_leaves_the_debt(self, mkreg, renderer):
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
-
         reg = mkreg()
         a, b, c = spawn_idle(reg), spawn_idle(reg), spawn_idle(reg)
         calls = self._run(
@@ -1322,19 +1311,15 @@ class TestCompleteIsLocal:
         )
         assert [x["expects_reply"] for x in calls if x["key"] == c] == [True]
         (to_a,) = [x for x in calls if x["key"] == a]
-        assert to_a["message"].startswith(_NO_REPLY_LABEL), (
-            "빚이 안 갚혔는데 폴백이 없다"
-        )
+        assert is_no_reply(to_a["message"]), "빚이 안 갚혔는데 답 없음 회신이 없다"
 
     def test_unpaid_debt_falls_back_to_a_labelled_summary(self, mkreg, renderer):
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
-
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         calls = self._run(reg, b, f"agent:{a}", lambda: None)
         (to_a,) = [x for x in calls if x["key"] == a]
-        assert to_a["message"].startswith(_NO_REPLY_LABEL)
-        assert "런 요약" in to_a["message"]
+        assert is_no_reply(to_a["message"])
+        assert "런 요약" not in to_a["message"]  # 런의 결과는 요청자에게 가지 않는다
         assert to_a["expects_reply"] is False
         assert to_a["kind"] == "reply" and to_a["re"] == "r-1"  # 무엇에 대한 것인가
 
@@ -1344,9 +1329,7 @@ class TestCompleteIsLocal:
         """묻는 쪽은 반드시 무언가를 받는다 (v10.77.0 ①) — 종전엔 답 없는
         에이전트 질문을 런 끝에 사유와 함께 닫았다. 이제 에이전트에게 묻는
         길은 `message` 요청이고, 상대가 끝내 `reply` 하지 않으면 그 r- 빚이
-        라벨 붙은 런 요약으로 묻는 쪽에 돌아온다 — 봉투가 그 요청을 가리킨다."""
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
-
+        "답하지 않았다" 회신으로 묻는 쪽에 돌아온다 — 봉투가 그 요청을 가리킨다."""
         reg = mkreg()
         got, box = [], {}
 
@@ -1366,9 +1349,11 @@ class TestCompleteIsLocal:
         rid = box["res"][0].split('delivered as request "')[1].split('"')[0]
         assert rid.startswith("r-")
         head, _, body = got[0].partition("\n")
-        assert head.startswith("── reply [n-") and head.endswith(f"re [{rid}] ──")
+        assert head.startswith("── reply [n-") and head.endswith(
+            f"re [{rid}] · no reply ──"
+        )
         assert f"from {b}" in head
-        assert body.startswith(_NO_REPLY_LABEL) and "b 의 런 요약" in body
+        assert is_no_reply(body) and "b 의 런 요약" not in body
 
     def test_reply_is_refused_when_nothing_is_owed(self, mkreg, renderer):
         """회신·통지·답으로 시작한 런 — ack 가 새는 자리. 거부하고 message 로 안내."""
@@ -1453,8 +1438,8 @@ class TestCompleteIsLocal:
 
 
 class TestMainRunEnd:
-    """main 의 런 끝 — `end_run("main", output)`: 남은 회신 빚은 라벨 붙은 런
-    요약을 그 에이전트 inbox 로. main 의 회신 빚은 에이전트가 main 에게 보낸
+    """main 의 런 끝 — `end_run("main", activity)`: 남은 회신 빚은 "답하지 않았다" 회신을
+    그 에이전트 inbox 로(main 이 사용자에게 한 답은 가지 않는다). main 의 회신 빚은 에이전트가 main 에게 보낸
     `message`(expects_reply=True)만 만든다 — `reply` 는 답이라 빚이 아니다."""
 
     def test_message_to_main_creates_a_debt_and_reply_does_not(self, mkreg, renderer):
@@ -1487,16 +1472,13 @@ class TestMainRunEnd:
         assert reg.question_port(None).debts() == []
 
     def test_unsettled_debt_falls_back_to_a_labelled_summary(self, mkreg, renderer):
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
-
         reg = mkreg()
         a = spawn_idle(reg)
         reg.note_owes("main", f"agent:{a}", "결정해 줘")
         with SubmitSpy(reg) as spy:
-            assert reg.end_run("main", "main 은 이렇게 끝냈다") == 1
+            assert reg.end_run("main", []) == 1
         (call,) = [c for c in spy.calls if c["key"] == a]
-        assert call["message"].startswith(_NO_REPLY_LABEL)
-        assert "main 은 이렇게 끝냈다" in call["message"]
+        assert is_no_reply(call["message"]) and call["message"].startswith("main ended")
         assert call["expects_reply"] is False
         assert call["author"] == "main" and call["kind"] == "reply"
         assert reg.reply_debts("main") == []
@@ -1683,7 +1665,7 @@ class TestUnifiedDebtRules:
             m
             for m in ctx.get_raw_messages()
             if m.get("role") == "user"
-            and "your result was delivered, but" in m.get("content", "")
+            and "your result is recorded, but" in m.get("content", "")
         ]
         assert nags and '`reply` with `id` "r-1"' in nags[0]["content"]
         assert reg.reply_debts(f"agent:{b}") == []  # 갚았다
@@ -1785,8 +1767,6 @@ class TestAskKeepsTheRequesterDebt:
     사람에게만 가면서 그 근거가 사라졌다."""
 
     def test_asking_the_person_keeps_the_requester_debt(self, mkreg, renderer):
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
-
         reg = mkreg()
         b = spawn_idle(reg)
         me = f"agent:{b}"
@@ -1798,10 +1778,10 @@ class TestAskKeepsTheRequesterDebt:
         assert [d.to for d in reg.reply_debts(me)] == ["main"], (
             "사람에게 물었다고 main 빚이 사라졌다"
         )
-        # 런 끝: main 은 라벨 붙은 런 요약을 폴백으로 받는다 — 침묵이 아니다
-        assert reg.end_run(me, "사용자 답을 기다립니다", success=True) == 1
+        # 런 끝: main 은 "답하지 않았다" 회신을 받는다 — 침묵이 아니다
+        assert reg.end_run(me, [], success=True) == 1
         (rec,) = [r for r in absorbed_mail(reg) if r.get("kind") == "reply"]
-        assert rec["output"].startswith(_NO_REPLY_LABEL) and rec["re"] == "r-1"
+        assert is_no_reply(rec["output"]) and rec["re"] == "r-1"
 
 
 class TestIdleMeansTheRunIsFullyDone:
@@ -1815,9 +1795,11 @@ class TestIdleMeansTheRunIsFullyDone:
         seen = {}
         real_end_run = reg.end_run
 
-        def spying_end_run(debtor, output, **meta):
-            if debtor != f"agent:{b}" or seen:  # a 의 폴백 런이 부르는 것은 제외
-                return real_end_run(debtor, output, **meta)
+        def spying_end_run(debtor, activity, **meta):
+            if (
+                debtor != f"agent:{b}" or seen
+            ):  # a 의 답 없음 회신 런이 부르는 것은 제외
+                return real_end_run(debtor, activity, **meta)
             tm = reg.get(b)
             seen["state"] = tm.state
             seen["handled"] = tm.handled
@@ -1825,7 +1807,7 @@ class TestIdleMeansTheRunIsFullyDone:
                 c[1].get("direction") == "out" and c[1].get("key") == b
                 for c in renderer.named("agent_message")
             )
-            return real_end_run(debtor, output, **meta)
+            return real_end_run(debtor, activity, **meta)
 
         reg.end_run = spying_end_run
         assert reg.request(b, "일감", author=f"agent:{a}", expects_reply=True) == ""
@@ -1950,15 +1932,13 @@ class TestPerRequestDebts:
         assert [d.id for d in reg.reply_debts("main")] == [d1.id, d2.id]
 
     def test_run_end_falls_back_once_per_unpaid_request(self, mkreg, renderer):
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
-
         reg = mkreg()
         a, b = spawn_idle(reg), spawn_idle(reg)
         me = self._two(reg, b, f"agent:{a}")
         with SubmitSpy(reg) as spy:
-            assert reg.end_run(me, "런 요약", success=True) == 2
+            assert reg.end_run(me, [], success=True) == 2
         assert len(spy.calls) == 2
-        assert all(c["message"].startswith(_NO_REPLY_LABEL) for c in spy.calls)
+        assert all(is_no_reply(c["message"]) for c in spy.calls)
         assert reg.reply_debts(me) == []
 
     def test_tail_and_nag_show_the_ids(self, mkreg, renderer):
@@ -2243,7 +2223,7 @@ class TestMidRunAbsorption:
         assert "## Open Items" in second and "[u-2]" in second  # 사람 요청 회계
         third = "\n".join(str(m.get("content")) for m in calls[2])
         assert (
-            "your result was delivered, but 1 item is still open" in third
+            "your result is recorded, but 1 item is still open" in third
         )  # 배달 후 독촉
         assert "was refused" not in third
         user_recs = [r for r in _history(ctx) if r.get("request_id") == "u-2"]

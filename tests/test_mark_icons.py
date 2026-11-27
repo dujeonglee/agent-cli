@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import io
 import json
+import os
+from pathlib import Path
 
 import pytest
 from rich.console import Console
@@ -36,9 +38,20 @@ def _drawn_observations(monkeypatch, tmp_path, scenario, tool=None):
     return drawn
 
 
+def _history_files(root: Path) -> list[Path]:
+    """``root`` 아래의 history.jsonl — 제품 스냅샷 저장소(``.agent-cli/snapshot.git``)는 훑지 않는다: history 가 거기
+    있을 리 없고, 그 안은 git 의 자동 정리가 훑는 사이 디렉터리를 지운다(간헐 FileNotFoundError)."""
+    found = []
+    for here, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d != "snapshot.git"]
+        if "history.jsonl" in files:
+            found.append(Path(here) / "history.jsonl")
+    return sorted(found)
+
+
 def _records_with(tmp_path, content: str) -> list[dict]:
     out = []
-    for h in tmp_path.rglob("history.jsonl"):
+    for h in _history_files(tmp_path):
         for line in h.read_text().splitlines():
             if line.strip():
                 r = json.loads(line)

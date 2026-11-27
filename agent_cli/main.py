@@ -46,6 +46,7 @@ from agent_cli.providers import (
 from agent_cli.render import C, console, get_renderer
 from agent_cli.render.base import interactive_lock
 from agent_cli.session_slots import get_agent_registry
+from agent_cli.subagent import agent_stop
 from agent_cli.terminate import CLOSE_WAIT_S, SigTerm, Terminated, wait_left
 
 app = typer.Typer(
@@ -1098,7 +1099,6 @@ def _dispatch_agent(
     sentinel 로 분기. success 는 그 런의 실제 성공 여부(``--result-file`` 이 실패 텍스트를
     성공 답변처럼 기록하지 않기 위한 신호, 5.6.0).
     """
-    from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
     from agent_cli.subagent.agent_modes import NO_REGISTRY
     from agent_cli.subagent.run_agent import launch_run
 
@@ -1174,10 +1174,12 @@ def _dispatch_agent(
         elif mail is None:
             answer, ok = f"agent {agent_name} ended without a reply", False
         else:
-            body = str(mail.get("output") or "")
-            # 폴백 회신(명시 `reply` 없이 끝남)의 머리 라벨은 답이 아니다
-            answer = body.removeprefix(f"{_NO_REPLY_LABEL}\n")
-            ok = bool(mail.get("success", True))
+            # 답은 `reply` 하나다 — `reply` 없이 끝났으면 하니스의 "답하지 않았다" 문장이 답 자리에 서고
+            # 명령은 실패다(``--result-file`` 도 실패로 적는다)
+            answer = str(mail.get("output") or "")
+            ok = bool(mail.get("success", True)) and (
+                mail.get("mark") != agent_stop.NO_REPLY_MARK
+            )
 
     # Record result in context
     if ctx and answer:

@@ -92,7 +92,7 @@ class TestMainRunEnd:
         t.start()
         assert done.wait(10)
         assert seen == ["boom", "fine"]
-        assert reg.ended == [("main", "")]  # 둘째 런은 세션 종료 — 끝 정리 없음
+        assert reg.ended == [("main", [])]  # 둘째 런은 세션 종료 — 끝 정리 없음
         kinds = [c[0] for c in surface.calls]
         assert kinds.count("run_failed") == 1
         first_end = kinds.index("run_ended")
@@ -130,4 +130,4 @@ class TestMainRunEndOrder:
             "bind_stop",
             False,
         )
-        assert reg.ended == [("main", "ok")]  # 정리는 한 번
+        assert reg.ended == [("main", [])]  # 정리는 한 번

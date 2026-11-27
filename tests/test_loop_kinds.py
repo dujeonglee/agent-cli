@@ -345,9 +345,9 @@ class TestKindsStateTheirPolicy:
     def test_prompt_profile(self, tmp_path):
         main, skill, one, harness, _ = self._kinds(tmp_path)
         p = main.prompt_profile()
-        assert p.role == "" and not p.reports_to_caller
-        assert skill.prompt_profile().reports_to_caller
-        assert one.prompt_profile().reports_to_caller
+        assert p.role == "" and p.answer_route == "user"
+        assert skill.prompt_profile().answer_route == "result"
+        assert one.prompt_profile().answer_route == "reply"
         # `ask` 안내는 에이전트만(포트의 술어 하나): run 에이전트는 받고, main·스킬은 받지 않는다
         assert one.ports.ask_guide()
         assert not main.ports.ask_guide() and not skill.ports.ask_guide()
@@ -433,7 +433,7 @@ class TestEngineAsksTheKind:
         cfg = make_config(owner="agent:q", depth=1, tools_list=["shell"])
         assert isinstance(cfg.kind, LoopKind) and cfg.kind.owner == "agent:q"
         assert cfg.kind.ports.owner == "agent:q" and not cfg.kind.ports.wakeable()
-        assert cfg.kind.prompt_profile().reports_to_caller
+        assert cfg.kind.prompt_profile().answer_route == "result"
 
 
 # ── PR 3 (v10.89.0): 결과·마감 하나 ─────────────────────────────────────────
@@ -504,7 +504,8 @@ class TestResidentFinishIsOnePath:
             lambda: reg.arrived_for("main", waking_only=False, words=False)
         )
         (reply,) = absorbed_mail(reg)
-        assert "agent internal error: RuntimeError: boom" in reply["output"]
+        # 원인은 회신 머리 한 줄로(`run_error_line`) — 런의 결과는 요청자에게 가지 않는다(v10.177.8)
+        assert reply["error"] == "agent internal error: RuntimeError: boom"
         assert wait_until(lambda: reg.get(key).state == "idle")
         assert reg.get(key).handled == 1
         reg.shutdown_all()

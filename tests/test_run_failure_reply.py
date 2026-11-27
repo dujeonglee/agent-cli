@@ -22,12 +22,11 @@ from agent_cli.subagent.agent_mail import build_reply_record
 from agent_cli.subagent.agents_live import AgentRegistry
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
-from tests.mail_support import absorbed_mail
+from tests.mail_support import absorbed_mail, is_no_reply
 
 CAPS = ModelCapabilities(
     context_window=65536, max_output_tokens=4096, supports_thinking=False
 )
-LABEL = "(no explicit reply — this is the agent's run summary)"
 
 
 class _Provider:
@@ -125,7 +124,8 @@ class TestMainRequester:
         key = _ask(reg, "main", run=True)
         assert _until(lambda: reg.get(key).state == "dead")
         body = _main_reply(reg)
-        assert f"(the run ended with an error: Max turns (3) reached)\n{LABEL}" in body
+        cause = "(the run ended with an error: Max turns (3) reached)\n"
+        assert cause in body and is_no_reply(body.split(cause, 1)[1])
 
     def test_provider_error_cause_reaches_main(self, world):
         _, make = world
@@ -167,10 +167,11 @@ class TestAgentRequester:
         assert _until(lambda: reg.get(key).state == "dead")
         assert _until(lambda: built["asked"])
         (got,) = built["asked"]
-        head, line, label = got.splitlines()[:3]
+        head, line, note = got.splitlines()[:3]
         assert head.startswith("── reply [n-") and f"from {key}" in head
+        assert head.endswith(" · no reply ──")
         assert line == "(the run ended with an error: Max turns (3) reached)"
-        assert label == LABEL
+        assert is_no_reply(note)
 
     def test_provider_error_cause_reaches_the_requesting_agent(self, world):
         built, make = world
@@ -183,10 +184,9 @@ class TestAgentRequester:
             in built["asked"][0]
         )
 
-    def test_crash_marks_the_reply_failed_without_a_cause_line(
-        self, world, monkeypatch
-    ):
-        """엔진 예외 — 사유는 산출물("agent internal error: …")에 있으니 머리는 접두만."""
+    def test_crash_names_its_cause_in_the_head_line(self, world, monkeypatch):
+        """엔진 예외 — 사유가 머리 한 줄에(v10.177.8: 산출물은 요청자에게 가지 않으므로 사유는 그 줄에만 남는다;
+        종전엔 머리는 접두만이고 사유는 산출물 쪽에 있었다)."""
         built, make = world
         reg = make("reply")
         asker = _asker(built, reg)
@@ -198,20 +198,21 @@ class TestAgentRequester:
         _ask(reg, asker, run=True)
         assert _until(lambda: built["asked"])
         lines = built["asked"][0].splitlines()
-        assert lines[1:4] == [
-            "(the run ended with an error)",
-            LABEL,
-            "agent internal error: RuntimeError: tool registry exploded",
-        ]
+        assert lines[1] == (
+            "(the run ended with an error: agent internal error: RuntimeError: tool "
+            "registry exploded)"
+        )
+        assert is_no_reply(lines[2])
 
-    def test_successful_fallback_has_no_error_line(self, world):
+    def test_a_successful_run_without_reply_has_no_error_line(self, world):
         built, make = world
         reg = make("reply")
         asker = _asker(built, reg)
         _ask(reg, asker, run=True)
         assert _until(lambda: built["asked"])
         assert "run ended with an error" not in built["asked"][0]
-        assert f"{LABEL}\nall good" in built["asked"][0]
+        body = built["asked"][0].split("\n", 1)[1]
+        assert is_no_reply(body) and "all good" not in body  # 런의 결과는 가지 않는다
 
 
 def test_human_stop_is_a_stopped_reply_not_an_error(world):

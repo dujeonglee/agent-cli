@@ -274,14 +274,19 @@ def _agent_result_samples() -> list[tuple[str, str, str]]:
             "agent_failed_run_reply",
             (
                 "The reply the requester gets when an agent's run ends with an error before it "
-                "replied — the cause line (here the turn limit), then the run-summary label (v10.143.0)"
+                "replied — the cause line (here the turn limit), then the note that it did not "
+                "reply; the run's result is not sent (v10.143.0, v10.177.8)"
             ),
             mail.envelope(
                 "reply",
                 "n-10",
                 "agt-3",
-                f"{mail.run_error_line('Max turns (40) reached')}\n{mail._NO_REPLY_LABEL}\n",
+                f"{mail.run_error_line('Max turns (40) reached')}\n"
+                + agent_stop.no_reply(
+                    "agt-3", "r-21", "review the parser next", [], gone=False
+                ),
                 re="r-21",
+                mark=agent_stop.NO_REPLY_MARK,
             ),
         ),
         (

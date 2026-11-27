@@ -60,7 +60,6 @@ from agent_cli.session.store import AGENTS_DIR
 from agent_cli.session_slots import get_job_registry
 from agent_cli.subagent import agent_stop, agents_state, conversation_log
 from agent_cli.subagent.agent_mail import (
-    _NO_REPLY_LABEL,
     MailView,
     envelope,
     envelope_of_item,
@@ -618,8 +617,8 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
         (v10.141.0, docs/agent-engine/DESIGN.md §3). ``[{"id", "from", "text"}]``, 번호 순.
 
         우편 장부의 열린 r 줄을 읽는다 — 요청이 상자에 들 때 열리고(`_enqueue`·`message_to_main`), 받는 쪽의
-        빚이 끝날 때(갚음·폴백·버림 — 배달과 한 락 구간) 닫힌다(v10.145.0).
-        갚음·폴백은 회신을 **배달한 뒤** 지운다: 먼저 지우면 그 틈에 요청자의 `wait` 가 기다릴
+        빚이 끝날 때(갚음·답 없음 회신·버림 — 배달과 한 락 구간) 닫힌다(v10.145.0).
+        갚음·답 없음 회신은 회신을 **배달한 뒤** 지운다: 먼저 지우면 그 틈에 요청자의 `wait` 가 기다릴
         회신도 도착한 메일도 없는 순간을 보고 `wait` 를 거절한다.
         받는 쪽에서 세면(빚 장부 + 받은편지함) 항목이 받은편지함을 떠나 빚으로 적히기까지의
         틈에 회신 기다림이 사라진다. 받는 쪽이 죽었으면 빼다(`wake_facts` 의 ``replies``). 읽기만 한다."""
@@ -631,7 +630,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
     # 범용 배달(`_enqueue`·`_push_reply`·`_push_private`)은 봉투를 `_post_deliver` 로 우편에 넣는다. 갚는 자리
     # (`pay_debt`·`end_run`·`answer_debts_as_stopped`·`answer_question`)만 ``settles`` 로 그 배달이 닫는 줄의 id 를
     # 말한다 — 같은 모양의 봉투라도 위임·`message`·removed 회신·재배달은 갚지 않으므로 호출자가 아는 사실이다(갚는
-    # 것은 `reply` 와 그 대신인 폴백·정지 회신, v10.145.1). 배달 지시라 봉투·저장 파일·모델이 읽는 글에 실리지 않는다.
+    # 것은 `reply` 와 런 끝의 답 없음 회신·정지 회신, v10.145.1). 배달 지시라 봉투·저장 파일·모델이 읽는 글에 실리지 않는다.
 
     def _post_deliver(
         self, env, *, settles: str = "", closes_as: str = "user_answered"
@@ -722,8 +721,8 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
     # 요청(`expects_reply=True` 항목 / main 에 배달된 `message`)은 빚이다.
     # 갚는 길: `reply` 하나 — main·에이전트 같은 판정(`question_port.judge_reply`, v10.146.0). `message` 는
     # 갚지 않는다(v10.145.1).
-    # 런의 끝은 `run_ended` 하나다 — 보통의 끝은 남은 빚을 폴백(라벨 붙은 런 요약)으로
-    # 배달하고, 정지는 버린다.
+    # 런의 끝은 `run_ended` 하나다 — 보통의 끝은 남은 빚마다 "답하지 않았다" 회신으로 닫고, 정지는
+    # 버린다.
 
     def note_owes(
         self,
@@ -840,7 +839,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
     def run_ended(
         self,
         debtor: str,
-        output: str,
+        activity: list[str],
         *,
         stopped: bool = False,
         **meta,
@@ -851,14 +850,15 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
         - ``stopped`` (정지로 끊김): 남은 빚을 버린다. 사람·모델의 정지(■·✕)는 런의 정리가
           먼저 빚진 상대 모두에게 회신했다(`answer_debts_as_stopped` — 여기 남는 것은 사람 주소의
           빚뿐).
-        - 그 밖(보통의 끝): :meth:`end_run` — 남은 빚을 라벨 붙은 런 요약으로.
+        - 그 밖(보통의 끝): :meth:`end_run` — 남은 빚마다 "답하지 않았다" 는 사실 문장. ``activity`` 는 그
+          런의 마지막 호출(`agent_stop.run_activity`) — 그 문장의 `Last activity:` 줄.
 
         종전엔 이 판정(``not stop_event``)이 호출부 셋에 흩어져 있었다. 체크인 타이머는 여기서 풀 것이 없다 — 거는 곳은 제자리 대기 하나이고 깨면 그 ``finally`` 가 푼다."""
         if stopped:
             # 버린 빚 — 요청자는 더 기다리지 않는다(dropped).
             self._post.end_run(debtor, run_id=self._run_of(debtor), outcome="stopped")
             return 0
-        return self.end_run(debtor, output, **meta)
+        return self.end_run(debtor, activity, **meta)
 
     # ── `wait` 중간 깨우기 (v10.79.0, docs/wait/DESIGN.md §6) ──────────────
     #
@@ -990,38 +990,51 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
             )
         return text
 
-    def end_run(self, debtor: str, output: str, **meta) -> int:
-        """``debtor`` 의 런이 끝났다 — 남은 회신 빚은 라벨 붙은 런 요약을
-        폴백 배달한다. 건수를 돌려준다.
+    def end_run(self, debtor: str, activity: list[str], **meta) -> int:
+        """``debtor`` 의 런이 끝났다 — 남은 회신 빚마다 "답하지 않았다" 는 사실 문장으로 회신하고 그 배달로
+        빚을 닫는다. 건수를 돌려준다. 요청의 답은 `reply` 하나다 — 런의 결과는 싣지 않는다.
 
-        독촉은 런 **안**에서 3회 있었다(dispatch 의 빚 목록). 배관만 갈린다:
-        main → peer 는 `request`(inbox), 상주 → peer 는 `_deliver_peer_reply`
-        (terminal 재주입), 상주 → main 은 mailbox `kind:"reply"`(``meta`` 가
-        run(그 런을 연 배달 id)/success/duration/reply_path 를, 실패면 error(엔진의 사유)를 싣는다).
-        실패한 런의 회신은 머리에 원인 한 줄(`agent_mail.run_error_line`) — main 은 관찰 레코드가, 에이전트
-        요청자는 여기서 단다. main 의 런 끝(``meta`` 없음)은 성공으로 본다.
+        배관만 갈린다: main → peer 는 `_deliver_peer_reply`(받은편지함), 상주 → peer 도 같고, 상주 → main 은
+        mailbox `kind:"reply"`(``meta`` 가 run(그 런을 연 배달 id)/success 를, 실패면 error(엔진의 사유)를
+        싣는다). 실패한 런의 회신은 머리에 원인 한 줄(`agent_mail.run_error_line`) — main 은 관찰 레코드가,
+        에이전트 요청자는 여기서 단다. main 의 런 끝(``meta`` 없음)은 성공으로 본다.
         """
         n = 0
-        summary = f"{_NO_REPLY_LABEL}\n{output}"
-        # 에이전트 요청자의 회신에도 실패 머리 한 줄 — main 의 메일은 관찰 레코드(`build_reply_record`)가 단다
-        peer_summary = (
-            summary
-            if meta.get("success", True)
-            else f"{run_error_line(str(meta.get('error') or ''))}\n{summary}"
-        )
-        for d in self.reply_debts(debtor):  # 폴백의 배달이 곧 갚음(``settles``)
-            n += self._fall_back(debtor, d, summary, peer_summary, meta)
+        for d in self.reply_debts(debtor):  # 회신의 배달이 곧 갚음(``settles``)
+            n += self._send_no_reply(debtor, d, activity, meta)
         # 남은 줄(배달 못 한 빚 — dropped, 사람 말 — run_ended)을 닫는다
         self._post.end_run(debtor, run_id=self._run_of(debtor), outcome="done")
         return n
 
-    def _fall_back(
-        self, debtor: str, d: ReplyDebt, summary: str, peer_summary: str, meta: dict
+    def no_reply_text(self, debtor: str, d: ReplyDebt, activity: list[str]) -> str:
+        """빚 ``d`` 를 `reply` 없이 남긴 ``debtor`` 의 회신 본문(`agent_stop.no_reply`) — 내려가는 일회용이면 그
+        문장으로. 🤝 창의 out 줄과 배달이 같은 글을 쓴다."""
+        key = debtor.split(":", 1)[1] if debtor.startswith("agent:") else debtor
+        tm = self._agents.get(key)
+        gone = bool(tm is not None and tm.ends_after_task)
+        return agent_stop.no_reply(key, d.id, d.text, activity, gone=gone)
+
+    def _send_no_reply(
+        self, debtor: str, d: ReplyDebt, activity: list[str], meta: dict
     ) -> int:
-        """빚 하나의 폴백 회신 — 배달했으면 1. main 은 상대에게(받은편지함), 상주는 main(메일함)·요청자에게."""
+        """빚 하나에 "답하지 않았다" 회신 — 배달했으면 1. 머리 표지는 `agent_stop.NO_REPLY_MARK`. main 은
+        상대에게(받은편지함), 상주는 main(메일함)·요청자에게."""
+        text = self.no_reply_text(debtor, d, activity)
+        # 에이전트 요청자의 회신에도 실패 머리 한 줄 — main 의 메일은 관찰 레코드(`build_reply_record`)가 단다
+        peer_text = (
+            text
+            if meta.get("success", True)
+            else f"{run_error_line(str(meta.get('error') or ''))}\n{text}"
+        )
+        mark = agent_stop.NO_REPLY_MARK
         if debtor == "main":
             err = self._deliver_peer_reply(
-                d.to.split(":", 1)[1], "main", peer_summary, re=d.id, settles=d.id
+                d.to.split(":", 1)[1],
+                "main",
+                peer_text,
+                re=d.id,
+                mark=mark,
+                settles=d.id,
             )
             return 0 if err else 1
         key = debtor.split(":", 1)[1]
@@ -1032,15 +1045,16 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
                     "kind": "reply",
                     "key": key,
                     "profile": tm.profile_name if tm else "",
-                    "output": summary,
+                    "output": text,
                     **meta,
-                    "re": d.id,  # 이 요약이 대신하는 회신의 요청
+                    "re": d.id,  # 이 회신이 닫는 요청
+                    "mark": mark,
                 },
                 settles=d.id,
             )
         else:
             self._deliver_peer_reply(
-                d.to.split(":", 1)[1], key, peer_summary, re=d.id, settles=d.id
+                d.to.split(":", 1)[1], key, peer_text, re=d.id, mark=mark, settles=d.id
             )
         return 1
 
@@ -1677,7 +1691,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
             expects_reply=False,
             kind="reply",
             re=re,
-            **({"mark": mark} if mark else {}),  # 정지 회신만 표지를 단다
+            **({"mark": mark} if mark else {}),  # 정지·답 없음 회신만 표지를 단다
             **({} if opens_run else {"opens_run": False}),
             settles=settles,
             **({"lines": lines} if lines else {}),  # 보낸 쪽 out 은 `_pay_debt` 만
@@ -1738,7 +1752,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
             "direction": "out",
             "author": from_key,
             "text": text,
-            # 이 발신을 낸 런 — 웹이 폴백 줄을 그 런 블록에 단다
+            # 이 발신을 낸 런 — 웹이 ⚠ 줄(답 없음 회신)을 그 런 블록에 단다
             "item": tm.current_item,
             "success": True,
             "to": to,
@@ -2399,18 +2413,6 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
 
     # ── worker ──────────────────────────────────
 
-    def _persist_reply(self, tm: AgentInstance, run_item: str, body: str) -> str:
-        """회신 전문을 항상 디스크에 (over-cap 포인터 + P3 보존 토대). 파일
-        이름은 그 런을 연 배달의 id — 전역에서 유일해 덮어쓸 일이 없다."""
-        try:
-            replies_dir = tm.home_dir / "replies"
-            replies_dir.mkdir(parents=True, exist_ok=True)
-            path = replies_dir / f"reply-{run_item}.md"
-            path.write_text(body, encoding="utf-8")
-            return str(path)
-        except OSError:
-            return ""
-
     def _lines_in_section(self, lines) -> None:
         """배달 구간(``_cv``) 안의 몫 — 줄을 파일에 적고, 막히지 않는 렌더러면 창에도 낸다. 규칙(`conversation_log`):
         기록이 원본이고 화면은 그 순서를 따른다 — 막히지 않는 표면만 구간 안에서. 받는 쪽은 ``_cv`` 없이 못 꺼내니
@@ -2512,7 +2514,7 @@ class AgentRegistry(QuestionsMixin, ConfirmsMixin):
                     self._answer_debts(
                         tm, agent_stop.DIED_MARK, agent_stop.died_working_reply
                     )
-                    self.run_ended(f"agent:{tm.key}", crash, stopped=True)
+                    self.run_ended(f"agent:{tm.key}", [], stopped=True)
                 # 스스로 내려갔다(run 의 과제 끝·워커 죽음) — 더는 상자를 읽지 않으니 줄 선 요청에 알린다
                 mark = agent_stop.DIED_MARK if crash else agent_stop.ENDED_MARK
                 self._answer_queued(

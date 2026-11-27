@@ -126,7 +126,7 @@ class ResidentLoop(LoopKind):
         return PromptProfile(
             role=self.tm.role_prompt,
             peer_section=self.peer_agents_section,
-            reports_to_caller=True,
+            answer_route="reply",
         )
 
     def tail_roster(self, tools: list[str]) -> str:
@@ -268,19 +268,18 @@ class ResidentLoop(LoopKind):
 
         - `complete` 는 국소다: 산출물은 자동으로 아무에게도 가지 않는다. 요청 항목이면 이
           런은 요청자에게 회신을 **빚졌고**, 갚았으면 끝; 안 갚았으면 `run_ended` →
-          `end_run` 이 런 요약을 라벨 붙여 폴백 배달한다(독촉 3회를 지나고도 안 보낸 경우).
+          `end_run` 이 "답하지 않았다" 는 사실 문장으로 닫는다(되돌림 예산을 다 쓰고도 안 보낸 경우 —
+          런의 결과는 요청자에게 가지 않는다).
           중단된 런은 빚을 버린다(받아들여진 `wait` 는 런을 끝내지 않는다 — 깬 뒤 같은 런이 갚는다, 5c-1).
-        - out 레코드(대화창의 발신 줄)는 **실제 발신** 둘뿐: 하니스 폴백(라벨 붙음)과 사람
+        - out 레코드(대화창의 발신 줄)는 **실제 발신** 둘뿐: 하니스의 "답하지 않았다" 회신과 사람
           발신(창이 곧 배달 — `reply_debts` 가 사람 주소를 뺀다).
         - ``handled``/``state`` 는 **정리 뒤**(`_close_run`) — idle 은 '이 런의 일이 다
           끝났다' 여야 한다(v9.22.4, Linux CI 레이스).
-        - 세션 종료로 끝난 런(``session_ended`` — 5e1)은 아무것도 하지 않는다: 회신·폴백·우편 정리·처리 수 없이
+        - 세션 종료로 끝난 런(``session_ended`` — 5e1)은 아무것도 하지 않는다: 회신·답 없음 회신·우편 정리·처리 수 없이
           그대로 돌려준다. 우편은 프로세스와 함께 사라지고(5c-0), 마지막 저장은 `shutdown_all` 이 한다.
         """
         if result is not None and getattr(result, "session_ended", False):
             return result, secs
-
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
 
         reg, tm = self.registry, self.tm
         me = self.owner
@@ -294,16 +293,15 @@ class ResidentLoop(LoopKind):
         )
         # 이 런에서 **건** 사람 질문 중 아직 열린 것을 결과에 실어 알린다 (§3.6·§3.7)
         output = reg._with_human_notice(tm, iid, output)
-        reply_path = reg._persist_reply(tm, iid, output)
         human = is_human_addr(author)
         run_stop = self._run_stop
         stopped = run_stop.is_set() if run_stop is not None else tm.stop_event.is_set()
         if stopped and tm.stop_cause:
             # 사람(또는 모델)이 멈췄다 — 빚진 상대 모두에게 stopped 회신 (P3, `agent_stop`)
             self._answer_stopped_run()
-        # 🤝 창의 out 줄 — 하니스 폴백은 도구 호출 없는 유일한 발신이라(v9.23.0) 웹이 ⚠ 줄로 그린다: 갚지 못한 빚마다
-        # 한 줄, 그 빚의 id 와 상대로(`end_run` 이 보내는 폴백과 한 줄씩 맞는다). 사람이 창에서 연 구간은 창이 곧
-        # 배달이다 — 그 사람에게 결과 한 줄(폴백이 아니다). 결과가 빈 글이면(기다릴 것 없는 `wait` 로 끝났다 — 5d) 그
+        # 🤝 창의 out 줄 — 하니스의 "답하지 않았다" 회신은 도구 호출 없는 유일한 발신이라(v9.23.0) 웹이 ⚠ 줄로
+        # 그린다: 갚지 못한 빚마다 한 줄, 그 빚의 id 와 상대로(`end_run` 이 보내는 회신과 한 줄씩 같은 글). 사람이 창에서 연 구간은 창이 곧
+        # 배달이다 — 그 사람에게 결과 한 줄(답 없음 회신이 아니다). 결과가 빈 글이면(기다릴 것 없는 `wait` 로 끝났다 — 5d) 그
         # 사람에게 한 말이 없다: 줄을 내지 않는다.
         line = {
             "key": tm.key,
@@ -314,8 +312,11 @@ class ResidentLoop(LoopKind):
             "profile": tm.profile_name,
             "instance_name": tm.instance_name,
         }
+        # 그 런의 마지막 호출 — "답하지 않았다" 회신의 `Last activity:` 줄(정지 회신과 같은 재료)
+        records = tm.ctx.records_since(self._run_from) if tm.ctx is not None else []
+        activity = agent_stop.run_activity(records)
         for d in () if stopped else reg.reply_debts(me):
-            text = f"{_NO_REPLY_LABEL}\n{output}"
+            text = reg.no_reply_text(me, d, activity)
             reg._record(
                 tm, {**line, "text": text, "item": d.id, "to": d.to, "fallback": True}
             )
@@ -327,10 +328,9 @@ class ResidentLoop(LoopKind):
         # 런 끝 정리 — 판정은 `run_ended` 한 곳에 (중단·보통)
         reg.run_ended(
             me,
-            output,
+            activity,
             stopped=stopped,
             success=success,
-            reply_path=reply_path,
             # 실패한 런의 사유(턴 상한·provider 오류) — 산출물이 비어 회신 머리 한 줄에만 남는다
             **({"error": str(result.error)} if not success and result.error else {}),
         )
@@ -360,7 +360,10 @@ class ResidentLoop(LoopKind):
         # worker 는 죽지 않는다 — 회신으로 보고하고 같은 후처리를 거친다
         return self.finish(
             ToolResult(
-                False, output=f"agent internal error: {type(exc).__name__}: {exc}"
+                False,
+                output=f"agent internal error: {type(exc).__name__}: {exc}",
+                # 원인은 회신 머리 한 줄로 간다(`run_error_line`) — 런의 결과(output)는 요청자에게 가지 않는다
+                error=f"agent internal error: {type(exc).__name__}: {exc}",
             ),
             0.0,
             "",
@@ -406,8 +409,8 @@ class AgentActor:
 
     def ended(self, start: Start, end: RunEnd) -> bool:
         """run 에이전트는 런이 끝나면 내려온다 — `complete`·정지·턴 상한·오류 어느 끝이든(사용자 결정 2026-11-15:
-        회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도 남으면 런 끝 폴백이 런 요약으로
-        회신한다). 받아들여진 `wait` 는 런을 끝내지 않는다(5c-1); 닫지 않은 것도 깨울 것도 없는 `wait` 는 끝내고, 그 끝에도
+        회신은 장부가 보장한다 — 갚을 빚이 남으면 `complete` 가 되돌아오고, 그래도 남으면 런 끝 정리가 "답하지
+        않았다" 는 사실 문장으로 닫는다 — 2026-11-27 결정: 요청의 답은 `reply` 하나). 받아들여진 `wait` 는 런을 끝내지 않는다(5c-1); 닫지 않은 것도 깨울 것도 없는 `wait` 는 끝내고, 그 끝에도
         내려온다(5d). 런 중간의 `reply` 는 끝이 아니다. 세션 종료(``session_end``)는 과제의 끝이 아니다 — 내려옴(`OnAgentEnd` 훅)도 없이 워커를 끝낸다(5e1 결정 E)."""
         if end.outcome == "session_end":
             return True

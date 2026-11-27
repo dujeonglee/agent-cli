@@ -14,7 +14,6 @@ from agent_cli.post import envelope as post_envelope
 from agent_cli.post.envelope import Envelope
 from agent_cli.subagent.agent_stop import one_line
 from agent_cli.subagent.agents_state import WAITING, state_is_active
-from agent_cli.token_estimator import estimate_tokens
 from agent_cli.wake import harness_record
 
 
@@ -48,11 +47,6 @@ def owe_line(who: str, rid: str) -> str:
     return f'You owe {who} a `reply` with `id` "{rid}".'
 
 
-#: 빚진 `message` 없이 런이 끝났을 때 요청자에게 가는 폴백 요약의 머리말
-#: (v9.21.0). 라벨이 있어야 받는 쪽이 "명시 회신" 과 구분한다.
-_NO_REPLY_LABEL = "(no explicit reply — this is the agent's run summary)"
-
-
 #: 질문을 닫는 봉투의 종류 (6b) — 사람의 답, 사람이 답 없이 닫음. 둘 다 줄 없는 봉투(회신과 같다)
 QUESTION_CLOSERS = ("answer", "closed")
 
@@ -62,7 +56,7 @@ def is_human_addr(addr: str) -> bool:
     return addr == "user" or addr.startswith("user:")
 
 
-#: 실패로 끝난 런의 회신(폴백 런 요약) 머리 한 줄. 원인은 엔진의 사유(턴 상한·provider 오류 — `ToolResult.error`)
+#: 실패로 끝난 런의 회신("답하지 않았다" 회신 — `agent_stop.no_reply`) 머리 한 줄. 원인은 엔진의 사유(턴 상한·provider 오류 — `ToolResult.error`)
 #: 다 — 실패한 런은 산출물이 비어 사유가 이 줄에만 남는다(v10.143.0; 종전엔 버려져 요청자가 "왜" 를 몰랐다).
 RUN_ERROR_LINE = "(the run ended with an error)"
 RUN_ERROR_CAUSE_LINE = "(the run ended with an error: {error})"
@@ -145,7 +139,7 @@ def view_of_inbox_item(item: dict) -> MailView:
 #   종류(job·monitor·checkin) → `system`(줄 없음 — 하니스 통지는 에이전트에서 항목이 아니다).
 #   ``opens_run`` 거짓 → 깨우지 않음.
 # - main·private 메일: peer_message 의 ``expects_reply`` → `request` — main 이 빚을 적는다(`AgentLoop._inject_mail`);
-#   ``notice`` → `notice`; ``re`` 가 있으면(명시 회신·정지 회신) 또는 kind reply(폴백) → `reply`; 그 밖
+#   ``notice`` → `notice`; ``re`` 가 있으면(명시 회신·정지 회신) 또는 kind reply(런 끝의 답 없음 회신) → `reply`; 그 밖
 #   (job·monitor·harness·died·checkin) → `system`, 줄 없음 — main 앞 메일의 n- 항목은 루프 장부(`Ledger`)가 들고
 #   있다. ``wakes_main`` 거짓 → 깨우지 않음.
 
@@ -243,17 +237,12 @@ def mail_queue_item(reply: dict) -> dict:
     }
 
 
-def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
+def build_reply_record(reply: dict, *, registry=None) -> dict:
     """mailbox 아이템 1건 → main ctx 에 넣을 관찰 레코드.
 
     에이전트에게서 온 것은 봉투 하나(:func:`envelope`, v10.77.0 D) — 요청·통지·
     회신·죽음. 머리의 id 는 그 메일의 id(`item_id`)이고, 요청이면 main 이 그
     id 로 빚진다. 작업·모니터·하니스 보고는 도구가 만든 보고라 봉투 밖이다.
-
-    ``cap``(loop 의 ``_oversized_cap``, 0=무제한) 초과 회신은 전문 대신
-    디스크 포인터 + head 발췌로 치환 — 전문은 worker 가 이미
-    ``agents/<key>/replies/reply-<id>.md`` 에 영속했다(배달과 무관하게
-    항상 저장).
 
     ``registry`` (v7.11.0, 배달 시점에만 전달): 회신 레코드 말미에 그
     에이전트의 **배달-시점** 잔여 상태 한 줄을 동봉 — main 이 "얼마나
@@ -278,7 +267,8 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             "content": (
                 f"── {job} ──\n{body}\n"
                 "(A harness job's result — nothing to send back. Act on findings "
-                "if there are any; otherwise there is nothing to do.)"
+                "if there are any, then close it in `complete`'s `answers` with its "
+                "id from `## Open Items`.)"
             ),
             "source": "harness",
         }
@@ -359,26 +349,27 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         }
 
     body = reply.get("output") or "(empty reply)"
-
-    tokens = estimate_tokens(body)
-    if cap and tokens > cap:
-        path = reply.get("reply_path", "")
-        head = body[: cap * 2]  # ~cap/2 tokens 어치만 발췌 (chars≈tokens*4)
-        body = (
-            f"(reply is ~{tokens} tokens — over the {cap}-token cap; "
-            f'full text saved to "{path}". Read a specific range or search '
-            f"it, or send a narrower request.)\n"
-            f"--- head excerpt ---\n{head}"
-        )
-
     if not reply.get("success"):
         body = f"{run_error_line(str(reply.get('error') or ''))}\n{body}"
-    # 런 끝 폴백 — 표지는 이 회신이 갚는 요청(``re``)이다. 그 런을 연 배달(``run``)이 아니다: 체크인·하위 회신이 연
-    # 런이나 런 도중 흡수한 둘째 요청의 폴백이면 둘이 다르고, main 은 ``run`` 을 본 적이 없다(v10.145.1). 이 분기로
-    # 오는 메일은 `_fall_back` 의 것뿐이고 언제나 ``re`` 를 단다.
-    content = envelope("reply", mid, label, body, re=str(reply.get("re") or ""))
+    # 런 끝의 "답하지 않았다" 회신 — 표지는 이 회신이 닫는 요청(``re``)이다. 그 런을 연 배달(``run``)이 아니다:
+    # 체크인·하위 회신이 연 런이나 런 도중 흡수한 둘째 요청이면 둘이 다르고, main 은 ``run`` 을 본 적이 없다
+    # (v10.145.1). 이 분기로 오는 메일은 `AgentRegistry._send_no_reply` 의 것뿐이고 언제나 ``re``·``mark`` 를 단다.
+    content = envelope(
+        "reply",
+        mid,
+        label,
+        body,
+        re=str(reply.get("re") or ""),
+        mark=str(reply.get("mark") or ""),
+    )
     tm = registry.get(key) if registry is not None else None
-    if tm is not None and getattr(tm, "state", "dead") != "dead":
+    # 상태 꼬리는 다시 물을 수 있는 상주에게만 — 일회용(``ends_after_task``)은 이 회신을 낸 런으로 내려간다("… and is
+    # gone."). 배달 순간엔 아직 dead 가 아니어도 그렇다.
+    if (
+        tm is not None
+        and getattr(tm, "state", "dead") != "dead"
+        and not getattr(tm, "ends_after_task", False)
+    ):
         queued = registry.backlog_of(key)
         if queued > 0 or state_is_active(tm.state):
             # 기다리는 중이면(우편의 기다림 표시) 작업 상태 대신 그 낱말로 — 꼬리의 `## Live Agents` 와 같다

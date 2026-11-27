@@ -11,7 +11,7 @@
   Input JSON: {"question": "string, required — The question to ask the user."}
 - agent: Hand a task to another agent that works in its own context; the profiles are listed under `## Agent Profiles`.
   Input JSON: {"mode": "string, required — \"run\" | \"spawn\" | \"status\" | \"resume\" | \"kill\"", "profile": "string", "name": "string", "task": "string", "instructions": "string", "key": "string", "tools": "array<string>", "context": "string — \"none\" | \"fork\""}
-- complete: Call this tool when the task is done — always the last call. `result` is the only text delivered as your answer — to the user, or to the agent that called you; what you wrote outside it is not. The user sees it rendered as Markdown. Put the answer first. When it rests on work you did, end with two lines:
+- complete: Call this tool when the task is done — always the last call. `result` is your final answer for the person who asked you here, or for the caller that ran you inline (a skill or a harness job); what you wrote outside it is not. An agent that sent you a request gets only your `reply` — `result` does not reach it. The user sees it rendered as Markdown. Put the answer first. When it rests on work you did, end with two lines:
 Checked: <what you ran or inspected, and what it showed>
 Not checked: <what you inferred from reading rather than running, or did not test — 'nothing' if so>
 A reply with nothing to check has neither line. When `## Open Items` lists items closed by `complete`, `answers` is required: list the ids your result covers. Ids you leave out stay open. Not for waiting — to pause until a job, monitor or agent reports back, call `wait`.

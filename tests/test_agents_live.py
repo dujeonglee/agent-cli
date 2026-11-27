@@ -8,6 +8,7 @@ stop 이 분리될 것.
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from pathlib import Path
@@ -144,18 +145,25 @@ class _RecordingRunner:
             return list(self.seen)
 
 
-# v9.21.0 — `complete` 는 국소다. 러너가 요청자에게 `message` 를 안 보내면
-# 레지스트리가 런 요약을 **라벨 붙여** 폴백 배달한다. 아래 테스트들은 가짜
-# 러너가 message 를 안 보내므로 전부 이 경로다 — 라벨을 벗기고 내용을 본다.
-from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
+# `complete` 는 국소다. 러너가 요청자에게 `reply` 를 안 보내면 레지스트리가 "답하지 않았다" 는
+# 사실 문장으로 그 요청을 닫는다(v10.177.8 — 런의 결과는 싣지 않는다). 아래 테스트들은 가짜 러너가
+# `reply` 를 안 보내므로 전부 이 경로다 — 문장이 어느 요청을 닫았는지(인용한 요청 글)를 본다.
+_NO_REPLY_RE = re.compile(
+    r"^(agt-[0-9a-f]+) (?:ended its run|finished its task) without a `reply` to your "
+    r'request \[(r-\d+)\] \("(.*)"\)'
+)
 
 
-def _unlabel(output: str) -> str:
+def _noted(output: str) -> str:
+    """ "답하지 않았다" 회신 → 그 회신이 인용한 요청 글."""
+    m = _NO_REPLY_RE.match(output)
+    assert m, f"답 없음 회신이 아니다: {output[:80]!r}"
+    return m.group(3)
 
-    assert output.startswith(_NO_REPLY_LABEL + "\n"), (
-        f"폴백 요약에 라벨이 없다: {output[:60]!r}"
-    )
-    return output[len(_NO_REPLY_LABEL) + 1 :]
+
+def _is_no_reply(text: str, key: str, request: str) -> bool:
+    m = _NO_REPLY_RE.match(text)
+    return bool(m) and m.group(1) == key and m.group(3) == request
 
 
 def _queue_behind_a_held_run(reg, key):
@@ -220,11 +228,11 @@ class TestBuildReplyRecord:
             "key": "agt-abc",
             "profile": "researcher",
             "run": "r-1",
-            "re": "r-1",  # 갚는 요청 — 런 끝 폴백(`_fall_back`)은 언제나 단다; 표지는 이것이다(v10.145.1)
+            "re": "r-1",  # 닫는 요청 — 런 끝의 답 없음 회신(`_send_no_reply`)은 언제나 단다(v10.145.1)
+            "mark": "no reply",
             "success": True,
             "output": "findings",
             "duration_s": 0.5,
-            "reply_path": "/tmp/x/reply-r-1.md",
             **kw,
         }
 
@@ -272,18 +280,11 @@ class TestBuildReplyRecord:
         assert "run ended with an error" not in rec["content"]
 
     def test_reply_envelope_names_its_id_and_request(self):
-        """v10.77.0 (D): ``── reply [<메일 id>] from <이름표> re [<요청 id>] ──``."""
+        """v10.77.0 (D): ``── reply [<메일 id>] from <이름표> re [<요청 id>] · no reply ──``."""
         rec = build_reply_record(self._reply(item_id="n-9"))
         assert rec["content"].startswith(
-            "── reply [n-9] from agt-abc (researcher) re [r-1] ──\nfindings"
+            "── reply [n-9] from agt-abc (researcher) re [r-1] · no reply ──\nfindings"
         )
-
-    def test_over_cap_replaced_with_pointer(self):
-        big = "x" * 40_000  # ~10k tokens
-        rec = build_reply_record(self._reply(output=big), cap=100)
-        assert "reply-r-1.md" in rec["content"]
-        assert len(rec["content"]) < len(big)
-        assert "head excerpt" in rec["content"]
 
     @staticmethod
     def _agent_with_backlog(tmp_path, queued: int | None):
@@ -334,21 +335,6 @@ class TestBuildReplyRecord:
         # 레거시/직접 호출 경로 무변경 (restore pending 미러 재생 등)
         rec = build_reply_record(self._reply())
         assert "agent status:" not in rec["content"]
-
-    def test_status_tail_survives_overcap_pointer(self, tmp_path):
-        """over-cap 치환(본문→디스크 포인터) 뒤에도 상태 tail 은 붙는다."""
-        reg, key, gate = self._agent_with_backlog(tmp_path, 1)
-        try:
-            big = "x" * 40_000
-            rec = build_reply_record(
-                self._reply(key=key, output=big), cap=100, registry=reg
-            )
-        finally:
-            gate.set()
-            reg.shutdown_all()
-        assert "reply-r-1.md" in rec["content"]  # 포인터 치환 유지
-        assert "agent status: busy" in rec["content"]
-        assert "1 queued" in rec["content"]
 
     def test_delivery_path_carries_real_backlog(self, tmp_path, renderer):
         """통합: 실제 레지스트리로 request→회신 대기→(배달부와 동일하게)
@@ -593,24 +579,10 @@ class TestRegistryLifecycle:
         assert len(replies) == 1
         r = replies[0]
         assert r["key"] == key and r["success"]
-        assert _unlabel(r["output"]) == "done:hello"
+        assert _noted(r["output"]) == "hello"
         assert not reg.arrived_for(
             "main", waking_only=False, words=False
         )  # drain 은 소비
-        reg.shutdown_all()
-
-    def test_reply_persisted_to_disk(self, tmp_path, renderer):
-        reg = make_registry(tmp_path)
-        key, _ = reg.spawn()
-        reg.request(key, "hi")
-        assert wait_until(
-            lambda: reg.arrived_for("main", waking_only=False, words=False)
-        )
-        reply = absorbed_mail(reg)[0]
-        path = Path(reply["reply_path"])
-        assert path.is_file()
-        assert path.read_text(encoding="utf-8") == "done:hi"
-        assert "agents" in str(path) and key in str(path)  # 5.0.0 디스크 명명
         reg.shutdown_all()
 
     def test_on_reply_callback_fires(self, tmp_path, renderer):
@@ -708,7 +680,13 @@ class TestRegistryLifecycle:
             lambda: reg.arrived_for("main", waking_only=False, words=False)
         )
         r = absorbed_mail(reg)[0]
-        assert not r["success"] and "boom" in r["output"]
+        assert not r["success"] and "boom" in r["error"]
+        # 받는 쪽 레코드: 원인 한 줄 + 답 없음 문장(런의 결과는 싣지 않는다)
+        content = build_reply_record(r)["content"]
+        assert (
+            "(the run ended with an error: agent internal error: RuntimeError: boom)"
+            in content
+        )
         # worker 는 죽지 않는다 — 다음 요청도 받는다. 회신은 busy 인 채로
         # 나가고(런 끝 정리 전) idle 은 그 뒤라, 곧바로 단정하면 느린 CI 에서
         # 그 틈에 걸린다(3.11, 2026-09-27) — idle 이 되기를 기다린다.
@@ -838,7 +816,6 @@ class TestWaitAndScope:
         도입되면 denylist(not in idle/dead)가 조용히 active 로 오분류하는데,
         이 테스트가 '분류 안 된 새 상태'를 잡는다."""
         import re
-        from pathlib import Path
 
         src = Path(
             __import__("agent_cli.subagent.agents_live", fromlist=["x"]).__file__
@@ -1010,7 +987,7 @@ class TestToolTeammate:
             lambda: reg.arrived_for("main", waking_only=False, words=False)
         )
         reply = absorbed_mail(reg)[0]
-        assert "done:go" in reply["output"]
+        assert _noted(reply["output"]) == "go"
         reg.shutdown_all()
 
     def test_wait_and_request_modes_rejected(self, tmp_path, renderer):
@@ -1158,10 +1135,12 @@ class TestLoopWiring:
             AgentLoop._inject_mail(fake_self, reply)
 
         assert len(fake_self.messages) == 1
-        assert "done:job" in fake_self.messages[0]["content"]
+        assert (
+            '("job").' in fake_self.messages[0]["content"]
+        )  # 답 없음 회신이 인용한 요청
         assert len(added) == 1
         assert added[0]["tool"] == "agent"
-        # v10.141.0 (사용자 결정): 회신(여기선 런 끝 폴백 요약)은 장부 항목이 아니다 — 읽으면
+        # v10.141.0 (사용자 결정): 회신(여기선 런 끝의 답 없음 회신)은 장부 항목이 아니다 — 읽으면
         # 끝, 레코드에 항목 id 도 없다
         assert fake_self._state.ledger.open_requests() == ()
         assert "request_id" not in added[0] and fake_self.noted == []
@@ -1239,14 +1218,16 @@ class TestFullLoopIntegration:
             m for m in ctx.get_raw_messages() if m.get("source") == "agent_reply"
         ]
         assert len(delivered) == 1
-        assert "done:explore the repo" in delivered[0]["content"]
+        # 가짜 에이전트는 `reply` 없이 끝난다 — 답 없음 회신이 그 요청을 닫는다(v10.177.8)
+        assert '("explore the repo").' in delivered[0]["content"]
         assert not is_format_intervention(delivered[0])
 
         # 배달 이후 LLM 호출의 프롬프트에 회신이 실제로 노출됐다
         later_calls = provider.call.call_args_list[2:]
-        assert any("done:explore the repo" in str(c) for c in later_calls), (
-            "delivered reply never reached a later LLM prompt"
-        )
+        assert any(
+            '(\\"explore the repo\\").' in str(c) or '("explore the repo").' in str(c)
+            for c in later_calls
+        ), "delivered reply never reached a later LLM prompt"
         reg.shutdown_all()
 
     def test_every_loop_gets_the_same_agent_surface(self, tmp_path):
@@ -1314,12 +1295,12 @@ class TestAskRouting:
         reg.request(key, "do the task")
         assert wait_until(lambda: reg.get(key).handled == 1)
 
-        # 질문은 main 메일함이 아니라 사람에게 — 메일은 런 요약(폴백 회신) 하나
+        # 질문은 main 메일함이 아니라 사람에게 — 메일은 답 없음 회신 하나
         assert wait_until(
             lambda: reg.arrived_for("main", waking_only=False, words=False)
         )
         (mail,) = absorbed_mail(reg)
-        assert mail["kind"] == "reply" and _NO_REPLY_LABEL in mail["output"]
+        assert mail["kind"] == "reply" and mail["mark"] == "no reply"
         (q,) = reg.open_human_questions()
         assert q.text == "which branch?" and q.target == "user"
 
@@ -1679,10 +1660,7 @@ class TestHumanInterventionRouting:
         assert wait_until(lambda: len(runner.seen) == 3)
         assert wait_until(lambda: reg.get(key).handled == 3)
         replies = absorbed_mail(reg)
-        assert sorted(_unlabel(r["output"]) for r in replies) == [
-            "done:task A",
-            "done:task B",
-        ]
+        assert sorted(_noted(r["output"]) for r in replies) == ["task A", "task B"]
         reg.shutdown_all()
 
     def test_mixed_batch_splits_at_main_delegation(self, tmp_path, renderer):
@@ -1702,7 +1680,7 @@ class TestHumanInterventionRouting:
         assert wait_until(lambda: len(runner.seen) == 4)
         assert wait_until(lambda: reg.get(key).handled == 4)
         replies = absorbed_mail(reg)
-        assert len(replies) == 1 and _unlabel(replies[0]["output"]) == "done:deleg"
+        assert len(replies) == 1 and _noted(replies[0]["output"]) == "deleg"
         reg.shutdown_all()
 
     def test_human_request_reply_not_delivered_to_main(self, tmp_path, renderer):
@@ -2603,7 +2581,9 @@ class TestPeerMessaging:
             for q in qs
         )
         # A 가 B 회신 받음 — 무엇에 대한 회신인지(re [r-1])
-        assert any(q.startswith("── reply [") and "re [r-1] ──" in q for q in qs)
+        assert any(
+            q.startswith("── reply [") and "re [r-1] · no reply ──" in q for q in qs
+        )
         # 총 실행 정확히 2회 — 핑퐁 없음
         assert reg.get(a).handled == 1 and reg.get(b).handled == 1
         # peer 트래픽은 main mailbox 를 건드리지 않음
@@ -2856,7 +2836,7 @@ class TestUnifiedMessagingV512:
         # 말하고 할 일이 없으니 괄호 줄이 없다.
         got = [q for q in runner.queries() if q.startswith("── reply [")]
         assert got, "A 가 B 회신을 못 받음"
-        assert f"from {b} (beta) re [r-1] ──" in got[0]
+        assert f"from {b} (beta) re [r-1] · no reply ──" in got[0]
         reg.shutdown_all()
 
     def test_roster_uses_first_sentence_not_midword_cut(self, tmp_path, renderer):
@@ -3008,16 +2988,6 @@ class TestResumeMode:
         # 이전 생의 기억을 그대로 갖고 살아났다
         assert any("landmark-before-death" in str(m) for m in tm.ctx.get_raw_messages())
         assert tm.instance_name == "ui"  # 라벨 보존
-        # 부활 후 첫 회신은 새 id 의 파일 — 앞 생의 reply-r-1.md 를 덮지 않는다
-        reg.request(key, "second job")
-        assert wait_until(
-            lambda: reg.arrived_for("main", waking_only=False, words=False)
-        )
-        again = absorbed_mail(reg)[0]
-        assert Path(again["reply_path"]).name != "reply-r-1.md"
-        assert (tm.home_dir / "replies" / "reply-r-1.md").is_file()
-        assert Path(again["reply_path"]).is_file()
-        assert Path(again["reply_path"]).parent == tm.home_dir / "replies"
         reg.shutdown_all()
 
     def test_resume_guards(self, tmp_path, renderer):
@@ -3156,8 +3126,8 @@ class TestConversationReplay:
         recs = self._conv_records(tmp_path, key)
         dirs = [(r["direction"], r["text"]) for r in recs]
         assert ("in", "first job") in dirs
-        # v9.21.0: 가짜 러너는 reply 를 안 보내므로 이 out 은 하네스 폴백이다
-        assert ("out", _NO_REPLY_LABEL + "\ndone:first job") in dirs
+        # 가짜 러너는 reply 를 안 보내므로 이 out 은 하네스의 답 없음 회신이다(v10.177.8)
+        assert any(d == "out" and _is_no_reply(t, key, "first job") for d, t in dirs)
         # 각 레코드는 대화창 페이로드 그대로 — 재생이 파싱 없이 재발행 가능.
         out = next(r for r in recs if r["direction"] == "out")
         assert out["key"] == key and out["to"] == "main" and out["item"] == "r-1"
@@ -3192,7 +3162,7 @@ class TestConversationReplay:
         assert any(m[1].get("fallback") for m in msgs if m[1]["direction"] == "out")
         texts = {(c[1]["direction"], c[1]["text"]) for c in msgs}
         assert ("in", "job") in texts
-        assert ("out", _NO_REPLY_LABEL + "\ndone:job") in texts  # 폴백(v9.21.0)
+        assert any(d == "out" and _is_no_reply(t, key, "job") for d, t in texts)
         # 저장된 ts 가 재발행에 실린다.
         assert all("ts" in c[1] for c in msgs)
         reg.shutdown_all()
@@ -3229,7 +3199,7 @@ class TestConversationReplay:
             (c[1]["direction"], c[1]["text"]) for c in renderer.named("agent_message")
         }
         assert ("in", "job") in texts
-        assert ("out", _NO_REPLY_LABEL + "\ndone:job") in texts  # 폴백(v9.21.0)
+        assert any(d == "out" and _is_no_reply(t, key, "job") for d, t in texts)
         reg.shutdown_all()
 
     def test_session_restore_replays_conversation(self, tmp_path, renderer):
@@ -3250,7 +3220,7 @@ class TestConversationReplay:
             (c[1]["direction"], c[1]["text"]) for c in renderer.named("agent_message")
         }
         assert ("in", "job") in texts
-        assert ("out", _NO_REPLY_LABEL + "\ndone:job") in texts  # 폴백(v9.21.0)
+        assert any(d == "out" and _is_no_reply(t, key, "job") for d, t in texts)
         reg2.shutdown_all()
 
 

@@ -29,7 +29,7 @@ from agent_cli.subagent.delegation_checks import (
 from agent_cli.tools.result import ToolResult
 from tests.binding_support import make_binding
 from tests.loop_kinds import make_caller, runtime_of
-from tests.mail_support import agent_wake_lines
+from tests.mail_support import agent_wake_lines, is_no_reply
 
 CAPS = ModelCapabilities(
     context_window=32768, max_output_tokens=4096, supports_thinking=False
@@ -283,7 +283,8 @@ class TestAtAgent:
             agent_registry=reg,
             mcp_manager=None,
         )
-        assert ok and answer == "hello"  # 폴백 라벨은 답이 아니다
+        # 답은 `reply` 하나 — `reply` 없이 끝났으니 답 자리에 하니스의 사실 문장, 명령은 실패(v10.177.8)
+        assert not ok and is_no_reply(answer) and "hello" not in answer
         assert not reg.arrived_for(
             "main", waking_only=False, words=False
         )  # 명령의 답 — main 의 다음 턴 메일이 아니다

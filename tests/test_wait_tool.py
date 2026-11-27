@@ -147,11 +147,11 @@ class TestRegistration:
         assert "The user sees it rendered as Markdown." in d
 
     def test_complete_says_result_is_the_delivered_answer(self):
-        # v10.75.0: result 가 답으로 전달되는 유일한 글 — 답 먼저, 근거는 고정 틀
-        # 두 줄. 추론 과정 전체를 요구하지 않는다(사용자 결정).
+        # v10.75.0: result 가 사람에게 가는 답 — 답 먼저, 근거는 고정 틀 두 줄. 추론 과정 전체를
+        # 요구하지 않는다(사용자 결정). v10.177.8: 요청한 에이전트에게는 `reply` 만 간다.
         d = TOOLS["complete"].description
-        assert "`result` is the only text delivered as your answer" in d
-        assert "the agent that called you" in d
+        assert "`result` is your final answer for the person who asked you here" in d
+        assert "gets only your `reply` — `result` does not reach it" in d
         assert "\nChecked: <" in d and "\nNot checked: <" in d
         assert "nothing to check has neither line" in d
         assert "reasoning" not in d
@@ -784,25 +784,27 @@ class TestRunEnded:
         """끊긴 요청은 재시작이 새 id 로 다시 적는다 — 남기면 빚이 둘이 되고, 죽은
         채무자의 빚이 요청자의 `wait` 를 붙잡는다."""
         reg.note_owes("agent:a", "main", "일감", id="r-1")
-        assert reg.run_ended("agent:a", "끊김", stopped=True) == 0
+        assert reg.run_ended("agent:a", [], stopped=True) == 0
         assert reg.reply_debts("agent:a") == []
         assert not reg.arrived_for("main", waking_only=False, words=False)
         assert agent_wake_lines(reg, "main") == []
 
-    def test_a_normal_end_sends_the_labelled_summary_and_clears(self, reg):
-        from agent_cli.subagent.agent_mail import _NO_REPLY_LABEL
-
+    def test_a_normal_end_sends_the_no_reply_note_and_clears(self, reg):
         reg.note_owes("agent:a", "main", "일감", id="r-1")
-        assert reg.run_ended("agent:a", "요약", success=True) == 1
+        assert reg.run_ended("agent:a", [], success=True) == 1
         assert reg.reply_debts("agent:a") == []
         (mail,) = absorbed_mail(reg)
-        assert mail["output"] == f"{_NO_REPLY_LABEL}\n요약" and mail["re"] == "r-1"
+        assert mail["output"] == (
+            'a ended its run without a `reply` to your request [r-1] ("일감").\n'
+            "Decide whether to continue another way or report back to the user."
+        )
+        assert mail["re"] == "r-1" and mail["mark"] == "no reply"
 
     def test_main_run_ended_routes_through_the_same_place(self, reg):
         from agent_cli.runtime import main_run_ended
 
         reg.note_owes("main", "agent:a", "결정해 줘", id="r-5")
         assert (
-            main_run_ended(reg, "끊김", stopped=True) == 0
+            main_run_ended(reg, [], stopped=True) == 0
         )  # 상주와 같은 자리 — 정지면 버린다
         assert reg.reply_debts("main") == []

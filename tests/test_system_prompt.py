@@ -1781,8 +1781,9 @@ class TestCodeIndexToldOnce:
     def test_whole_block_stays_small(self):
         """설명 + 인자 전체 — 안내 블록이 되살아나면 여기서 걸린다. v10.97.0: `refs` 태그·
         `path` 로 정의 고르기·모듈로 한정한 이름 세 문장(GLM 토크나이저 1,004 → 1,054,
-        DESIGN §21 예산 +79 안)으로 3,800 → 4,000."""
-        assert len(self._block()) < 4000, len(self._block())
+        DESIGN §21 예산 +79 안)으로 3,800 → 4,000. v10.177.8: 함께 실리는 `complete` 설명에 "요청한 에이전트는
+        `reply` 만 받는다" 한 문장(+127자) — 4,000 → 4,100."""
+        assert len(self._block()) < 4100, len(self._block())
 
     def test_defconfig_lives_in_the_trigger_observation_not_the_guide(self):
         """v10.76.1: defconfig 안내는 선언만 잡힌 관찰에 붙는다

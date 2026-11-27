@@ -58,7 +58,7 @@ SPAWN_DEAD_SAME_PROFILE = (
 )
 SPAWN_TASK_QUEUED = (
     'initial task queued as request "{rid}" — its `reply` comes back marked [{rid}] '
-    "and wakes you (if it completes without one you get its run summary instead)."
+    "and wakes you (if it ends its run without one, you get a note saying so)."
 )
 SPAWN_NO_TASK = 'send it work with `message` (`to` "{key}", `text` the task).'
 SPAWN_PEERS = (
@@ -71,7 +71,7 @@ RESUME_DONE = (
 )
 RESUME_TASK_QUEUED = (
     'task queued as request "{rid}" — its `reply` comes back marked [{rid}] and '
-    "wakes you."
+    "wakes you (if it ends its run without one, you get a note saying so)."
 )
 KILL_DONE = (
     'agent "{key}" terminated. Its context is kept — `mode` "resume" brings it '

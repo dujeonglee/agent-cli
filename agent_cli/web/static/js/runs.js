@@ -47,7 +47,7 @@ import { sendOnce } from "./send.js";
 //     쌓인 3건이 블록 3개를 먼저 연다.
 //   · 보냄 → 그리지 않는다. `message`/`reply`/`answer` **도구 줄**이 그 발신
 //     이고(라이브·resume 재생 둘 다 history 에서 온다), 유일한 예외는 도구
-//     호출 없는 하네스 폴백(`fallback`) — 그것만 ⚠ 줄로 몸통에.
+//     호출 없는 하네스의 답 없음 회신(`fallback`) — 그것만 ⚠ 줄로 몸통에.
 //   · 질문 → `→ ask` 도구 줄. 트레이 갱신만 남는다.
 // resume: `scopes.jsonl` 이 같은 scope_start/end 를 재생하고 에이전트
 // history 가 도구 줄을 재생하므로 재생 소스는 **새로 늘지 않는다**.
@@ -318,15 +318,15 @@ export function closeRunBlock(d) {
   scheduleScroll();
 }
 
-/** 하네스 폴백 — 회신 없이 끝난 런의 요약을 하네스가 대신 보냈다. 본문
- * 첫 줄은 그 사정을 말하는 라벨이라 요약에서는 뺀다. */
+/** 하네스의 "답하지 않았다" 회신 — `reply` 없이 끝난 런의 빚마다 하네스가 요청자에게 그 사실을
+ * 알렸다(런의 결과는 보내지 않는다). 본문은 그 회신 글 그대로다. */
 function renderFallbackRow(blk, d) {
   var text = String(d.text || "");
   var lines = text.split("\n");
   var rest = lines.slice(1).join("\n").trim();
   var body = rest ? elHtml("div", ["md"], escapeAndFormat(text)) : null;
   var tail = el("span", ["peer"], peerLabel(d.to));
-  var row = makeRow("⚠", "Fallback", "ended without a reply — the harness sent the run summary instead", body, ["fallback"], tail);
+  var row = makeRow("⚠", "Fallback", "ended without a reply — the harness told the requester so", body, ["fallback"], tail);
   var card = el("div", ["card", "card-fallback"]);
   card.appendChild(row);
   stampCard(card, d.ts);
