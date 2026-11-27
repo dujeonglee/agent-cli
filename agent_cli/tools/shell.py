@@ -524,6 +524,19 @@ class ShellTool(Tool):
         # 밀려난 양을 넘지 못한다.
         return self.strip_prefix(action_input).get("command") or ""
 
+    def validate(self, args: dict) -> str | None:
+        """`timeout` 은 1 초 이상 (감사 1-8) — 0·음수는 종전엔 시작하자마자 시간 초과였다."""
+        try:
+            asked = int(args.get("timeout", FOREGROUND_LIMIT))
+        except (TypeError, ValueError):
+            return None  # 형은 중앙 검증이 본다
+        if asked < 1:
+            return (
+                "`timeout` must be at least 1 second; omit it for the default "
+                f"({FOREGROUND_LIMIT})."
+            )
+        return None
+
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         background = args.get("background") is True or str(
             args.get("background", "")

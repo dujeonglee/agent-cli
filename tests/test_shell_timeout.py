@@ -77,10 +77,12 @@ def test_description_states_the_result_shape_not_task_kinds():
 
 
 def test_timeout_below_one_second():
-    """`timeout` 0 — 지금은 검증을 지나 시작하자마자 "timed out after 0s"(감사 1-8, 고정)."""
+    """`timeout` 0·음수는 거절 (감사 1-8 — 종전엔 시작하자마자 "timed out after 0s")."""
     from agent_cli.tools.registry import validate_tool_input
 
-    ok, err, conv = validate_tool_input("shell", {"command": "true", "timeout": 0})
-    assert ok, err
-    r = ShellTool().run(conv)
-    assert not r.success and "timed out after 0s" in r.error
+    for t in (0, -5):
+        ok, err, _ = validate_tool_input("shell", {"command": "true", "timeout": t})
+        assert not ok
+        assert err == (
+            "`timeout` must be at least 1 second; omit it for the default (120)."
+        )
