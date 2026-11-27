@@ -39,6 +39,13 @@ def test_read_one_range(sample):
     assert "line4" not in r.output
 
 
+def test_read_one_line_end_alone(sample):
+    """`line_end` 만 — 지금은 범위가 아니라 파일 전체가 온다(감사 1-4, 고정)."""
+    r = _read_one({"path": str(sample), "line_end": 2})
+    assert r.success
+    assert "line5" in r.output
+
+
 def test_read_one_search(sample):
     r = _read_one({"path": str(sample), "search": "line3", "context": 0})
     assert r.success
