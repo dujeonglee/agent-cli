@@ -48,7 +48,8 @@ class SnapshotTool(Tool):
     requires_handler = "snapshot"
     description = (
         "Restore a file from the workspace snapshots the harness takes automatically "
-        f"(at session start and before each {MUTATING_TOOLS_PHRASE} call). "
+        f"(at session start, and before a {MUTATING_TOOLS_PHRASE} call — at most once "
+        "per the interval stated in `## Workspace snapshot`). "
         'Use it when an input file got damaged or disappeared: `mode` "restore" with '
         "the file `path` brings back the most recent snapshot whose content differs "
         "from what is on disk now and tells you which call changed it (optional `at` "
