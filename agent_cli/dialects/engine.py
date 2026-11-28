@@ -47,6 +47,9 @@ from agent_cli.tools.registry import TOOLS
 
 # JSON parse 를 시도할 스키마 타입 — string/미선언은 raw 유지.
 _COERCE_TYPES = frozenset({"integer", "number", "boolean", "array", "object"})
+#: JSON 으로 읽는 인자 가운데 값이 JSON 값 하나로 끝나는 타입 — 닫는 태그 누락 구제의 대상 (v10.177.13)
+_JSON_VALUE_TYPES = frozenset({"array", "object"})
+_JSON_PREFIX = json.JSONDecoder(strict=False)
 
 
 def coerce_params(action: str, params: dict) -> dict:
@@ -868,6 +871,7 @@ class Dialect(DialectBase):
         qualified_starts = {m.start() for m in self._call_opens(body)}
         ops: list[Op] = []
         truncated_any = False
+        rescued_any = False
         # v10.1.3: 닫힌 파라미터의 **값 안**에 있는 이름·파라미터 태그는 텍스트다.
         # 종전엔 세그먼트를 다음 이름 태그에서 무조건 잘라, 값에 포맷 자체가
         # 적힌 경우(문서·동료에게 보내는 형식 예시, 백틱·펜스 안이라도) 값이
@@ -914,6 +918,8 @@ class Dialect(DialectBase):
             if name is None and not params:
                 continue  # 이름도 파라미터도 없는 빈 골격
             if name is not None and self.spec.value_mode == "raw":
+                params, rescued = self._end_json_values_at_json(name, params)
+                rescued_any |= rescued
                 params = coerce_params(name, params)
             ops.append(Op(action=name, action_input=params, truncated=trunc))
             truncated_any |= trunc or hybrid
@@ -928,10 +934,58 @@ class Dialect(DialectBase):
 
         n_co = _outside(t.call_open)
         n_cc = _outside(t.call_close)
-        drifted = n_co != n_name or n_co != n_cc
+        drifted = n_co != n_name or n_co != n_cc or rescued_any
         if t.name_close is not None:
             drifted |= _outside(t.name_close) != n_name
         return ops, drifted, truncated_any
+
+    def _end_json_values_at_json(self, name: str, params: dict) -> tuple[dict, bool]:
+        """JSON 으로 읽는 인자(배열·객체)의 값은 JSON 값이 끝나는 자리에서 끝난다 (v10.177.13,
+        PROP-argkey-missing-close) — ``(params, 구제했나)``.
+
+        값 전체는 JSON 이 아닌데 앞부분이 완결된 JSON 값이고 그 뒤(공백 지나)가 이 방언의 파라미터 여는 태그면,
+        닫는 태그가 빠진 것이다: 값 안의 태그는 글이라는 규칙(v10.1.3) 때문에 값이 다음 파라미터의 닫는 태그까지
+        삼켰다. JSON 값까지를 그 인자로 두고 나머지를 다음 파라미터로 다시 읽는다. 정당한 값은 잘리지 않는다 —
+        JSON 뒤에 글을 더 품은 배열·객체 값은 지금도 JSON 이 아니라 거절된다. 글(문자열) 인자는 보지 않는다.
+        다시 읽은 키가 이미 있으면 구제하지 않는다(모양이 모호하다)."""
+        props = TOOLS[name].parameters.get("properties", {}) if name in TOOLS else {}
+        out = dict(params)
+        rescued = False
+        again = True
+        while again:
+            again = False
+            for key, value in out.items():
+                if props.get(key, {}).get("type") not in _JSON_VALUE_TYPES:
+                    continue
+                if not isinstance(value, str):
+                    continue
+                head = value.strip()
+                try:
+                    json.loads(head, strict=False)
+                    continue  # 온전한 JSON — 그대로
+                except ValueError:
+                    pass
+                try:
+                    _, end = _JSON_PREFIX.raw_decode(head)
+                except ValueError:
+                    continue
+                rest = head[end:].lstrip()
+                if not self._t.param_open.match(rest):
+                    continue
+                extra, _ = self._extract_params(rest + self.spec.param_close)
+                if not extra or set(extra) & set(out):
+                    continue
+                # 다시 읽은 파라미터는 모델이 쓴 자리(그 인자 바로 뒤)에 — 기록의 순서가 원문과 같게
+                out = {
+                    k2: v2
+                    for k, v in out.items()
+                    for k2, v2 in (
+                        [(k, head[:end]), *extra.items()] if k == key else [(k, v)]
+                    )
+                }
+                rescued = again = True
+                break
+        return out, rescued
 
     # ─── Degeneration / sanitize ────────────────────────────────
 
