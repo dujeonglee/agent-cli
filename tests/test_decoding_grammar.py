@@ -183,7 +183,7 @@ class TestXmlFcGrammar:
         g = get("xml_fc").grammar(_tools(["shell", "write_file"], "xml_fc"))
         lines = g.splitlines()
         # 바로 호출 | 산문 + 개행 + 호출 | 산문만; 호출 사이·끝은 공백 관용(ws)
-        assert lines[0] == 'root ::= ( calls | prose "\\n" calls | prose ) ws'
+        assert lines[0] == 'root ::= ( calls | prose "\\n" calls | prose )'
         assert prose_rule("prose", "<tool_call>") in g  # 줄 첫 오프너만 제외
         assert "ws ::= [ \\t\\r\\n]*" in g
         assert (

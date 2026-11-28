@@ -271,7 +271,8 @@ class TestWhatTheGrammarForbids:
     @pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
     def test_direct_start_and_empty_array_and_loose_whitespace(self, compiler, fmt):
         """구제 가능한 모양은 허용: 산문 없이 바로 호출, 빈 배열 `[]`(NO_ACTION
-        넛지가 구제), 태그 사이 빈 줄·공백(파서는 `\\s*`), 호출 뒤 공백."""
+        넛지가 구제), 태그 사이 빈 줄·공백(파서는 `\\s*`), 호출 사이 공백. 마지막 호출 뒤 공백은 v10.177.15 부터
+        막는다 — 그 무제한 공백이 호출을 다 쓴 모델을 멈추지 못하게 했다(TestTerminalCallIsLast)."""
         wf = get(fmt)
         compiled = compiler.compile_grammar(wf.grammar(_tools(fmt)))
         if fmt == "json_fc":
@@ -284,7 +285,7 @@ class TestWhatTheGrammarForbids:
                 "</function>\n\n</tool_call>"
             )
             assert _accepts(compiled, call)  # 바로 시작 + 태그 사이 빈 줄
-            assert _accepts(compiled, "thought\n" + call + "\n\n" + call + "\n\n")
+            assert _accepts(compiled, "thought\n" + call + "\n\n" + call)
             assert _accepts(compiled, "thought\n\n\n" + call)
 
     def test_xml_line_start_opener_is_always_a_call(self, compiler):
@@ -587,8 +588,9 @@ class TestTerminalCallIsLast:
     def test_no_prose_after_the_terminal_call(self, compiled, fmt):
         done = _calls(fmt, [_DONE])
         assert not _accepts(compiled, done + "\nDone.")
-        # xml 은 종전대로 호출 뒤 공백 관용(ws), json 은 종전대로 `]` 에서 끝
-        assert _accepts(compiled, done + "\n\n") is (fmt == "xml_fc")
+        # 문법은 마지막 호출에서 끝난다(v10.177.15) — xml 도 json 처럼 호출 뒤 공백을 받지 않는다.
+        # 종전 xml 의 무제한 끝 공백은 GLM·omlx 에서 공백 폭주를 불렀다(PROP-grammar-stalls).
+        assert not _accepts(compiled, done + "\n\n")
 
 
 @pytest.mark.parametrize("fmt", ["json_fc", "xml_fc"])
