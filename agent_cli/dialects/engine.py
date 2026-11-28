@@ -377,7 +377,9 @@ class Dialect(DialectBase):
         co, cc = s.call_open, s.call_close
         pre, pre_rules = think_prefix(thinking_open, forbid=s.forbid_in_think)
         lines = [
-            rf'root ::= {pre}( calls | prose "\n" calls | prose ) ws',
+            # 문법은 마지막 호출에서 끝난다(json_fc 와 같은 끝, v10.177.15) — 뿌리 끝의 무제한 `ws` 는 호출을
+            # 다 쓴 모델이 멈추지 못하고 공백만 내게 했다(GLM·omlx 실측, PROP-grammar-stalls).
+            rf'root ::= {pre}( calls | prose "\n" calls | prose )',
             prose_rule("prose", s.prose_opener),
             r"ws ::= [ \t\r\n]*",
             *call_sequence_rules(
@@ -498,7 +500,9 @@ class Dialect(DialectBase):
         # 사고 구간에는 호출 여는 태그를 못 쓴다(v9.24.8).
         pre, pre_rules = think_prefix(thinking_open, forbid=s.forbid_in_think)
         lines = [
-            rf'root ::= {pre}( calls | prose "\n" calls | prose ) ws',
+            # 문법은 마지막 호출에서 끝난다(json_fc 와 같은 끝, v10.177.15) — 뿌리 끝의 무제한 `ws` 는 호출을
+            # 다 쓴 모델이 멈추지 못하고 공백만 내게 했다(GLM·omlx 실측, PROP-grammar-stalls).
+            rf'root ::= {pre}( calls | prose "\n" calls | prose )',
             prose_rule("prose", s.prose_opener),
             r"ws ::= [ \t\r\n]*",
             *call_sequence_rules(

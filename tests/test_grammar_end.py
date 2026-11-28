@@ -38,8 +38,13 @@ def root(g: str) -> str:
 
 @pytest.mark.parametrize("thinking_open", [False, True])
 @pytest.mark.parametrize("name", ["xml_fc", "glm_argkey", "hermes_json"])
-def test_tag_and_hermes_roots_end_with_unbounded_whitespace(name, thinking_open):
-    assert root(grammar(name, thinking_open)).endswith(" ) ws")
+def test_tag_and_hermes_roots_end_at_the_last_call(name, thinking_open):
+    """뿌리는 마지막 호출(또는 산문)에서 끝난다 — 끝의 `ws` 가 없다. 호출 안·호출 사이의 `ws` 는 그대로다."""
+    g = grammar(name, thinking_open)
+    pre = 'think "</think>\\n\\n" ' if thinking_open else ""
+    assert root(g) == f'root ::= {pre}( calls | prose "\\n" calls | prose )'
+    assert "ws ::= [ \\t\\r\\n]*" in g.splitlines()
+    assert any(" ws " in ln for ln in g.splitlines() if ln.startswith("calls"))
 
 
 @pytest.mark.parametrize("thinking_open", [False, True])
