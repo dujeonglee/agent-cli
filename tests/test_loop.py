@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from agent_cli.loop.dispatch import NO_PROGRESS_LIMIT
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.credentials import Credentials
@@ -1339,13 +1340,15 @@ class TestRunLoopActionLoop:
         assert "The original user task here" in retry_msg
         assert "previous nudge did not work" in retry_msg.lower()
 
-    def test_five_same_result_calls_hard_fail(self, caps, tmp_path):
+    def test_same_result_calls_end_at_the_no_progress_limit(self, caps, tmp_path):
+        """v10.177.16 — 하드 실패가 없다: 넛지가 이어지고(3단계부터는 2단계 넛지 그대로) 진전 없는 응답의 상한에서
+        끝난다. 실행 둘(첫 결과는 새것 — 진전, 같은 결과의 둘째는 제자리 턴 — 진전 없음 1) 뒤 넛지 응답 9."""
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
         provider = MagicMock()
         provider.call.side_effect = [
-            LLMResponse(content=_shell_call("ls")) for _ in range(6)
+            LLMResponse(content=_shell_call("ls")) for _ in range(30)
         ]
         result = run_loop(
             ports=TEST_PORTS,
@@ -1354,14 +1357,14 @@ class TestRunLoopActionLoop:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            max_turns=10,
         )
         assert not result.success
-        assert "loop" in result.error.lower()
-        # Error message should cite which primitives were tried
-        assert "probe_progress" in result.error
-        assert "restate_task" in result.error
-        assert provider.call.call_count == 5  # 다섯 번째 호출에서 멈춘다
+        assert result.error == (
+            f"No progress: the last {NO_PROGRESS_LIMIT} responses produced nothing new."
+        )
+        assert provider.call.call_count == 1 + NO_PROGRESS_LIMIT
+        last = provider.call.call_args_list[-1].kwargs["messages"][-1]["content"]
+        assert "You were asked to:" in last  # 마지막 넛지도 2단계 글
 
     def test_repeat_of_a_rejected_call_gets_the_rejection_again(self, caps, tmp_path):
         """v10.32.0 — 실행 전에 거부된(A5) 호출을 그대로 다시 보내는 건 결과를
@@ -1393,15 +1396,15 @@ class TestRunLoopActionLoop:
         assert "times in a row" not in third
         assert "Missing required field" in third
 
-    def test_four_rejected_repeats_hard_fail(self, caps, tmp_path):
-        """짝이 없어도 상한은 유지 — 같은 거부를 세 번 받고도 같은 인자를
-        보내면 4번째에 멈춘다(개입 턴은 max_turns 를 안 세므로 유일한 상한)."""
+    def test_rejected_repeats_end_at_the_no_progress_limit(self, caps, tmp_path):
+        """짝 없는 반복(같은 거부를 받고도 같은 인자) — 4번째 하드 실패가 아니라 거부 안내가 이어지고, 진전 없는
+        응답의 상한(10번째 거부)에서 끝난다(v10.177.16)."""
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
         bad = json.dumps({"action": "write_file", "content": "x"})
         provider = MagicMock()
-        provider.call.side_effect = [LLMResponse(content=bad) for _ in range(5)]
+        provider.call.side_effect = [LLMResponse(content=bad) for _ in range(30)]
         result = run_loop(
             ports=TEST_PORTS,
             query="t",
@@ -1409,12 +1412,14 @@ class TestRunLoopActionLoop:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            max_turns=10,
         )
         assert not result.success
-        assert "loop" in result.error.lower()
-        assert "rejected before every run" in result.error
-        assert "probe_progress" not in result.error
+        assert result.error == (
+            f"No progress: the last {NO_PROGRESS_LIMIT} responses produced nothing new."
+        )
+        assert provider.call.call_count == NO_PROGRESS_LIMIT
+        last = provider.call.call_args_list[-1].kwargs["messages"][-1]["content"]
+        assert "Missing required field" in last and "times in a row" not in last
 
     def test_different_action_resets_counter(self, caps, tmp_path):
         """B1 only fires on *consecutive* identical calls. A different

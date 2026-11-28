@@ -141,16 +141,16 @@ class TestMainRequester:
             in body
         )
 
-    def test_discarded_response_limit_cause_reaches_main(self, world):
-        """버려진 응답이 상한에 닿아 끝난 런 — 원인 줄에 실패 결과 문장, 그 뒤는 답 없음 사실 문장 그대로."""
+    def test_no_progress_limit_cause_reaches_main(self, world):
+        """진전 없는 응답이 상한에 닿아 끝난 런 — 원인 줄에 실패 결과 문장, 그 뒤는 답 없음 사실 문장 그대로."""
         _, make = world
         reg = make("prose")
         key = _ask(reg, "main", run=True)
         assert _until(lambda: reg.get(key).state == "dead")
         body = _main_reply(reg)
         cause = (
-            "(the run ended with an error: No progress: the last 10 responses were "
-            "rejected before anything ran.)\n"
+            "(the run ended with an error: No progress: the last 10 responses "
+            "produced nothing new.)\n"
         )
         assert cause in body and is_no_reply(body.split(cause, 1)[1])
 

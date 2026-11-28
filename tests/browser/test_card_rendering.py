@@ -691,16 +691,17 @@ class TestGeneratingIndicator:
         stack.emit_ready()
         _open_timeline(page, stack)
         stack.renderer.error(
-            "Action loop unresolved: shell repeated; Stopping.", turn=3
+            "No progress: the last 10 responses produced nothing new (last: wait refused). Stopping.",
+            turn=3,
         )
         err = page.locator("#messages .card-error")
         assert _wait(lambda: err.count() == 1)
-        assert "Action loop unresolved" in err.inner_text()
+        assert "No progress" in err.inner_text()
 
         page.reload()  # 재접속 replay 에 실려야 한다
         err2 = page.locator("#messages .card-error")
         assert _wait(lambda: err2.count() == 1)
-        assert "Action loop unresolved" in err2.inner_text()
+        assert "No progress" in err2.inner_text()
 
     def test_a_run_that_ended_without_failing_is_a_neutral_line(self, stack, page):
         """기다릴 것 없이 끝난 런(5d)의 끝 줄 — 같은 길(`turn_error`)이지만 오류 카드가 아니라 중립 줄이고, 다시

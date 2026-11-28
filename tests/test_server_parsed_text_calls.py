@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.dialects import get
-from agent_cli.loop.dispatch import DISCARDED_RESPONSE_LIMIT
+from agent_cli.loop.dispatch import NO_PROGRESS_LIMIT
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from tests.loop_ports import TEST_PORTS
@@ -79,12 +79,12 @@ def test_prose_turn_is_read_as_before(tmp_path, monkeypatch):
     assert observed.startswith(NO_CALL)
 
 
-def test_repeated_text_calls_end_at_the_discarded_response_limit(tmp_path, monkeypatch):
-    """글로 쓴 호출만 되풀이하면 — 호출 없는 턴의 되묻기(버려진 응답)라 v10.177.10 의 상한에서 끝난다."""
+def test_repeated_text_calls_end_at_the_no_progress_limit(tmp_path, monkeypatch):
+    """글로 쓴 호출만 되풀이하면 — 호출 없는 턴의 되묻기(버려진 응답)라 진전 없는 응답의 상한에서 끝난다."""
     monkeypatch.chdir(tmp_path)
     provider = MagicMock()
     provider.call.side_effect = [LLMResponse(content=JSON_TEXT)] * (
-        DISCARDED_RESPONSE_LIMIT + 5
+        NO_PROGRESS_LIMIT + 5
     )
     sd = tmp_path / "sess"
     sd.mkdir()
@@ -99,5 +99,5 @@ def test_repeated_text_calls_end_at_the_discarded_response_limit(tmp_path, monke
         ctx=ctx,
     )
     assert result.success is False and result.error.startswith("No progress:")
-    assert provider.call.call_count == DISCARDED_RESPONSE_LIMIT
+    assert provider.call.call_count == NO_PROGRESS_LIMIT
     assert not (tmp_path / "made.txt").exists()

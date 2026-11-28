@@ -435,11 +435,14 @@ class TestRecovery:
         conn = WebConnection(id="c1")
         r.hub.register(conn)
 
-        r.error("Action loop unresolved: shell repeated; Stopping.", turn=3)
+        r.error(
+            "No progress: the last 10 responses produced nothing new (last: wait refused). Stopping.",
+            turn=3,
+        )
 
         event, data = conn.queue.get(timeout=0.5)
         assert event == "turn_error"
-        assert "Action loop unresolved" in data["content"]
+        assert "No progress" in data["content"]
         assert r.hub.persistent_count == 1
 
     def test_a_failed_end_keeps_its_payload_and_a_quiet_end_says_so(self):

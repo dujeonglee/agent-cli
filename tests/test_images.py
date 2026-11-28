@@ -514,6 +514,7 @@ class TestInjectedMessageImages:
         loop.messages = []
         loop.task_log = []
         loop.route_message = None
+        loop._dispatch = SimpleNamespace(reset_no_progress=lambda: None)
         from tests.loop_kinds import make_kind
         from tests.loop_ports import make_ports, queue_inbox
 

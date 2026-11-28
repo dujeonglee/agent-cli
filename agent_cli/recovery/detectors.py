@@ -87,7 +87,7 @@ class ActionLoopDetector:
             0 — no fire (below threshold, or reset by an error retry)
             1 — first fire (just hit threshold)
             2 — second fire (kept emitting after the first intervention)
-            3+ — subsequent fires (caller should hard-fail)
+            3+ — subsequent fires (the level-2 nudge again)
 
         Args:
             action: Tool name the model is about to invoke.
@@ -147,21 +147,23 @@ STALE_WINDOW = 8
 STALE_RUN = 3
 #: 든 턴은 제자리가 아니다 — 기다리는 도구는 같은 결과가 정상이다.
 STALE_RESET_TOOLS = frozenset({"wait", "monitor"})
-#: 결과가 같아도 진척일 수 있는 쓰기 도구 — 그 쌍은 제자리로 세지 않는다.
+#: 결과가 같아도 진척일 수 있는 쓰기 도구 — **성공한** 쌍은 제자리로 세지 않는다(실패한 쓰기는 다른 도구와 같다,
+#: v10.177.16 — 같은 실패를 되풀이하는 편집은 진척이 아니다).
 STALE_WRITE_TOOLS = frozenset({"write_file", "edit_file", "snapshot", "memory"})
 #: 정보가 없는 결과 — 같아도 "이미 본 결과" 가 아니다.
 _STALE_GENERIC = frozenset({"", "(no output)"})
 _OBSERVATION_PREFIX = "Observation: "
 
 
-def stale_turn_pairs(records: list[dict]) -> list[tuple[str, str]] | None:
-    """한 턴이 기록한 레코드들 → 그 턴의 (도구 이름, 관찰 본문) 쌍 목록 (v10.120.0).
+def stale_turn_pairs(records: list[dict]) -> list[tuple[str, str, bool]] | None:
+    """한 턴이 기록한 레코드들 → 그 턴의 (도구 이름, 관찰 본문, 성공) 쌍 목록 (v10.120.0 · 성공 v10.177.16).
 
     ``records`` 는 그 턴의 디스패치가 ``ctx.add`` 한 것 그대로(history.jsonl 의 그 구간과
     같은 내용)다. 정의는 ATIF 변환(`bench/harbor/atif.py`)이 trajectory 의 호출과 결과를
     짝짓는 방식과 같다 — assistant 레코드의 op(``complete`` 제외)마다, 개입이 아닌 관찰
     레코드의 본문을 순서대로 붙이고, 모자라면 빈 결과. 다른 점 하나: 묶음 관찰은 op 별
-    조각(``parts``)으로 나눠 붙인다 — trajectory 는 합친 본문을 첫 호출에만 붙인다.
+    조각(``parts``)으로 나눠 붙인다 — trajectory 는 합친 본문을 첫 호출에만 붙인다. 성공은 그 관찰(조각)의
+    ``success`` 다 — 쓰기 도구의 제외가 성공한 쓰기에만 걸린다(`StaleGuard.observe`). 빈 결과는 성공으로 둔다.
 
     assistant 레코드가 없으면 ``None`` — 저장되지 않은 시도(형식 재시도·B1 이 막은 반복)는
     턴이 아니다(턴 미계수 규칙과 같다). 감지기를 부르지 않는다."""
@@ -173,19 +175,26 @@ def stale_turn_pairs(records: list[dict]) -> list[tuple[str, str]] | None:
         for op in assistant.get("ops") or []
         if isinstance(op, dict) and op.get("action") and op.get("action") != "complete"
     ]
-    contents: list[str] = []
+    results: list[tuple[str, bool]] = []
     for r in records:
         if r.get("role") != "user" or not r.get("tool") or r.get("recovery"):
             continue
         parts = r.get("parts")
         if parts:
-            contents.extend(str(p.get("content") or "") for p in parts)
+            results.extend(
+                (str(p.get("content") or ""), p.get("success") is not False)
+                for p in parts
+            )
         else:
-            contents.append(
-                str(r.get("content") or "").removeprefix(_OBSERVATION_PREFIX)
+            results.append(
+                (
+                    str(r.get("content") or "").removeprefix(_OBSERVATION_PREFIX),
+                    r.get("success") is not False,
+                )
             )
     return [
-        (name, contents[i] if i < len(contents) else "") for i, name in enumerate(names)
+        (name, *(results[i] if i < len(results) else ("", True)))
+        for i, name in enumerate(names)
     ]
 
 
@@ -197,8 +206,8 @@ class StaleGuard:
     (2f2mRbp — `ls … | wc -l` → 17 을 되풀이). 이 감지기는 호출 글자를 보지 않고 **결과**를
     본다.
 
-    턴 하나는 그 턴에 실행된 호출의 (도구, 관찰 본문) 쌍 목록이다. 모든 쌍이 비어 있지
-    않은 결과이고, 쓰기 도구가 아니고, ``(no output)`` 이 아니고, 최근 ``window`` 턴 안에
+    턴 하나는 그 턴에 실행된 호출의 (도구, 관찰 본문, 성공) 쌍 목록이다. 모든 쌍이 비어 있지
+    않은 결과이고, 성공한 쓰기가 아니고, ``(no output)`` 이 아니고, 최근 ``window`` 턴 안에
     같은 (도구, 결과) 쌍이 이미 있었으면 "제자리 턴" 이다. 쌍이 없거나, `wait`·`monitor` 가
     들었거나, 하니스 작업(그 런의 백그라운드 작업·모니터)이 도는 중이면 제자리가 아니다.
     제자리 턴이 ``run`` 번 연달아면 발화하고 연속 수는 0 으로 돌아간다.
@@ -216,6 +225,7 @@ class StaleGuard:
         self._streak = 0
         self._since_turn = 0
         self._fires = 0
+        self._last_stale = False
 
     @property
     def fires(self) -> int:
@@ -233,12 +243,21 @@ class StaleGuard:
         return self._streak
 
     @property
+    def last_turn_stale(self) -> bool:
+        """마지막으로 먹인 턴이 제자리 턴이었나 — 발화와 무관하다. 진전 없는 응답의 판정이 읽는다."""
+        return self._last_stale
+
+    @property
     def since_turn(self) -> int:
         """지금 이어지는 제자리 구간이 시작된 턴 (구간이 없으면 0)."""
         return self._since_turn if self._streak else 0
 
     def observe(
-        self, pairs: list[tuple[str, str]], *, turn: int, work_running: bool = False
+        self,
+        pairs: list[tuple[str, str, bool]],
+        *,
+        turn: int,
+        work_running: bool = False,
     ) -> bool:
         """한 턴을 먹인다. 발화했으면 ``True``."""
         keyed = [
@@ -246,10 +265,10 @@ class StaleGuard:
                 tool,
                 hashlib.sha256(body.encode("utf-8", "replace")).hexdigest(),
                 bool(body.strip())
-                and tool not in STALE_WRITE_TOOLS
+                and (tool not in STALE_WRITE_TOOLS or not succeeded)
                 and body not in _STALE_GENERIC,
             )
-            for tool, body in pairs
+            for tool, body, succeeded in pairs
         ]
         seen: set[tuple[str, str]] = set().union(*self._window)
         stale = (
@@ -261,6 +280,7 @@ class StaleGuard:
         self._window.append(
             frozenset((tool, digest) for tool, digest, ok in keyed if ok)
         )
+        self._last_stale = stale
         if not stale:
             self._run = 0
             self._streak = 0

@@ -418,7 +418,11 @@ class TestEngineAsksTheKind:
         loop.task_log = []
         loop.route_message = None
         loop.turn = 0
+        resets: list[int] = []
+        # 사람의 새 말(main 상자의 말·창의 요청)마다 진전 없는 응답의 연속 수를 0 으로 — 메일·기록은 아니다
+        loop._dispatch = SimpleNamespace(reset_no_progress=lambda: resets.append(1))
         loop._intake()
+        assert len(resets) == 2
         assert [m["content"] for m in loop.messages] == [
             "[dj]: steer",
             "job #1 done",
