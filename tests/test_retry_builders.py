@@ -153,7 +153,7 @@ class TestFormatActionLoopIntervention:
     """B1 (action loop) Intervention composer.
 
     Level 1 → probe_progress; level 2 and every later level → restate_task
-    (v10.177.14 — no hard fail; the run ends at NO_PROGRESS_LIMIT). Temperature-down level intentionally omitted —
+    (v10.177.16 — no hard fail; the run ends at NO_PROGRESS_LIMIT). Temperature-down level intentionally omitted —
     see DESIGN.md §2.3 and recovery.common_recovery.format_action_loop_intervention
     docstring.
     """

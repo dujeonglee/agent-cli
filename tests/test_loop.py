@@ -1341,7 +1341,7 @@ class TestRunLoopActionLoop:
         assert "previous nudge did not work" in retry_msg.lower()
 
     def test_same_result_calls_end_at_the_no_progress_limit(self, caps, tmp_path):
-        """v10.177.14 — 하드 실패가 없다: 넛지가 이어지고(3단계부터는 2단계 넛지 그대로) 진전 없는 응답의 상한에서
+        """v10.177.16 — 하드 실패가 없다: 넛지가 이어지고(3단계부터는 2단계 넛지 그대로) 진전 없는 응답의 상한에서
         끝난다. 실행 둘(첫 결과는 새것 — 진전, 같은 결과의 둘째는 제자리 턴 — 진전 없음 1) 뒤 넛지 응답 9."""
         from agent_cli.context.manager import ContextManager
 
@@ -1398,7 +1398,7 @@ class TestRunLoopActionLoop:
 
     def test_rejected_repeats_end_at_the_no_progress_limit(self, caps, tmp_path):
         """짝 없는 반복(같은 거부를 받고도 같은 인자) — 4번째 하드 실패가 아니라 거부 안내가 이어지고, 진전 없는
-        응답의 상한(10번째 거부)에서 끝난다(v10.177.14)."""
+        응답의 상한(10번째 거부)에서 끝난다(v10.177.16)."""
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)

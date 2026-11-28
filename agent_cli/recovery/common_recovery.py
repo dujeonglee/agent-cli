@@ -38,7 +38,7 @@ def format_action_loop_intervention(
     this is always the paired result (level 2 does not use it).
 
     Level 1 is ``probe_progress``; level 2 and every later repeat get
-    ``restate_task`` again (v10.177.14 — there is no level-3 hard fail any
+    ``restate_task`` again (v10.177.16 — there is no level-3 hard fail any
     more: the nudges are discarded responses, and the run ends at
     ``NO_PROGRESS_LIMIT`` of them in a row).
 

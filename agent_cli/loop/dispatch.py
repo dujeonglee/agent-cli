@@ -133,7 +133,7 @@ def _flag(value, *, default: bool) -> bool:
 #: A5 자동 전문의 머리 (v10.109.0) — 뒤에 `tool_help` 가 줄 전문이 온다.
 FULL_GUIDE_HEAD = "Full guide:"
 
-#: 진전 없는 응답의 연속 상한 (v10.177.14, PROP-no-progress-turns) — 새 결과를 하나도 내지 못한 응답이 연달아
+#: 진전 없는 응답의 연속 상한 (v10.177.16, PROP-no-progress-turns) — 새 결과를 하나도 내지 못한 응답이 연달아
 #: 이만큼이면 런을 끝낸다. 진전 없음은 다섯이다: 버려진 응답(`_intervene(store_emission=False)` — 형식 되묻기·홀로
 #: 거절된 호출·B1 넛지), 호출이 전부 실행 전에 거절된 응답(`wait` 거절 포함), 실행했지만 결과가 모두 이미 본 것인
 #: 응답(StaleGuard 의 제자리 턴), 코어가 끊은 응답(출력 절단·폭주·스트림 서버 오류). 그 밖은 진전이다. 0 으로 돌아가는
@@ -1686,7 +1686,7 @@ class TurnDispatcher:
         # 재시도라 루프 넛지가 아니라 거부 안내를 다시 받아야 한다(사용자
         # 지적). 그래서 넛지는 짝이 있을 때만 끼어들고, 짝이 없으면 아래
         # A4/A5 로 흘려 보낸다. 끝은 어느 쪽이든 진전 없는 응답의 상한
-        # (`NO_PROGRESS_LIMIT` — 넛지·거절은 버려진 응답이다)이 정한다(v10.177.14 —
+        # (`NO_PROGRESS_LIMIT` — 넛지·거절은 버려진 응답이다)이 정한다(v10.177.16 —
         # 종전의 4번째 동일 반복 하드 실패는 지웠다).
         last = (
             self.tools.recent_tool_history[-1]

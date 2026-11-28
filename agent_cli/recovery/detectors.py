@@ -148,7 +148,7 @@ STALE_RUN = 3
 #: 든 턴은 제자리가 아니다 — 기다리는 도구는 같은 결과가 정상이다.
 STALE_RESET_TOOLS = frozenset({"wait", "monitor"})
 #: 결과가 같아도 진척일 수 있는 쓰기 도구 — **성공한** 쌍은 제자리로 세지 않는다(실패한 쓰기는 다른 도구와 같다,
-#: v10.177.14 — 같은 실패를 되풀이하는 편집은 진척이 아니다).
+#: v10.177.16 — 같은 실패를 되풀이하는 편집은 진척이 아니다).
 STALE_WRITE_TOOLS = frozenset({"write_file", "edit_file", "snapshot", "memory"})
 #: 정보가 없는 결과 — 같아도 "이미 본 결과" 가 아니다.
 _STALE_GENERIC = frozenset({"", "(no output)"})
@@ -156,7 +156,7 @@ _OBSERVATION_PREFIX = "Observation: "
 
 
 def stale_turn_pairs(records: list[dict]) -> list[tuple[str, str, bool]] | None:
-    """한 턴이 기록한 레코드들 → 그 턴의 (도구 이름, 관찰 본문, 성공) 쌍 목록 (v10.120.0 · 성공 v10.177.14).
+    """한 턴이 기록한 레코드들 → 그 턴의 (도구 이름, 관찰 본문, 성공) 쌍 목록 (v10.120.0 · 성공 v10.177.16).
 
     ``records`` 는 그 턴의 디스패치가 ``ctx.add`` 한 것 그대로(history.jsonl 의 그 구간과
     같은 내용)다. 정의는 ATIF 변환(`bench/harbor/atif.py`)이 trajectory 의 호출과 결과를

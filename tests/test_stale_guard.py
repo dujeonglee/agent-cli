@@ -760,7 +760,7 @@ class TestAutoApproveDoesNotSkipThePause:
 
 
 def test_a_failed_write_repeated_is_stale():
-    """쓰기 도구의 제외는 성공한 쓰기에만 (v10.177.14) — 같은 실패를 되풀이하는 편집은 다른 도구와 같이 센다."""
+    """쓰기 도구의 제외는 성공한 쓰기에만 (v10.177.16) — 같은 실패를 되풀이하는 편집은 다른 도구와 같이 센다."""
     turns = [[("edit_file", "Hash mismatch at line 2", False)]] * 6
     g = StaleGuard()
     assert _feed(g, turns) == [4] and g.turns_without_new == 5
